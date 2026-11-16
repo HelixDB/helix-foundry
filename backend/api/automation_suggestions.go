@@ -30,11 +30,11 @@ var suggestionIcons = map[suggest.Icon]foundryv1.FoundryAutomationSuggestionIcon
 // ListFoundryAutomationSuggestions answers the new automation page with an
 // ontology's suggestions, for the callers of the other automation routes:
 //   - none without a current version;
-//   - the Assistant's, once written for that version (source MODEL);
+//   - Founder's, once written for that version (source MODEL);
 //   - else the fallback from its competency questions (source QUESTIONS),
 //     generating while a write is queued or running and queued less than
 //     suggest.StaleAfter ago. A read with no write, or one that failed
-//     suggest.RetryAfter ago, queues one, unless the Assistant is off, the
+//     suggest.RetryAfter ago, queues one, unless Founder is off, the
 //     workspace's AI setting can't be used, or the workspace queued
 //     suggest.PerHour this hour.
 //
@@ -98,7 +98,7 @@ func (s *Service) ListFoundryAutomationSuggestions(ctx context.Context, req *fou
 
 // queueAutomationSuggestions queues a write of the version's suggestions,
 // with its questions, where one can run, and returns its row; nil, with no
-// error, where none can: the Assistant is off, the workspace's AI setting
+// error, where none can: Founder is off, the workspace's AI setting
 // can't be used (no provider, its own provider off Pro, or unreadable), or
 // it queued suggest.PerHour this hour.
 func (s *Service) queueAutomationSuggestions(ctx context.Context, ws, ontologyID, versionID string, questions []string) (

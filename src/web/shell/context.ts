@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-/** Where the person opened the Assistant from, for analytics. */
+/** Where the person opened Founder from, for analytics. */
 export type AssistantFrom = "shortcut" | "button" | "palette";
 
 export type ShellApi = {
@@ -9,7 +9,7 @@ export type ShellApi = {
   // Shows or hides the open section's panel; on a phone, opens or closes
   // the drawer that holds it.
   togglePanel: () => void;
-  // The Assistant's dock: whether this build and user have it, whether it
+  // Founder's dock: whether this build and user have it, whether it
   // is open, and opening or closing it.
   assistant: {
     available: boolean;

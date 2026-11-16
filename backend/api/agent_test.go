@@ -758,7 +758,7 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 		f.store.refusal = foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentPerHour, Detail: "slow down"}
 		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
 		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
-		assert.Contains(t, status.Convert(err).Message(), "your answers reached the draft, which carries on from them, but the Assistant can't reply: slow down")
+		assert.Contains(t, status.Convert(err).Message(), "your answers reached the draft, which carries on from them, but Founder can't reply: slow down")
 		assert.Len(t, f.loads.answered, 1)
 	})
 

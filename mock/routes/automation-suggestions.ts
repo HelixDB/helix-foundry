@@ -22,7 +22,7 @@ import { ontologyById } from "./ontologies";
 import { currentVersionOf, ontologyVersion } from "./ontology";
 
 // The new automation page's suggestions, as the backend serves them
-// (api/automation_suggestions.go, the suggest package, the Assistant's
+// (api/automation_suggestions.go, the suggest package, Founder's
 // worker): for an ontology's current version, written once by the
 // Assistant, and until then, or where it can't write them, made from the
 // version's competency questions (`fallbackSuggestions`, the backend's
@@ -37,7 +37,7 @@ import { currentVersionOf, ontologyVersion } from "./ontology";
 // `automationSuggestionsOutcome: "fail"` fails the writing (the fallback,
 // not generating); `automationSuggestionsAi: false` is a workspace without
 // an AI provider (as `aiSource` none, the local mock's `aiDefault: false`)
-// and the Assistant off (`agentEnabled: false`) never writes them.
+// and Founder off (`agentEnabled: false`) never writes them.
 
 type Knobs = {
   automationSuggestionsMs?: number;

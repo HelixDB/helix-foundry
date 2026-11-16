@@ -3,7 +3,7 @@
 // automation page offers, each filling its composer for a person to edit and
 // send, never run.
 //
-// The Assistant's worker writes them once per version on the workspace's
+// Founder's worker writes them once per version on the workspace's
 // cheapest task model (Prompt, then Parse of the model's one tool call);
 // until it has, and wherever it can't, the API offers Fallback, made from the
 // version's competency questions without a model. A model wrote what Parse

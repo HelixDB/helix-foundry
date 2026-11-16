@@ -39,14 +39,14 @@ import { automationPaths as paths } from "./paths";
 import { automationQueries, useNames } from "./queries";
 
 // /automations/new: a new automation starts as a conversation with the
-// Assistant (the general one, the dock's: its thread, turns and cards), its
+// Founder (the general one, the dock's: its thread, turns and cards), its
 // composer centred over the canvas's dots, a suggestion's prompt a chip away
 // (hovered or focused, it is the composer's placeholder; clicked, its text),
 // or from scratch on the canvas (?template=blank, as every template's
 // draft). Sending opens a new thread, which the page then holds whole
 // (?thread=), and which the dock lists too; the page context says the
 // person is making an automation. Nothing runs until they click a card:
-// once their click on the Assistant's create_automation card made it, the
+// once their click on Founder's create_automation card made it, the
 // page opens it on its canvas. The suggestions are written for one of the
 // workspace's ontologies with a current version (model.ts
 // suggestionOntology), which a picker under them changes when there are
@@ -138,7 +138,7 @@ function NewChat() {
         <div className="au-frame">
           <Section
             title="Start from a template"
-            description="The Assistant isn’t available here, so start from a template or from scratch: you can change every step before it runs."
+            description="Founder isn’t available here, so start from a template or from scratch: you can change every step before it runs."
             className="au-templates-section"
           >
             <Templates lists={lists} />
@@ -157,8 +157,8 @@ function NewChat() {
             </span>
             <h2 className="au-new-title">What should happen?</h2>
             <p className="au-new-text">
-              Say when it starts and what it does, in your own words. The
-              Assistant sets it up; nothing runs until you approve it.
+              Say when it starts and what it does, in your own words. Founder
+              sets it up; nothing runs until you approve it.
             </p>
             {runtime}
             <div className="au-new-composer">
@@ -209,7 +209,7 @@ function NewChat() {
             thread={thread.data}
             runtime={where?.runtime ?? "api"}
             hostState={where?.state ?? "ready"}
-            placeholder="Reply to the Assistant…"
+            placeholder="Reply to Founder…"
             onSent={sent}
           />
         </div>
@@ -258,7 +258,7 @@ function Suggestions({
     data: read.data,
   });
   const generating = shown.generating;
-  // Chips replaced under the pointer or the focus (the Assistant's in
+  // Chips replaced under the pointer or the focus (Founder's in
   // place of the fallback, or another ontology's) leave no stale preview,
   // and a screen reader hears that they changed.
   const chipsSeen = shown.kind === "chips" ? shown.chips : undefined,

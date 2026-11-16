@@ -431,7 +431,7 @@ describe("jobs", () => {
     expect(local.values.has(PENDING)).toBe(false);
   });
 
-  it("reports an Assistant turn's end with where its thread ran", async () => {
+  it("reports a Founder turn's end with where its thread ran", async () => {
     const a = await load();
     a.jobStarted(
       { job: "agent_turn", section: "ask", runtime: "claude_code" },

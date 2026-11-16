@@ -156,8 +156,8 @@ export function Inspector({
           </label>
           <p className="au-hint">
             {email
-              ? "It emails you this, with what the Assistant’s steps before it found. Links are taken out of their words."
-              : "This Foundry sends no email: the run records what the Assistant’s steps found instead."}
+              ? "It emails you this, with what Founder’s steps before it found. Links are taken out of their words."
+              : "This Foundry sends no email: the run records what Founder’s steps found instead."}
           </p>
         </>
       )}
@@ -368,7 +368,7 @@ function TriggerFields({
   );
 }
 
-/** Every action an Assistant step may be allowed, from the workspace's targets. */
+/** Every action a Founder step may be allowed, from the workspace's targets. */
 function choices(lists: Lists): AutomationAction[] {
   return [
     ...lists.connectors.map(
@@ -592,7 +592,7 @@ function ConditionFields({
           label="It checks"
           value={c.check}
           options={[
-            { value: "answer", label: "The Assistant’s answer" },
+            { value: "answer", label: "Founder’s answer" },
             { value: "count", label: "A count" },
           ]}
           onChange={(check) =>
@@ -651,8 +651,8 @@ function ConditionFields({
       )}
       <p className="au-hint">
         {c.check === "answer"
-          ? "It reads the yes or no of the Assistant step before it."
-          : "It reads the count of the step before it: the Assistant’s, the documents that arrived, or the rows a sync wrote."}
+          ? "It reads the yes or no of the Founder step before it."
+          : "It reads the count of the step before it: Founder’s, the documents that arrived, or the rows a sync wrote."}
       </p>
       <dl className="au-branches">
         <dt>When met</dt>

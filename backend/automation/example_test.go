@@ -72,13 +72,13 @@ func ExampleRequest() {
 	fmt.Println(automation.Request("Renewals", "Run by hand.", spec, map[string]string{"01SALES": "Sales", "01STRIPE": "Stripe"}))
 	// Output:
 	// Run by hand. The automation "Renewals" ran these steps, in order:
-	// 1. Assistant step "ask": Are any renewals due? (It may sync the connector "Stripe" unasked.)
+	// 1. Founder step "ask": Are any renewals due? (It may sync the connector "Stripe" unasked.)
 	// 2. Condition "due": go on one way if the step before answered yes, the other way if not.
 	// 3. Condition "count": go on one way if the step before counted at least 2, the other way if not.
 	// 4. Action step "load": load the current version of the ontology "Sales".
 	// 5. Action step "pub": publish the dashboard 01DASH again at its link.
-	// 6. Notify step "mail": email its owner "Renewals", with what the Assistant steps before it said.
-	// 7. Notify step "quiet": email its owner, with what the Assistant steps before it said.
+	// 6. Notify step "mail": email its owner "Renewals", with what the Founder steps before it said.
+	// 7. Notify step "quiet": email its owner, with what the Founder steps before it said.
 }
 
 // The steps' targets leave out what the trigger listens to.

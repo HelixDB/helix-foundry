@@ -51,7 +51,7 @@ It starts:
 - when documents arrive in a document set;
 - or when its owner runs it by hand.
 Its steps can be:
-- an Assistant instruction: Foundry's Assistant reads the ontology's data and answers in words, a yes or no, or a count;
+- a Founder step: Founder, Foundry's assistant, reads the ontology's data and answers in words, a yes or no, or a count;
 - a condition on that yes or no or count, which decides whether the next steps run;
 - an action: sync a connection, load the ontology, or publish a dashboard;
 - an email to the automation's owner.

@@ -256,7 +256,7 @@ describe("the mock's route", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("answers the competency questions while it writes, then the Assistant's", async () => {
+  it("answers the competency questions while it writes, then Founder's", async () => {
     const first = await get("ont_acme_renewals");
     expect(first.body).toMatchObject({
       source: "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",

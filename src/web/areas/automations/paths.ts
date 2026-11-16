@@ -6,7 +6,7 @@ const enc = encodeURIComponent;
 export const automationPaths = {
   // The overview: the workspace's runs of the last days and its automations.
   automations: () => "/automations",
-  // A new one: the Assistant's composer, or, from a template (TEMPLATES'
+  // A new one: Founder's composer, or, from a template (TEMPLATES'
   // ids, "blank" from scratch), a draft on the full canvas.
   newAutomation: (template?: string) =>
     "/automations/new" + (template ? "?template=" + enc(template) : ""),

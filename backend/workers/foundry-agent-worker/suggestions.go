@@ -64,7 +64,7 @@ type resolver interface {
 
 // suggester writes suggestions for a new automation, a few versions at a
 // time, on each workspace's extraction model, its cheapest task model,
-// charged to the Assistant's monthly budget (package suggest).
+// charged to Founder's monthly budget (package suggest).
 type suggester struct {
 	db       suggestionStore
 	ai       resolver
@@ -146,20 +146,20 @@ func (s *suggester) write(ctx context.Context, row *model.FoundryAutomationSugge
 	now := s.now().UTC()
 	spent, err := s.db.SumFoundryAssistantSpend(ctx, row.WorkspaceID, time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
-		logger.Warn("read the Assistant's spend failed; the lease lapses and it is claimed again", "err", err)
+		logger.Warn("read Founder's spend failed; the lease lapses and it is claimed again", "err", err)
 		return
 	}
 	prompt := int64((len(system)+len(user)+len(suggest.ToolSchema))/charsPerToken + 1)
 	worst := suggestionCalls * binding.Pricer.Micros(llm.Usage{In: prompt, Out: suggest.MaxOutputTokens})
 	if spent+worst > s.monthly {
-		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: "the Assistant's monthly budget is spent"})
+		s.finish(ctx, row, model.FoundryAutomationSuggestionsEnd{Failure: "Founder's monthly budget is spent"})
 		return
 	}
 	timeout := suggest.Timeout
 	switch resolved.Settings.Provider.(type) {
 	case ai.Ollama, ai.Compatible:
 		// The owner's own server, whose calls this process queues (Ollama's
-		// one at a time, the Assistant's turns among them), and a local
+		// one at a time, Founder's turns among them), and a local
 		// model may load and write slowly: the setting's call timeout.
 		timeout = max(timeout, resolved.CallTimeout)
 	}

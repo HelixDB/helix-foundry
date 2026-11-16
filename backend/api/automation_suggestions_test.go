@@ -100,7 +100,7 @@ func contractsDefinition(t *testing.T) json.RawMessage {
 	return raw
 }
 
-// suggestionService is hosted Foundry with automations and the Assistant
+// suggestionService is hosted Foundry with automations and Founder
 // on, Helix's Claude the workspace's model, and Customer contracts' current
 // version holding three competency questions.
 func suggestionService(t *testing.T) (*Service, *suggestionStore) {
@@ -240,7 +240,7 @@ func TestAutomationSuggestionsWithoutAModel(t *testing.T) {
 		"own key off Pro": func(_ *Service, store *suggestionStore) {
 			store.active = &foundrymodel.FoundryAIConfig{ID: "cfg-1", WorkspaceID: "ws-1", Kind: "anthropic"}
 		},
-		"the Assistant off": func(s *Service, _ *suggestionStore) { s.deps.Cfg.Foundry.Agent.Enabled = false },
+		"Founder off": func(s *Service, _ *suggestionStore) { s.deps.Cfg.Foundry.Agent.Enabled = false },
 		"20 this hour":      func(_ *Service, store *suggestionStore) { store.queueErr = foundrystore.ErrLimitExceeded },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -265,7 +265,7 @@ func TestAutomationSuggestionsWithoutQuestions(t *testing.T) {
 	assert.Empty(t, out.GetVersionId(), "no current version, no suggestions")
 	assert.Zero(t, store.queued)
 
-	// A Definition v1 has no questions: none until the Assistant writes some.
+	// A Definition v1 has no questions: none until Founder writes some.
 	s, store = suggestionService(t)
 	store.version.Format, store.version.Definition = foundrymodel.OntologyFormatFoundryV1, json.RawMessage(`{"entities":[]}`)
 	out = listSuggestions(t, s)

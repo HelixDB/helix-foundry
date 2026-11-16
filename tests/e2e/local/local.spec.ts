@@ -52,9 +52,9 @@ const configure = (config: {
   loadStepMs?: number;
   askStepMs?: number;
   agentStepMs?: number;
-  // false: the Assistant is off (foundry.agent.enabled).
+  // false: Founder is off (foundry.agent.enabled).
   agentEnabled?: boolean;
-  // The Assistant's helpers (mock/routes/agent-hosts.ts).
+  // Founder's helpers (mock/routes/agent-hosts.ts).
   agentHosts?: {
     name: string;
     runtimes: ("claude_code" | "codex")[];
@@ -1246,28 +1246,28 @@ test("stars on GitHub in place with the install's token, else opens it", async (
   expect(await done()).toBe("1");
 });
 
-// The Assistant on the owner's own subscription (Settings › AI models): new
+// Founder on the owner's own subscription (Settings › AI models): new
 // threads run on Claude Code through a helper paired with a one-time code,
 // whose command the page shows; the dock says where its thread runs, and,
 // while no helper runs it, how to start one.
 
 const dockOf = (page: Page) =>
-  page.getByRole("complementary", { name: "Assistant" });
+  page.getByRole("complementary", { name: "Founder" });
 const assistantPanel = (page: Page) =>
   page
     .locator(".hf-panel")
-    .filter({ hasText: "Where new Assistant threads run" });
+    .filter({ hasText: "Where new Founder threads run" });
 
 async function openDock(page: Page) {
   await page
-    .getByRole("button", { name: "Assistant", exact: true })
+    .getByRole("button", { name: "Founder", exact: true })
     .filter({ visible: true })
     .first()
     .click();
   await expect(dockOf(page)).toBeVisible();
 }
 
-test("pairs a helper and runs new Assistant threads on the owner's Claude subscription", async ({
+test("pairs a helper and runs new Founder threads on the owner's Claude subscription", async ({
   page,
 }) => {
   await configure({ agentStepMs: 100 });
@@ -1283,7 +1283,7 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   await panel.getByRole("radio", { name: "Foundry’s AI model" }).focus();
   await page.keyboard.press("ArrowDown");
   await expect(
-    page.getByText("New Assistant threads run on your Claude subscription."),
+    page.getByText("New Founder threads run on your Claude subscription."),
   ).toBeVisible();
   const claude = panel.getByRole("radio", { name: "My Claude subscription" });
   await expect(claude).toBeChecked();
@@ -1382,7 +1382,7 @@ test("pairs a helper and runs new Assistant threads on the owner's Claude subscr
   );
 });
 
-test("runs new Assistant threads on the owner's Codex once they confirm what it runs with", async ({
+test("runs new Founder threads on the owner's Codex once they confirm what it runs with", async ({
   page,
 }) => {
   await configure({ agentStepMs: 100 });
@@ -1400,7 +1400,7 @@ test("runs new Assistant threads on the owner's Codex once they confirm what it 
   // confirmed.)
   await codex.click();
   const confirm = page.getByRole("dialog", {
-    name: "Run the Assistant on your Codex?",
+    name: "Run Founder on your Codex?",
   });
   await expect(confirm).toContainText(
     "Codex runs with your own Codex setup, including your MCP servers, plugins and apps.",
@@ -1409,10 +1409,10 @@ test("runs new Assistant threads on the owner's Codex once they confirm what it 
     "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for.",
   );
   await expect(confirm).toContainText(
-    "one that doesn’t ask can run in the Assistant’s turns, even when a document tells the model to call it, and can read or send whatever it reaches.",
+    "one that doesn’t ask can run in Founder’s turns, even when a document tells the model to call it, and can read or send whatever it reaches.",
   );
   await expect(confirm).toContainText(
-    "The Assistant’s turns count against your ChatGPT plan’s Codex limits.",
+    "Founder’s turns count against your ChatGPT plan’s Codex limits.",
   );
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(confirm).toHaveCount(0);
@@ -1422,7 +1422,7 @@ test("runs new Assistant threads on the owner's Codex once they confirm what it 
   await codex.click();
   await confirm.getByRole("button", { name: "Use Codex" }).click();
   await expect(
-    page.getByText("New Assistant threads run on your ChatGPT subscription."),
+    page.getByText("New Founder threads run on your ChatGPT subscription."),
   ).toBeVisible();
   await expect(codex).toBeChecked();
   const terms = panel.getByRole("region", { name: "What Codex runs with" });
@@ -1468,14 +1468,14 @@ test("runs new Assistant threads on the owner's Codex once they confirm what it 
   // Confirmed once: choosing Codex again asks nothing.
   await panel.getByRole("radio", { name: "Foundry’s AI model" }).check();
   await expect(
-    page.getByText("New Assistant threads run on the workspace’s AI model."),
+    page.getByText("New Founder threads run on the workspace’s AI model."),
   ).toBeVisible();
   await codex.check();
   await expect(confirm).toHaveCount(0);
   await expect(codex).toBeChecked();
 });
 
-test("says when a helper's Codex is too old to run the Assistant", async ({
+test("says when a helper's Codex is too old to run Founder", async ({
   page,
 }) => {
   await configure({
@@ -1490,7 +1490,7 @@ test("says when a helper's Codex is too old to run the Assistant", async ({
     .getByRole("radio", { name: "My ChatGPT subscription (Codex)" })
     .click();
   await page
-    .getByRole("dialog", { name: "Run the Assistant on your Codex?" })
+    .getByRole("dialog", { name: "Run Founder on your Codex?" })
     .getByRole("button", { name: "Use Codex" })
     .click();
   const row = panel.getByRole("listitem", { name: "Old laptop" });
@@ -1550,7 +1550,7 @@ test("says when a helper's Codex didn't start, not that it is too old", async ({
     .getByRole("radio", { name: "My ChatGPT subscription (Codex)" })
     .click();
   await page
-    .getByRole("dialog", { name: "Run the Assistant on your Codex?" })
+    .getByRole("dialog", { name: "Run Founder on your Codex?" })
     .getByRole("button", { name: "Use Codex" })
     .click();
   const row = panel.getByRole("listitem", { name: "Old laptop" });
@@ -1580,7 +1580,7 @@ test("says when a helper's Codex didn't start, not that it is too old", async ({
   );
 });
 
-test("asks the Assistant's questions one at a time in the dock, and a draft's on its page", async ({
+test("asks Founder's questions one at a time in the dock, and a draft's on its page", async ({
   page,
 }) => {
   await configure({
@@ -1613,7 +1613,7 @@ test("asks the Assistant's questions one at a time in the dock, and a draft's on
   ).toBeVisible({ timeout: 15_000 });
 });
 
-test("shows nothing of where the Assistant runs while it is off", async ({
+test("shows nothing of where Founder runs while it is off", async ({
   page,
 }) => {
   await configure({ agentEnabled: false });
@@ -1626,12 +1626,12 @@ test("shows nothing of where the Assistant runs while it is off", async ({
     page.getByRole("heading", { name: "Choose where AI runs" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "The Assistant", exact: true }),
+    page.getByRole("heading", { name: "Founder", exact: true }),
   ).toHaveCount(0);
   await expect(assistantPanel(page)).toHaveCount(0);
-  await expect(
-    page.getByText("Couldn’t read where the Assistant runs"),
-  ).toHaveCount(0);
+  await expect(page.getByText("Couldn’t read where Founder runs")).toHaveCount(
+    0,
+  );
 });
 
 test("says how to start a helper that isn't running, and when its Claude Code is signed out", async ({
@@ -1740,7 +1740,7 @@ test("runs an automation, which notes what it found where it can't email", async
 }) => {
   await configure({ agentStepMs: 60, automationStepMs: 100 });
   await page.goto("/automations");
-  // A new one starts with the Assistant here too, or from scratch.
+  // A new one starts with Founder here too, or from scratch.
   await page.getByRole("link", { name: "New automation" }).first().click();
   await expect(
     page.getByRole("heading", { name: "What should happen?" }),
@@ -1750,7 +1750,7 @@ test("runs an automation, which notes what it found where it can't email", async
     .getByRole("textbox", { name: "Name" })
     .fill("Count the ontologies");
   await page.getByRole("button", { name: "Add step" }).click();
-  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
   await page
     .getByLabel("What should it do?")
     .fill("How many ontologies are there?");
@@ -1759,7 +1759,7 @@ test("runs an automation, which notes what it found where it can't email", async
   const inspector = page.getByRole("complementary", { name: "Inspector" });
   await inspector.getByRole("button", { name: "Back to the summary" }).click();
   await expect(inspector.locator(".au-summary-text")).toHaveText(
-    "When you run it, ask the Assistant: “How many ontologies are there?”, then note what it found in the run (this Foundry sends no email).",
+    "When you run it, ask Founder: “How many ontologies are there?”, then note what it found in the run (this Foundry sends no email).",
   );
   await page.getByRole("button", { name: "Review and save" }).click();
   await page.getByRole("button", { name: "Save and turn on" }).click();
@@ -1784,7 +1784,7 @@ test("records how much an ontology helped an automation, as a hosted Foundry doe
   await page.goto("/automations/new?template=blank");
   await page.getByRole("textbox", { name: "Name" }).fill("Invoice check");
   await page.getByRole("button", { name: "Add step" }).click();
-  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
   await page
     .getByLabel("What should it do?")
     .fill("How many invoices does Customer contracts hold?");

@@ -41,7 +41,7 @@ import {
 } from "./queries";
 
 // Settings › AI models on a local install, for its owner: where the
-// workspace's new Assistant threads run (the workspace's AI model, or the
+// workspace's new Founder threads run (the workspace's AI model, or the
 // owner's Claude or ChatGPT subscription through a helper on their
 // computer; choosing Codex the first time shows what it runs with, their
 // own Codex setup, and the owner confirms it once), a one-time pairing code
@@ -51,7 +51,7 @@ import {
 // Foundry runs says to update it), and Revoke. The page reads them every 3 s
 // while a code waits for its helper, a helper paired waits to start, or the
 // chosen runtime's helper isn't running, else every 30 s. Nothing shows
-// while the Assistant is off. No helper token is ever shown: Foundry never
+// while Founder is off. No helper token is ever shown: Foundry never
 // sends one.
 
 const SLOW_POLL_MS = 30_000;
@@ -64,7 +64,7 @@ const ICONS: Record<AgentRuntime, ReactNode> = {
   codex: <span className="ag-mark-openai" />,
 };
 const DESCRIPTIONS: Record<AgentRuntime, string> = {
-  api: "The provider above. Its turns count toward the workspace’s Assistant budget.",
+  api: "The provider above. Its turns count toward the workspace’s Founder budget.",
   claude_code:
     "Claude Code on your computer, signed in to your Claude plan, through Foundry’s helper. It costs the workspace nothing; check that your plan’s terms allow it.",
   codex:
@@ -73,9 +73,9 @@ const DESCRIPTIONS: Record<AgentRuntime, string> = {
 
 /** What Codex runs with, as the owner confirms it and the settings say it after. */
 const CODEX_TERMS = [
-  "Codex runs with your own Codex setup, including your MCP servers, plugins and apps. A tool of theirs that asks for approval is declined; one that doesn’t ask can run in the Assistant’s turns, even when a document tells the model to call it, and can read or send whatever it reaches.",
-  "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for. The Assistant reads your documents and synced rows, which could carry instructions meant to mislead it: this keeps them from running commands or changing files on your computer.",
-  "The Assistant’s turns count against your ChatGPT plan’s Codex limits. Check that your plan’s terms allow it.",
+  "Codex runs with your own Codex setup, including your MCP servers, plugins and apps. A tool of theirs that asks for approval is declined; one that doesn’t ask can run in Founder’s turns, even when a document tells the model to call it, and can read or send whatever it reaches.",
+  "Foundry turns off Codex’s shell, sub-agents, web search and image viewer, and declines any command or file change it asks for. Founder reads your documents and synced rows, which could carry instructions meant to mislead it: this keeps them from running commands or changing files on your computer.",
+  "Founder’s turns count against your ChatGPT plan’s Codex limits. Check that your plan’s terms allow it.",
 ] as const;
 
 /**
@@ -124,16 +124,16 @@ export function AssistantRuntimePanel() {
   if (agentRefusal(query.error) === "FOUNDRY_AGENT_DISABLED") return null;
   if (query.isPending)
     return (
-      <Panel title="The Assistant">
+      <Panel title="Founder">
         <SkeletonText lines={3} />
       </Panel>
     );
   if (!data)
     return (
-      <Panel title="The Assistant" padded={false}>
+      <Panel title="Founder" padded={false}>
         <div className="wk-pad">
           <p role="alert" className="hf-form-error">
-            Couldn’t read where the Assistant runs.{" "}
+            Couldn’t read where Founder runs.{" "}
             {query.error && sentence(query.error.message)}
           </p>
           <Button size="sm" onClick={() => void query.refetch()}>
@@ -157,7 +157,7 @@ export function AssistantRuntimePanel() {
         agentQueries.runtime(ws).queryKey,
         await setAgentRuntime(ws, next, confirmCodex),
       );
-      notify(`New Assistant threads run on ${RUNTIMES[next].on}.`);
+      notify(`New Founder threads run on ${RUNTIMES[next].on}.`);
     } catch (e) {
       notify(sentence((e as Error).message), true);
     } finally {
@@ -174,8 +174,8 @@ export function AssistantRuntimePanel() {
   };
   return (
     <Panel
-      title="The Assistant"
-      subtitle="Where new Assistant threads run. A thread keeps running where it started."
+      title="Founder"
+      subtitle="Where new Founder threads run. A thread keeps running where it started."
       padded={false}
     >
       <div className="wk-pad wk-ai-form">
@@ -183,7 +183,7 @@ export function AssistantRuntimePanel() {
           className="plain-fieldset"
           aria-busy={!!choosing || undefined}
         >
-          <legend className="hf-sr-only">Where the Assistant runs</legend>
+          <legend className="hf-sr-only">Where Founder runs</legend>
           <div className="choice-options provider-options">
             {(["api", "claude_code", "codex"] as const).map((r) => (
               <ChoiceCard
@@ -203,8 +203,8 @@ export function AssistantRuntimePanel() {
         )}
         {confirming && (
           <ConfirmDialog
-            title="Run the Assistant on your Codex?"
-            description="New Assistant threads run on the Codex you’re signed in to on your computer, through Foundry’s helper."
+            title="Run Founder on your Codex?"
+            description="New Founder threads run on the Codex you’re signed in to on your computer, through Foundry’s helper."
             confirmLabel="Use Codex"
             pending={choosing === "codex"}
             onCancel={() => setConfirming(false)}
@@ -295,9 +295,9 @@ function Helpers({
       </div>
       <p className="wk-note">
         A helper runs on the computer where you’re signed in to Claude Code or
-        Codex, and runs the Assistant’s turns there: Claude Code with Foundry’s
-        tools alone, Codex with its shell off. Each keeps a thread’s session on
-        that computer, with what Foundry’s tools answered, until the thread is
+        Codex, and runs Founder’s turns there: Claude Code with Foundry’s tools
+        alone, Codex with its shell off. Each keeps a thread’s session on that
+        computer, with what Foundry’s tools answered, until the thread is
         deleted or the helper revoked.
       </p>
       {pairing?.kind === "code" && (
@@ -565,7 +565,7 @@ function HelperRow({ host, min }: { host: FoundryAgentHost; min?: string }) {
       {revoking && (
         <ConfirmDialog
           title={`Revoke ${name}?`}
-          description="It stops running the Assistant’s turns at once, and a turn it is running ends. Next time it reaches Foundry, it deletes the sessions its Claude Code or Codex kept of its threads. To run more, pair it again."
+          description="It stops running Founder’s turns at once, and a turn it is running ends. Next time it reaches Foundry, it deletes the sessions its Claude Code or Codex kept of its threads. To run more, pair it again."
           confirmLabel="Revoke"
           tone="danger"
           pending={pending}

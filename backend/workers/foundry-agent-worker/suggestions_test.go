@@ -394,7 +394,7 @@ func TestSuggestionsStayWithinTheAssistantsBudget(t *testing.T) {
 	db.spent = s.monthly - 9_000
 	s.drain(context.Background())
 	assert.Empty(t, m.requests, "no call that might not fit")
-	assert.Equal(t, model.FoundryAutomationSuggestionsEnd{Failure: "the Assistant's monthly budget is spent"}, db.ended["ver-1"])
+	assert.Equal(t, model.FoundryAutomationSuggestionsEnd{Failure: "Founder's monthly budget is spent"}, db.ended["ver-1"])
 
 	db, m = newSuggestionDB("ver-1"), &scriptedModel{answers: []answer{toolCall(goodAnswer)}}
 	s, _ = newSuggester(db, m)

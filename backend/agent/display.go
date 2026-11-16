@@ -662,7 +662,7 @@ func (c Cards) specDisplay(ctx context.Context, raw json.RawMessage) (SpecDispla
 func (c Cards) describeSettle(ctx context.Context, ontology Ref, p integration.SettleReviewPayload) (any, error) {
 	refuse := func(why string) error { return status.Error(codes.FailedPrecondition, why) }
 	if c.Reviews == nil {
-		return nil, status.Error(codes.Unavailable, "the Assistant can't read reviews here")
+		return nil, status.Error(codes.Unavailable, "Founder can't read reviews here")
 	}
 	review, loadID, err := c.Reviews(ctx, ontology.ID, p.ReviewID)
 	if err != nil {
