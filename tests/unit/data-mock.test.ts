@@ -136,6 +136,7 @@ describe("connector kinds", () => {
       "slack:true",
       "notion:true",
       "google:true",
+      "databuddy:true",
       "postgres:true",
       "mysql:true",
       "s3:true",
@@ -152,6 +153,7 @@ describe("connector kinds", () => {
       "slack:true",
       "notion:true",
       "google:true",
+      "databuddy:true",
       "postgres:false",
       "mysql:false",
       "s3:false",
@@ -458,6 +460,87 @@ describe("testing and creating", () => {
       "milestone_id>milestones",
       "user_id>users",
     ]);
+  });
+
+  it("checks Databuddy's settings, lists its tables and what a key without website permission can't read", () => {
+    const test = (config: unknown) =>
+      refusal(call("POST", `${base()}/connectors:test`, { config }));
+    const tested = (config: unknown) =>
+      ok<any>(call("POST", `${base()}/connectors:test`, { config }));
+    for (const apiKey of ["", "sk_live_1", "dbdy_ x"])
+      expect(test({ databuddy: { apiKey } }).message).toBe(
+        "enter a Databuddy API key (dbdy_…)",
+      );
+    for (const historyDays of [-1, 366])
+      expect(test({ databuddy: { apiKey: "dbdy_1", historyDays } })).toEqual({
+        status: 400,
+        message: "keep 1 to 365 days of history",
+      });
+    expect(
+      test({ databuddy: { apiKey: "dbdy_1", websiteIds: [" "] } }).message,
+    ).toBe("a website id is empty");
+    expect(test({ databuddy: { apiKey: "dbdy_bad1" } })).toEqual({
+      status: 400,
+      message: "Databuddy rejected this key; check it and enter it again",
+    });
+    expect(
+      test({ databuddy: { apiKey: "dbdy_1", websiteIds: ["web_gone"] } }),
+    ).toEqual({
+      status: 400,
+      message:
+        "this Databuddy key cannot read the website web_gone; choose another or give the key access to it",
+    });
+
+    const all = tested({
+      databuddy: { apiKey: " dbdy_1 ", websiteIds: ["web_acme", " web_acme"] },
+    });
+    expect(all.config).toEqual({
+      databuddy: { apiKey: "", websiteIds: ["web_acme"], historyDays: 90 },
+    });
+    expect(all.discovery.unavailable).toEqual([]);
+    expect(keys(all)).toEqual({
+      websites: "website_id",
+      daily_metrics: "website_id+date",
+      pages: "website_id+path",
+      referrers: "website_id+referrer",
+      custom_events: "website_id+event_name",
+      sessions: "website_id+session_id",
+      profiles: "website_id+visitor_id",
+    });
+    expect(links(all, "sessions")).toEqual(["website_id>websites.website_id"]);
+    expect(links(all, "pages")).toEqual(["website_id>websites.website_id"]);
+    const limited = tested({ databuddy: { apiKey: "dbdy_nocustom1" } });
+    expect(limited.discovery.unavailable).toEqual([
+      "custom_events: Website permission required",
+      "profiles: Website permission required",
+    ]);
+    expect(links(limited, "sessions")).toEqual([
+      "website_id>websites.website_id",
+    ]);
+
+    const key = "dbdy_" + "a".repeat(24) + "4f2a";
+    const c = create({ databuddy: { apiKey: key, historyDays: 30 } });
+    expect(c.secretHint).toBe("dbdy…4f2a");
+    expect(c.config).toEqual({
+      databuddy: { apiKey: "", websiteIds: [], historyDays: 30 },
+    });
+    syncOf(c.id);
+    vi.advanceTimersByTime(3000);
+    const read = ok<{ connector: Connector }>(
+      call("GET", `${base()}/connectors/${c.id}`),
+    ).connector;
+    expect(read.tables!.map((t) => t.name)).toEqual([
+      "custom_events",
+      "daily_metrics",
+      "pages",
+      "profiles",
+      "referrers",
+      "sessions",
+      "websites",
+    ]);
+    expect(
+      JSON.stringify(call("GET", `${base()}/connectors`).body),
+    ).not.toContain(key);
   });
 
   it("syncs Cal.com and Granola tables with their key hints, never the key", () => {
@@ -1277,6 +1360,13 @@ describe("editing and deleting", () => {
         {},
       ],
       ["granola", "apiKey", "grn_" + "f".repeat(12) + "QRST", "grn…QRST", {}],
+      [
+        "databuddy",
+        "apiKey",
+        "dbdy_" + "i".repeat(12) + "IJKL",
+        "dbdy…IJKL",
+        { websiteIds: ["web_docs"], historyDays: 7 },
+      ],
       [
         "slack",
         "botToken",

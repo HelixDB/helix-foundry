@@ -332,6 +332,67 @@ test("connects Granola and says what its key can't read", async ({ page }) => {
   ).toHaveText(["parent_folder_idfolders.folder_id"]);
 });
 
+test("connects Databuddy with the websites chosen and its days of history", async ({
+  page,
+}) => {
+  const key = "dbdy_e2eDatabuddyKey0123456789abcdWXYZ";
+  const bodies = recordResponses(page);
+  await signIn(page);
+  await page.goto("/data?add=databuddy");
+  await expect(dialog(page)).toHaveAttribute("aria-label", "Databuddy");
+  const guide = dialog(page).locator(".connection-guide");
+  await expect(guide).toContainText("Organization settings → API keys");
+  await expect(guide).toContainText("read:data");
+  await expect(
+    guide.getByRole("link", { name: "your Databuddy dashboard" }),
+  ).toHaveAttribute("href", "https://app.databuddy.cc");
+  const keyField = dialog(page).getByLabel("API key");
+  await expect(keyField).toHaveAttribute("placeholder", "dbdy_…");
+  await expect(dialog(page).getByLabel("Days of history")).toHaveValue("90");
+  await keyField.fill("dbdy_badE2eKey");
+  await dialog(page).getByRole("button", { name: "Test connection" }).click();
+  await expect(dialog(page).getByRole("alert")).toHaveText(
+    "Databuddy rejected this key; check it and enter it again",
+  );
+  // A key without website permission can't read custom events or profiles.
+  await keyField.fill("dbdy_nocustomE2eKey");
+  await dialog(page).getByRole("button", { name: "Test connection" }).click();
+  const objects = dialog(page).getByRole("group", {
+    name: "Databuddy objects this key can read",
+  });
+  await expect(objects).toContainText("Website permission required");
+  // A website the key doesn't read fails the test.
+  await keyField.fill(key);
+  const websites = dialog(page).getByLabel("Websites (optional)");
+  await websites.fill("web_acme\nweb_gone");
+  await dialog(page).getByRole("button", { name: "Test connection" }).click();
+  await expect(dialog(page).getByRole("alert")).toContainText(
+    "cannot read the website web_gone",
+  );
+  await websites.fill("web_acme");
+  await dialog(page).getByLabel("Days of history").fill("30");
+  await dialog(page).getByRole("button", { name: "Test connection" }).click();
+  await expect(objects.getByRole("listitem")).toHaveCount(7);
+  await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
+
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Databuddy" }),
+  ).toBeVisible();
+  await expect(header(page)).toContainText("Databuddy · web_acme");
+  await expect(page.locator(".hf-kv")).toContainText("Websitesweb_acme");
+  await expect(page.locator(".hf-kv")).toContainText("History30 days");
+  await expect(header(page).getByText("Synced", { exact: true })).toBeVisible(
+    SYNCED,
+  );
+  await expect(
+    page.getByRole("list", { name: "Synced tables" }).getByRole("listitem"),
+  ).toHaveCount(7);
+  for (const body of bodies) expect(body).not.toContain(key);
+});
+
 test("connects a PostgreSQL database with the tables chosen", async ({
   page,
 }) => {

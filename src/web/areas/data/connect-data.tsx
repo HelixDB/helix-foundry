@@ -56,6 +56,7 @@ const appChoices: [ConnectorKindName, string, string][] = [
   ["slack", "Slack", "Channels, messages and people"],
   ["notion", "Notion", "Pages and databases"],
   ["google", "Google Workspace", "Drive docs, calendars and people"],
+  ["databuddy", "Databuddy", "Web analytics: sessions, pages and visitors"],
 ];
 const databaseChoices: [ConnectorKindName, string, string][] = [
   ["postgres", "PostgreSQL", "Import tables from your database."],

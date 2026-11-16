@@ -591,6 +591,10 @@ func sourceFromProto(catalog *connector.Catalog, cfg *foundryv1.ConnectorConfig)
 		g := k.Google
 		name, secret = "google", strings.TrimSpace(g.GetServiceAccountKey())
 		settings = connector.GoogleSettings{Subject: g.GetSubject(), EventDays: int(g.GetEventDays())}
+	case *foundryv1.ConnectorConfig_Databuddy:
+		d := k.Databuddy
+		name, secret = "databuddy", strings.TrimSpace(d.GetApiKey())
+		settings = connector.DatabuddySettings{WebsiteIDs: d.GetWebsiteIds(), HistoryDays: int(d.GetHistoryDays())}
 	case *foundryv1.ConnectorConfig_Postgres:
 		name, settings, secret = "postgres", databaseSettings(k.Postgres), k.Postgres.GetPassword()
 	case *foundryv1.ConnectorConfig_Mysql:
@@ -694,6 +698,14 @@ func configToProto(kind string, settings json.RawMessage) (*foundryv1.ConnectorC
 		}
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{
 			Subject: g.Subject, EventDays: int32(g.EventDays),
+		}}}, nil
+	case "databuddy":
+		var d connector.DatabuddySettings
+		if err := json.Unmarshal(settings, &d); err != nil {
+			return nil, err
+		}
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Databuddy{Databuddy: &foundryv1.DatabuddyConnectorConfig{
+			WebsiteIds: d.WebsiteIDs, HistoryDays: int32(d.HistoryDays),
 		}}}, nil
 	case "postgres", "mysql":
 		var d connector.DatabaseSettings

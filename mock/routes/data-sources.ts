@@ -45,7 +45,10 @@ import { layout, type Listed } from "./data-files";
 //   when its JSON contains "bad"; a subject containing "member" is no
 //   admin (users can't be read), one containing "nobody" is no user, and a
 //   key whose client_email contains "nocalendar" wasn't delegated
-//   Calendar's scope (calendars and their events can't be read).
+//   Calendar's scope (calendars and their events can't be read). A
+//   Databuddy key reads the websites web_acme and web_docs; one containing
+//   "nocustom" lacks website permission, so custom_events and profiles
+//   can't be read, and a chosen website it doesn't read fails the test.
 // - Databases: the password "wrong" fails authentication, a host ending in
 //   ".invalid" cannot be reached, and private or loopback hosts are refused
 //   as the connector guard refuses them. Every database holds the same small
@@ -115,6 +118,7 @@ export const kinds: MockKind[] = [
   { name: "slack", displayName: "Slack", requiresPro: false },
   { name: "notion", displayName: "Notion", requiresPro: false },
   { name: "google", displayName: "Google Workspace", requiresPro: false },
+  { name: "databuddy", displayName: "Databuddy", requiresPro: false },
   { name: "postgres", displayName: "PostgreSQL", requiresPro: true },
   { name: "mysql", displayName: "MySQL", requiresPro: true },
   { name: "s3", displayName: "Amazon S3", requiresPro: true },
@@ -726,6 +730,101 @@ const calcomForeignKeys: Record<string, ConnectorForeignKey[]> = {
 };
 // What a key of an account without teams cannot read.
 const calcomTeams = new Set(["teams", "team_memberships"]);
+
+// Databuddy's query API (api.databuddy.cc), as databuddy.go reads it: the
+// key's websites, and per website its query types over history_days. Every
+// row but a website's carries its website_id and is keyed within its website.
+const databuddyObjects = [
+  object(
+    "websites",
+    "website_id",
+    ["website_id", "name", "domain", "is_public", "created_at"],
+    2,
+  ),
+  object(
+    "daily_metrics",
+    ["website_id", "date"],
+    [
+      "website_id",
+      "date",
+      "pageviews",
+      "visitors",
+      "sessions",
+      "bounce_rate",
+      "avg_session_duration",
+    ],
+    180,
+  ),
+  object(
+    "pages",
+    ["website_id", "path"],
+    ["website_id", "path", "pageviews", "visitors", "percentage"],
+    146,
+  ),
+  object(
+    "referrers",
+    ["website_id", "referrer"],
+    ["website_id", "referrer", "pageviews", "visitors", "percentage"],
+    38,
+  ),
+  object(
+    "custom_events",
+    ["website_id", "event_name"],
+    [
+      "website_id",
+      "event_name",
+      "total_events",
+      "unique_users",
+      "unique_sessions",
+      "first_occurrence",
+      "last_occurrence",
+    ],
+    9,
+  ),
+  object(
+    "sessions",
+    ["website_id", "session_id"],
+    [
+      "session_id",
+      "website_id",
+      "visitor_id",
+      "first_visit",
+      "last_visit",
+      "duration",
+      "page_views",
+      "country",
+      "referrer",
+      "device_type",
+      "browser_name",
+    ],
+    4210,
+  ),
+  object(
+    "profiles",
+    ["website_id", "visitor_id"],
+    [
+      "visitor_id",
+      "website_id",
+      "profile_id",
+      "first_visit",
+      "last_visit",
+      "session_count",
+      "total_events",
+      "country",
+    ],
+    2875,
+  ),
+];
+const databuddyForeignKeys: Record<string, ConnectorForeignKey[]> =
+  Object.fromEntries(
+    databuddyObjects
+      .slice(1)
+      .map((o) => [o.name, [fk("website_id", "websites")]]),
+  );
+// The websites every mock Databuddy key reads, and what a key without
+// website permission can't query.
+const databuddySites = ["web_acme", "web_docs"];
+const databuddyPermitted = new Set(["custom_events", "profiles"]);
 
 // Granola's public API (public-api.granola.ai), as granola.go reads it: the
 // notes the key's scopes read with their owner, calendar event and summary,
@@ -2492,6 +2591,32 @@ export function prepare(
         ...(signIn ? { signIn } : {}),
       };
     }
+    case "databuddy": {
+      const key = String(raw.apiKey || "").trim();
+      if (!/^dbdy_[A-Za-z0-9_-]+$/.test(key))
+        return invalid("enter a Databuddy API key (dbdy_…)");
+      const historyDays = raw.historyDays || 90;
+      if (historyDays < 1 || historyDays > 365)
+        return invalid("keep 1 to 365 days of history");
+      const websiteIds: string[] = [];
+      for (const id of ((raw.websiteIds || []) as string[]).map((id) =>
+        String(id).trim(),
+      )) {
+        if (!id) return invalid("a website id is empty");
+        if (!websiteIds.includes(id)) websiteIds.push(id);
+      }
+      return {
+        kind,
+        settings: {
+          databuddy: {
+            ...(websiteIds.length ? { websiteIds } : {}),
+            historyDays,
+          },
+        },
+        secret: key,
+        workspaceId,
+      };
+    }
     case "notion": {
       if (signIn) return signedIn(kind, { notion: {} }, workspaceId);
       const token = String(raw.token || "").trim();
@@ -2618,6 +2743,7 @@ export function discover(
           notion: "Notion rejected this secret; check it and enter it again",
           google:
             "Google rejected this service account key; check it and paste it again",
+          databuddy: "Databuddy rejected this key; check it and enter it again",
         } as Partial<Record<ConnectorKindName, string>>
       )[src.kind]!,
     );
@@ -2778,6 +2904,26 @@ export function discover(
       settings: s,
     };
   }
+  if ("databuddy" in s) {
+    const lost = (s.databuddy.websiteIds || []).find(
+      (id) => !databuddySites.includes(id),
+    );
+    if (lost)
+      return refused(
+        `this Databuddy key cannot read the website ${lost}; choose another or give the key access to it`,
+      );
+    const noPermission = (name: string) =>
+      src.secret.includes("nocustom") && databuddyPermitted.has(name);
+    return {
+      discovery: apiDiscovery(
+        databuddyObjects,
+        databuddyForeignKeys,
+        (name) => !noPermission(name),
+        () => "Website permission required",
+      ),
+      settings: s,
+    };
+  }
   const p = (s as { posthog: PostHogConnectorConfig }).posthog;
   let projectId = p.projectId;
   if (!projectId) {
@@ -2809,6 +2955,7 @@ export function hint(src: Source) {
         src.kind === "posthog" ||
           src.kind === "granola" ||
           src.kind === "notion" ||
+          src.kind === "databuddy" ||
           (src.kind === "github" && !src.secret.startsWith("github_pat_"))
           ? 1
           : 2,
@@ -2848,6 +2995,7 @@ export function syncTables(src: Source): SyncedSnapshot[] | string {
           slack: slackObjects,
           notion: notionTables.map((t) => object(t.name, [], [], t.rows)),
           google: googleObjects,
+          databuddy: databuddyObjects,
         } as Partial<Record<ConnectorKindName, ApiObject[]>>
       )[src.kind]!;
   // Slack's history is what its days hold: two messages each, as history

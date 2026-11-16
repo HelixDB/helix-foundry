@@ -542,6 +542,14 @@ function responseConfig(
       slack: { botToken: "", historyDays: settings.slack.historyDays || 0 },
     };
   if ("notion" in settings) return { notion: { token: "" } };
+  if ("databuddy" in settings)
+    return {
+      databuddy: {
+        apiKey: "",
+        websiteIds: settings.databuddy.websiteIds || [],
+        historyDays: settings.databuddy.historyDays || 0,
+      },
+    };
   if ("google" in settings)
     return {
       google: {

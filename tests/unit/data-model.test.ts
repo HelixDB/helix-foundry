@@ -12,6 +12,7 @@ import {
   KINDS,
   MAX_NAME_BYTES,
   configKind,
+  databuddyWebsites,
   emptyForm,
   eventCapacity,
   eventSourceLine,
@@ -69,7 +70,7 @@ const connector = (c: Partial<Connector>): Connector => ({
 });
 
 describe("kinds and roles", () => {
-  it("knows the WFE's fourteen kinds, which are databases and which offer tables", () => {
+  it("knows the WFE's fifteen kinds, which are databases and which offer tables", () => {
     expect(KINDS).toEqual([
       "stripe",
       "workos",
@@ -81,11 +82,14 @@ describe("kinds and roles", () => {
       "slack",
       "notion",
       "google",
+      "databuddy",
       "postgres",
       "mysql",
       "s3",
       "events",
     ]);
+    expect(isKnownKind("databuddy")).toBe(true);
+    expect(isDatabase("databuddy")).toBe(false);
     expect(isKnownKind("events")).toBe(true);
     expect(isKnownKind("google")).toBe(true);
     expect(isKnownKind("gdrive")).toBe(false);
@@ -1232,6 +1236,72 @@ describe("credential forms", () => {
         eventDays: 30,
       },
     });
+  });
+
+  it("sends a Databuddy key with its websites and days of history", () => {
+    expect(emptyForm("databuddy")).toEqual({
+      kind: "databuddy",
+      apiKey: "",
+      websiteIds: "",
+      historyDays: "90",
+    });
+    expect(
+      toConfig({
+        kind: "databuddy",
+        apiKey: " dbdy_1 \n",
+        websiteIds: "web_a\n web_b, ,web_c",
+        historyDays: "30",
+      }),
+    ).toEqual({
+      databuddy: {
+        apiKey: "dbdy_1",
+        websiteIds: ["web_a", "web_b", "web_c"],
+        historyDays: 30,
+      },
+    });
+    expect(toConfig(emptyForm("databuddy"))).toEqual({
+      databuddy: { apiKey: "", websiteIds: [], historyDays: 90 },
+    });
+    expect(
+      toConfig({
+        ...emptyForm("databuddy"),
+        historyDays: "",
+      } as ConnectionForm),
+    ).toEqual({ databuddy: { apiKey: "", websiteIds: [], historyDays: 0 } });
+    // An edit's blank key is sent blank, so the WFE keeps the stored one.
+    const edit = formFromConfig("databuddy", {
+      databuddy: { apiKey: "", websiteIds: ["web_a", "web_b"], historyDays: 7 },
+    });
+    expect(edit).toEqual({
+      kind: "databuddy",
+      apiKey: "",
+      websiteIds: "web_a\nweb_b",
+      historyDays: "7",
+    });
+    expect(toConfig(edit)).toEqual({
+      databuddy: { apiKey: "", websiteIds: ["web_a", "web_b"], historyDays: 7 },
+    });
+    expect(formFromConfig("databuddy", { databuddy: {} })).toEqual(
+      emptyForm("databuddy"),
+    );
+    expect(databuddyWebsites(" , \n")).toEqual([]);
+    expect(hasCredential(emptyForm("databuddy"))).toBe(false);
+    expect(
+      hasCredential({
+        ...emptyForm("databuddy"),
+        apiKey: "dbdy_1",
+      } as ConnectionForm),
+    ).toBe(true);
+    expect(suggestedName(emptyForm("databuddy"))).toBe("Databuddy");
+    // Databuddy connects with a key only.
+    expect(signInConfig(emptyForm("databuddy"))).toBeUndefined();
+    const summary = (websiteIds?: string[]) =>
+      sourceSummary(
+        connector({ kind: "databuddy", config: { databuddy: { websiteIds } } }),
+      );
+    expect(summary()).toBe("Every website");
+    expect(summary(["web_a", "web_b"])).toBe("web_a, web_b");
+    expect(summary(["a", "b", "c"])).toBe("3 websites");
   });
 
   it("sends API keys trimmed and nothing else", () => {

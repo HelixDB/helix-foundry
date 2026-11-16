@@ -513,6 +513,47 @@ export function ConnectionForm({
             </label>
           </>
         )}
+        {form.kind === "databuddy" && (
+          <>
+            <label className="span2">
+              API key
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                required={credentialRequired}
+                placeholder={
+                  secretHint ? `Leave blank to keep ${secretHint}` : "dbdy_…"
+                }
+                value={form.apiKey}
+                onChange={(e) => update("apiKey", e.target.value)}
+              />
+            </label>
+            <label className="span2">
+              Websites (optional)
+              <textarea
+                spellCheck={false}
+                placeholder={"web_…\nweb_…"}
+                value={form.websiteIds}
+                onChange={(e) => update("websiteIds", e.target.value)}
+              />
+              <small className="muted">
+                One website id per line. Leave blank to sync every website the
+                key can read.
+              </small>
+            </label>
+            <label>
+              Days of history
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={form.historyDays}
+                onChange={(e) => update("historyDays", e.target.value)}
+              />
+            </label>
+          </>
+        )}
         {form.kind === "github" && (
           <>
             {!noKey && (

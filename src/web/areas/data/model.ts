@@ -6,6 +6,7 @@ import type {
   ConnectorSync,
   ConnectorTable,
   DatabaseConnectorConfig,
+  DatabuddyConnectorConfig,
   DocumentSetConnector,
   EventSourceCapacity,
   EventSourceField,
@@ -45,6 +46,7 @@ export const KINDS: readonly ConnectorKindName[] = [
   "slack",
   "notion",
   "google",
+  "databuddy",
   "postgres",
   "mysql",
   "s3",
@@ -645,6 +647,14 @@ export type ConnectionForm =
       eventDays: string;
     }
   | {
+      kind: "databuddy";
+      apiKey: string;
+      // Website ids, one per line or comma-separated; blank reads every
+      // website the key reads.
+      websiteIds: string;
+      historyDays: string;
+    }
+  | {
       kind: "github";
       token: string;
       // owner/name or repository URLs, one per line or comma-separated;
@@ -704,6 +714,8 @@ export function emptyForm(kind: CredentialKind): ConnectionForm {
       return { kind, serviceAccountKey: "", subject: "", eventDays: "90" };
     case "github":
       return { kind, token: "", repos: "", reviewDays: "90" };
+    case "databuddy":
+      return { kind, apiKey: "", websiteIds: "", historyDays: "90" };
     case "posthog":
       return {
         kind,
@@ -787,6 +799,14 @@ export function formFromConfig(
         reviewDays: String(g.reviewDays || 90),
       };
     }
+    case "databuddy": {
+      const d = (config as { databuddy: DatabuddyConnectorConfig }).databuddy;
+      return {
+        ...form,
+        websiteIds: (d.websiteIds || []).join("\n"),
+        historyDays: String(d.historyDays || 90),
+      };
+    }
     case "granola":
       return {
         ...form,
@@ -861,6 +881,17 @@ export function githubRepos(text: string): string[] {
 }
 
 /**
+ * The website ids a Databuddy form names, in the order typed: one per line
+ * or comma-separated. The WFE drops repeats.
+ *
+ * @example
+ * databuddyWebsites("web_a\n web_b, "); // ["web_a", "web_b"]
+ */
+export function databuddyWebsites(text: string): string[] {
+  return text.split(/[\s,]+/).filter(Boolean);
+}
+
+/**
  * The config a form sends to test, create or update a connector. `tables`
  * is the database or S3 sync selection; empty means every table. Blank
  * optional fields are left for the WFE's defaults.
@@ -903,6 +934,14 @@ export function toConfig(
           serviceAccountKey: form.serviceAccountKey.trim(),
           subject: form.subject.trim(),
           eventDays: Number(form.eventDays) || 0,
+        },
+      };
+    case "databuddy":
+      return {
+        databuddy: {
+          apiKey: form.apiKey.trim(),
+          websiteIds: databuddyWebsites(form.websiteIds),
+          historyDays: Number(form.historyDays) || 0,
         },
       };
     case "github":
@@ -1079,6 +1118,8 @@ export function suggestedName(form: ConnectionForm) {
       return "Cal.com";
     case "granola":
       return "Granola";
+    case "databuddy":
+      return "Databuddy";
     case "slack":
       return "Slack";
     case "notion":
@@ -1144,6 +1185,12 @@ export function sourceSummary(c: Connector): string {
     return repos.length > 2
       ? `${repos.length} repositories`
       : repos.join(", ") || "Every repository";
+  }
+  if ("databuddy" in config) {
+    const sites = config.databuddy.websiteIds || [];
+    return sites.length > 2
+      ? `${sites.length} websites`
+      : sites.join(", ") || "Every website";
   }
   return c.secretHint || "";
 }
