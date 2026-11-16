@@ -390,7 +390,7 @@ func TestAHelpersCLICallsTheAssistantsToolsAsThePerson(t *testing.T) {
 	// sends, and under no workflow run it names.
 	for _, token := range []string{"a", "b"} {
 		_, err = client.CallTool(ctx, &mcp.CallToolParams{Name: toolAsk, Arguments: map[string]any{
-			"workspace_id": ws, "ontology_id": ontology, "question": "Who?", "client_token": token, "workflow_run_id": "01RUN_key"}})
+			"workspace_id": ws, "ontology_id": ontology, "question": "Who?", "client_token": token, "use_case_run_id": "01RUN_key"}})
 		require.NoError(t, err)
 	}
 	require.Len(t, h.backend.asked, 2)

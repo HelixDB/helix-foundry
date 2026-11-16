@@ -755,7 +755,7 @@ func TestToolsAreAClosedList(t *testing.T) {
 	}
 	assert.True(t, slices.IsSorted(offered), "one order, for the cache")
 	for _, name := range []string{"helix_foundry_execute_operation", "helix_foundry_complete_document_upload", "helix_foundry_send_pieces",
-		"helix_foundry_cancel_question", "helix_foundry_create_workflow", "helix_list_workspaces"} {
+		"helix_foundry_cancel_question", "helix_foundry_create_use_case", "helix_list_workspaces"} {
 		assert.NotContains(t, offered, name)
 	}
 	// Every name the list allows is a tool a full session offers, so none is
@@ -843,8 +843,8 @@ func TestTheNewAutomationPageIsSaid(t *testing.T) {
 	turn.PageContext = json.RawMessage(`{"new_automation":true}`)
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
-	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, `<page_context>{"creating_automation":true}</page_context>`)
-	assert.Contains(t, h.model.requests[0].System, "creating_automation")
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, `<page_context>{"creating_workflow":true}</page_context>`)
+	assert.Contains(t, h.model.requests[0].System, "creating_workflow")
 }
 
 // The person's time zone reaches the model as data in <page_context>, and
@@ -856,7 +856,7 @@ func TestThePersonsTimeZoneIsSaid(t *testing.T) {
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text,
-		`<page_context>{"creating_automation":true,"time_zone":"America/New_York"}</page_context>`)
+		`<page_context>{"creating_workflow":true,"time_zone":"America/New_York"}</page_context>`)
 	assert.Contains(t, h.model.requests[0].System, "the time_zone in <page_context> (their browser's), without asking for it")
 }
 
@@ -1037,7 +1037,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-13", PromptVersion)
+	assert.Equal(t, "assistant-14", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {

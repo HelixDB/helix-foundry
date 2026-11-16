@@ -13,15 +13,15 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// An automation's run records how much each ontology it uses helped it:
-// Foundry keeps a workflow of each ontology an automation uses (package
-// store's automation workflows), and each run that uses one starts a run of
-// that workflow at its first use, which the run's end finishes with what it
-// found, so the workflow's assessments say what the ontology was worth to
-// the automation. A use is an Assistant step's call of a tool that names the
+// A workflow's run (an automation's, as the code calls it) records how much
+// each ontology it uses helped it: Foundry keeps a use case of each ontology
+// a workflow uses (package store's automation workflows), and each run that
+// uses one starts a run of that use case at its first use, which the run's
+// end finishes with what it found, so the use case's assessments say what
+// the ontology was worth to the workflow. A use is an Assistant step's call of a tool that names the
 // ontology (AutomationUses.Called) or an action step on it. Its Assistant
 // steps' reads and questions of the ontology are recorded under the
-// workflow run, whose id Foundry gives the tool: a model never chooses or
+// use case run, whose id Foundry gives the tool: a model never chooses or
 // forges one, and only these calls hold its key (FoundryWorkflowRun.
 // Recording), so no other caller records under it. Tracking never stops a
 // run: a use that can't be recorded goes untracked.
@@ -39,13 +39,13 @@ type WorkflowStore interface {
 }
 
 // AutomationUses are one automation run's uses of ontologies, as one
-// attempt of a step finds them: the workflow run that records each.
+// attempt of a step finds them: the use case run that records each.
 type AutomationUses struct {
 	db   WorkflowStore
 	run  *model.FoundryAutomationRun
 	name string
 	spec automation.Spec
-	// runs is how calls name each ontology's workflow run (its Recording),
+	// runs is how calls name each ontology's use case run (its Recording),
 	// "" for one gone untracked.
 	runs map[string]string
 }
@@ -56,16 +56,16 @@ func NewAutomationUses(db WorkflowStore, run *model.FoundryAutomationRun, name s
 	return &AutomationUses{db: db, run: run, name: name, spec: spec, runs: map[string]string{}}
 }
 
-// workflowToolsRecorded are the Assistant's tools whose calls a workflow run
-// records, by their workflow_run_id: reads and questions of a load.
+// workflowToolsRecorded are the Assistant's tools whose calls a use case run
+// records, by their use_case_run_id: reads and questions of a load.
 var workflowToolsRecorded = map[string]bool{"helix_foundry_read_graph": true, toolAsk: true}
 
 // workflowRunField is the input field a tool records its call under.
-const workflowRunField = "workflow_run_id"
+const workflowRunField = "use_case_run_id"
 
-// Use is how calls name the open workflow run that records the run's use of
+// Use is how calls name the open use case run that records the run's use of
 // ontologyID (its Recording), started at its first: "" when it goes untracked (the ontology holds as
-// many workflows as it may, it isn't a live ontology of the workspace, or
+// many use cases as it may, it isn't a live ontology of the workspace, or
 // the run ended). An error is the store's: the use goes untracked too, and
 // the caller logs it.
 func (u *AutomationUses) Use(ctx context.Context, ontologyID string) (string, error) {
@@ -138,7 +138,7 @@ func (u *AutomationUses) request(ctx context.Context) (string, error) {
 // it names (its input's ontology_id; an action it prepares on an ontology,
 // or a publish of a dashboard, whose tiles read theirs), and sets args, its
 // input, as the tool takes it: a read's or a question's with the
-// workflow_run_id of the run that records it, any other's without one,
+// use_case_run_id of the run that records it, any other's without one,
 // whatever the model wrote. An error is the store's: the call runs
 // unrecorded.
 func (u *AutomationUses) Called(ctx context.Context, tool string, args map[string]any) error {
@@ -197,7 +197,7 @@ func (u *AutomationUses) DashboardOntologies(ctx context.Context, dashboardID st
 	return spec.Ontologies()
 }
 
-// withoutWorkflowRunArg is a call's input (JSON) without workflow_run_id:
+// withoutWorkflowRunArg is a call's input (JSON) without use_case_run_id:
 // input itself when it names none or isn't an object.
 func withoutWorkflowRunArg(input json.RawMessage) json.RawMessage {
 	var args map[string]json.RawMessage
@@ -215,7 +215,7 @@ func withoutWorkflowRunArg(input json.RawMessage) json.RawMessage {
 	return out
 }
 
-// withoutWorkflowRun is a tool's input schema (JSON) without workflow_run_id:
+// withoutWorkflowRun is a tool's input schema (JSON) without use_case_run_id:
 // Foundry gives it, never the model.
 func withoutWorkflowRun(schema json.RawMessage) json.RawMessage {
 	var s map[string]any

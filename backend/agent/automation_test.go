@@ -32,7 +32,7 @@ func automationTurn(h *harness, allow string) *model.FoundryAgentTurn {
 	h.db.runs = []*model.FoundryAutomationRun{{ID: "run1", AutomationID: "auto1", WorkspaceID: ws, Status: model.FoundryAutomationRunRunning, Spec: stepSpec(allow)}}
 	runID, node := "run1", "ask"
 	turn := &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnAutomation,
-		Input: "Load the Sales graph\n\n<automation_context>{}</automation_context>", AutomationRunID: &runID, AutomationNodeID: &node, MaxUSDMicros: 500_000, Attempts: 1}
+		Input: "Load the Sales graph\n\n<workflow_context>{}</workflow_context>", AutomationRunID: &runID, AutomationNodeID: &node, MaxUSDMicros: 500_000, Attempts: 1}
 	h.db.turns = []*model.FoundryAgentTurn{turn}
 	return turn
 }
@@ -56,10 +56,10 @@ func TestAnAutomationRunsWhatItsOwnerApproved(t *testing.T) {
 	assert.Equal(t, 2, len(h.host.actors), "a session for the turn, and one as its owner for the action")
 
 	system := h.model.requests[0].System
-	assert.Contains(t, system, `automation "Nightly load"`)
+	assert.Contains(t, system, `workflow "Nightly load"`)
 	assert.Contains(t, system, "unattended")
 	assert.Contains(t, system, "create_load on ontology:<this workspace>/ont1")
-	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "<automation_context>")
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "<workflow_context>")
 	offered := map[string]bool{}
 	for _, tool := range h.model.requests[0].Tools {
 		offered[tool.Name] = true
