@@ -429,6 +429,7 @@ export const syncsEnded = (connectorId: string) =>
       outcome:
         s.status === "CONNECTOR_SYNC_STATUS_SUCCEEDED" ? "succeeded" : "failed",
       rows: s.rowsSynced,
+      error: s.error,
     }));
 
 function syncsOf(connectorId: string) {

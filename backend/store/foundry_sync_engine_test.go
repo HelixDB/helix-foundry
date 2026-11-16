@@ -530,11 +530,11 @@ func TestFoundryRefresh(t *testing.T) {
 	t.Run("owes a refresh only for ontologies that read a changed table", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "OWE")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"charges"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"charges"}, time.Hour))
 		assert.Nil(t, f.ontologyNow(t).RefreshDueAt)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, id26("RC-other"), []string{"customers"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, id26("RC-other"), "", []string{"customers"}, time.Hour))
 		assert.Nil(t, f.ontologyNow(t).RefreshDueAt)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Hour))
 		due := f.ontologyNow(t).RefreshDueAt
 		require.NotNil(t, due)
 		assert.WithinDuration(t, time.Now(), *due, 5*time.Second, "a first refresh is due at once")
@@ -548,7 +548,7 @@ func TestFoundryRefresh(t *testing.T) {
 	t.Run("makes each refresh current and deletes the refresh it replaced", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, userLoad := refreshFixture(t, "CUR")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("1"))
 		require.NoError(t, err)
 		require.True(t, queued)
@@ -562,7 +562,7 @@ func TestFoundryRefresh(t *testing.T) {
 		assert.Equal(t, first.ID, *f.ontologyNow(t).CurrentLoadID)
 
 		time.Sleep(5 * time.Millisecond)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err = f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("2"))
 		require.NoError(t, err)
 		require.True(t, queued)
@@ -576,12 +576,12 @@ func TestFoundryRefresh(t *testing.T) {
 	t.Run("spaces refreshes by the plan's interval", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "GAP")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Hour))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("g1"))
 		require.NoError(t, err)
 		require.True(t, queued)
 		f.loaded(t, "w2")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Hour))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Hour))
 		due := f.ontologyNow(t).RefreshDueAt
 		require.NotNil(t, due)
 		assert.WithinDuration(t, time.Now().Add(time.Hour), *due, 5*time.Second)
@@ -601,7 +601,7 @@ func TestFoundryRefresh(t *testing.T) {
 		f, connectorID, userLoad := refreshFixture(t, "WAIT")
 		_, err := testDB.ExecContext(ctx, `UPDATE foundry_load_jobs SET usd_micros=? WHERE id=?`, int64(1)<<40, userLoad)
 		require.NoError(t, err)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		f.load(t, "busy")
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("w1"))
 		require.NoError(t, err)
@@ -620,7 +620,7 @@ func TestFoundryRefresh(t *testing.T) {
 	t.Run("gives way to a load the user starts", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "PRE")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("p1"))
 		require.NoError(t, err)
 		require.True(t, queued)
@@ -642,7 +642,7 @@ func TestFoundryRefresh(t *testing.T) {
 		f.loaded(t, "w2")
 		_, err := f.db.SetCurrentFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, firstLoad, extractJob("move"), resendJob("move"), noBudget)
 		require.NoError(t, err)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("m1"))
 		require.NoError(t, err)
 		require.True(t, queued)
@@ -657,7 +657,7 @@ func TestFoundryRefresh(t *testing.T) {
 	t.Run("claims a user's job before a refresh's", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "ORD")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("o1"))
 		require.NoError(t, err)
 		require.True(t, queued)
@@ -706,12 +706,12 @@ func TestFoundryRefresh(t *testing.T) {
 	t.Run("forgets an owed refresh when refresh is turned off", func(t *testing.T) {
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, "OFF")
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		require.NoError(t, f.db.SetFoundryOntologyAutoRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, false))
 		o := f.ontologyNow(t)
 		assert.False(t, o.AutoRefresh)
 		assert.Nil(t, o.RefreshDueAt)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		assert.Nil(t, f.ontologyNow(t).RefreshDueAt, "an ontology with refresh off owes nothing")
 	})
 }

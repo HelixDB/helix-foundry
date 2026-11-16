@@ -47,6 +47,8 @@ func TestAnAutomationRunsWhatItsOwnerApproved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StopAnswered, a.Stop)
 	assert.Equal(t, 1, h.backend.loads, "the approved action ran once, at once")
+	assert.Equal(t, map[string][]model.FoundryAutomationJob{"run1": {{Kind: model.FoundryAutomationJobLoad, ID: "load1"}}}, h.db.causes,
+		"the load names the run that started it, so its triggers don't loop")
 	require.Len(t, h.db.actions, 1)
 	action := h.db.actions[0]
 	assert.Equal(t, model.FoundryAgentActionSucceeded, action.Status)
@@ -94,6 +96,7 @@ func TestAnAutomationLeavesWhatItsOwnerDidntApproveAsACard(t *testing.T) {
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Zero(t, h.backend.loads, "another ontology's load was approved, not this one's")
+	assert.Empty(t, h.db.causes, "nothing ran, so nothing is marked")
 	require.Len(t, h.db.actions, 1)
 	assert.Equal(t, model.FoundryAgentActionPrepared, h.db.actions[0].Status)
 	afterPrepare := h.model.requests[1].Messages
@@ -147,6 +150,7 @@ func TestAnApprovedActionRunsOnceAcrossReplays(t *testing.T) {
 	_, err := h.runner.Run(context.Background(), turn)
 	require.NoError(t, err)
 	assert.Equal(t, 1, h.backend.loads, "prepared again, it is found, not run again")
+	assert.Len(t, h.db.causes["run1"], 1, "marked once")
 	again := h.model.requests[2].Messages
 	assert.Contains(t, again[len(again)-1].Content[0].(llm.ToolResult).Content, `"succeeded"`)
 

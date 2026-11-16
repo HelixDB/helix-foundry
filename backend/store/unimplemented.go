@@ -796,7 +796,7 @@ func (u Unimplemented) QueueFoundryRefresh(context.Context, string, string, *mod
 	u.unimplemented("QueueFoundryRefresh")
 	return false, nil
 }
-func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, []string, time.Duration) error {
+func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, string, []string, time.Duration) error {
 	u.unimplemented("OweFoundryRefreshes")
 	return nil
 }
@@ -1582,6 +1582,16 @@ func (u Unimplemented) StartFoundryAutomationAssistant(context.Context, string, 
 
 func (u Unimplemented) EndFoundryAutomationNode(context.Context, string, string, string, model.FoundryAutomationNodeEnd) error {
 	u.unimplemented("EndFoundryAutomationNode")
+	return nil
+}
+
+func (u Unimplemented) AwaitFoundryAutomationJob(context.Context, string, string, string, model.FoundryAutomationJob, json.RawMessage) error {
+	u.unimplemented("AwaitFoundryAutomationJob")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundryAutomationCause(context.Context, string, model.FoundryAutomationJob) error {
+	u.unimplemented("MarkFoundryAutomationCause")
 	return nil
 }
 
