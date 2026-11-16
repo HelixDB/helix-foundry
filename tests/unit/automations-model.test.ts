@@ -56,6 +56,7 @@ import {
   ACTIVE_POLL_MS,
   automationQueries,
 } from "@/web/areas/automations/queries";
+import { automationPaths, openAutomation } from "@/web/areas/automations/paths";
 
 // An automation's spec as the site reads it (src/web/areas/automations/
 // model.ts), a port of the backend's package automation: what ParseSpec
@@ -1589,4 +1590,27 @@ describe("an automation's ontologies' impact", () => {
       assessing({ id: "x", ontologies: [{ ...r, status: "finished" }] }),
     ).toBe(false);
   });
+});
+
+describe("the workflows' paths", () => {
+  it("lives under /workflows, each id one segment", () => {
+    expect(automationPaths.automations()).toBe("/workflows");
+    expect(automationPaths.newAutomation("blank")).toBe(
+      "/workflows/new?template=blank",
+    );
+    expect(automationPaths.automation("a b", "runs")).toBe(
+      "/workflows/a%20b?tab=runs",
+    );
+    expect(automationPaths.automationRun("a1", "r1")).toBe(
+      "/workflows/a1/runs/r1",
+    );
+  });
+
+  it.each([
+    ["/workflows/a%20b", "a b"],
+    ["/workflows/a1/runs/r1", "a1"],
+    ["/workflows/new", undefined],
+    ["/workflows", undefined],
+    ["/automations/a1", undefined],
+  ])("opens %s as %s", (path, id) => expect(openAutomation(path)).toBe(id));
 });
