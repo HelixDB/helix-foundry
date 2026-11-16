@@ -260,6 +260,38 @@ func TestNewSetsOllamasWindow(t *testing.T) {
 	assert.Zero(t, b.Window, "a provider that says nothing of one")
 }
 
+// NewFor binds a role's own model, priced as its own, its reasoning off
+// except the ask model's, and Ollama in that role's window.
+func TestNewForBindsTheRolesModel(t *testing.T) {
+	catalog, err := ai.VendoredCatalog()
+	require.NoError(t, err)
+	roles := ai.Roles{Draft: ai.Model{Name: "gpt-6.1-sol", Price: ai.PriceTable{}}, Ask: ai.Model{Name: "gpt-6.1-sol", Price: ai.PriceTable{}},
+		Extract: ai.Model{Name: "cheap", Price: ai.PriceRates{Input: 100, Output: 400}}, Verify: ai.Model{Name: "gpt-6.1-sol", Price: ai.PriceTable{}}}
+	r := ai.Resolved{Settings: ai.Settings{Provider: ai.OpenAI{}, Models: roles}, Key: ontologyagent.NewModelKey("k")}
+	b, err := NewFor(r, catalog, ai.RoleExtract)
+	require.NoError(t, err)
+	assert.Equal(t, "cheap", b.Model.(*responsesModel).model)
+	assert.False(t, b.Model.(*responsesModel).reasoning, "short structured work runs without reasoning")
+	assert.Equal(t, Pricer{Input: 100, Output: 400, CacheRead: 100, CacheWrite: 125}, b.Pricer)
+	ask, err := NewFor(r, catalog, ai.RoleAsk)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-6.1-sol", ask.Model.(*responsesModel).model)
+	assert.True(t, ask.Model.(*responsesModel).reasoning)
+	for _, role := range []ai.Role{ai.RoleDraft, ai.RoleVerify} {
+		_, err := NewFor(r, catalog, role)
+		require.NoError(t, err, role)
+	}
+	_, err = NewFor(r, catalog, "title")
+	assert.Error(t, err, "a role ai doesn't have")
+
+	free := ai.Model{Name: "qwen3", Price: ai.PriceFree{}}
+	ollama := ai.Resolved{Settings: ai.Settings{Provider: ai.Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: 65536},
+		Models: ai.Roles{Draft: free, Ask: free, Extract: free, Verify: free}}}
+	b, err = NewFor(ollama, catalog, ai.RoleExtract)
+	require.NoError(t, err)
+	assert.Equal(t, 65536, b.Window)
+}
+
 // Hosted, a call dials only public addresses, whatever the host resolves
 // to when it's made: a server on a private one is refused before a byte is
 // sent, as the setting's to fix.

@@ -1,7 +1,9 @@
 // Package foundryagentworker runs the Assistant's turns (package agent): it
 // claims queued turns, reserving each one's cap against its workspace's
 // monthly Assistant budget, runs an attempt on the workspace's model provider
-// with its person's tools, renewing its lease, and settles what it spent.
+// with its person's tools, renewing its lease, and settles what it spent. It
+// also writes the suggestions for a new automation (package suggest), each
+// in one call on the workspace's extraction model, under the same budget.
 // Off (foundry.agent.enabled false) it claims nothing, so a host may list it
 // everywhere.
 package foundryagentworker
@@ -83,6 +85,8 @@ type Task struct {
 	worker      tasks.Worker
 	slots       chan struct{}
 	running     sync.WaitGroup
+	// suggestions writes suggestions for new automations, beside the turns.
+	suggestions *suggester
 }
 
 func New(d Deps) (*Task, error) {
@@ -104,6 +108,8 @@ func New(d Deps) (*Task, error) {
 		return nil, fmt.Errorf("foundry-agent-worker: %w", err)
 	}
 	t.queue = d.DB
+	t.suggestions = &suggester{db: d.DB, ai: resolver, models: llm.NewFor, catalog: catalog, monthly: cfg.MonthlyMicros(),
+		workerID: t.workerID, now: time.Now, writers: suggestionWriters, retryWait: suggestionRetryWait}
 	t.runner = &agent.Runner{
 		DB: d.DB, Sessions: d.Sessions, AI: resolver, Models: llm.New, Catalog: catalog, Keys: resolver.Keyring, Databases: d.Databases,
 		Cfg: cfg, WorkerID: t.workerID, Now: time.Now,
@@ -113,15 +119,19 @@ func New(d Deps) (*Task, error) {
 
 func (t *Task) Name() string { return Name }
 
-// Start claims turns every PollInterval while it has a free slot; off, it
-// only serves its health listener.
+// Start claims turns every PollInterval while it has a free slot, and, on
+// a tick of its own, writes due automation suggestions, a few at a time;
+// off, it only serves its health listener.
 func (t *Task) Start(ctx context.Context) error {
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
 		if !t.cfg.Enabled {
 			<-ctx.Done()
 			return nil
 		}
+		var suggesting sync.WaitGroup
+		suggesting.Go(func() { tasks.Tick(ctx, t.cfg.PollInterval, t.suggestions.drain) })
 		tasks.Tick(ctx, t.cfg.PollInterval, t.drain)
+		suggesting.Wait()
 		t.running.Wait()
 		return nil
 	})

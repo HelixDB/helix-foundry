@@ -891,7 +891,7 @@ func TestRefreshPreemptionCancelsEnrichment(t *testing.T) {
 		t.Helper()
 		ctx := context.Background()
 		f, connectorID, _ := refreshFixture(t, tag)
-		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
 		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob(tag))
 		require.NoError(t, err)
 		require.True(t, queued)

@@ -1461,6 +1461,32 @@
   background: var(--hf-danger-soft);
   color: var(--hf-danger-text);
 }
+.au-suggestion-icon.is-success {
+  background: var(--hf-success-soft);
+  color: var(--hf-success-text);
+}
+.au-suggestion-icon.is-neutral {
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+}
+.au-suggestion-title {
+  min-width: 0;
+}
+/* Where suggestions are still coming: chips' shapes, as tall as a chip. */
+.au-suggestion-skeleton {
+  flex: 1;
+  border-radius: var(--hf-radius-lg);
+}
+/* The ontology the suggestions are written for, when there are several. */
+.au-suggestions-for {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
 @container au-new (max-width: 640px) {
   .au-suggestions {
     grid-template-columns: repeat(2, minmax(0, 1fr));

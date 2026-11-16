@@ -267,6 +267,10 @@ type ReadStore interface {
 	DueFoundryAutomationSchedules(ctx context.Context, limit int) ([]*model.FoundryAutomation, error)
 	WatchedFoundryAutomations(ctx context.Context, every time.Duration, limit int) ([]*model.FoundryAutomation, error)
 	FindFoundryAutomationEnded(ctx context.Context, a *model.FoundryAutomation, settle time.Duration, limit int) ([]model.FoundryAutomationEnded, error)
+
+	// Suggestions for a new automation (foundry_automation_suggestions.go)
+	GetFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID string) (*model.FoundryAutomationSuggestions, error)
+	SumFoundryAssistantSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 }
 
 // Store is ReadStore plus every write.
@@ -375,7 +379,7 @@ type Store interface {
 	PutFoundryDataLayout(ctx context.Context, l *model.FoundryDataLayout, expectedRevision int64) error
 	CreateFoundryLoad(ctx context.Context, job *model.FoundryGraphJob) error
 	QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error)
-	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error
+	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID, syncID string, tables []string, refreshEvery time.Duration) error
 	SetFoundryOntologyAutoRefresh(ctx context.Context, workspaceID, id string, on bool) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error
 	SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
@@ -531,10 +535,21 @@ type Store interface {
 	StartFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, status model.FoundryAutomationNodeStatus) error
 	StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error
 	EndFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, end model.FoundryAutomationNodeEnd) error
+	AwaitFoundryAutomationJob(ctx context.Context, runID, workerID, nodeID string, job model.FoundryAutomationJob, output json.RawMessage) error
+	MarkFoundryAutomationCause(ctx context.Context, runID string, job model.FoundryAutomationJob) error
 	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
 	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
 	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
 	PruneFoundryAutomationRuns(ctx context.Context, before time.Time) (int, error)
+
+	// Suggestions for a new automation: queued by reads, written by the
+	// Assistant's worker under a lease.
+	QueueFoundryAutomationSuggestions(ctx context.Context, workspaceID, ontologyID, versionID string, questions []string, perHour int,
+		retryAfter time.Duration) (*model.FoundryAutomationSuggestions, error)
+	ClaimFoundryAutomationSuggestions(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryAutomationSuggestions, error)
+	RenewFoundryAutomationSuggestionsLease(ctx context.Context, ontologyID, versionID, workerID string, lease time.Duration) error
+	FinishFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID, workerID string, end model.FoundryAutomationSuggestionsEnd) error
+	ChargeFoundryAutomationSuggestions(ctx context.Context, workspaceID string, usdMicros int64) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside
