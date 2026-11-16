@@ -40,10 +40,11 @@ type FoundryWorkflow struct {
 	ClientToken                 string
 	CreatedByUserID             string
 	CreatedAt                   time.Time
-	// Runs and FinishedRuns count the runs it keeps; LastRunAt is when its
-	// newest started, nil before any.
-	Runs, FinishedRuns int64
-	LastRunAt          *time.Time
+	// Runs and FinishedRuns count the runs it keeps, NeverCalledRuns those
+	// that finished without a call to the ontology (they aren't assessed);
+	// LastRunAt is when its newest started, nil before any.
+	Runs, FinishedRuns, NeverCalledRuns int64
+	LastRunAt                           *time.Time
 	// Automation is the automation whose runs it records, for a workflow
 	// Foundry made; nil for one a person made.
 	Automation *FoundryWorkflowAutomation
@@ -75,6 +76,11 @@ func FoundryAutomationWorkflowName(name string) string {
 const FoundryAutomationWorkflowDescription = "Foundry records here each run of its workflow that uses this ontology: " +
 	"what the run read of it and what the run found, so each run's assessment says how much the ontology helped."
 
+// FoundryWorkflowNeverCalled is why a finished run that made no call to the
+// ontology isn't assessed: an assessment of it would say nothing of the
+// ontology.
+const FoundryWorkflowNeverCalled = "This run made no call to the ontology, so there is nothing to assess."
+
 // FoundryWorkflowRunStatus is where a run stands.
 type FoundryWorkflowRunStatus string
 
@@ -88,8 +94,8 @@ const (
 // FoundryWorkflowRunTally is what one principal's runs of a workflow come
 // to: a FoundryWorkflow's counts and its verdicts, over those runs alone.
 type FoundryWorkflowRunTally struct {
-	Runs, FinishedRuns int64
-	LastRunAt          *time.Time
+	Runs, FinishedRuns, NeverCalledRuns int64
+	LastRunAt                           *time.Time
 	// Verdicts counts their done assessments by verdict.
 	Verdicts map[string]int64
 }

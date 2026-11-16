@@ -3953,6 +3953,9 @@ export type FoundryAutomationRunOntology = {
   assessmentStatus?: string;
   // Once done: essential, helpful, marginal, unused or misleading.
   verdict?: string;
+  // Finished without a read or question of the ontology: not assessed, so
+  // no assessmentStatus or verdict.
+  neverCalled?: boolean;
 };
 
 /**
@@ -3969,6 +3972,8 @@ export type FoundryAutomationOntology = {
   // int64 as strings.
   runs?: string;
   finishedRuns?: string;
+  // Of finishedRuns, those with no read or question of it: not assessed.
+  neverCalledRuns?: string;
   lastRunAt?: string | null;
   verdicts?: FoundryWorkflowVerdictCount[];
   // What the ontology lacked, as the newest assessed run named it, at most
@@ -4604,7 +4609,8 @@ export type FoundryWorkflowVerdictCount = {
  * (areas/workflows/model.ts).
  */
 export type FoundryWorkflowAssessment = {
-  // queued, running, done, failed or skipped (the month's budget spent).
+  // queued, running, done, failed or skipped (the month's budget spent, or
+  // a run queued before ones without a call went unassessed).
   status: string;
   // Once done: essential, helpful, marginal, unused or misleading.
   verdict?: string;
@@ -4694,18 +4700,24 @@ export type FoundryWorkflowInsightTotals = {
   uploads?: number;
   assessmentUsdMicros?: string;
   gapKinds?: { kind?: string; runs?: number }[];
+  // Finished runs that made no call to the ontology: counted here alone,
+  // not in assessed, helped, verdicts, claims or gapKinds.
+  neverCalled?: number;
 };
 /** v1FoundryWorkflowInsightDay: one UTC day, YYYY-MM-DD. */
 export type FoundryWorkflowInsightDay = {
   date?: string;
   totals?: FoundryWorkflowInsightTotals;
 };
-/** v1FoundryWorkflowInsightFunnel: each step the runs of the one before that went on. */
+/**
+ * v1FoundryWorkflowInsightFunnel: each step the runs of the one before that
+ * went on: started, finished, used (called the ontology), assessed, helped.
+ */
 export type FoundryWorkflowInsightFunnel = {
   started?: number;
   finished?: number;
-  assessed?: number;
   used?: number;
+  assessed?: number;
   helped?: number;
 };
 /** v1FoundryWorkflowInsightIssue: a recurring gap (with its kind) or suggestion. */

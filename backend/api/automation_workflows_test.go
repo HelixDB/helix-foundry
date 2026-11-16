@@ -224,7 +224,7 @@ func TestAutomationsSayHowMuchTheirOntologiesHelped(t *testing.T) {
 	s, store := automationService(t)
 	a := createAutomation(t, s, site("user-ada"), weeklyAutomation)
 	last := time.Now().Add(-time.Hour)
-	w := &foundrymodel.FoundryWorkflow{ID: "wf-1", OntologyID: "ont-1", Runs: 4, FinishedRuns: 3, LastRunAt: &last}
+	w := &foundrymodel.FoundryWorkflow{ID: "wf-1", OntologyID: "ont-1", Runs: 4, FinishedRuns: 3, NeverCalledRuns: 1, LastRunAt: &last}
 	store.ontologies = map[string][]foundrymodel.FoundryAutomationOntology{a.GetId(): {
 		{OntologyID: "ont-1", OntologyName: "Sales", Tracking: foundrymodel.FoundryAutomationTracked{Workflow: w,
 			Verdicts: map[string]int64{"unused": 1, "essential": 2}}},
@@ -240,6 +240,7 @@ func TestAutomationsSayHowMuchTheirOntologiesHelped(t *testing.T) {
 	require.Equal(t, "wf-1", sales.GetWorkflowId())
 	require.Equal(t, int64(4), sales.GetRuns())
 	require.Equal(t, int64(3), sales.GetFinishedRuns())
+	require.Equal(t, int64(1), sales.GetNeverCalledRuns())
 	require.NotNil(t, sales.GetLastRunAt())
 	var verdicts []string
 	for _, v := range sales.GetVerdicts() {
@@ -262,17 +263,25 @@ func TestAutomationsSayHowMuchTheirOntologiesHelped(t *testing.T) {
 	runID, wrun := runResp.GetRun().GetId(), "wrun-1"
 	finished := &foundrymodel.FoundryWorkflowRunEnd{At: time.Now(), Output: "Done."}
 	store.runOntologies = []foundrymodel.FoundryAutomationRunOntology{
-		{OntologyID: "ont-1", OntologyName: "Sales", Run: &foundrymodel.FoundryWorkflowRun{ID: wrun, WorkflowID: "wf-1", AutomationRunID: &runID, Finished: finished},
+		{OntologyID: "ont-1", OntologyName: "Sales", Run: &foundrymodel.FoundryWorkflowRun{ID: wrun, WorkflowID: "wf-1", AutomationRunID: &runID, Finished: finished,
+			Counts: foundrymodel.FoundryWorkflowRunCounts{Accesses: 1, Reads: 1}},
 			Assessment: &foundrymodel.FoundryWorkflowAssessment{Status: foundrymodel.FoundryWorkflowAssessmentDone, Verdict: "essential"}},
 		{OntologyID: "ont-3", OntologyName: "Tickets", Run: &foundrymodel.FoundryWorkflowRun{ID: "wrun-2", WorkflowID: "wf-3", AutomationRunID: &runID}},
+		// Finished without a read or question, assessed before such runs
+		// went unassessed: it shows no assessment, and says so.
+		{OntologyID: "ont-4", OntologyName: "Wiki", Run: &foundrymodel.FoundryWorkflowRun{ID: "wrun-3", WorkflowID: "wf-4", AutomationRunID: &runID, Finished: finished},
+			Assessment: &foundrymodel.FoundryWorkflowAssessment{Status: foundrymodel.FoundryWorkflowAssessmentDone, Verdict: "unused"}},
 	}
 	run := must(s.GetFoundryAutomationRun(site("user-alan"), &foundryv1.GetFoundryAutomationRunRequest{WorkspaceId: "ws-1", AutomationId: a.GetId(),
 		Id: runID})).GetRun()
-	require.Len(t, run.GetOntologies(), 2)
+	require.Len(t, run.GetOntologies(), 3)
 	require.Equal(t, &foundryv1.FoundryAutomationRunOntology{OntologyId: "ont-1", OntologyName: "Sales", WorkflowId: "wf-1", WorkflowRunId: wrun,
 		Status: "finished", AssessmentStatus: "done", Verdict: "essential"}, run.GetOntologies()[0])
 	require.Equal(t, "open", run.GetOntologies()[1].GetStatus())
 	require.Empty(t, run.GetOntologies()[1].GetAssessmentStatus())
+	require.False(t, run.GetOntologies()[1].GetNeverCalled(), "an open run may still call it")
+	require.Equal(t, &foundryv1.FoundryAutomationRunOntology{OntologyId: "ont-4", OntologyName: "Wiki", WorkflowId: "wf-4", WorkflowRunId: "wrun-3",
+		Status: "finished", NeverCalled: true}, run.GetOntologies()[2])
 	runs := must(s.ListFoundryAutomationRuns(site("user-ada"), &foundryv1.ListFoundryAutomationRunsRequest{WorkspaceId: "ws-1", AutomationId: a.GetId()}))
 	require.True(t, slices.ContainsFunc(runs.GetRuns(), func(r *foundryv1.FoundryAutomationRun) bool { return len(r.GetOntologies()) == 0 }),
 		"a list of runs leaves them out")

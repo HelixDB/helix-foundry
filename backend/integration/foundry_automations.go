@@ -104,6 +104,8 @@ type FoundryAutomationWorkflowOutput struct {
 	WorkflowID   string `json:"use_case_id,omitempty"`
 	Runs         int64  `json:"runs"`
 	FinishedRuns int64  `json:"finished_runs"`
+	// NeverCalledRuns are finished runs that recorded no read or question of it: they aren't assessed.
+	NeverCalledRuns int64 `json:"never_called_runs"`
 	// Verdicts counts their done assessments by verdict.
 	Verdicts map[string]int64 `json:"verdicts"`
 	// Gaps are what the ontology lacked, as the newest assessed run named it: in a get only.
@@ -121,6 +123,7 @@ type FoundryAutomationRunWorkflowOutput struct {
 	Status           string `json:"status"`
 	AssessmentStatus string `json:"assessment_status,omitempty"`
 	Verdict          string `json:"verdict,omitempty" jsonschema:"Once assessed: essential, helpful, marginal, unused or misleading."`
+	NeverCalled      bool   `json:"never_called,omitempty" jsonschema:"The use case run finished without a read or question of the ontology, so it isn't assessed."`
 }
 
 // FoundryAutomationRunOutput is a run as the tools return it.
@@ -275,7 +278,7 @@ func (s *Service) FoundryAutomation(workspaceID string, a *foundryv1.FoundryAuto
 	out.Workflows = []FoundryAutomationWorkflowOutput{}
 	for _, o := range a.GetOntologies() {
 		w := FoundryAutomationWorkflowOutput{OntologyID: o.GetOntologyId(), OntologyName: o.GetOntologyName(), WorkflowID: o.GetWorkflowId(),
-			Runs: o.GetRuns(), FinishedRuns: o.GetFinishedRuns(), Verdicts: map[string]int64{}, Gaps: o.GetGaps(), Untracked: o.GetUntracked()}
+			Runs: o.GetRuns(), FinishedRuns: o.GetFinishedRuns(), NeverCalledRuns: o.GetNeverCalledRuns(), Verdicts: map[string]int64{}, Gaps: o.GetGaps(), Untracked: o.GetUntracked()}
 		for _, v := range o.GetVerdicts() {
 			w.Verdicts[v.GetVerdict()] = v.GetRuns()
 		}
@@ -304,7 +307,7 @@ func (s *Service) FoundryAutomationRun(workspaceID string, r *foundryv1.FoundryA
 	for _, o := range r.GetOntologies() {
 		out.Workflows = append(out.Workflows, FoundryAutomationRunWorkflowOutput{OntologyID: o.GetOntologyId(), OntologyName: o.GetOntologyName(),
 			WorkflowID: o.GetWorkflowId(), WorkflowRunID: o.GetWorkflowRunId(), Status: o.GetStatus(), AssessmentStatus: o.GetAssessmentStatus(),
-			Verdict: o.GetVerdict()})
+			Verdict: o.GetVerdict(), NeverCalled: o.GetNeverCalled()})
 	}
 	return out
 }

@@ -744,7 +744,7 @@ describe("a run's assessment, read without trust", () => {
         { verdict: "later", runs: "9" },
         { verdict: "helpful", runs: "0" },
       ]),
-    ).toBe("1,200 essential · 1 unused");
+    ).toBe("1,200 essential · 1 not used");
     expect(verdictsText(undefined)).toBe("");
     expect(VERDICTS).toHaveLength(5);
   });
@@ -800,9 +800,30 @@ describe("the mock's assessments", () => {
     ).toBe("unused");
   });
 
-  const finishRun = async (input = "Who renews?") => {
+  // A run that read the ontology once (calls: 1), or never (0), finished.
+  const finishRun = async (input = "Who renews?", calls = 1) => {
     const wf = (await call("POST", W, { name: "Triage" })).body.workflow.id;
     const run = (await call("POST", `${W}/${wf}/runs`, { input })).body.run;
+    for (let i = 0; i < calls; i++)
+      await tracked(
+        {
+          method: "POST",
+          path: "/",
+          params: { workspaceId: "ws_acme", ontologyId: "ont_acme_contracts" },
+          query: new URLSearchParams(),
+          body: { workflowRunId: run.id },
+          principal: { user: db.users.get("usr_ada")!, sessionId: "s" },
+        } as MockRequest,
+        "ont_acme_contracts",
+        () => ok({ resultJson: '{"results":[{"ok":{}}]}' }),
+        (body) => ({
+          read: {
+            loadId: "l1",
+            readsJson: "[]",
+            resultJson: (body as { resultJson: string }).resultJson,
+          },
+        }),
+      );
     const done = (
       await call("POST", `${W}/${wf}/runs/${run.id}:finish`, {
         output: "Globex renews in March.",
@@ -825,12 +846,12 @@ describe("the mock's assessments", () => {
       .assessment;
     expect(done).toMatchObject({
       status: "done",
-      verdict: "unused",
+      verdict: "helpful",
       usdMicros: String(ASSESSMENT_USD_MICROS),
     });
-    expect(JSON.parse(done.assessmentJson).verdict).toBe("unused");
+    expect(JSON.parse(done.assessmentJson).verdict).toBe("helpful");
     expect((await call("GET", `${W}/${wf}`)).body.workflow.verdicts).toEqual([
-      { verdict: "unused", runs: "1" },
+      { verdict: "helpful", runs: "1" },
     ]);
     const usage = (await call("GET", "/v1/workspaces/ws_acme/foundry/usage"))
       .body.usage;
@@ -858,6 +879,23 @@ describe("the mock's assessments", () => {
       (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment
         .usdMicros,
     ).toBe(String(2 * ASSESSMENT_USD_MICROS));
+  });
+
+  it("aren't made of a run that never called the ontology, nor asked for", async () => {
+    const { wf, run } = await finishRun("Who renews?", 0);
+    expect(run.assessment).toBeUndefined();
+    const again = await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {});
+    expect(again.status).toBe(400);
+    expect(again.body.message).toBe(
+      "This run made no call to the ontology, so there is nothing to assess.",
+    );
+    later(2000);
+    expect(
+      (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment,
+    ).toBeUndefined();
+    expect(
+      (await call("GET", `${W}/${wf}`)).body.workflow.verdicts,
+    ).toBeUndefined();
   });
 
   it("fail, skip, or aren't there, as the knobs say", async () => {
