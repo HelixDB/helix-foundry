@@ -104,7 +104,7 @@
           "rationale": "The goal's plan and subscription.",
           "serves": [],
           "status": "proposed",
-          "toml": "[cq.CQ2]\nquestion = \"How many active subscriptions does each plan have, and what do they bring in each month?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"on_plan>\", \"Plan\"]\n"
+          "toml": "[cq.CQ2]\nquestion = \"How much do active subscriptions on each plan bring in each month?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"on_plan>\", \"Plan\"]\n"
         },
         "cq.CQ3": {
           "basis": null,

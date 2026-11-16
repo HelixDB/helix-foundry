@@ -434,7 +434,7 @@ func TestSampleQuestions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &def))
 	assert.Equal(t, []string{
 		"Which roles do our contacts play, and how many hold each?",
-		"How many active subscriptions does each plan have, and what do they bring in each month?",
+		"How much do active subscriptions on each plan bring in each month?",
 		"Which invoices are overdue, which accounts owe them, and how much?",
 		"Which support tickets are still open, for which accounts, and who raised them?",
 	}, suggest.Questions(def, 4))
