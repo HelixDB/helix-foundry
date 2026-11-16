@@ -294,8 +294,8 @@ export function ShareDialog({
             <ul>
               <li>Anyone with the link can view it, without signing in.</li>
               <li>
-                It’s a snapshot of what you can see now, not of what each
-                viewer may read.
+                It’s a snapshot of what you can see now, not of what each viewer
+                may read.
               </li>
               <li>It doesn’t change until you publish it again.</li>
             </ul>
@@ -371,13 +371,17 @@ export function ShareDialog({
           <>
             {expired && share?.expiresAt && (
               <p className="db-share-note">
-                Its link ended on {day(share.expiresAt)} and shows nothing
-                now. Publishing again makes a new link.
+                Its link ended on {day(share.expiresAt)} and shows nothing now.
+                Publishing again makes a new link.
               </p>
             )}
             {expiryField}
             <div className="hf-form-actions">
-              {expired ? unpublishButton : <Button onClick={onClose}>Cancel</Button>}
+              {expired ? (
+                unpublishButton
+              ) : (
+                <Button onClick={onClose}>Cancel</Button>
+              )}
               <Button
                 variant="primary"
                 icon={Globe}

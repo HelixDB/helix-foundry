@@ -762,7 +762,10 @@ describe("sharing", () => {
       ),
     ).toEqual({ live: false, detail: "expired" });
     expect(
-      linkState({ status: "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF" }, day),
+      linkState(
+        { status: "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF" },
+        day,
+      ),
     ).toEqual({ live: false, detail: "turned off for this workspace" });
     expect(
       linkState({ status: "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE" }, day),

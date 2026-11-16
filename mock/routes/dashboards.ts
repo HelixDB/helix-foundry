@@ -174,7 +174,8 @@ function shareStatus(d: Stored, share: Share): DashboardShareStatus {
 /** Why c may not publish a dashboard of the workspace, as the backend's publishBlock says. */
 function publishBlock(c: Caller): DashboardPublishBlock {
   if (!publicLinks()) return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE";
-  if (c.grantee || !c.manager) return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY";
+  if (c.grantee || !c.manager)
+    return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY";
   if (!workspacePublicLinks(c.m.workspaceId))
     return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF";
   return "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED";
@@ -376,8 +377,7 @@ function toDashboard(
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     share: d.share && {
-      token:
-        !c.grantee && c.manager && !expired(d.share) ? d.share.token : "",
+      token: !c.grantee && c.manager && !expired(d.share) ? d.share.token : "",
       specRevision: String(d.share.specRevision),
       publishedAt: d.share.publishedAt,
       firstPublishedAt: d.share.firstPublishedAt,
@@ -889,7 +889,8 @@ export const dashboardRoutes: MockRoute[] = [
       if (blocked) return blocked;
       if (expected < 1)
         return fail("INVALID_ARGUMENT", "expected_revision is required");
-      const expiry = body?.expiry ?? "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED";
+      const expiry =
+        body?.expiry ?? "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED";
       if (!(expiry in EXPIRY_DAYS))
         return fail("INVALID_ARGUMENT", "expiry is never, 7, 30 or 90 days");
       const d = visible(req, c);

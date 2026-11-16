@@ -556,8 +556,8 @@ describe("mock dashboards", () => {
   it("leaves public links to owners and admins, and refuses a member why", async () => {
     await loaded();
     const d = await create(spec([tile("t1", customers)], [["t1"]]), "usr_alan");
-    const seen = (await call("GET", `${D}/${d.id}`, undefined, "usr_alan"))
-      .body.dashboard;
+    const seen = (await call("GET", `${D}/${d.id}`, undefined, "usr_alan")).body
+      .dashboard;
     expect(seen).toMatchObject({
       canPublish: false,
       publishBlock: "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY",
@@ -588,27 +588,27 @@ describe("mock dashboards", () => {
   it("ends a link when it expires, and makes a new one after", async () => {
     await loaded();
     const d = await create(spec([tile("t1", customers)], [["t1"]]));
+    const inDays = (n: number) =>
+      new Date(Date.now() + n * 86_400_000).toISOString();
     const publish = (expiry?: wfe.DashboardLinkExpiry) =>
       call("POST", `${D}/${d.id}:publish`, {
         expectedRevision: "1",
         ...(expiry ? { expiry } : {}),
       });
-    expect(
-      (await publish("NEVER" as wfe.DashboardLinkExpiry)).status,
-    ).toBe(400);
+    expect((await publish("NEVER" as wfe.DashboardLinkExpiry)).status).toBe(
+      400,
+    );
     const first = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7")).body
       .dashboard;
     const token = first.share.token as string;
-    expect(first.share.expiresAt).toBe("2026-11-21T12:00:00.000Z");
+    expect(first.share.expiresAt).toBe(inDays(7));
     // Unset keeps its end; another choice moves it, keeping the link.
-    expect((await publish()).body.dashboard.share.expiresAt).toBe(
-      "2026-11-21T12:00:00.000Z",
-    );
+    expect((await publish()).body.dashboard.share.expiresAt).toBe(inDays(7));
     const moved = (await publish("FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30")).body
       .dashboard;
     expect(moved.share).toMatchObject({
       token,
-      expiresAt: "2026-12-14T12:00:00.000Z",
+      expiresAt: inDays(30),
     });
     expect(shared(token).status).toBe(200);
 

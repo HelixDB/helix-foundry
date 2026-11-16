@@ -877,9 +877,7 @@ test("Copy link shares a dashboard's page with the workspace, from its page and 
     expected,
   );
   // No snapshot is made: the dashboard has no public link.
-  await expect(
-    page.getByRole("main").getByText(/^Public link/),
-  ).toHaveCount(0);
+  await expect(page.getByRole("main").getByText(/^Public link/)).toHaveCount(0);
 
   await page.evaluate(() => navigator.clipboard.writeText(""));
   await page.goto("/dashboards");
@@ -903,9 +901,7 @@ test("a member copies the workspace link but can't make a public link", async ({
   const id = await makeDashboard(alan, "Alan’s numbers");
   await alan.goto(`/dashboards/${id}`);
   await alan.getByRole("button", { name: "Share", exact: true }).click();
-  await expect(
-    alan.getByRole("menuitem", { name: "Copy link" }),
-  ).toBeEnabled();
+  await expect(alan.getByRole("menuitem", { name: "Copy link" })).toBeEnabled();
   await expect(
     alan.getByRole("menuitem", {
       name: "Only owners and admins make public links",
@@ -939,7 +935,10 @@ test("a public link set to expire ends then, and publishing again makes a new on
   await page.goto(`/dashboards/${id}`);
   await openPublicLink(page, "Make a public link…");
   let dialog = page.getByRole("dialog", { name: "Make a public link?" });
-  await choose(dialog.getByRole("button", { name: "Link ends" }), "After 7 days");
+  await choose(
+    dialog.getByRole("button", { name: "Link ends" }),
+    "After 7 days",
+  );
   await dialog.getByRole("button", { name: "Publish", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "Public link" });
   const link = await dialog.getByLabel("Link", { exact: true }).inputValue();
