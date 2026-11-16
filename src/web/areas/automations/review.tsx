@@ -252,9 +252,7 @@ export function ApproveDialog({
       }
     >
       <div className="au-review">
-        <p className="au-sentence">
-          {sentence(spec, lists.names, email)}
-        </p>
+        <p className="au-sentence">{sentence(spec, lists.names, email)}</p>
         <StepsPreview
           spec={spec}
           names={lists.names}

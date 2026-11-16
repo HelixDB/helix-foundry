@@ -2359,9 +2359,12 @@ describe("an automation's time zone", () => {
   });
 
   it("asks for one in words when none was sent, and schedules in the one chosen", async () => {
-    const c = await card("Every Monday at 8am, summarise the overdue invoices", {
-      pageContext: { newAutomation: true },
-    });
+    const c = await card(
+      "Every Monday at 8am, summarise the overdue invoices",
+      {
+        pageContext: { newAutomation: true },
+      },
+    );
     expect(c.action).toBeUndefined();
     const asked = c.events.find((e) => e.type === "questions") as Extract<
       AgentEvent,

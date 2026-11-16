@@ -1143,7 +1143,9 @@ test.describe("in the browser's time zone", () => {
     await expect(steps).not.toContainText("America/New_York");
     // Its instruction names the ontology, never its id.
     await expect(steps).toContainText("the Customer contracts ontology");
-    await expect(steps).not.toContainText(/\bont_\w+|\b[0-9A-HJKMNP-TV-Z]{26}\b/);
+    await expect(steps).not.toContainText(
+      /\bont_\w+|\b[0-9A-HJKMNP-TV-Z]{26}\b/,
+    );
     await card.getByRole("button", { name: "Create and turn on" }).click();
     await expect(page).toHaveURL(/\/automations\/aut_[^/?]+$/);
     await expect(inspector(page).locator(".au-summary-text")).toContainText(

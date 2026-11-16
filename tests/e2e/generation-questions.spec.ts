@@ -525,7 +525,10 @@ test.describe("an option that is a time zone id", () => {
   test.use({ timezoneId: "America/New_York" });
 
   test("shows its city and offset, and sends the id back", async ({ page }) => {
-    await mock.configure({ ontologyStepMs: 300, ontologyQuestions: "time_zone" });
+    await mock.configure({
+      ontologyStepMs: 300,
+      ontologyQuestions: "time_zone",
+    });
     await signIn(page);
     await page.goto(`${O}/generate`);
     await page.getByRole("button", { name: "Generate", exact: true }).click();

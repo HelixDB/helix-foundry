@@ -2622,7 +2622,10 @@ function automationCreate(a: Ask, chosen?: string): Step[] {
     : undefined;
   const hourly = /\bevery\s+hour\b/i.test(text);
   if (!uploaded && !hourly && !zone) {
-    const when = weekday || /\bevery\s+week\b/i.test(text) ? `${(weekday ?? "monday").replace(/^./, (c) => c.toUpperCase())} ` : "";
+    const when =
+      weekday || /\bevery\s+week\b/i.test(text)
+        ? `${(weekday ?? "monday").replace(/^./, (c) => c.toUpperCase())} `
+        : "";
     const questions: AgentQuestion[] = [
       {
         id: "q1",

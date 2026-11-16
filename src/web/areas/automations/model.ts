@@ -783,13 +783,17 @@ const dayName = (d: Weekday) => cap(d);
 export function scheduleText(s: ScheduleTrigger) {
   if (s.every === "hour") {
     const when =
-      s.minute === 0 ? "every hour, on the hour" : `every hour at ${s.minute} past`;
+      s.minute === 0
+        ? "every hour, on the hour"
+        : `every hour at ${s.minute} past`;
     return validZone(s.time_zone) && zoneOffset(s.time_zone).includes(":")
       ? `${when}, ${zoneTime(s.time_zone)}`
       : when;
   }
   const when =
-    s.every === "day" ? `every day at ${s.at}` : `every ${dayName(s.weekday)} at ${s.at}`;
+    s.every === "day"
+      ? `every day at ${s.at}`
+      : `every ${dayName(s.weekday)} at ${s.at}`;
   return `${when} ${zoneTime(s.time_zone)}`;
 }
 
@@ -899,11 +903,7 @@ export const KIND_HEADS: Record<Kind, string> = {
  * `email` is whether a notify step emails here (false on a local build,
  * where it only notes the run).
  */
-export function nodeText(
-  n: AutomationNode,
-  names: Names,
-  email: boolean,
-) {
+export function nodeText(n: AutomationNode, names: Names, email: boolean) {
   switch (n.kind) {
     case "trigger":
       return n.config.kind === "manual"
@@ -935,11 +935,7 @@ export function nodeText(
  * sentence(spec, names, true);
  * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask the Assistant: “…”, then email you what it found."
  */
-export function sentence(
-  spec: AutomationSpec,
-  names: Names,
-  email: boolean,
-) {
+export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
   const read = parseSpec(spec);
   // Steps that can't be read yet go as the canvas lays them out, top down.
   const order = read.ok
