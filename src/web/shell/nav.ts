@@ -65,6 +65,11 @@ export const primaryNav: NavItem[] = [
   // Steps Foundry runs for a person when a schedule or an event fires.
   item("automations", "/automations", "Automations", Zap, ["/automations"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
+];
+// The sections at the sidebar's foot, above Feedback: where the data comes
+// from, set up once and then mostly left (a grantee and an onboarding
+// workspace have none).
+export const footNav: NavItem[] = [
   item("data", "/data", "Connectors", Cable, ["/data"]),
 ];
 // The Explorer has no link of its own: an ontology's row in the Ontologies
@@ -92,12 +97,14 @@ export const onboardingNav: NavItem[] = [
 export const secondaryNav: NavItem[] = [
   item("settings", "/settings", "Settings", Settings, ["/settings"]),
 ];
-// Every section, linked or not.
-export const allSections: NavItem[] = [
+// Every linked section, in the sidebar's order.
+export const linkedSections: NavItem[] = [
   ...primaryNav,
-  explorer,
+  ...footNav,
   ...secondaryNav,
 ];
+// Every section, linked or not.
+export const allSections: NavItem[] = [...linkedSections, explorer];
 export const paletteSources: PaletteSource[] = areas.flatMap(
   (a) => a.palette || [],
 );

@@ -787,7 +787,7 @@ test("on a phone, shows the threads as the page and in the drawer's sidebar", as
   await page.getByRole("button", { name: "Open navigation" }).click();
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   const sections = drawer.getByRole("navigation", { name: "Main navigation" });
-  await expect(sections.getByRole("link")).toHaveCount(5);
+  await expect(sections.getByRole("link")).toHaveCount(4);
   await expect(sections.getByRole("link", { name: "Analyst" })).toHaveAttribute(
     "aria-current",
     "page",
@@ -805,7 +805,7 @@ test("on a phone, shows the threads as the page and in the drawer's sidebar", as
   // A section's link closes it too.
   await page.getByRole("button", { name: "Open navigation" }).click();
   await drawer
-    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("navigation", { name: "Data" })
     .getByRole("link", { name: "Connectors" })
     .click();
   await expect(drawer).toHaveCount(0);

@@ -31,8 +31,7 @@ import {
 import {
   ShellBanner,
   activeSection,
-  primaryNav,
-  secondaryNav,
+  linkedSections,
   sectionPanels,
 } from "./nav";
 import { Rail } from "./Rail";
@@ -99,7 +98,7 @@ function RouteAnnouncer() {
 function SidebarFallback() {
   return (
     <nav aria-label="Main navigation" className="hf-sidebar-fallback">
-      {[...primaryNav, ...secondaryNav].map((n) => (
+      {linkedSections.map((n) => (
         <Link key={n.id} to={n.to}>
           {n.label}
         </Link>
