@@ -53,7 +53,7 @@ describe("next.config.ts", () => {
     },
     { name: "local mode", appEnv: undefined, mode: "local", on: "1" },
     { name: "local mode on prod", appEnv: "prod", mode: "local", on: "1" },
-  ])("offers the Assistant in $name: $on", async ({ appEnv, mode, on }) => {
+  ])("offers Founder in $name: $on", async ({ appEnv, mode, on }) => {
     const env = await load({
       NEXT_PUBLIC_APP_ENV: appEnv,
       NEXT_PUBLIC_FOUNDRY_MODE: mode,

@@ -16,7 +16,7 @@ import { routes } from "../../mock/routes";
 import { handleDocumentUpload } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
 
-// The mock WFE's Assistant (mock/routes/agent.ts) behaves as the backend's
+// The mock WFE's Founder (mock/routes/agent.ts) behaves as the backend's
 // API does for the dock: private threads, turns that stream events in the
 // backend's shapes (each one the dock's parser reads), a load prepared as a
 // card and run only by its person, with the hash they were shown, once,
@@ -373,11 +373,11 @@ describe("messages", () => {
   it.each([
     [
       "qwen-notoolcall",
-      "The workspace's model, qwen-notoolcall, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.",
+      "The workspace's model, qwen-notoolcall, doesn't call tools, which Founder needs. An owner can choose another in Settings › AI models.",
     ],
     [
       "qwen-toolrefused",
-      "llm.example.com refused the Assistant's calls to qwen-toolrefused. An owner can choose another model in Settings › AI models.",
+      "llm.example.com refused Founder's calls to qwen-toolrefused. An owner can choose another model in Settings › AI models.",
     ],
   ])(
     "fails a turn at once while the setting's tool check failed on %s, in the worker's words",
@@ -600,13 +600,13 @@ describe("a local install", () => {
   });
 });
 
-describe("where the Assistant runs", () => {
+describe("where Founder runs", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
   });
 
-  it("refuses every Assistant route while the Assistant is off", async () => {
+  it("refuses every Founder route while Founder is off", async () => {
     Object.assign(config, { agentEnabled: false });
     for (const [method, path] of [
       ["GET", `${A}/threads`],
@@ -986,7 +986,7 @@ describe("where the Assistant runs", () => {
       agentHosts: [{ name: "Ada's Mac", runtimes: ["claude_code"] }],
     });
     expect(
-      (await turn("Switch the Assistant to Claude Code")).action,
+      (await turn("Switch Founder to Claude Code")).action,
     ).toBeUndefined();
     const revoke = await turn("Revoke the helper");
     expect(JSON.parse(revoke.action.displayJson)).toEqual({
@@ -1363,6 +1363,79 @@ async function runCard(action: { id: string; payloadHash: string }) {
   };
 }
 const display = (a: { displayJson: string }) => JSON.parse(a.displayJson);
+
+/**
+ * A new dashboard made at once: the prepare, its card and its result (both
+ * auto, the same action), then the prepare's result; no card waits.
+ */
+function ranAtOnce(evs: AgentEvent[]) {
+  const at = evs.findIndex((e) => e.type === "action_card");
+  expect(at).toBeGreaterThan(0);
+  expect(evs.slice(at - 1, at + 3).map((e) => e.type)).toEqual([
+    "tool_call",
+    "action_card",
+    "action_result",
+    "tool_result",
+  ]);
+  const shown = evs[at] as Extract<AgentEvent, { type: "action_card" }>;
+  expect(evs[at - 1]).toMatchObject({
+    name: "helix_foundry_prepare_operation",
+  });
+  expect(shown).toMatchObject({ operation: "create_dashboard", auto: true });
+  expect(evs[at + 1]).toMatchObject({
+    action_id: shown.action_id,
+    operation: "create_dashboard",
+    status: "succeeded",
+    auto: true,
+  });
+  expect(evs[at + 2]).toMatchObject({
+    name: "helix_foundry_prepare_operation",
+    is_error: false,
+    output: {
+      action_id: shown.action_id,
+      status: "ran",
+      outcome: "succeeded",
+    },
+  });
+  expect(JSON.stringify(evs)).not.toContain("awaiting_person");
+}
+
+/**
+ * A message whose turn asks the Analyst: the question holds the turn while
+ * it runs, so its events are read again once time moves on.
+ */
+async function analystTurn(text: string, userId = "usr_ada") {
+  const sent = await send(text, {}, userId);
+  expect(sent.status).toBe(200);
+  const held = await events(sent.body.turn.id, userId);
+  expect(held.page.status).toBe("running");
+  const { page, events: evs } = await events(sent.body.turn.id, userId);
+  expect(page.status).toBe("done");
+  const thread = await call(
+    "GET",
+    `${A}/threads/${sent.body.thread.id}`,
+    undefined,
+    userId,
+  );
+  return {
+    sent,
+    page,
+    events: evs,
+    said: evs
+      .filter((e) => e.type === "text")
+      .map((e) => (e as { text: string }).text)
+      .join(" "),
+    action: (thread.body.actions || []).at(-1),
+  };
+}
+const ASK = "helix_foundry_ask",
+  GET_QUESTION = "helix_foundry_get_question";
+/** A tool's result in a turn's events. */
+const resultOf = (evs: AgentEvent[], name: string) =>
+  evs.find(
+    (e): e is Extract<AgentEvent, { type: "tool_result" }> =>
+      e.type === "tool_result" && e.name === name,
+  );
 
 describe("operations", () => {
   it("builds an ontology card by card: create, draft, make current, load", async () => {
@@ -2110,7 +2183,7 @@ describe("dashboards", () => {
     );
   });
 
-  it("tries a tile, then prepares the dashboard, which its person creates", async () => {
+  it("tries a tile, then makes the dashboard at once, since the message asked for one", async () => {
     await loaded("dash");
     const c = await card(BUILD);
     expect(
@@ -2123,11 +2196,16 @@ describe("dashboards", () => {
       is_error: false,
       output: { outcome: { ok: { result: { kind: "group_count" } } } },
     });
+    // Made at once, as the backend's auto-run rule makes it: the prepare,
+    // its card and its result (both auto), then the prepare's result.
+    ranAtOnce(c.events);
     expect(c.action).toMatchObject({
       operation: "create_dashboard",
       target: "workspace:ws_acme",
       // The person named its name: "invoices by status".
       targetNamedByUser: true,
+      status: "succeeded",
+      decidedByUserId: "usr_ada",
     });
     expect(c.display).toEqual({
       name: "Invoices by status",
@@ -2142,17 +2220,43 @@ describe("dashboards", () => {
         ],
       },
     });
-    const r = await runCard(c.action);
-    expect(r.ran.status).toBe("succeeded");
-    expect(r.result).toMatchObject({ name: "Invoices by status", revision: 1 });
-    expect(r.said).toContain(`/dashboards/${r.result.id}`);
-    // Made once, as its person, its spec as the card showed it.
+    const made = JSON.parse(c.action.resultJson).result;
+    expect(made).toMatchObject({
+      name: "Invoices by status",
+      revision: 1,
+      pinned: false,
+    });
+    expect(c.said).toContain(
+      `I made the dashboard “Invoices by status”, with one bar chart of the invoices in Customer contracts by status: /dashboards/${made.id}.`,
+    );
+    expect(c.said).toContain("Undo deletes it");
+    // No continuation: it ran in the turn that asked.
+    const thread = await call("GET", `${A}/threads/${c.sent.body.thread.id}`);
+    expect(thread.body.turns).toHaveLength(1);
+    // Made once, as its person, its spec as the card showed it: theirs
+    // alone, unpinned and unpublished.
     expect((await call("GET", D)).body.dashboards).toHaveLength(1);
-    const got = await call("GET", `${D}/${r.result.id}`);
+    const got = await call("GET", `${D}/${made.id}`);
     expect(JSON.parse(got.body.dashboard.specJson)).toEqual(
       JSON.parse(c.action.payloadJson).spec,
     );
-    expect(got.body.dashboard.createdByUserId).toBe("usr_ada");
+    expect(got.body.dashboard).toMatchObject({
+      createdByUserId: "usr_ada",
+      pinned: false,
+    });
+    expect(got.body.dashboard.share).toBeFalsy();
+    // The dock's Undo deletes it, as its maker may.
+    expect((await call("DELETE", `${D}/${made.id}`)).status).toBe(200);
+    expect((await call("GET", `${D}/${made.id}`)).status).toBe(404);
+  });
+
+  it("makes no dashboard a message doesn't ask for", async () => {
+    await loaded("dash");
+    const c = await card("Build a chart of invoices by status");
+    expect(c.action).toBeUndefined();
+    expect(c.events.some((e) => e.type === "action_card")).toBe(false);
+    expect(c.events.some((e) => e.type === "action_result")).toBe(false);
+    expect((await call("GET", D)).body.dashboards).toEqual([]);
   });
 
   it("pins, renames, publishes, unpublishes and deletes the dashboard on the page", async () => {
@@ -2286,18 +2390,16 @@ describe("dashboards", () => {
     ).toBeFalsy();
   });
 
-  it("builds a member's own dashboard, and leaves pinning to owners and admins", async () => {
+  it("builds a member's own dashboard at once, and leaves pinning to owners and admins", async () => {
     await loaded("dash");
     const built = await card(BUILD, {}, "usr_alan");
-    expect(built.action.operation).toBe("create_dashboard");
-    const ran = await call(
-      "POST",
-      `${A}/actions/${built.action.id}:execute`,
-      { payloadHash: built.action.payloadHash },
-      "usr_alan",
-    );
-    expect(ran.body.action.status).toBe("succeeded");
-    const id = JSON.parse(ran.body.action.resultJson).result.id;
+    ranAtOnce(built.events);
+    expect(built.action).toMatchObject({
+      operation: "create_dashboard",
+      status: "succeeded",
+      decidedByUserId: "usr_alan",
+    });
+    const id = JSON.parse(built.action.resultJson).result.id;
     expect(
       (await call("GET", `${D}/${id}`)).body.dashboard.createdByUserId,
     ).toBe("usr_alan");
@@ -2310,10 +2412,249 @@ describe("dashboards", () => {
     expect(pin.said).toContain(
       "Only an owner or admin of this workspace can pin a dashboard",
     );
+    // Its Undo is theirs too: a member deletes their own unpinned one.
+    expect(
+      (await call("DELETE", `${D}/${id}`, undefined, "usr_alan")).status,
+    ).toBe(200);
   });
 
   it("refuses a page naming a dashboard by anything but an id", async () => {
     const r = await send("Pin it", { pageContext: { dashboardId: "a/b" } });
     expect(r.status).toBe(400);
+  });
+});
+
+describe("the Analyst", () => {
+  const D = `${WS}/dashboards`;
+  const ASKED =
+    "Make a dashboard that shows which invoices are billed to each account, and which are unpaid or overdue";
+
+  it("asks the Analyst, then makes a dashboard of its answer's tables and charts at once", async () => {
+    const load = await loaded("dash");
+    const t = await analystTurn(ASKED);
+    expect(
+      t.events
+        .filter((e) => e.type === "tool_call")
+        .map((e) => (e as { name: string }).name),
+    ).toEqual([
+      "helix_foundry_list_ontologies",
+      ASK,
+      GET_QUESTION,
+      "helix_foundry_prepare_operation",
+    ]);
+    // Asked as the person, of the current load: queued, then read again
+    // until it ended. Both results name the question, whatever their size.
+    const asked = resultOf(t.events, ASK)!;
+    const qid = (asked.output as { id: string }).id;
+    expect(asked).toMatchObject({
+      is_error: false,
+      output: { id: qid, status: "queued", done: false, load_id: load },
+      question: {
+        ontology_id: "ont_acme_contracts",
+        id: qid,
+        load_id: load,
+        thread_id: qid,
+        status: "queued",
+      },
+    });
+    const read = resultOf(t.events, GET_QUESTION)!;
+    expect(read).toMatchObject({
+      is_error: false,
+      output: { id: qid, status: "answered", done: true },
+      question: {
+        ontology_id: "ont_acme_contracts",
+        id: qid,
+        status: "answered",
+      },
+    });
+    // Its result as lists give it: the queries without their outputs.
+    const listedResult = (read.output as { result: any }).result;
+    expect(listedResult.status).toBe("answered");
+    expect(listedResult.queries.map((q: object) => "output" in q)).toEqual([
+      false,
+      false,
+    ]);
+    // The question is the person's, among the Analyst's threads.
+    const q = (await call("GET", `${CONTRACTS}/questions/${qid}`)).body
+      .question;
+    expect(q).toMatchObject({ askedByUserId: "usr_ada", status: "answered" });
+    const result = JSON.parse(q.resultJson);
+    expect(result.answer.visuals).toEqual([
+      {
+        evidence_id: "e2",
+        after: 0,
+        kind: "table",
+        title: "Invoices by account",
+      },
+      {
+        evidence_id: "e3",
+        after: 1,
+        kind: "bar",
+        title: "Unpaid or overdue invoices",
+      },
+    ]);
+
+    // Then the dashboard, made at once: a tile for each of the answer's
+    // visuals, its query the one the answer recorded.
+    ranAtOnce(t.events);
+    expect(t.action).toMatchObject({
+      operation: "create_dashboard",
+      target: "workspace:ws_acme",
+      status: "succeeded",
+      decidedByUserId: "usr_ada",
+    });
+    expect(display(t.action)).toEqual({
+      name: "Invoices by account",
+      description:
+        "Customer contracts: the Analyst's answer, as tables and charts.",
+      spec: {
+        tiles: [
+          {
+            title: "Invoices by account",
+            ontology: { id: "ont_acme_contracts", name: "Customer contracts" },
+            visual: "table",
+          },
+          {
+            title: "Unpaid or overdue invoices",
+            ontology: { id: "ont_acme_contracts", name: "Customer contracts" },
+            visual: "bar",
+          },
+        ],
+      },
+    });
+    const made = JSON.parse(t.action.resultJson).result;
+    expect(t.said).toBe(
+      `I made the dashboard “Invoices by account”: /dashboards/${made.id}. It isn't pinned or published; Undo deletes it.`,
+    );
+    const board = (await call("GET", `${D}/${made.id}`)).body.dashboard;
+    const spec = JSON.parse(board.specJson);
+    expect(spec.tiles).toHaveLength(2);
+    expect(spec.tiles.map((x: { query: unknown }) => x.query)).toEqual(
+      result.queries.map((r: { query: unknown }) => r.query),
+    );
+    const shape = (x: any) => [x.id, x.title, x.visual, x.load];
+    expect(spec.tiles.map(shape)).toEqual([
+      ["t1", "Invoices by account", { kind: "table" }, { kind: "current" }],
+      [
+        "t2",
+        "Unpaid or overdue invoices",
+        { kind: "bar" },
+        { kind: "current" },
+      ],
+    ]);
+    expect(spec.layout.rows).toEqual([["t1"], ["t2"]]);
+    // Unpinned and unpublished: the person's alone.
+    expect(board).toMatchObject({ createdByUserId: "usr_ada", pinned: false });
+    expect(board.share).toBeFalsy();
+    // Its tiles read, as the dashboard page reads them.
+    for (const tile of spec.tiles) {
+      const preview = await call("POST", `${D}:preview-tile`, {
+        tileJson: JSON.stringify(tile),
+      });
+      expect(JSON.parse(preview.body.outcomeJson).ok, tile.id).toBeTruthy();
+    }
+    // The dock's Undo deletes it.
+    expect((await call("DELETE", `${D}/${made.id}`)).status).toBe(200);
+    expect((await call("GET", `${D}/${made.id}`)).status).toBe(404);
+    expect((await call("GET", D)).body.dashboards).toEqual([]);
+  });
+
+  it("answers a member's question and makes their own dashboard of it", async () => {
+    await loaded("dash");
+    const t = await analystTurn(ASKED, "usr_alan");
+    expect(resultOf(t.events, GET_QUESTION)).toMatchObject({
+      output: { status: "answered" },
+    });
+    ranAtOnce(t.events);
+    expect(t.action).toMatchObject({
+      status: "succeeded",
+      decidedByUserId: "usr_alan",
+    });
+    const id = JSON.parse(t.action.resultJson).result.id;
+    expect((await call("GET", `${D}/${id}`)).body.dashboard).toMatchObject({
+      createdByUserId: "usr_alan",
+      pinned: false,
+    });
+    const qid = (resultOf(t.events, ASK)!.output as { id: string }).id;
+    expect(
+      (await call("GET", `${CONTRACTS}/questions/${qid}`)).body.question
+        .askedByUserId,
+    ).toBe("usr_alan");
+  });
+
+  it("makes no dashboard of an answer with no table or chart", async () => {
+    await loaded("dash");
+    Object.assign(config, { askVisuals: false });
+    const t = await analystTurn(ASKED);
+    expect(t.action).toBeUndefined();
+    expect(t.events.some((e) => e.type === "action_card")).toBe(false);
+    expect(t.said).toBe(
+      "The Analyst's answer shows no table or chart to put on a dashboard, so I made none.",
+    );
+    expect((await call("GET", D)).body.dashboards).toEqual([]);
+  });
+
+  it("answers a question of the data with the Analyst's answer, and a sentence around it", async () => {
+    await loaded("data");
+    const t = await analystTurn("Which customers have unpaid invoices?");
+    expect(
+      t.events
+        .filter((e) => e.type === "tool_call")
+        .map((e) => (e as { name: string }).name),
+    ).toEqual(["helix_foundry_list_ontologies", ASK, GET_QUESTION]);
+    expect(resultOf(t.events, GET_QUESTION)).toMatchObject({
+      output: { status: "answered", done: true },
+      question: { ontology_id: "ont_acme_contracts", status: "answered" },
+    });
+    // Never the answer again, and nothing prepared.
+    expect(t.said).toBe(
+      "That's the Analyst's answer, from the current load of Customer contracts.",
+    );
+    expect(t.action).toBeUndefined();
+  });
+
+  it("leaves a question of the data to the read tools while nothing is loaded", async () => {
+    const c = await card("Which customers have unpaid invoices?");
+    expect(c.events.some((e) => e.type === "tool_call" && e.name === ASK)).toBe(
+      false,
+    );
+    expect(c.said).toContain("This workspace has");
+  });
+
+  it("says a limit of the Analyst's is the Analyst's, in its words", async () => {
+    await loaded("limits");
+    Object.assign(config, { askStepMs: 1 });
+    for (let i = 0; i < 30; i++) {
+      const q = await call("POST", `${CONTRACTS}/questions`, {
+        question: "Who signed it?",
+        clientToken: `q${i}`,
+      });
+      expect(q.status).toBe(200);
+      later(50);
+    }
+    const hour = await card("How many invoices are unpaid?");
+    expect(resultOf(hour.events, ASK)).toMatchObject({
+      is_error: true,
+      error:
+        "the workspace has asked 30 questions in the last hour; try again later",
+    });
+    expect(
+      hour.events.some(
+        (e) => e.type === "tool_call" && e.name === GET_QUESTION,
+      ),
+    ).toBe(false);
+    expect(hour.said).toBe(
+      "The Analyst takes 30 questions an hour, and this workspace has asked them all. That's the Analyst's limit, not mine: ask again later.",
+    );
+    // The month's question budget, a dashboard asked for: nothing is made.
+    later(3_600_000);
+    Object.assign(config, { askSpentUsdMicros: 29_600_000 });
+    const month = await card(ASKED);
+    expect(resultOf(month.events, ASK)).toMatchObject({ is_error: true });
+    expect(month.said).toBe(
+      "This workspace has used the month's question budget for the Analyst. That's the Analyst's limit, not mine: it starts again next month.",
+    );
+    expect(month.action).toBeUndefined();
+    expect((await call("GET", D)).body.dashboards).toEqual([]);
   });
 });

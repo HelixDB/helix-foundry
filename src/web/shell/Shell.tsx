@@ -40,7 +40,7 @@ import { recordRecent } from "./recents";
 import { Sidebar } from "./Sidebar";
 import type { SectionPanel } from "./types";
 
-// The Assistant (areas/agent): in this build (next.config.ts), its dock
+// Founder (areas/agent): in this build (next.config.ts), its dock
 // loaded once opened.
 const ASSISTANT = !!process.env.NEXT_PUBLIC_FOUNDRY_ASSISTANT;
 const AgentDock = lazy(() =>
@@ -49,7 +49,7 @@ const AgentDock = lazy(() =>
 // Whether the dock is open on a wide screen, per browser ("open" or "").
 const DOCK_KEY = "foundry.agent.dock";
 
-// What the Assistant's dock shows while it loads, or if it fails.
+// What Founder's dock shows while it loads, or if it fails.
 const dockLoading = (
   <div className="hf-section-panel-note" aria-busy="true">
     <SkeletonText lines={4} />
@@ -57,7 +57,7 @@ const dockLoading = (
 );
 const dockFailed = (
   <p className="hf-section-panel-note">
-    The Assistant hit a problem. Reload to try again.
+    Founder hit a problem. Reload to try again.
   </p>
 );
 
@@ -157,12 +157,12 @@ function PanelAside({
 
 // Workspace chrome: an area's banner across the top when it shows one, the
 // sidebar on every page, with the open section's panel beside it when it has
-// one, mobile bar and drawer, the command palette, and the Assistant's dock
+// one, mobile bar and drawer, the command palette, and Founder's dock
 // (⌘J, the sidebar's button or the palette): a column right of the page on
 // a wide screen, kept open per browser, else a drawer (below 1100px, or
 // 1400px beside a section's panel, so the page keeps its room). Closing the
 // column gives the focus back to what opened it. A grantee has no
-// Assistant (the WFE denies it every route). While the workspace is
+// Founder (the WFE denies it every route). While the workspace is
 // onboarding, the sidebar holds only the workspace and the account, and there
 // is no palette; a grantee has no palette either (what it lists, a grantee
 // can't read).
@@ -363,7 +363,7 @@ export function Shell({
                   <button
                     type="button"
                     className="hf-btn hf-btn--ghost hf-btn--md hf-btn--icon"
-                    aria-label="Assistant"
+                    aria-label="Founder"
                     aria-pressed={dockOpen}
                     onClick={() => toggleDock("button")}
                   >
@@ -376,8 +376,8 @@ export function Shell({
               </main>
             </div>
             {dockOpen && !dockDrawer && (
-              <aside className="hf-assistant" aria-label="Assistant">
-                <ChromeBoundary name="Assistant" fallback={dockFailed}>
+              <aside className="hf-assistant" aria-label="Founder">
+                <ChromeBoundary name="Founder" fallback={dockFailed}>
                   <Suspense fallback={dockLoading}>
                     <AgentDock onClose={closeDock} />
                   </Suspense>
@@ -386,13 +386,13 @@ export function Shell({
             )}
             {dockOpen && dockDrawer && (
               <Dialog
-                title="Assistant"
+                title="Founder"
                 hideTitle
                 variant="drawer"
                 className="hf-assistant-drawer"
                 onClose={closeDock}
               >
-                <ChromeBoundary name="Assistant" fallback={dockFailed}>
+                <ChromeBoundary name="Founder" fallback={dockFailed}>
                   <Suspense fallback={dockLoading}>
                     <AgentDock onClose={closeDock} onNavigate={closeDock} />
                   </Suspense>

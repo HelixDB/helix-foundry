@@ -51,7 +51,9 @@ type AwaitingPerson struct {
 }
 
 // RanApproved is an action that ran at once, as its person: an automation's
-// owner approved it for the step whose turn prepared it. Status is how it
+// owner approved it for the step whose turn prepared it, or (Auto) the
+// person's own message asked for it and Founder's auto-run rule lets it run
+// without a card (a new dashboard, which they can undo). Status is how it
 // ended (succeeded, failed, or unknown: it lost its answer after its
 // confirmation was spent), Result its untrusted result, Error why it didn't
 // succeed.
@@ -60,6 +62,7 @@ type RanApproved struct {
 	Status   string
 	Result   json.RawMessage
 	Error    string
+	Auto     bool
 }
 
 func (AwaitingPerson) recorded() {}
@@ -81,7 +84,7 @@ type ActionSink interface {
 // it beforehand.
 type PreparedForPersonOutput struct {
 	ActionID string `json:"action_id"`
-	Status   string `json:"status" jsonschema:"awaiting_person: a card shows the person the action, which runs only if they click Run; or ran: its person approved it beforehand, and it ran."`
+	Status   string `json:"status" jsonschema:"awaiting_person: a card shows the person the action, which runs only if they click Run; or ran: it ran at once, because its person approved it beforehand (an automation's step) or asked for it (a new dashboard they asked for), and next says which."`
 	// ExpiresAt is an awaiting action's.
 	ExpiresAt string `json:"expires_at,omitempty"`
 	// Outcome, Result and Error are a ran action's.
@@ -99,11 +102,24 @@ const awaitingPersonNext = "The person sees this action as a card and runs it, o
 // ranApprovedNext tells the agent what happened to its action.
 const ranApprovedNext = "Its person approved this action beforehand, so it ran. Go on from its outcome."
 
+// ranAutoNext tells the agent what happened to an action that ran at once because its person asked for it.
+const ranAutoNext = "Foundry made this new dashboard at once, because the person asked for one; it isn't pinned or published, " +
+	"and they can undo it from the conversation. Give them its link (/dashboards/<id>) in a sentence."
+
+// ranAutoUnsureNext tells the agent an action that ran at once because its person asked for it didn't succeed, or may not have.
+const ranAutoUnsureNext = "Foundry ran this at once, because the person asked for it, and it didn't succeed or may not have. Go on from its outcome."
+
 // preparedForPerson is what the agent reads of r.
 func preparedForPerson(r Recorded) PreparedForPersonOutput {
 	switch r := r.(type) {
 	case RanApproved:
 		out := PreparedForPersonOutput{ActionID: r.ActionID, Status: "ran", Outcome: r.Status, Error: r.Error, Next: ranApprovedNext}
+		switch {
+		case r.Auto && r.Status == "succeeded":
+			out.Next = ranAutoNext
+		case r.Auto:
+			out.Next = ranAutoUnsureNext
+		}
 		if len(r.Result) > 0 {
 			out.Result = UntrustedJSON(string(r.Result))
 		}
@@ -164,7 +180,7 @@ func (s *Service) prepareForPerson(ctx context.Context, identity *Identity, call
 	call.ResourceKind, call.ResourceID = TargetKind(input.Target), input.Target
 	if !sink.Allows(input.Operation) {
 		return nil, detailedToolError{code: errCodeInvalidArguments,
-			message: "the Assistant can't prepare " + input.Operation + " here: tell the person how to do it in Foundry instead"}
+			message: "Founder can't prepare " + input.Operation + " here: tell the person how to do it in Foundry instead"}
 	}
 	operation, err := s.ValidateFoundryOperation(ctx, identity, input)
 	if err != nil {

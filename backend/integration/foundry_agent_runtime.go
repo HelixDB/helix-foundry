@@ -189,7 +189,7 @@ func (s *Service) validateAssistantOperation(ctx context.Context, identity *Iden
 	}
 	switch {
 	case !s.AgentHosts:
-		return nil, true, detailedToolError{code: errCodeFailedPrecondition, message: "the Assistant runs on a subscription only on a local install"}
+		return nil, true, detailedToolError{code: errCodeFailedPrecondition, message: "Founder runs on a subscription only on a local install"}
 	case !identity.User || identity.ServiceKey || identity.Agent:
 		return nil, true, errCodeNotFound
 	}

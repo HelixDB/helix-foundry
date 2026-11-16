@@ -192,7 +192,7 @@ func TestTheGenerationToolPointsTheAssistantAtRelaying(t *testing.T) {
 	require.NoError(t, err)
 	i := slices.IndexFunc(h.model.requests[0].Tools, func(tool llm.Tool) bool { return tool.Name == "helix_foundry_get_generation" })
 	require.GreaterOrEqual(t, i, 0)
-	assert.Contains(t, h.model.requests[0].Tools[i].Description, "Foundry's Assistant relays them with "+toolAskPerson)
+	assert.Contains(t, h.model.requests[0].Tools[i].Description, "Founder, Foundry's own agent, relays them with "+toolAskPerson)
 }
 
 // answering is a thread whose turn turn-ask asked what asked holds, and the

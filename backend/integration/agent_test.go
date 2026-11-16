@@ -224,6 +224,27 @@ func TestPreparedForPersonSaysHowAnApprovedActionRan(t *testing.T) {
 	assert.Empty(t, waiting.Outcome)
 }
 
+// An action Founder ran at once because its person asked for it is told
+// apart from one approved beforehand: the agent gives its link, and says the
+// person can undo it.
+func TestPreparedForPersonSaysWhenAnActionRanBecauseItWasAskedFor(t *testing.T) {
+	made := preparedForPerson(RanApproved{ActionID: "act-4", Status: "succeeded", Result: []byte(`{"result":{"id":"dash1"}}`), Auto: true})
+	assert.Equal(t, "ran", made.Status)
+	assert.Equal(t, "succeeded", made.Outcome)
+	assert.Equal(t, ranAutoNext, made.Next)
+	assert.Contains(t, made.Next, "because the person asked for one")
+	assert.Contains(t, made.Next, "it isn't pinned or published")
+	assert.Contains(t, made.Next, "undo")
+	assert.Contains(t, made.Next, "/dashboards/<id>")
+	assert.NotNil(t, made.Result)
+	for _, outcome := range []string{"failed", "unknown"} {
+		unsure := preparedForPerson(RanApproved{ActionID: "act-5", Status: outcome, Error: "refused", Auto: true})
+		assert.Equal(t, ranAutoUnsureNext, unsure.Next, outcome)
+		assert.NotContains(t, unsure.Next, "made this new dashboard", "it doesn't say it made what it may not have")
+	}
+	assert.Equal(t, ranApprovedNext, preparedForPerson(RanApproved{ActionID: "act-6", Status: "succeeded"}).Next, "an automation's stays as it was")
+}
+
 func TestRunApprovedPreparesAndRunsOnce(t *testing.T) {
 	actions := &loadActions{}
 	s := (&Service{Confirmations: &memConfirmations{}, Actions: actions}).ForAgent()

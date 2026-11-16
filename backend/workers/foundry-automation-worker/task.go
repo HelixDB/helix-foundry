@@ -624,7 +624,7 @@ func (t *Task) runNode(ctx context.Context, st *runState, nodeID string) (waitin
 // and waits for it.
 func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, step automation.AssistantNode) (bool, error) {
 	if !t.assistant {
-		return false, t.fail(ctx, st, nodeID, "The Assistant isn't available here.")
+		return false, t.fail(ctx, st, nodeID, "Founder isn't available here.")
 	}
 	run := st.run
 	var thread *model.FoundryAgentThread
@@ -681,11 +681,11 @@ func title(name string) string {
 func (t *Task) wait(ctx context.Context, st *runState, nodeID string) (bool, error) {
 	turnID, ok := st.turns[nodeID]
 	if !ok {
-		return false, t.fail(ctx, st, nodeID, "Its Assistant turn can't be found.")
+		return false, t.fail(ctx, st, nodeID, "Its Founder turn can't be found.")
 	}
 	turn, err := t.db.GetFoundryAgentTurn(ctx, st.run.WorkspaceID, turnID)
 	if errors.Is(err, foundrystore.ErrNotFound) {
-		return false, t.fail(ctx, st, nodeID, "Its Assistant turn is gone.")
+		return false, t.fail(ctx, st, nodeID, "Its Founder turn is gone.")
 	}
 	if err != nil {
 		return false, err
@@ -695,7 +695,7 @@ func (t *Task) wait(ctx context.Context, st *runState, nodeID string) (bool, err
 	}
 	usd := turn.Spend.USDMicros
 	if turn.Status != model.FoundryAgentTurnDone {
-		why := "The Assistant's turn was " + string(turn.Status) + "."
+		why := "Founder's turn was " + string(turn.Status) + "."
 		if turn.Error != nil {
 			why = sentence(*turn.Error)
 		}

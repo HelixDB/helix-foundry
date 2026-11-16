@@ -4,7 +4,7 @@ import { expect, mock, postToWfe, signIn, test } from "./support/mock";
 // Automations: a person's steps Foundry runs as them, on a schedule or when
 // a sync, a load or documents arrive. The overview counts the runs of the
 // last days and lists the automations; a new one starts as a conversation
-// with the Assistant, from a template, or from scratch; an automation opens
+// with Founder, from a template, or from scratch; an automation opens
 // on a full-page canvas, where its owner edits its steps (or in the
 // outline), saves them through the review of what runs unattended, and
 // goes Live; nothing runs until its owner approves exactly what runs; the
@@ -144,7 +144,7 @@ test("the overview counts the runs of the last days and lists the automations, w
   await expect(list).toHaveCount(0);
 });
 
-test("a new automation starts as a conversation with the Assistant, whose card opens it on its canvas", async ({
+test("a new automation starts as a conversation with Founder, whose card opens it on its canvas", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 60 });
@@ -156,7 +156,7 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   await expect(
     page.getByRole("heading", { name: "What should happen?" }),
   ).toBeVisible();
-  // Four suggestions, each a prompt for the Assistant: hovered, it is the
+  // Four suggestions, each a prompt for Founder: hovered, it is the
   // empty composer's placeholder; clicked, its text, which nothing sends.
   const suggestions = page.getByRole("list", { name: "Suggestions" });
   await expect(suggestions.getByRole("button")).toHaveText([
@@ -212,7 +212,7 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   await expect(message).toHaveValue(`${prompt} Only the ones over $10k.`);
   await expect(page).toHaveURL(/\/automations\/new$/);
   // The person's words are theirs to change before they send them; the
-  // page tells the Assistant they're making an automation.
+  // page tells Founder they're making an automation.
   await expect(page.getByText("Making a new automation")).toBeVisible();
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page).toHaveURL(/\/automations\/new\?thread=/);
@@ -228,12 +228,12 @@ test("a new automation starts as a conversation with the Assistant, whose card o
   await card.getByRole("button", { name: "Create and turn on" }).click();
   await expect(page).toHaveURL(/\/automations\/aut_[^/?]+$/);
   await expect(live(page)).toBeChecked();
-  // When a document arrives in General, the Assistant's step, an email.
+  // When a document arrives in General, Founder's step, an email.
   await expect(canvas(page).locator(".react-flow__node")).toHaveCount(3);
 
-  // The conversation is the Assistant's: the dock lists it.
+  // The conversation is Founder's: the dock lists it.
   await page.keyboard.press("ControlOrMeta+j");
-  const dock = page.getByRole("complementary", { name: "Assistant" });
+  const dock = page.getByRole("complementary", { name: "Founder" });
   await dock.getByRole("button", { name: /^Threads:/ }).click();
   await expect(
     page.getByRole("menuitemradio", {
@@ -303,7 +303,7 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
 
   // Add step, from the toolbar: after the trigger, joined, selected.
   await page.getByRole("button", { name: "Add step" }).click();
-  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
   await expect(nodes).toHaveCount(2);
   await expect(edges).toHaveCount(1);
   await page
@@ -323,7 +323,7 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
   // Cut a join in the outline, and join them again on the canvas.
   await page.getByRole("button", { name: "Outline" }).click();
   await page
-    .getByRole("button", { name: /^Change the step: Ask the Assistant/ })
+    .getByRole("button", { name: /^Change the step: Ask Founder/ })
     .click();
   await page.getByRole("menuitem", { name: /^Email you/ }).click();
   await page.getByRole("button", { name: "Outline" }).click();
@@ -359,7 +359,7 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
     .getByRole("button", { name: "Back to the summary" })
     .click();
   await expect(inspector(page).locator(".au-summary-text")).toHaveText(
-    "When you run it, ask the Assistant: “How many ontologies are there?”, then email you what it found.",
+    "When you run it, ask Founder: “How many ontologies are there?”, then email you what it found.",
   );
 
   await page
@@ -380,7 +380,7 @@ test("starts from scratch on the full canvas: adds, joins, tidies and inspects i
   await expect(title(page, "Count the ontologies")).toBeVisible();
 });
 
-test("a step added after one that leads on slots in between, and a blank Assistant step reads without quotes", async ({
+test("a step added after one that leads on slots in between, and a blank Founder step reads without quotes", async ({
   page,
 }) => {
   await signIn(page);
@@ -394,18 +394,18 @@ test("a step added after one that leads on slots in between, and a blank Assista
   await expect(nodes).toHaveCount(3);
   await nodes.filter({ hasText: "Summarise." }).click();
   await page.getByRole("button", { name: "Add step" }).click();
-  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
   await expect(nodes).toHaveCount(4);
   // Joined from the step chosen and on to the one it led to: no new branch.
   await expect(canvas(page).locator(".react-flow__edge")).toHaveCount(3);
-  const blank = nodes.filter({ hasText: "Write what the Assistant should do" });
+  const blank = nodes.filter({ hasText: "Write what Founder should do" });
   await expect(blank).toHaveCount(1);
   await expect(blank).not.toContainText("“");
   await inspector(page)
     .getByRole("button", { name: "Back to the summary" })
     .click();
   await expect(inspector(page).locator(".au-summary-text")).toContainText(
-    "ask the Assistant: “Summarise.”, then ask the Assistant, then email you “Done”",
+    "ask Founder: “Summarise.”, then ask Founder, then email you “Done”",
   );
 });
 
@@ -420,7 +420,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
   // The template's steps, its connection the workspace's first, said in
   // words and drawn on the canvas.
   await expect(inspector(page).locator(".au-summary-text")).toContainText(
-    "Every day at 08:00, sync “Stripe”, then ask the Assistant:",
+    "Every day at 08:00, sync “Stripe”, then ask Founder:",
   );
   await expect(canvas(page).locator(".au-node")).toHaveCount(4);
   await expect(live(page)).toBeDisabled();
@@ -461,7 +461,7 @@ test("starts from a template, runs only once approved, runs now, and colours the
     "Started a sync of its connector.",
   );
   await expect(steps(page).getByRole("listitem").nth(2)).toContainText(
-    "What the Assistant reported",
+    "What Founder reported",
   );
   await expect(steps(page).getByRole("listitem").nth(3)).toContainText(
     "Emailed its owner.",
@@ -570,7 +570,7 @@ test("edits its steps in the outline, and waits for approval until approved", as
   await page
     .getByRole("button", { name: /^Change the step: Email you/ })
     .click();
-  await page.getByRole("menuitem", { name: "Ask the Assistant" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
   await page
     .getByLabel("What should it do?")
     .fill("Say how many invoices changed.");
@@ -1016,9 +1016,9 @@ test("shows another member its steps and how far a run went, never what it found
   ).toHaveCount(0);
   await alan.goto(`/automations/${id}/runs/${run}`);
   await ended(alan, "Succeeded");
-  await expect(
-    inspector(alan).getByText("What the Assistant reported"),
-  ).toHaveCount(0);
+  await expect(inspector(alan).getByText("What Founder reported")).toHaveCount(
+    0,
+  );
   // Their own, they may make.
   await alan.goto("/automations");
   await expect(
@@ -1054,7 +1054,7 @@ test("on a phone the canvas only shows the steps: the inspector is a sheet, and 
   await sheet.getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Outline" }).click();
   await page
-    .getByRole("button", { name: /^Change the step: Ask the Assistant/ })
+    .getByRole("button", { name: /^Change the step: Ask Founder/ })
     .click();
   await page.getByRole("menuitem", { name: "Email me" }).click();
   // The step it added opens in the sheet.
@@ -1071,21 +1071,21 @@ test("on a phone the canvas only shows the steps: the inspector is a sheet, and 
   await context.close();
 });
 
-test("the Assistant sets one up from a card its person runs, in the dock", async ({
+test("Founder sets one up from a card its person runs, in the dock", async ({
   page,
 }) => {
   await mock.configure({ agentStepMs: 60 });
   await signIn(page);
   await page.goto("/automations");
-  // ⌘J, once the shell (whose Assistant button it presses) is on screen.
+  // ⌘J, once the shell (whose Founder button it presses) is on screen.
   await expect(
     page
-      .getByRole("button", { name: "Assistant", exact: true })
+      .getByRole("button", { name: "Founder", exact: true })
       .filter({ visible: true })
       .first(),
   ).toBeVisible();
   await page.keyboard.press("ControlOrMeta+j");
-  const dock = page.getByRole("complementary", { name: "Assistant" });
+  const dock = page.getByRole("complementary", { name: "Founder" });
   await dock
     .getByRole("textbox", { name: "Message" })
     .fill(

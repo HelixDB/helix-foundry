@@ -300,7 +300,7 @@ export function RunHead({
           {
             label: "Cost",
             value: usdText(run.usdMicros),
-            hint: "What its Assistant steps spent.",
+            hint: "What its Founder steps spent.",
           },
         ]}
       />

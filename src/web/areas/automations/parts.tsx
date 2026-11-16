@@ -34,7 +34,7 @@ import type { useNames } from "./queries";
 // What the automations' pages share: how an automation, a run and a step
 // show their state, each kind's icon, and the steps as they will run
 // unattended, which an owner reads before approving them (the builder's
-// review, an unapproved automation's page, the Assistant's card).
+// review, an unapproved automation's page, Founder's card).
 
 /** An automation's state, as a dot and its words. */
 export function automationStatus(a: FoundryAutomation): {
@@ -104,7 +104,7 @@ export const stepTitle = (
 
 /**
  * The steps as they run unattended, in the order a run takes them: each in
- * words, an Assistant step with what it may do without asking (else that
+ * words, a Founder step with what it may do without asking (else that
  * anything it prepares waits for its owner), a condition with where its
  * yes and no lead. What an owner approves.
  */

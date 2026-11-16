@@ -447,7 +447,7 @@ export function DashboardPage() {
             editing
               ? "Every tile is removed. Save to keep it empty, or Cancel to keep its tiles."
               : d.canEdit
-                ? "Pin a chart or table from an Analyst answer, or ask the Assistant to build tiles for you."
+                ? "Pin a chart or table from an Analyst answer, or ask Founder to build tiles for you."
                 : "Whoever made it, or an owner or admin, adds its tiles."
           }
           action={

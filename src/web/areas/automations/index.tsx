@@ -1,7 +1,7 @@
 // Automations area: a person's graphs of steps Foundry runs as them when a
 // schedule or an event fires (backend/automation), lazy-loaded by main.tsx's
 // route table under /automations: the overview (the workspace's runs of the
-// last days and its automations), a new one (the Assistant's conversation,
+// last days and its automations), a new one (Founder's conversation,
 // or a template's draft on the canvas), and an automation on its full-page
 // canvas, its runs coloured there. Every member sees every automation; what
 // each may do the WFE says per automation.
@@ -120,7 +120,7 @@ function Overview() {
   const header = (
     <PageHeader
       title="Automations"
-      subtitle="Steps Foundry runs for you on a schedule, or when a sync, a load or new documents arrive: syncs, loads, the Assistant’s checks, and emails."
+      subtitle="Steps Foundry runs for you on a schedule, or when a sync, a load or new documents arrive: syncs, loads, Founder’s checks, and emails."
       actions={
         query.data?.canCreate && (
           <ButtonLink to={paths.newAutomation()} variant="primary" icon={Plus}>
@@ -167,7 +167,7 @@ function Overview() {
         <EmptyState
           icon={Zap}
           title="No automations yet"
-          text="Describe what should happen and the Assistant sets it up, or start from a template. Nothing runs until you approve it."
+          text="Describe what should happen and Founder sets it up, or start from a template. Nothing runs until you approve it."
           action={
             query.data.canCreate && (
               <ButtonLink
@@ -233,7 +233,7 @@ function Overview() {
           <Stat
             label="Spend"
             value={usdText(totals.usdMicros)}
-            note="by its Assistant steps"
+            note="by its Founder steps"
           />
         </dl>
         {!!summary?.byDay?.length && (

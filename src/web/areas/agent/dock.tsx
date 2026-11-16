@@ -1,5 +1,7 @@
 import "./agent.css";
 import {
+  Suspense,
+  lazy,
   useEffect,
   useId,
   useLayoutEffect,
@@ -17,7 +19,6 @@ import {
   CircleHelp,
   CircleAlert,
   TriangleAlert,
-  ExternalLink,
   LoaderCircle,
   Plug,
   MessageSquarePlus,
@@ -76,13 +77,14 @@ import {
   NOT_RUN_TEXT,
   STARTS_WORK,
   STOP_TEXT,
-  TOOL_LABELS,
+  stepLabel,
   agentRefusal,
-  analystLink,
+  answerBlocks,
   connectLink,
   isLiveTurn,
   pageContext,
   pretty,
+  questionOf,
   textParts,
   threadKey,
   threadRuntime,
@@ -102,8 +104,12 @@ import {
   turnEvents,
 } from "./queries";
 
+// The Analyst's answer under the step that asked it: its card and the
+// explore reads it needs load only once a thread holds one.
+const InlineQuestion = lazy(() => import("../ontology/ask-inline"));
+
 /**
- * The Assistant's dock: the person's threads with it, the open thread's
+ * Founder's dock: the person's threads with it, the open thread's
  * turns as they stream (polled), the actions it prepared as cards, and the
  * composer, which sends what page the person is on (ids only) unless they
  * take it off. Rendered by the shell outside the page's routes, so it reads
@@ -147,7 +153,7 @@ export function AgentDock({
     <div className="ag-dock" data-replay-block>
       <header className="ag-head">
         <Sparkles size={16} aria-hidden className="ag-head-icon" />
-        <h2 className="ag-head-title">Assistant</h2>
+        <h2 className="ag-head-title">Founder</h2>
         <DropdownMenu
           label={`Threads: ${title}`}
           align="end"
@@ -189,8 +195,8 @@ export function AgentDock({
         <button
           type="button"
           className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
-          aria-label="Close the Assistant"
-          title="Close the Assistant"
+          aria-label="Close Founder"
+          title="Close Founder"
           onClick={onClose}
         >
           <X size={16} aria-hidden />
@@ -200,7 +206,7 @@ export function AgentDock({
         <EmptyState
           size="sm"
           icon={Sparkles}
-          title="The Assistant isn’t available here"
+          title="Founder isn’t available here"
           text="It is off for this Foundry."
         />
       ) : (
@@ -447,8 +453,8 @@ export function Transcript({
           <EmptyState
             size="sm"
             icon={Sparkles}
-            title="Ask the Assistant"
-            text="It reads your workspace with Foundry’s tools. What would change anything it prepares as a card, which runs only when you click."
+            title="Ask Founder"
+            text="It answers questions about your data with the Analyst’s cited answers, and works in your workspace. Changes wait as cards you click to run; a dashboard you ask for it makes at once, with Undo."
           />
         ) : (
           data.turns.map((t, i, all) => (
@@ -600,6 +606,8 @@ function TurnView({
     stream.ended && stream.ended.status === "done"
       ? STOP_TEXT[stream.ended.reason]
       : null;
+  // An Analyst question shows once, under the last step that returned it.
+  const answers = useMemo(() => answerBlocks(stream.blocks), [stream.blocks]);
   return (
     <>
       {turn.kind === "answers" ? (
@@ -620,7 +628,7 @@ function TurnView({
         className="ag-msg ag-msg--agent"
         aria-busy={live || read.loading || undefined}
       >
-        <span className="ag-who">Assistant</span>
+        <span className="ag-who">Founder</span>
         {read.loading && !stream.blocks.length && <SkeletonText lines={2} />}
         {read.failed && (
           <p className="ag-card-error">
@@ -644,6 +652,7 @@ function TurnView({
             <Block
               key={i}
               block={b}
+              answer={answers.has(i)}
               actions={actions}
               busy={busy}
               onNavigate={onNavigate}
@@ -687,11 +696,15 @@ function TurnView({
 
 function Block({
   block,
+  answer,
   actions,
   busy,
   onNavigate,
 }: {
   block: AgentBlock;
+  // A step's: the Analyst question it returned shows under it (the last
+  // step of the turn naming it).
+  answer: boolean;
   actions: ReadonlyMap<string, FoundryAgentAction>;
   busy: boolean;
   onNavigate?: () => void;
@@ -701,7 +714,7 @@ function Block({
       return <PlainText text={block.text} onNavigate={onNavigate} />;
     case "step": {
       const s = block.step,
-        analyst = analystLink(s),
+        question = answer ? questionOf(s) : undefined,
         connect = connectLink(s);
       // Asking shows as its questions; only a refusal shows as a step.
       if (s.name === ASK_PERSON && s.result?.kind !== "failed") return null;
@@ -710,7 +723,7 @@ function Block({
           <details className="ag-step">
             <summary>
               <Wrench size={13} aria-hidden />
-              <span>{TOOL_LABELS[s.name] || s.name}</span>
+              <span>{stepLabel(s)}</span>
               {!s.result && (
                 <LoaderCircle
                   size={13}
@@ -745,13 +758,17 @@ function Block({
                   )}
                 </>
               )}
-              {analyst && (
-                <Link className="ag-link" to={analyst} onClick={onNavigate}>
-                  Open in Analyst <ExternalLink size={12} aria-hidden />
-                </Link>
-              )}
             </div>
           </details>
+          {question && (
+            <Suspense fallback={<SkeletonText lines={3} />}>
+              <InlineQuestion
+                ontologyId={question.ontologyId}
+                questionId={question.questionId}
+                onNavigate={onNavigate}
+              />
+            </Suspense>
+          )}
           {connect && (
             <Link
               className="hf-btn hf-btn--secondary hf-btn--sm ag-connect"
@@ -768,7 +785,12 @@ function Block({
     case "card": {
       const action = actions.get(block.actionId);
       return action ? (
-        <ActionCard action={action} busy={busy} onNavigate={onNavigate} />
+        <ActionCard
+          action={action}
+          auto={block.auto}
+          busy={busy}
+          onNavigate={onNavigate}
+        />
       ) : (
         <div className="ag-card" aria-busy>
           <SkeletonText lines={2} />
@@ -871,8 +893,7 @@ function AskedBlock({
   if (!questions)
     return (
       <p className="ag-note">
-        The Assistant asked questions this page can’t show. Reload to update
-        Foundry.
+        Founder asked questions this page can’t show. Reload to update Foundry.
       </p>
     );
   if (state !== "open" || moved)
@@ -901,7 +922,7 @@ function AskedBlock({
       <QuestionFlow
         questions={questions}
         storageKey={`agent:${turn.id}`}
-        agent={relayed ? "the agent" : "the Assistant"}
+        agent={relayed ? "the agent" : "Founder"}
         sendLabel={relayed ? "Send answers to the draft" : "Send answers"}
         pending={pending}
         disabled={busy}
@@ -964,7 +985,7 @@ function AskedBlock({
 
 /**
  * An answers turn's answers, each beside its question as the asking turn
- * asked it; a question left out was left to the Assistant.
+ * asked it; a question left out was left to Founder.
  */
 function AnswersOf({
   turn,
@@ -983,7 +1004,7 @@ function AnswersOf({
           question: q.text,
           answer: a
             ? answerText(a)
-            : `Left to ${asking?.asked?.generation ? "the agent" : "the Assistant"}`,
+            : `Left to ${asking?.asked?.generation ? "the agent" : "Founder"}`,
           left: !a,
         };
       })
@@ -1173,7 +1194,7 @@ export function Composer({
         text={
           role === "owner"
             ? `${checkFailed} Open Settings › AI models.`
-            : "The Assistant can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
+            : "Founder can’t run on this workspace’s AI model. An owner can fix this in Settings › AI models."
         }
         onNavigate={onNavigate}
       />
@@ -1181,12 +1202,12 @@ export function Composer({
   ) : tooLong ? (
     `${length - MAX_MESSAGE} characters too long.`
   ) : busy ? (
-    "You can send once the Assistant has finished."
+    "You can send once Founder has finished."
   ) : null;
   return (
     <form
       className="ag-composer"
-      aria-label="Message the Assistant"
+      aria-label="Message Founder"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
@@ -1250,7 +1271,7 @@ export function Composer({
           {caption}
         </p>
       )}
-      <AiRefusal action="The Assistant" error={error} ready={modelReady}>
+      <AiRefusal action="Founder" error={error} ready={modelReady}>
         {!!error && (
           <p className="ag-card-error" role="alert">
             {agentRefusal(error) !== "FOUNDRY_AGENT_HOST_OFFLINE" ? (

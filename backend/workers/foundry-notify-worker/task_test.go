@@ -418,7 +418,7 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			subject: "Weekly invoices: Overdue invoices this week",
 			text: []string{
 				"Overdue invoices this week",
-				"The Assistant: Three invoices are overdue, from Globex. See [link removed] for more.",
+				"Founder: Three invoices are overdue, from Globex. See [link removed] for more.",
 				"One action waits for you: open the run to see it and run it, or not.",
 				"See every step of the run: " + siteURL + "/automations/auto-1/runs/run-1?workspace=ws-1",
 			},

@@ -575,7 +575,7 @@ func invalidArgument(err error) (string, bool) {
 // working, is refused.
 func (h *agentHostHandler) serveMCP(w http.ResponseWriter, r *http.Request, token string) {
 	if r.URL.Path != "/mcp" {
-		refuse(w, "a turn's token calls the Assistant's tools only")
+		refuse(w, "a turn's token calls Founder's tools only")
 		return
 	}
 	claim, err := h.dir.AgentTurnToken(r.Context(), token)

@@ -37,9 +37,9 @@ func (s *Service) agentHosts(ctx context.Context, workspaceID string) (foundryag
 	switch {
 	case s.deps.AgentHosts == nil:
 		return nil, foundryPrecondition(workspaceID, "FOUNDRY_AGENT_HOSTS_LOCAL_ONLY",
-			"the Assistant runs on a subscription only on a local install")
+			"Founder runs on a subscription only on a local install")
 	case !s.mayManageAI(ctx, workspaceID):
-		return nil, status.Error(codes.PermissionDenied, "only the workspace's owner chooses where the Assistant runs")
+		return nil, status.Error(codes.PermissionDenied, "only the workspace's owner chooses where Founder runs")
 	}
 	return s.deps.AgentHosts, nil
 }
@@ -183,7 +183,7 @@ func (s *Service) offlineWhy(ctx context.Context, runtime foundrymodel.FoundryAg
 			case !h.Online(now) || i < 0 || runtime != foundrymodel.FoundryAgentRuntimeCodex:
 			case h.Accounts[i].Outdated():
 				return "the Codex on " + h.Name + " is older than " + foundryagent.MinCodexVersion +
-					", the oldest Foundry runs the Assistant on: update it there, then send again in a minute"
+					", the oldest Foundry runs Founder on: update it there, then send again in a minute"
 			case h.Accounts[i].Version == "":
 				return "the Codex on " + h.Name + " didn't start: run codex --version there to see why, then send again in a minute"
 			}

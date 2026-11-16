@@ -1,4 +1,4 @@
-/* The Assistant's dock (dock.tsx, cards.tsx): its head, the conversation,
+/* Founder's dock (dock.tsx, cards.tsx): its head, the conversation,
    tool steps, action cards and the composer. Where it sits (a column right
    of the page, or a phone's drawer) is the shell's (shell.css .hf-assistant). */
 .ag-dock {
@@ -202,7 +202,7 @@
 }
 
 /* An action the agent prepared: set apart from its words. */
-/* Questions the Assistant asks: the question-by-question flow, in a box
+/* Questions Founder asks: the question-by-question flow, in a box
    like a card's. */
 .ag-asked {
   display: grid;
@@ -388,7 +388,7 @@
 }
 
 /* Settings › AI models on a local install (runtime-settings.tsx): the
-   Assistant's helpers, a pairing code's commands, and what to run when the
+   Founder's helpers, a pairing code's commands, and what to run when the
    chosen runtime's helper isn't running. Its rows are the members list's
    (workspace.css .wk-member). */
 .ag-helpers {
