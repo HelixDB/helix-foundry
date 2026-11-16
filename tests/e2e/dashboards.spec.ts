@@ -39,7 +39,7 @@ const tile = (id: string, title: string, query: object, kind?: string) => ({
   visual: kind ? { kind } : {},
 });
 
-/** Makes a dashboard through the BFF, as its New dashboard does: its id. */
+/** Makes a dashboard through the BFF, as Founder or an Analyst answer does: its id. */
 async function makeDashboard(
   page: Page,
   name: string,
@@ -269,7 +269,14 @@ test("publishes a snapshot that a fresh browser opens, until it is unpublished",
   await expect(
     pub.getByRole("heading", { level: 1, name: "Revenue" }),
   ).toBeVisible();
-  await expect(pub.getByText(/^Snapshot from /)).toBeVisible();
+  await expect(pub.getByText(/^As of /)).toBeVisible();
+  // Foundry's wordmark and footer link to its landing page, sending no
+  // referrer (the address holds the link's token).
+  for (const name of ["Helix Foundry", "Made with Helix Foundry"]) {
+    const link = pub.getByRole("link", { name, exact: true });
+    await expect(link).toHaveAttribute("href", "/");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
   await expect(
     pub
       .getByRole("figure", { name: "Invoices by status" })
@@ -367,10 +374,10 @@ test("a member reads every dashboard and changes only their own", async ({
     );
 
   // Their own: they edit and delete it, and neither pin nor publish it.
-  await alan.getByRole("link", { name: "New dashboard" }).click();
-  const create = alan.getByRole("dialog", { name: "New dashboard" });
-  await create.getByLabel("Name").fill("Alan’s view");
-  await create.getByRole("button", { name: "Create dashboard" }).click();
+  const own = (
+    await postToWfe(alan, D, { name: "Alan’s view", clientToken: "c-alan" })
+  ).dashboard.id;
+  await alan.goto(`/dashboards/${own}`);
   await expect(
     alan.getByRole("heading", { level: 1, name: "Alan’s view" }),
   ).toBeVisible();
@@ -387,6 +394,210 @@ test("a member reads every dashboard and changes only their own", async ({
   ).toBeVisible();
   await expect(alan.getByRole("menuitem", { name: /Pin/ })).toHaveCount(0);
   await context.close();
+});
+
+test("the library: a card per dashboard with its miniature, searched and filtered", async ({
+  page,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  await makeDashboard(page, "Revenue");
+  const health = await makeDashboard(page, "Invoice health", [
+    tile("n", "Invoices", {
+      start: { type: "Invoice" },
+      return: { count: {} },
+    }),
+    tile("s", "By status", BY_STATUS, "line"),
+  ]);
+  await postToWfe(page, `${D}/${health}:pin`, {
+    pinned: true,
+    expectedRevision: "1",
+  });
+  await page.goto("/dashboards");
+  // The library's list, not the sidebar's group of the same name.
+  const cards = page
+    .getByRole("main")
+    .getByRole("list", { name: "Dashboards", exact: true });
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  // Pinned first, each a miniature drawn from its spec, without a tile read.
+  const first = cards.getByRole("article").first();
+  await expect(first.getByRole("link")).toHaveText("Invoice health");
+  await expect(first.getByText("Pinned", { exact: true })).toBeVisible();
+  await expect(first.locator(".db-mini-title")).toHaveText([
+    "Invoices",
+    "By status",
+  ]);
+  await expect(first.locator(".db-mini-figure")).toHaveCount(1);
+  await expect(first.locator(".db-mini-chart polyline")).toHaveCount(1);
+  const revenue = cards.getByRole("article").nth(1);
+  await expect(revenue.locator(".db-mini-chart rect")).toHaveCount(6);
+  await expect(revenue.locator(".db-mini-table")).toHaveCount(1);
+  const stats = await mock.stats();
+  expect(stats.requests.filter((r) => r.includes(":read"))).toEqual([]);
+
+  // Search by name, case and accents aside; filters for pinned and own.
+  const search = page.getByRole("searchbox", { name: "Search dashboards…" });
+  await search.fill("REVEN");
+  await expect(cards.getByRole("article")).toHaveCount(1);
+  await expect(cards.getByRole("link")).toHaveText("Revenue");
+  await expect(page.getByText("1 of 2 dashboards")).toBeVisible();
+  await search.fill("nothing like it");
+  await expect(
+    page.getByRole("heading", {
+      name: "No dashboards match “nothing like it”",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Show all dashboards" }).click();
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  await page.getByRole("radio", { name: /Pinned/ }).click();
+  await expect(cards.getByRole("link")).toHaveText(["Invoice health"]);
+  await page.getByRole("radio", { name: /Yours/ }).click();
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  await page.getByRole("radio", { name: /All/ }).click();
+
+  // A card opens its dashboard.
+  await revenue.click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Revenue" }),
+  ).toBeVisible();
+
+  // One column on a phone, the page never wider than it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/dashboards");
+  await expect(cards.getByRole("article")).toHaveCount(2);
+  const [a, b] = await cards
+    .getByRole("article")
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().left));
+  expect(a).toBe(b);
+  expect(
+    await page.evaluate(
+      () => document.scrollingElement!.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("New dashboard opens Founder with its request started, the caret at its end", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/dashboards");
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  // No dialog of its own: Founder's dock, on a new thread.
+  await expect(page.getByRole("dialog", { name: "New dashboard" })).toHaveCount(
+    0,
+  );
+  const dock = dockOf(page);
+  const box = dock.getByRole("textbox", { name: "Message" });
+  await expect(box).toHaveValue("Build me a dashboard for: ");
+  await expect(box).toBeFocused();
+  expect(
+    await box.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+      el.value.length,
+    ]),
+  ).toEqual([26, 26, 26]);
+  await expect(
+    dock.getByRole("button", { name: /^Threads: New thread/ }),
+  ).toBeVisible();
+  // What is typed follows it.
+  await page.keyboard.type("invoices by status");
+  await expect(box).toHaveValue("Build me a dashboard for: invoices by status");
+
+  // The sidebar's New dashboard starts it again, on a new thread.
+  await page
+    .getByRole("complementary")
+    .filter({ has: page.getByRole("navigation", { name: "Dashboards" }) })
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  await expect(box).toHaveValue("Build me a dashboard for: ");
+
+  // On a phone, Founder's drawer.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "New dashboard" })
+    .click();
+  const drawer = page.getByRole("dialog", { name: "Founder" });
+  await expect(drawer.getByRole("textbox", { name: "Message" })).toHaveValue(
+    "Build me a dashboard for: ",
+  );
+});
+
+test("a public dashboard's wide table scrolls inside its tile, never the page", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await loadContracts(page);
+  const WIDE = {
+    start: { type: "Invoice" },
+    steps: [{ via: "billed_to", dir: "out", to: "Customer" }],
+    return: {
+      rows: {
+        columns: [
+          { at: 1, prop: "name" },
+          { at: 1, prop: "currency" },
+          { at: 1 },
+          { at: 0 },
+          { at: 0, prop: "invoice_id" },
+          { at: 0, prop: "status" },
+          { at: 0, prop: "amount_due" },
+        ],
+      },
+    },
+  };
+  const id = await makeDashboard(page, "Collections", [
+    tile("w", "Unpaid or overdue invoices by account", WIDE, "table"),
+  ]);
+  const token = (
+    await postToWfe(page, `${D}/${id}:publish`, { expectedRevision: "1" })
+  ).dashboard.share.token as string;
+  const other = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const pub = await other.newPage();
+  await pub.goto(`/share/${token}`);
+  const table = pub
+    .getByRole("figure", { name: "Unpaid or overdue invoices by account" })
+    .getByRole("grid");
+  await expect(table.getByRole("columnheader")).toHaveCount(7);
+  await expect(
+    pub.getByRole("link", { name: "Helix Foundry", exact: true }),
+  ).toBeVisible();
+  // The table is wider than its tile and scrolls; the page doesn't.
+  expect(await table.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  expect(
+    await pub.evaluate(
+      () => document.scrollingElement!.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  // A fade at the right says there is more; scrolled to the end, at the left.
+  const wrap = pub.locator(".hf-grid-wrap");
+  await expect(wrap).toHaveClass(/is-scrolled-right/);
+  await table.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
+  await expect(wrap).toHaveClass(/is-scrolled-left/);
+  await expect(wrap).not.toHaveClass(/is-scrolled-right/);
+  // A header cut short shows whole on hover; numbers sit right.
+  await expect(
+    table.getByRole("columnheader").last().getByRole("button"),
+  ).toHaveAttribute("title", /amount_due|Amount due/i);
+  await expect(table.getByRole("columnheader").last()).toHaveClass(/is-right/);
+
+  // On a desktop it fits or scrolls the same way, the page never sideways.
+  await pub.setViewportSize({ width: 1440, height: 1000 });
+  expect(
+    await pub.evaluate(
+      () => document.scrollingElement!.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await other.close();
 });
 
 /** A change through the BFF, as another person's tab would make it. */
@@ -559,7 +770,7 @@ test("the share page says when its link is busy or failed", async ({
   await expect(
     pub.getByRole("heading", { name: "Too many tries from here" }),
   ).toBeVisible();
-  await expect(pub.getByText("A snapshot shared from")).toHaveCount(0);
+  await expect(pub.getByText("Made with Helix Foundry")).toHaveCount(0);
   answer = 500;
   await pub.reload();
   await expect(

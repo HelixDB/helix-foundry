@@ -97,7 +97,7 @@ async function reported<T>(
 export async function createDashboard(
   ws: string,
   body: CreateDashboardRequest,
-  from: "page" | "analyst",
+  from: "analyst",
 ): Promise<FoundryDashboard> {
   const { dashboard } = await reported("create", () =>
     api<DashboardResponse>(at(ws), body),

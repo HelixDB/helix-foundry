@@ -3,6 +3,7 @@ import type {
   DashboardSpec,
   DashboardTile,
   DashboardTileLoad,
+  FoundryDashboard,
   OntologyQuery,
   QueryOutput,
   VisualKind,
@@ -462,4 +463,95 @@ export function parseSnapshot(x: unknown): SharedDashboard | undefined {
       )
       .filter((r) => r.length),
   };
+}
+
+// ---------------------------------------------------------------- library
+
+/** What New dashboard starts Founder's composer with, the caret after it. */
+export const NEW_DASHBOARD_PROMPT = "Build me a dashboard for: ";
+
+/** Which of the library's dashboards show: every one, the pinned, or those the viewer made. */
+export type LibraryFilter = "all" | "pinned" | "yours";
+
+const folded = (text: string) =>
+  text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/**
+ * The dashboards the library shows, in the list's order (pinned first, as
+ * the WFE gives them): those `filter` keeps whose name or description holds
+ * every word of `query`, case and accents aside.
+ *
+ * @example
+ * const list = [{ id: "a", name: "Révenue", pinned: true }, { id: "b", name: "Churn", createdByUserId: "u1" }];
+ * libraryDashboards(list, { query: "reve", filter: "all", userId: "u1" }).map((d) => d.id); // ["a"]
+ * libraryDashboards(list, { query: "", filter: "yours", userId: "u1" }).map((d) => d.id); // ["b"]
+ */
+export function libraryDashboards<
+  D extends Pick<
+    FoundryDashboard,
+    "name" | "description" | "pinned" | "createdByUserId"
+  >,
+>(
+  list: readonly D[],
+  {
+    query,
+    filter,
+    userId,
+  }: { query: string; filter: LibraryFilter; userId: string },
+): D[] {
+  const words = folded(query).split(/\s+/).filter(Boolean);
+  return list.filter((d) => {
+    if (filter === "pinned" && !d.pinned) return false;
+    if (filter === "yours" && (!userId || d.createdByUserId !== userId))
+      return false;
+    const text = folded(`${d.name || ""}\n${d.description || ""}`);
+    return words.every((w) => text.includes(w));
+  });
+}
+
+/** How a tile draws in a dashboard's miniature: a number, bars, a line or a table's rows. */
+export type TileGlyph = "figure" | "bar" | "line" | "table";
+
+/**
+ * What a tile draws as, from its spec alone (no read): as its visual asks
+ * where its query's result can be drawn so (visualPlan's rules: one number
+ * is a figure or a table; groups and rows are bars, a line or a table),
+ * else as its result's shape suits: a count or an ungrouped aggregate is a
+ * figure, groups are bars, rows a table.
+ *
+ * @example
+ * tileGlyph({ query: { start: { type: "Invoice" }, return: { count: {} } }, visual: {} }); // "figure"
+ * tileGlyph({ query: { start: { type: "Invoice" }, return: { group_count: { at: 0, prop: "status" } } }, visual: { kind: "line" } }); // "line"
+ */
+export function tileGlyph(
+  tile: Pick<DashboardTile, "query" | "visual">,
+): TileGlyph {
+  // Read without trust: a spec's query is kept as the spec holds it.
+  const r: unknown = isRecord(tile.query) ? tile.query.return : undefined,
+    want = tile.visual.kind;
+  const agg = isRecord(r) && isRecord(r.aggregate) ? r.aggregate : undefined;
+  const one = isRecord(r) && ("count" in r || (!!agg && !agg.group_by));
+  const groups = isRecord(r) && ("group_count" in r || !!agg?.group_by);
+  if (one) return want === "table" ? "table" : "figure";
+  if (want === "bar" || want === "line" || want === "table") return want;
+  return groups ? "bar" : "table";
+}
+
+/** A tile in a dashboard's miniature: its title and how it draws. */
+export type PreviewTile = { id: string; title: string; glyph: TileGlyph };
+
+/**
+ * A dashboard's miniature, from its spec: its first `rows` rows of tiles,
+ * each with its title and glyph (the card crops what doesn't fit).
+ *
+ * @example
+ * previewRows({ v: 1, tiles: [t1, t2], layout: { rows: [["t1", "t2"]] } });
+ * // [[{ id: "t1", title: "Invoices", glyph: "figure" }, { id: "t2", title: "By status", glyph: "bar" }]]
+ */
+export function previewRows(spec: DashboardSpec, rows = 3): PreviewTile[][] {
+  return tileRows(spec)
+    .slice(0, rows)
+    .map((row) =>
+      row.map((t) => ({ id: t.id, title: t.title, glyph: tileGlyph(t) })),
+    );
 }

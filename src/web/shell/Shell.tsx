@@ -27,6 +27,7 @@ import {
   PanelSlotContext,
   ShellContext,
   type AssistantFrom,
+  type DockSeed,
   type PanelSlot,
 } from "./context";
 import {
@@ -226,19 +227,42 @@ export function Shell({
     () => (dockDrawer ? setDockDrawerOpen(false) : setDockStored("")),
     [dockDrawer, setDockStored],
   );
+  // What a compose asked the dock's new thread to start with, until the
+  // dock is next opened or closed another way.
+  const [dockSeed, setDockSeed] = useState<DockSeed | null>(null);
+  // Used once: a dock that mounts again (back from Founder's page, or
+  // between column and drawer) keeps its thread and starts empty.
+  useEffect(() => {
+    if (!dockOpen) setDockSeed(null);
+  }, [dockOpen]);
+  const opening = useCallback(
+    (from: AssistantFrom) => {
+      if (dockOpen) return;
+      trackEvent("agent_dock_opened", { from });
+      dockOpener.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+    },
+    [dockOpen],
+  );
   const toggleDock = useCallback(
     (from: AssistantFrom) => {
-      if (!dockOpen) {
-        trackEvent("agent_dock_opened", { from });
-        dockOpener.current =
-          document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null;
-      }
+      opening(from);
+      setDockSeed(null);
       if (dockDrawer) setDockDrawerOpen((o) => !o);
       else setDockStored((s) => (s === "open" ? "" : "open"));
     },
-    [dockOpen, dockDrawer, setDockStored],
+    [opening, dockDrawer, setDockStored],
+  );
+  const composeDock = useCallback(
+    (text: string, from: AssistantFrom) => {
+      opening(from);
+      setDockSeed((s) => ({ text, n: (s?.n ?? 0) + 1 }));
+      if (dockDrawer) setDockDrawerOpen(true);
+      else setDockStored("open");
+    },
+    [opening, dockDrawer, setDockStored],
   );
   useEffect(() => {
     if (!assistant) return;
@@ -286,9 +310,14 @@ export function Shell({
       },
       togglePanel: () =>
         narrow ? setDrawer((d) => !d) : setPanelHidden((h) => !h),
-      assistant: { available: assistant, open: dockOpen, toggle: toggleDock },
+      assistant: {
+        available: assistant,
+        open: dockOpen,
+        toggle: toggleDock,
+        compose: composeDock,
+      },
     }),
-    [narrow, assistant, dockOpen, toggleDock],
+    [narrow, assistant, dockOpen, toggleDock, composeDock],
   );
   const visit = useCallback(
     (title: string) =>
@@ -379,7 +408,7 @@ export function Shell({
               <aside className="hf-assistant" aria-label="Founder">
                 <ChromeBoundary name="Founder" fallback={dockFailed}>
                   <Suspense fallback={dockLoading}>
-                    <AgentDock onClose={closeDock} />
+                    <AgentDock onClose={closeDock} seed={dockSeed} />
                   </Suspense>
                 </ChromeBoundary>
               </aside>
@@ -394,7 +423,11 @@ export function Shell({
               >
                 <ChromeBoundary name="Founder" fallback={dockFailed}>
                   <Suspense fallback={dockLoading}>
-                    <AgentDock onClose={closeDock} onNavigate={closeDock} />
+                    <AgentDock
+                      onClose={closeDock}
+                      onNavigate={closeDock}
+                      seed={dockSeed}
+                    />
                   </Suspense>
                 </ChromeBoundary>
               </Dialog>

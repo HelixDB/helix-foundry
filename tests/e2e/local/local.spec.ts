@@ -10,6 +10,7 @@ import {
   createdOntology,
   explorer,
   file,
+  postToWfe,
   startOntology,
   uploadAndLoadContract,
   uploadCard,
@@ -1722,13 +1723,22 @@ test("says how to start a helper that isn't running, and when its Claude Code is
 
 test("makes dashboards, with no public link", async ({ page }) => {
   await page.goto("/dashboards");
+  // New dashboard asks Founder for one.
   await page
     .getByRole("main")
     .getByRole("button", { name: "New dashboard" })
     .click();
-  const create = page.getByRole("dialog", { name: "New dashboard" });
-  await create.getByLabel("Name").fill("Revenue");
-  await create.getByRole("button", { name: "Create dashboard" }).click();
+  await expect(
+    page
+      .getByRole("complementary", { name: "Founder" })
+      .getByRole("textbox", { name: "Message" }),
+  ).toHaveValue("Build me a dashboard for: ");
+  const { dashboard } = await postToWfe(
+    page,
+    "/v1/workspaces/ws_acme/foundry/dashboards",
+    { name: "Revenue", clientToken: "c-revenue" },
+  );
+  await page.goto(`/dashboards/${dashboard.id}`);
   await expect(
     page.getByRole("heading", { level: 1, name: "Revenue" }),
   ).toBeVisible();
