@@ -365,7 +365,11 @@ describe("signing in with a password", () => {
     [grpc(16, 401), 401, { error: "credentials" }],
     [grpc(7, 403), 403, { error: "denied" }],
     [grpc(14, 503), 503, { error: "unavailable" }],
-    [json({ code: 8, message: "slow down" }, 429), 503, { error: "unavailable" }],
+    [
+      json({ code: 8, message: "slow down" }, 429),
+      503,
+      { error: "unavailable" },
+    ],
     [
       json({ code: 3, message: "password is too long" }, 400),
       400,
@@ -482,12 +486,15 @@ describe("signing in with a password", () => {
     [{ ...form, email: "a@".padEnd(321, "x") }, "Enter your email."],
     [{ ...form, password: "" }, "Enter a password."],
     [{ ...form, password: 7 }, "Enter a password."],
-  ])("asks for what's missing without calling the WFE (%#)", async (body, message) => {
-    const res = await password("sign-in", body);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "refused", message });
-    expect(calls).toEqual([]);
-  });
+  ])(
+    "asks for what's missing without calling the WFE (%#)",
+    async (body, message) => {
+      const res = await password("sign-in", body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "refused", message });
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("says sign-in is away while the site isn't set up for it", async () => {
     vi.stubEnv("WORKOS_COOKIE_PASSWORD", "");
@@ -622,7 +629,11 @@ describe("resetting a password", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     const cookie = (res as NextResponse).cookies.get(RESET)!;
     expect(Buffer.from(cookie.value, "base64url").toString()).toBe("tok;1");
-    expect(cookie).toMatchObject({ httpOnly: true, sameSite: "lax", path: "/" });
+    expect(cookie).toMatchObject({
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
 
     // A link without one, or one too long, keeps what an earlier link kept.
     for (const q of ["", `?token=${"t".repeat(2049)}`]) {

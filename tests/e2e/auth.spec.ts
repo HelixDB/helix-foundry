@@ -318,12 +318,16 @@ test("resets a password from the emailed link", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Check your email" }),
   ).toBeVisible();
-  await expect(page.getByText("If an account uses ada@example.com")).toBeVisible();
+  await expect(
+    page.getByText("If an account uses ada@example.com"),
+  ).toBeVisible();
   // An address without an account reads the same, and gets no link.
   await page.getByRole("button", { name: "send another" }).click();
   await page.getByLabel("Email").fill("nobody@example.com");
   await page.getByRole("button", { name: "Email me a link" }).click();
-  await expect(page.getByText("If an account uses nobody@example.com")).toBeVisible();
+  await expect(
+    page.getByText("If an account uses nobody@example.com"),
+  ).toBeVisible();
   const resets = await mock.passwordResets();
   expect(resets.map((r) => r.email)).toEqual(["ada@example.com"]);
 

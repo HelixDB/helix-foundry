@@ -294,10 +294,7 @@ export const authRoutes: MockRoute[] = [
     handle: ({ body }) => {
       const req = (body || {}) as Partial<ResetPasswordRequest>;
       if (!req.token || !req.newPassword)
-        return fail(
-          "INVALID_ARGUMENT",
-          "token and new_password are required",
-        );
+        return fail("INVALID_ARGUMENT", "token and new_password are required");
       const user = db.users.get(db.passwordResets.get(req.token) ?? "");
       if (!user)
         return fail("INVALID_ARGUMENT", "reset link is invalid or expired");

@@ -44,11 +44,7 @@ import {
 import { StarPrompt } from "./shell/star-prompt";
 import { applyTheme, readTheme } from "./shell/theme";
 import { SignInPage, SignedInAs, VerifyEmailPage } from "./sign-in";
-import {
-  ForgotPasswordPage,
-  ResetPasswordPage,
-  SignUpPage,
-} from "./password";
+import { ForgotPasswordPage, ResetPasswordPage, SignUpPage } from "./password";
 import { WorkspacePicker } from "./areas/workspace/picker";
 import { myAccessQuery } from "./areas/workspace/access-api";
 import { granteeRedirect } from "./areas/workspace/access-model";

@@ -170,9 +170,7 @@ function field(form: Record<string, unknown>, key: string, max: number) {
 function splitName(raw: string) {
   const [firstName = "", ...rest] = raw.trim().split(/\s+/);
   if (!firstName) return null;
-  return rest.length
-    ? { firstName, lastName: rest.join(" ") }
-    : { firstName };
+  return rest.length ? { firstName, lastName: rest.join(" ") } : { firstName };
 }
 
 /**
@@ -309,8 +307,7 @@ export async function handlePassword(
   }
 
   if (!validEmail) return invalid("Enter your email.");
-  const returnPath =
-    parseReturnPath(field(form, "returnTo", MAX_BODY)) ?? "/";
+  const returnPath = parseReturnPath(field(form, "returnTo", MAX_BODY)) ?? "/";
   let called: Called;
   if (action === "sign-up") {
     const name = splitName(field(form, "name", MAX_NAME) ?? "");
