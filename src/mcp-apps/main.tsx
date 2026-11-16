@@ -5,6 +5,7 @@ import "../web/areas/ontology/ask.css";
 import "../web/areas/ontology/ask-visual.css";
 import "./answer.css";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { App } from "@modelcontextprotocol/ext-apps";
 import { AnswerView } from "./answer";
 import { answerCard, type AnswerCard } from "./answer-model";
@@ -22,13 +23,18 @@ const app = new App(
 const root = createRoot(document.getElementById("root")!);
 let card: AnswerCard | undefined, asking: string | undefined;
 
+// The Analyst's components link with react-router; in the frame nothing
+// navigates (the card's links open through the host), so a memory router
+// only gives them their context.
 const render = () =>
   root.render(
-    <AnswerView
-      card={card}
-      asking={asking}
-      open={(url) => void app.openLink({ url })}
-    />,
+    <MemoryRouter>
+      <AnswerView
+        card={card}
+        asking={asking}
+        open={(url) => void app.openLink({ url })}
+      />
+    </MemoryRouter>,
   );
 // The host's light or dark, as the website's own choice (data-theme).
 const theme = (t?: string) => {

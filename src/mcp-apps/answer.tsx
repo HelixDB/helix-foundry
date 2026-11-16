@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Component, Fragment, type ReactNode } from "react";
 import {
   Ban,
   CircleAlert,
@@ -163,7 +163,11 @@ function Body({ card, open }: { card: QuestionCard; open: Open }) {
       );
     case "retrying":
       return (
-        <Note icon={LoaderCircle} title="An attempt failed. Helix will try again" live>
+        <Note
+          icon={LoaderCircle}
+          title="An attempt failed. Helix will try again"
+          live
+        >
           {view.error}
         </Note>
       );
@@ -181,7 +185,11 @@ function Body({ card, open }: { card: QuestionCard; open: Open }) {
       );
     case "budget_exhausted":
       return (
-        <Note icon={Gauge} tone="danger" title="Stopped at this question’s limit">
+        <Note
+          icon={Gauge}
+          tone="danger"
+          title="Stopped at this question’s limit"
+        >
           It used what a question may before it could answer. Ask something
           narrower.
         </Note>
@@ -191,7 +199,11 @@ function Body({ card, open }: { card: QuestionCard; open: Open }) {
         draft = draftLink(card);
       return (
         <div className="mx-stack">
-          <Note icon={FileQuestion} tone="muted" title="This ontology can’t answer that">
+          <Note
+            icon={FileQuestion}
+            tone="muted"
+            title="This ontology can’t answer that"
+          >
             {result.kind && <Tag>{CANNOT_ANSWER_LABELS[result.kind]}</Tag>}{" "}
             {result.reason || "What it holds doesn’t say."}
             {result.gap && <> It lacks: {result.gap}</>}
@@ -208,6 +220,23 @@ function Body({ card, open }: { card: QuestionCard; open: Open }) {
     }
     case "answered":
       return <Answered card={card} result={view.result} open={open} />;
+  }
+}
+
+/**
+ * What a card shows when drawing its answer throws (data the Analyst's
+ * components didn't expect): that it couldn't, never a blank frame.
+ */
+class Drawn extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
 
@@ -235,12 +264,29 @@ export function AnswerView({
       {!card ? (
         <Note icon={LoaderCircle} title="Asking Foundry" live />
       ) : card.kind === "refused" ? (
-        <Note icon={CircleAlert} tone="danger" title="Foundry didn’t take the question">
+        <Note
+          icon={CircleAlert}
+          tone="danger"
+          title="Foundry didn’t take the question"
+        >
           {card.message}
         </Note>
       ) : (
         <>
-          <Body card={card} open={open} />
+          <Drawn
+            key={card.finishedAt ?? card.view.kind}
+            fallback={
+              <Note
+                icon={CircleAlert}
+                tone="danger"
+                title="This answer couldn’t be drawn here"
+              >
+                {card.askUrl ? "Open it in the Analyst to read it." : undefined}
+              </Note>
+            }
+          >
+            <Body card={card} open={open} />
+          </Drawn>
           {(card.askUrl || card.finishedAt) && (
             <footer className="mx-foot">
               {card.finishedAt && card.view.kind === "answered" && (

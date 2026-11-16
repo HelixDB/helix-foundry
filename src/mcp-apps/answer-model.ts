@@ -74,7 +74,9 @@ export function webUrl(x: unknown): string | undefined {
   if (!s) return undefined;
   try {
     const u = new URL(s);
-    return u.protocol === "https:" || u.protocol === "http:" ? u.href : undefined;
+    return u.protocol === "https:" || u.protocol === "http:"
+      ? u.href
+      : undefined;
   } catch {
     return undefined;
   }
@@ -184,7 +186,7 @@ function citations(card: QuestionCard): CitationContext {
  * @example
  * const card = { kind: "question", question: "", view: { kind: "running" }, loadId: "l1", askUrl: "https://foundry.helix-db.com/ask/o1?workspace=w1&thread=q1" } as const;
  * citationLink(card, { quote: { doc_id: "d1", section: 0, start: 4, end: 9 } });
- * // "https://foundry.helix-db.com/ontology/o1/documents/d1?load=l1#s0-4-9&workspace=w1" (the document's span)
+ * // "https://foundry.helix-db.com/ontology/o1/documents/d1?load=l1&workspace=w1#s0-4-9" (the document's span)
  * citationLink(card, { entity: { type: "Customer", id: "acme" } }); // card.askUrl
  */
 export function citationLink(

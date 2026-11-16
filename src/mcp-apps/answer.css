@@ -1,6 +1,12 @@
 /* The answer view's frame: one card the host sizes to its content (the view
    reports its height). Its parts are the Analyst's (ask.css, ask-visual.css,
    ontology.css's callouts), with the website's tokens. */
+:root {
+  /* The website's Geist comes from next/font, which the tokens' font stacks
+     name first; the frame has none, so they start at the system's. */
+  --font-geist-sans: system-ui;
+  --font-geist-mono: ui-monospace;
+}
 html,
 body {
   margin: 0;
