@@ -167,7 +167,7 @@ export function FounderPage() {
   // ask about, so no composer, whichever view the link names.
   if (access === "none")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar
           title={view.kind === "analyst" ? "Earlier question" : "Founder"}
         >
@@ -203,7 +203,7 @@ export function FounderPage() {
 
   if (view.kind === "threads")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title="Founder">{picker}</ChatBar>
         <div className="ak-scroll">
           <FounderThreads />
@@ -213,7 +213,7 @@ export function FounderPage() {
 
   if (view.kind === "chat")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={thread.data?.thread.title || "Thread"} onBack={back}>
           {picker}
         </ChatBar>
@@ -251,7 +251,7 @@ export function FounderPage() {
   const nothing = selection.choice.kind === "none" && !selection.pending;
   const name = ontologyName(ontology);
   return (
-    <div className="ak-chat ag-dots">
+    <div className="ak-chat">
       <ChatBar onBack={back}>{picker}</ChatBar>
       <div className="ak-scroll">
         <div className="ak-start fd-start" data-replay-block>
