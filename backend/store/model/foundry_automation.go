@@ -219,9 +219,39 @@ type FoundryAutomationRunNode struct {
 	Error          *string
 	TurnID         *string
 	NotificationID *string
-	USDMicros      int64
-	StartedAt      time.Time
-	FinishedAt     *time.Time
+	// JobID is the sync or load an action step started and waits for, while
+	// it runs; its action says which.
+	JobID      *string
+	USDMicros  int64
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
+
+// FoundryAutomationJobKind is the work an action step waits for: a closed set.
+type FoundryAutomationJobKind string
+
+const (
+	FoundryAutomationJobSync FoundryAutomationJobKind = "sync"
+	FoundryAutomationJobLoad FoundryAutomationJobKind = "load"
+)
+
+// FoundryAutomationJob is a sync (connector_syncs) or a load (foundry_loads)
+// an automation's run started, by id.
+type FoundryAutomationJob struct {
+	Kind FoundryAutomationJobKind
+	ID   string
+}
+
+// FoundryAutomationCause is the automation run that started a sync or a
+// load, as an event trigger reads it: the run, its automation ("" once the
+// run is gone), the automations that set the run off in turn (its event's
+// CausedBy), and Depth, how many automation runs led to the work, that one
+// included.
+type FoundryAutomationCause struct {
+	RunID        string
+	AutomationID string
+	Chain        []string
+	Depth        int
 }
 
 // FoundryAutomationNodeEnd ends a step: succeeded with its output, skipped
@@ -269,6 +299,12 @@ type FoundryAutomationEvent struct {
 	Rows *int64 `json:"rows,omitempty"`
 	// ByUserID is who ran it by hand.
 	ByUserID string `json:"by_user_id,omitempty"`
+	// CausedBy are the automations whose runs started the work that fired it,
+	// and the automations that set those off in turn; ChainDepth is how many
+	// automation runs led to that work (0: a person, a schedule or Foundry).
+	// A sync or load the run starts is one deeper.
+	CausedBy   []string `json:"caused_by_automations,omitempty"`
+	ChainDepth int      `json:"chain_depth,omitempty"`
 }
 
 // FoundryAutomationEnded is one row of work an event trigger found ended: a
@@ -279,6 +315,9 @@ type FoundryAutomationEnded struct {
 	Outcome string
 	// Rows is what a sync wrote.
 	Rows *int64
+	// Cause is the automation run that started a sync or a load; nil for
+	// work a person or Foundry itself started, and for other work.
+	Cause *FoundryAutomationCause
 }
 
 // FoundryAutomationAdvance is how a fire moves its automation on: a closed
@@ -300,7 +339,8 @@ func (FoundryCursorAdvance) advance()   {}
 // FoundryAutomationFire moves an automation on (Advance) and queues Run, with
 // its trigger's output (TriggerNodeID's, TriggerOutput), in one write; a nil
 // Run only moves it on (the work found fires nothing). Run's spec is the
-// automation's as it is.
+// automation's as it is. Skip, with Run, records Run as skipped saying why
+// (the work found would loop), whether or not a run is live.
 type FoundryAutomationFire struct {
 	AutomationID  string
 	WorkspaceID   string
@@ -308,6 +348,7 @@ type FoundryAutomationFire struct {
 	Run           *FoundryAutomationRun
 	TriggerNodeID string
 	TriggerOutput json.RawMessage
+	Skip          string
 }
 
 // FoundryAutomationFired is what a fire did: a closed set.
@@ -319,7 +360,8 @@ const (
 	// FoundryAutomationFiredMoved only moved it on.
 	FoundryAutomationFiredMoved FoundryAutomationFired = "moved"
 	// FoundryAutomationFiredSkipped recorded its run as skipped: a run of it
-	// was live (a schedule's), or the workspace ran its runs of the day.
+	// was live (a schedule's), the workspace ran its runs of the day, or the
+	// work found would loop (Skip).
 	FoundryAutomationFiredSkipped FoundryAutomationFired = "skipped"
 	// FoundryAutomationFiredWaiting changed nothing: a run of it is live, and
 	// the work found waits for it to end (an event trigger's).

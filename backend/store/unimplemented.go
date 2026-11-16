@@ -1585,6 +1585,16 @@ func (u Unimplemented) EndFoundryAutomationNode(context.Context, string, string,
 	return nil
 }
 
+func (u Unimplemented) AwaitFoundryAutomationJob(context.Context, string, string, string, model.FoundryAutomationJob, json.RawMessage) error {
+	u.unimplemented("AwaitFoundryAutomationJob")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundryAutomationCause(context.Context, string, model.FoundryAutomationJob) error {
+	u.unimplemented("MarkFoundryAutomationCause")
+	return nil
+}
+
 func (u Unimplemented) YieldFoundryAutomationRun(context.Context, string, string, time.Time) error {
 	u.unimplemented("YieldFoundryAutomationRun")
 	return nil

@@ -531,6 +531,8 @@ type Store interface {
 	StartFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, status model.FoundryAutomationNodeStatus) error
 	StartFoundryAutomationAssistant(ctx context.Context, runID, workerID, nodeID string, thread *model.FoundryAgentThread, turn *model.FoundryAgentTurn) error
 	EndFoundryAutomationNode(ctx context.Context, runID, workerID, nodeID string, end model.FoundryAutomationNodeEnd) error
+	AwaitFoundryAutomationJob(ctx context.Context, runID, workerID, nodeID string, job model.FoundryAutomationJob, output json.RawMessage) error
+	MarkFoundryAutomationCause(ctx context.Context, runID string, job model.FoundryAutomationJob) error
 	YieldFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time) error
 	RetryFoundryAutomationRun(ctx context.Context, id, workerID string, at time.Time, why string) error
 	FinishFoundryAutomationRun(ctx context.Context, id, workerID string, end model.FoundryAutomationRunEnd) error
