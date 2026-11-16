@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { FOUNDER } from "../../../shared/deployment";
 import {
   ArrowLeft,
   ArrowRight,
@@ -302,7 +303,7 @@ function Entity({
   identity: EntityIdentity;
   crumbs: { label: string; to: string }[];
 }) {
-  const { id } = useWorkspace(),
+  const { id, grantee } = useWorkspace(),
     { id: o, ontology } = useOntology();
   const { access, reader } = useGraphReader(),
     shared = access === "grants";
@@ -560,6 +561,21 @@ function Entity({
     );
   };
   const name = e.name || ("key" in identity ? identity.key : identity.name);
+  // Where Founder is asked, a new chat about it on its page; else the
+  // Analyst's, in a drawer.
+  const askAbout =
+    FOUNDER && !grantee ? (
+      <ButtonLink
+        icon={MessageSquarePlus}
+        to={link(paths.ask(o, { new: true, about: name }))}
+      >
+        Ask about this
+      </ButtonLink>
+    ) : (
+      <Button icon={MessageSquarePlus} onClick={() => setAsking(true)}>
+        Ask about this
+      </Button>
+    );
   // Entities of the rules' answers, named as this page names them.
   const known = new Map(
     [
@@ -623,11 +639,7 @@ function Entity({
         actions={
           <>
             {pickers}
-            {selection.choice.kind === "load" && (
-              <Button icon={MessageSquarePlus} onClick={() => setAsking(true)}>
-                Ask about this
-              </Button>
-            )}
+            {selection.choice.kind === "load" && askAbout}
             {shared ? (
               <ButtonLink icon={Table2} to={paths.records(o)}>
                 Records

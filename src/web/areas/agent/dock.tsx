@@ -52,6 +52,7 @@ import {
   writeStorage,
 } from "../../kit";
 import { activeSection } from "../../shell/nav";
+import { recordQuestionAsked } from "../../shell/star-prompt";
 import { useWorkspace } from "../../ui";
 import { loadVersion } from "../ontology/model";
 import { dashboardQueries } from "../dashboards/queries";
@@ -1174,6 +1175,7 @@ export function Composer({
       );
       setText("");
       setToken(crypto.randomUUID());
+      void recordQuestionAsked();
       onSent(r.thread.id);
     } catch (e) {
       setError(e);

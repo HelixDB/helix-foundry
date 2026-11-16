@@ -868,25 +868,27 @@ test("a member reading through grants isn't sent to query the database", async (
   ).toHaveCount(0);
 });
 
-test("the threads say why they can't be read, with a retry", async ({
+test("the Analyst's threads say why they can't be read, with a retry", async ({
   page,
 }) => {
   await signIn(page);
   let refuse = true;
   await page.route(
-    "**/papi/v1/workspaces/*/foundry/ontologies/ont_acme_contracts",
+    (url) =>
+      url.pathname.endsWith("/ontologies/ont_acme_contracts/questions") &&
+      !url.searchParams.has("threadId"),
     (route) =>
       refuse && route.request().method() === "GET"
         ? route.fulfill({
             status: 500,
-            json: { code: 13, message: "the ontology couldn't be read" },
+            json: { code: 13, message: "the questions couldn't be read" },
           })
         : route.fallback(),
   );
   await page.goto("/ask/ont_acme_contracts");
   const threads = page.getByRole("navigation", { name: "Threads" });
   await expect(threads.getByRole("alert")).toContainText(
-    "Couldn’t read the threads: the ontology couldn't be read",
+    "Couldn’t read the Analyst threads: the questions couldn't be read",
     { timeout: 15_000 },
   );
   refuse = false;
@@ -996,7 +998,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
   ).toHaveText([
-    "Analyst",
+    "Founder",
     "Dashboards",
     "Automations",
     "Ontologies",

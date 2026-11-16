@@ -1,4 +1,5 @@
 import {
+  askAnalyst,
   expect,
   mock,
   signIn,
@@ -130,15 +131,8 @@ test("follows a stored rule break from Ask to its record and its entity's Needs 
   await signIn(page);
   await uploadAndLoadContract(page);
   // An answer cites the load's first stored break of invoice_under_contract.
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
-  const form = page.getByRole("form", { name: "Ask a question" });
-  await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("Which invoices break a rule?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
-  const answer = page
-    .getByRole("article", { name: "Question: Which invoices break a rule?" })
-    .getByRole("region", { name: "Answer" });
+  const question = await askAnalyst(page, "Which invoices break a rule?");
+  const answer = question.getByRole("region", { name: "Answer" });
   await answer
     .getByRole("link", {
       name: /^Source \d+: A break of invoice_under_contract$/,
