@@ -8,8 +8,10 @@ import {
   useLocation,
   useParams,
 } from "react-router-dom";
+import { FOUNDER } from "../../../shared/deployment";
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
+import { useWorkspace } from "../../ui";
 import { AskPage } from "./ask";
 import { GeneratePage } from "./generate";
 import { GenerationPage } from "./generations";
@@ -54,6 +56,10 @@ const ConnectionsPage = lazy(() =>
   ),
   WorkflowRunPage = lazy(() =>
     import("../workflows").then((m) => ({ default: m.WorkflowRunPage })),
+  ),
+  // Founder's page brings the dock's conversation with it.
+  FounderPage = lazy(() =>
+    import("./founder-page").then((m) => ({ default: m.FounderPage })),
   );
 
 // /ontology/:ontologyId/versions/:versionId
@@ -164,16 +170,27 @@ export function ExploreRoutes() {
 }
 
 // /ask/*: Ask's route table, a section of its own: questions about an
-// ontology's load, inside its scope. /ask opens an ontology's.
+// ontology's load, inside its scope. /ask opens an ontology's, keeping the
+// link's query (a Founder thread's `?chat=`). Where the build has Founder
+// and the user isn't a grantee, it is Founder's page; else the Analyst's.
 export function AskRoutes() {
+  const { grantee } = useWorkspace(),
+    founder = FOUNDER && !grantee;
   return (
     <Routes>
       <Route
         index
-        element={<OpenOntology title="Analyst" to={paths.ask} reads />}
+        element={
+          <OpenOntology
+            title={founder ? "Founder" : "Analyst"}
+            to={paths.ask}
+            reads
+            keepQuery
+          />
+        }
       />
       <Route path=":ontologyId" element={<OntologyScope explores />}>
-        <Route index element={<AskPage />} />
+        <Route index element={founder ? <FounderPage /> : <AskPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />
