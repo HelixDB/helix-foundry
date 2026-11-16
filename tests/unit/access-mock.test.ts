@@ -1700,7 +1700,11 @@ describe("a grantee's Founder", () => {
     expect((await eve("GET", `${AG}/threads/${thread}`)).status).toBe(200);
     await grant(user("usr_eve"), [
       general,
-      { kind: "KIND_TABLE", connectorId: stripe.connectorId, table: "customers" },
+      {
+        kind: "KIND_TABLE",
+        connectorId: stripe.connectorId,
+        table: "customers",
+      },
     ]);
     expect(refusal(await eve("GET", `${AG}/threads/${thread}`))).toEqual([
       404,

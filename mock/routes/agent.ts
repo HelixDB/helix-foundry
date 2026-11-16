@@ -5002,7 +5002,8 @@ export const agentRoutes: MockRoute[] = [
         req.params.id!,
         p.grantee,
       );
-      if (!t) return turnMissing(ws, p.userId, req.params.id!);
+      if (!t)
+        return turnMissing(req.params.workspaceId!, p.userId, req.params.id!);
       advance(t);
       const after = Number(req.query.get("afterSeq") || 0) || 0;
       return ok({
