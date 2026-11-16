@@ -27,7 +27,7 @@
   ],
   "$defs": {
     "Aggregate": {
-      "description": "An aggregate of a numeric property, over all of a position's entities or by groups.",
+      "description": "An aggregate of a number of each entity, over all of a position's entities or by groups.",
       "type": "object",
       "properties": {
         "at": {
@@ -58,20 +58,41 @@
           "format": "uint",
           "default": 50,
           "minimum": 0
-        },
-        "prop": {
-          "description": "The property: an integer or float.",
-          "type": "string"
         }
       },
-      "additionalProperties": false,
+      "oneOf": [
+        {
+          "description": "A property (or `name`, for a column or an order).",
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prop"
+          ]
+        },
+        {
+          "description": "A value computed from two of the entity's properties.",
+          "type": "object",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "expr"
+          ]
+        }
+      ],
       "required": [
         "fn",
         "at",
-        "prop",
         "group_by",
         "limit"
-      ]
+      ],
+      "unevaluatedProperties": false
     },
     "AggregateGroup": {
       "description": "One group of an aggregate.",
@@ -84,6 +105,12 @@
             "null"
           ],
           "format": "double"
+        },
+        "skipped": {
+          "description": "How many of the group's entities a computed measure (`expr`) had no value for, so the\naggregate leaves them out; 0 (and absent) for a property.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
         },
         "value": {
           "description": "The group's value; `null` for the entities without one."
@@ -404,6 +431,12 @@
               "type": "string",
               "const": "aggregate"
             },
+            "skipped": {
+              "description": "How many of the entities a computed measure (`expr`) had no value for, so the\naggregate leaves them out; 0 (and absent) for a property.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
             "value": {
               "description": "Its value; `null` for a mean, least or greatest of no values.",
               "type": [
@@ -468,7 +501,7 @@
       ]
     },
     "Column": {
-      "description": "One column of rows.",
+      "description": "One column of rows: the entity at a position, one of its properties, or a value computed\nfrom two of them.",
       "type": "object",
       "properties": {
         "at": {
@@ -477,8 +510,19 @@
           "format": "uint",
           "minimum": 0
         },
+        "expr": {
+          "description": "A value computed from two of the entity's properties (see `Expr`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expr"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "prop": {
-          "description": "A property, or `name`; the entity itself if `null`.",
+          "description": "A property, or `name`; the entity itself if `null` and no `expr`.",
           "type": [
             "string",
             "null"
@@ -723,6 +767,65 @@
             "mapping",
             "row_key",
             "confidence"
+          ]
+        }
+      ]
+    },
+    "Expr": {
+      "description": "A number computed from two properties of one entity, each named by its property. An entity\nhas none where either property has no value, a date isn't to the day, or the result isn't a\nfinite number (a ratio's second is zero, an integer difference overflows): a column shows\n`null`, an order puts it with the absent, and an aggregate skips it and says how many it\nskipped.",
+      "oneOf": [
+        {
+          "description": "Days from the first date or datetime to the second, negative if the second is earlier:\nwhole days between two dates, fractional where either is a datetime (a date counts from\nits midnight UTC). A date to the year or the month only has no day: no value.",
+          "type": "object",
+          "properties": {
+            "days_between": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "days_between"
+          ]
+        },
+        {
+          "description": "The first number minus the second: an integer of two integers, a float otherwise.",
+          "type": "object",
+          "properties": {
+            "diff": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "diff"
+          ]
+        },
+        {
+          "description": "The first number divided by the second, a float: no value where the second is zero.",
+          "type": "object",
+          "properties": {
+            "ratio": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ratio"
           ]
         }
       ]
@@ -1152,18 +1255,39 @@
           "description": "Greatest first.",
           "type": "boolean",
           "default": false
-        },
-        "prop": {
-          "description": "The property, or `name`.",
-          "type": "string"
         }
       },
-      "additionalProperties": false,
+      "oneOf": [
+        {
+          "description": "A property (or `name`, for a column or an order).",
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prop"
+          ]
+        },
+        {
+          "description": "A value computed from two of the entity's properties.",
+          "type": "object",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "expr"
+          ]
+        }
+      ],
       "required": [
         "at",
-        "prop",
         "desc"
-      ]
+      ],
+      "unevaluatedProperties": false
     },
     "PartFailure": {
       "description": "Why part of an entity read has no answer.",
@@ -1819,7 +1943,7 @@
       "description": "Where a query's return is computed.",
       "oneOf": [
         {
-          "description": "In the store, over the last position's stream: a count, counts by value or an\nungrouped aggregate at the last position of an all-stated query, or the first rows of\nan all-stated query of one position.",
+          "description": "In the store, over the last position's stream: a count, counts by value or an\nungrouped aggregate of a property at the last position of an all-stated query, or the\nfirst rows of an all-stated query of one position not ordered by a computed value.",
           "type": "string",
           "const": "store"
         },

@@ -2513,6 +2513,24 @@ export type QueryWhere = {
 };
 
 /**
+ * A number computed from two props of one entity (contract 4.26.0): days
+ * from one date or datetime to another, a difference, or a ratio. An entity
+ * missing either prop (or dividing by zero) has none.
+ */
+export type QueryExpr =
+  | { days_between: [string, string] }
+  | { diff: [string, string] }
+  | { ratio: [string, string] };
+
+/**
+ * What a column, an order or an aggregate reads of each entity: one prop,
+ * or a number computed from two (`expr`); never both.
+ */
+export type QueryMeasure =
+  | { prop: string; expr?: never }
+  | { expr: QueryExpr; prop?: never };
+
+/**
  * A typed ontology query (extraction::query::typed): the `query` tool's
  * input as the model wrote it (defaults left out), a query read, and a
  * result's `queries` (every field written, entity ids resolved).
@@ -2539,9 +2557,10 @@ export type OntologyQuery = {
   return:
     | {
         rows: {
-          // A prop (or `name`) of the entity at `at`; the entity if none.
-          columns: { at: number; prop?: string | null }[];
-          order_by?: { at: number; prop: string; desc?: boolean } | null;
+          // A prop (or `name`) of the entity at `at`, or a number computed
+          // from two of its props; the entity if neither.
+          columns: { at: number; prop?: string | null; expr?: QueryExpr }[];
+          order_by?: ({ at: number; desc?: boolean } & QueryMeasure) | null;
           limit?: number;
           // Rows, in order, to pass over first; at most 10,000.
           offset?: number;
@@ -2554,10 +2573,9 @@ export type OntologyQuery = {
         aggregate: {
           fn: "sum" | "avg" | "min" | "max";
           at: number;
-          prop: string;
           group_by?: { at: number; prop: string } | null;
           limit?: number;
-        };
+        } & QueryMeasure;
       };
 };
 
@@ -2651,12 +2669,19 @@ export type QueryOutput = (
       groups: { value: unknown; count: number }[];
       total_groups: number;
     }
-  // `value` is null for a mean, least or greatest of no values.
-  | { kind: "aggregate"; value: number | null; values: number }
+  // `value` is null for a mean, least or greatest of no values. `skipped`
+  // (contract 4.26.0) counts the entities a computed measure had no value
+  // for; left out when none were.
+  | { kind: "aggregate"; value: number | null; values: number; skipped?: number }
   | {
       kind: "grouped_aggregate";
       // Greatest first, then by value, the entities without one last.
-      groups: { value: unknown; aggregate: number | null; values: number }[];
+      groups: {
+        value: unknown;
+        aggregate: number | null;
+        values: number;
+        skipped?: number;
+      }[];
       total_groups: number;
     }
 ) & { cut?: string | null };

@@ -83,7 +83,7 @@
   ],
   "$defs": {
     "Aggregate": {
-      "description": "An aggregate of a numeric property, over all of a position's entities or by groups.",
+      "description": "An aggregate of a number of each entity, over all of a position's entities or by groups.",
       "type": "object",
       "properties": {
         "at": {
@@ -114,18 +114,39 @@
           "format": "uint",
           "default": 50,
           "minimum": 0
-        },
-        "prop": {
-          "description": "The property: an integer or float.",
-          "type": "string"
         }
       },
-      "additionalProperties": false,
+      "oneOf": [
+        {
+          "description": "A property (or `name`, for a column or an order).",
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prop"
+          ]
+        },
+        {
+          "description": "A value computed from two of the entity's properties.",
+          "type": "object",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "expr"
+          ]
+        }
+      ],
       "required": [
         "fn",
-        "at",
-        "prop"
-      ]
+        "at"
+      ],
+      "unevaluatedProperties": false
     },
     "AsOf": {
       "description": "A calendar date, YYYY-MM-DD.",
@@ -133,7 +154,7 @@
       "format": "date"
     },
     "Column": {
-      "description": "One column of rows.",
+      "description": "One column of rows: the entity at a position, one of its properties, or a value computed\nfrom two of them.",
       "type": "object",
       "properties": {
         "at": {
@@ -142,8 +163,19 @@
           "format": "uint",
           "minimum": 0
         },
+        "expr": {
+          "description": "A value computed from two of the entity's properties (see `Expr`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expr"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "prop": {
-          "description": "A property, or `name`; the entity itself if `null`.",
+          "description": "A property, or `name`; the entity itself if `null` and no `expr`.",
           "type": [
             "string",
             "null"
@@ -332,6 +364,65 @@
       "required": [
         "pred",
         "args"
+      ]
+    },
+    "Expr": {
+      "description": "A number computed from two properties of one entity, each named by its property. An entity\nhas none where either property has no value, a date isn't to the day, or the result isn't a\nfinite number (a ratio's second is zero, an integer difference overflows): a column shows\n`null`, an order puts it with the absent, and an aggregate skips it and says how many it\nskipped.",
+      "oneOf": [
+        {
+          "description": "Days from the first date or datetime to the second, negative if the second is earlier:\nwhole days between two dates, fractional where either is a datetime (a date counts from\nits midnight UTC). A date to the year or the month only has no day: no value.",
+          "type": "object",
+          "properties": {
+            "days_between": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "days_between"
+          ]
+        },
+        {
+          "description": "The first number minus the second: an integer of two integers, a float otherwise.",
+          "type": "object",
+          "properties": {
+            "diff": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "diff"
+          ]
+        },
+        {
+          "description": "The first number divided by the second, a float: no value where the second is zero.",
+          "type": "object",
+          "properties": {
+            "ratio": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ratio"
+          ]
+        }
       ]
     },
     "FactRef": {
@@ -575,17 +666,38 @@
           "description": "Greatest first.",
           "type": "boolean",
           "default": false
-        },
-        "prop": {
-          "description": "The property, or `name`.",
-          "type": "string"
         }
       },
-      "additionalProperties": false,
+      "oneOf": [
+        {
+          "description": "A property (or `name`, for a column or an order).",
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prop"
+          ]
+        },
+        {
+          "description": "A value computed from two of the entity's properties.",
+          "type": "object",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "expr"
+          ]
+        }
+      ],
       "required": [
-        "at",
-        "prop"
-      ]
+        "at"
+      ],
+      "unevaluatedProperties": false
     },
     "PatternRead": {
       "description": "The facts of `pred` whose bound arguments are these entities.",

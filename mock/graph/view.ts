@@ -1,5 +1,9 @@
 import { parse, stringify } from "smol-toml";
-import type { OntologyQuery } from "../../src/shared/wfe";
+import type { OntologyQuery, QueryExpr } from "../../src/shared/wfe";
+
+/** An expression's two props, in order. */
+const exprProps = (e: QueryExpr): string[] =>
+  "days_between" in e ? e.days_between : "diff" in e ? e.diff : e.ratio;
 import { isRecord } from "../../src/shared/json";
 
 // What one reader may see of a load, as the ontology agent's `mapping::view`
@@ -421,11 +425,11 @@ export function narrows(view: View, q: OntologyQuery) {
     positions = positionsOf(q);
   const columnPartial =
     "rows" in q.return &&
-    q.return.rows.columns.some(
-      (c) =>
-        !!c.prop &&
-        c.prop !== "name" &&
-        view.props.get(key(positions[c.at]!, c.prop)) === "partial",
+    q.return.rows.columns.some((c) =>
+      (c.expr ? exprProps(c.expr) : c.prop ? [c.prop] : []).some(
+        (p) =>
+          p !== "name" && view.props.get(key(positions[c.at]!, p)) === "partial",
+      ),
     );
   return (
     columnPartial ||
@@ -497,8 +501,23 @@ export function admit(view: View, q: OntologyQuery) {
         "/return/rows/offset",
         `\`${positions.find((t) => view.types.get(t) === "partial") || positions[0]}\`, which can't be paged,`,
       );
-    if (order_by && !fullProp(positions[order_by.at], order_by.prop))
-      return refused("/return/rows/order_by/prop", `\`${order_by.prop}\``);
+    if (order_by) {
+      const props = order_by.expr ? exprProps(order_by.expr) : [order_by.prop];
+      if (!props.every((p) => fullProp(positions[order_by.at], p)))
+        return refused(
+          `/return/rows/order_by/${order_by.expr ? "expr" : "prop"}`,
+          props.map((p) => `\`${p}\``).join(" and "),
+        );
+    }
+    // A number computed from what it sees only some of can't be settled.
+    for (const [k, c] of columns.entries()) {
+      const props = c.expr ? exprProps(c.expr) : [];
+      if (!props.every((p) => fullProp(positions[c.at], p)))
+        return refused(
+          `/return/rows/columns/${k}/expr`,
+          props.map((p) => `\`${p}\``).join(" and "),
+        );
+    }
     const named = (at: number) => columns.some((c) => c.at === at);
     for (const [at, type] of positions.entries())
       if (view.types.get(type) === "partial" && !named(at))
@@ -520,8 +539,12 @@ export function admit(view: View, q: OntologyQuery) {
   const path = wholePath();
   if (path) return path;
   const a = ret.aggregate;
-  if (!fullProp(positions[a.at], a.prop))
-    return refused("/return/aggregate/prop", `\`${a.prop}\``);
+  const props = a.expr ? exprProps(a.expr) : [a.prop];
+  if (!props.every((p) => fullProp(positions[a.at], p)))
+    return refused(
+      `/return/aggregate/${a.expr ? "expr" : "prop"}`,
+      props.map((p) => `\`${p}\``).join(" and "),
+    );
   return a.group_by && !fullProp(positions[a.group_by.at], a.group_by.prop)
     ? refused("/return/aggregate/group_by/prop", `\`${a.group_by.prop}\``)
     : undefined;

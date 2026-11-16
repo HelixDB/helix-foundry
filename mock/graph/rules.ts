@@ -12,6 +12,7 @@ import {
   type Severity,
 } from "../../src/shared/foundry-read";
 import { contractErrors } from "../agent-contract";
+import type { QueryExpr } from "../../src/shared/wfe";
 import type { LoadGraph, MockNode } from "./store";
 import {
   MAX_SETTLED_ROWS,
@@ -1075,6 +1076,47 @@ const words = (s: string) =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 
+/** An expression's two props, in order. */
+const exprOperands = (e: QueryExpr): [string, string] =>
+  "days_between" in e ? e.days_between : "diff" in e ? e.diff : e.ratio;
+
+/**
+ * A number computed from two of an entity's props, as the engine computes
+ * it (contract 4.26.0); null where either is missing or not of the kind it
+ * takes, a date isn't to the day, or the result isn't a finite number.
+ *
+ * @example
+ * exprValue({ a: "2026-03-01", b: "2026-03-03T12:00:00Z" }, { days_between: ["a", "b"] }); // 2.5
+ * exprValue({ a: "2026-03", b: "2026-03-03" }, { days_between: ["a", "b"] }); // null
+ * exprValue({ a: 7, b: 10 }, { diff: ["a", "b"] }); // -3
+ * exprValue({ a: 5, b: 0 }, { ratio: ["a", "b"] }); // null
+ */
+export function exprValue(
+  props: Record<string, unknown>,
+  e: QueryExpr,
+): number | null {
+  const [a, b] = exprOperands(e).map((p) => props[p]);
+  const finite = (x: number) => (Number.isFinite(x) ? x : null);
+  if ("days_between" in e) {
+    // A date to the day from its midnight UTC; a datetime as it is.
+    const time = (v: unknown) =>
+      typeof v !== "string"
+        ? null
+        : /^\d{4}-\d{2}-\d{2}$/.test(v)
+          ? Date.parse(`${v}T00:00:00Z`)
+          : v.includes("T")
+            ? Date.parse(v)
+            : null;
+    const [from, to] = [time(a), time(b)];
+    return from === null || to === null || Number.isNaN(from) || Number.isNaN(to)
+      ? null
+      : finite((to - from) / 86_400_000);
+  }
+  if (typeof a !== "number" || typeof b !== "number") return null;
+  if ("diff" in e) return finite(a - b);
+  return b === 0 ? null : finite(a / b);
+}
+
 /**
  * A typed query's answer over the model, as the engine gives it: the start
  * type's entities (by ids, the best 100 of a text search of their names, or
@@ -1140,12 +1182,19 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
     if (at > last || !known(at, prop))
       return bad("/return/group_count/prop", `\`${prop}\` is no property`);
   }
+  // An expression's two props, each one the type has (never `name`).
+  const knownExpr = (at: number, e: QueryExpr) =>
+    exprOperands(e).every((p) => p !== "name" && known(at, p));
   if ("aggregate" in ret) {
-    const { at, prop, group_by = null, limit = 50 } = ret.aggregate;
+    const { at, group_by = null, limit = 50 } = ret.aggregate;
     const refused = groupLimit("/return/aggregate/limit", limit);
     if (refused) return refused;
-    if (at > last || prop === "name" || !known(at, prop))
-      return bad("/return/aggregate/prop", `\`${prop}\` is no number`);
+    const a = ret.aggregate;
+    if (a.expr !== undefined) {
+      if (at > last || !knownExpr(at, a.expr))
+        return bad("/return/aggregate/expr", "no such expression");
+    } else if (at > last || a.prop === "name" || !known(at, a.prop))
+      return bad("/return/aggregate/prop", `\`${a.prop}\` is no number`);
     if (group_by && (group_by.at > last || !known(group_by.at, group_by.prop)))
       return bad("/return/aggregate/group_by", "no such group");
   }
@@ -1156,9 +1205,19 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
     if (offset > 10_000)
       return bad("/return/rows/offset", "offset must be at most 10000");
     for (const [k, c] of columns.entries())
-      if (c.at > last || (c.prop != null && !known(c.at, c.prop)))
+      if (
+        c.at > last ||
+        (c.prop != null && !known(c.at, c.prop)) ||
+        (c.expr != null && (c.prop != null || !knownExpr(c.at, c.expr)))
+      )
         return bad(`/return/rows/columns/${k}`, "no such column");
-    if (order_by && (order_by.at > last || !known(order_by.at, order_by.prop)))
+    if (
+      order_by &&
+      (order_by.at > last ||
+        (order_by.expr !== undefined
+          ? !knownExpr(order_by.at, order_by.expr)
+          : !known(order_by.at, order_by.prop)))
+    )
       return bad("/return/rows/order_by", "no such order");
   }
   if (view) {
@@ -1233,6 +1292,7 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
           columns: ret.rows.columns.map((c) => ({
             at: c.at,
             prop: c.prop ?? null,
+            ...(c.expr ? { expr: c.expr } : {}),
           })),
           order_by: ret.rows.order_by
             ? { desc: false, ...ret.rows.order_by }
@@ -1304,6 +1364,9 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
   const named = [...new Set(columns.map((c) => c.at))];
   const value = (n: MockNode, prop: string) =>
     prop === "name" ? (n.props.name ?? null) : (n.props[prop] ?? null);
+  // What an order or a column reads: a prop, or a number computed from two.
+  const measured = (n: MockNode, by: { prop?: string; expr?: QueryExpr }) =>
+    by.expr ? exprValue(n.props, by.expr) : value(n, by.prop!);
   // Distinct over the positions the columns name.
   const rows = [
     ...new Map(
@@ -1314,8 +1377,8 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
     named.map((at) => canonical(m.g.node(p.nodes[at]!)!)).join("\u0000");
   rows.sort((a, b) => {
     if (order_by) {
-      const x = value(m.g.node(a.nodes[order_by.at]!)!, order_by.prop),
-        y = value(m.g.node(b.nodes[order_by.at]!)!, order_by.prop);
+      const x = measured(m.g.node(a.nodes[order_by.at]!)!, order_by),
+        y = measured(m.g.node(b.nodes[order_by.at]!)!, order_by);
       // Absent values first ascending, last descending.
       const c =
         x === y
@@ -1375,6 +1438,7 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
         rows: page.map((p) => ({
           cells: columns.map((c) => {
             const n = m.g.node(p.nodes[c.at]!)!;
+            if (c.expr) return exprValue(n.props, c.expr);
             return c.prop == null
               ? { ...refOf(n), name: nameOf(n) }
               : c.prop === "name"
@@ -1466,32 +1530,33 @@ function groupCount(
 }
 
 /**
- * A function of a numeric prop over the distinct entities at `at`, or by
- * the groups of `group_by`'s values (each entity once in each group it is
- * in), greatest first. A mean, least or greatest of no values is null.
+ * A function of a numeric prop (or a number computed from two, `expr`) over
+ * the distinct entities at `at`, or by the groups of `group_by`'s values
+ * (each entity once in each group it is in), greatest first. A mean, least
+ * or greatest of no values is null; a computed measure says how many
+ * entities it had no value for (`skipped`, left out when none).
  */
 function aggregateOf(
   m: Model,
   paths: Paths,
-  {
-    fn,
-    at,
-    prop,
-    group_by = null,
-    limit = 50,
-  }: {
+  aggregate: {
     fn: "sum" | "avg" | "min" | "max";
     at: number;
-    prop: string;
     group_by?: { at: number; prop: string } | null;
     limit?: number;
-  },
+  } & ({ prop: string; expr?: never } | { expr: QueryExpr; prop?: never }),
 ) {
+  const { fn, at, group_by = null, limit = 50 } = aggregate;
   const of = (ids: Iterable<number>) => {
-    const values = [...ids].flatMap((id) => {
-      const v = m.g.node(id)!.props[prop];
+    const all = [...ids];
+    const values = all.flatMap((id) => {
+      const props = m.g.node(id)!.props;
+      const v = aggregate.expr
+        ? exprValue(props, aggregate.expr)
+        : props[aggregate.prop];
       return typeof v === "number" && Number.isFinite(v) ? [v] : [];
     });
+    const skipped = aggregate.expr ? all.length - values.length : 0;
     const sum = values.reduce((a, b) => a + b, 0);
     const value = !values.length
       ? fn === "sum"
@@ -1504,12 +1569,16 @@ function aggregateOf(
           : fn === "min"
             ? Math.min(...values)
             : Math.max(...values);
-    return { aggregate: value, values: values.length };
+    return {
+      aggregate: value,
+      values: values.length,
+      ...(skipped ? { skipped } : {}),
+    };
   };
   if (!group_by)
     return {
       kind: "aggregate",
-      ...(({ aggregate, values }) => ({ value: aggregate, values }))(
+      ...(({ aggregate, ...counted }) => ({ value: aggregate, ...counted }))(
         of(new Set(paths.map((p) => p.nodes[at]!))),
       ),
     };
@@ -1528,6 +1597,7 @@ function aggregateOf(
       value: groupValue(g.value),
       aggregate: g.aggregate,
       values: g.values,
+      ...(g.skipped ? { skipped: g.skipped } : {}),
     })),
     total_groups: groups.length,
   };

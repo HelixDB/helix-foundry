@@ -349,6 +349,32 @@ func TestFromQuestion(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A visual of a number computed from two props (contract 4.26.0) is pinned
+// with its query as the engine recorded it, and one whose expression the
+// contract doesn't have is no query.
+func TestFromQuestionKeepsAComputedMeasure(t *testing.T) {
+	days := `{"start":{"type":"Ticket","where":[],"ids":null,"text":null},"steps":[],"filters":[],
+	  "return":{"aggregate":{"fn":"avg","at":0,"expr":{"days_between":["opened_at","closed_at"]},"group_by":{"at":0,"prop":"priority"},"limit":20}}}`
+	slowest := `{"start":{"type":"Ticket"},"return":{"rows":{"columns":[{"at":0,"prop":null},{"at":0,"prop":null,"expr":{"ratio":["cost","budget"]}}],
+	  "order_by":{"at":0,"expr":{"diff":["closed_at","opened_at"]},"desc":true},"limit":10}}}`
+	product := `{"start":{"type":"Ticket"},"return":{"aggregate":{"fn":"avg","at":0,"expr":{"product":["a","b"]}}}}`
+	both := `{"start":{"type":"Ticket"},"return":{"aggregate":{"fn":"avg","at":0,"prop":"a","expr":{"diff":["a","b"]}}}}`
+	result := `{"status":"answered","answer":{"blocks":[],"visuals":[{"evidence_id":"e1","kind":"bar"}]},"citations":[],"queries":[
+	  {"evidence_id":"e1","query":` + days + `,"output":{"kind":"grouped_aggregate","groups":[{"value":{"untrusted":"high"},"aggregate":6.375,"values":2,"skipped":1}],"total_groups":1}},
+	  {"evidence_id":"e2","query":` + slowest + `},{"evidence_id":"e3","query":` + product + `},{"evidence_id":"e4","query":` + both + `}],"usage":{}}`
+	v, err := dashboard.FromQuestion(json.RawMessage(result), "e1")
+	require.NoError(t, err)
+	require.JSONEq(t, days, string(v.Query))
+	require.Equal(t, dashboard.VisualBar, v.Visual)
+	v, err = dashboard.FromQuestion(json.RawMessage(result), "e2")
+	require.NoError(t, err)
+	require.JSONEq(t, slowest, string(v.Query))
+	for _, id := range []string{"e3", "e4"} {
+		_, err = dashboard.FromQuestion(json.RawMessage(result), id)
+		require.ErrorContains(t, err, "not a Query", id)
+	}
+}
+
 func TestTileTitle(t *testing.T) {
 	require.Equal(t, "a b", dashboard.TileTitle(" a\u0007\tb "))
 	long := dashboard.TileTitle(strings.Repeat("x", 100))

@@ -522,6 +522,75 @@ description = "Bills."
     });
   });
 
+  it("computes a number from two props as the engine does (contract 4.26.0)", () => {
+    const g = new MockGraph().view("load_1");
+    const deal = (k: string, stage: string, props: Record<string, unknown>) =>
+      g.addNode("Deal", { entity_key: k, deal_id: k, name: k, stage, ...props });
+    deal("d1", "won", { opened_on: "2026-01-01", closed_at: "2026-01-31T12:00:00Z", amount: 100, cost: 40 });
+    deal("d2", "won", { opened_on: "2026-02-01", closed_at: "2026-02-11T00:00:00Z", amount: 50, cost: 0 });
+    deal("d3", "lost", { opened_on: "2026-03", closed_at: "2026-03-02T00:00:00Z", amount: 7 });
+    deal("d4", "open", { opened_on: "2026-04-01" });
+    const model = evaluate(
+      g,
+      compile(`version = "draft"
+[types.Deal]
+description = "A sale."
+props = { deal_id = "string", stage = "string", opened_on = "date", closed_at = "datetime", amount = "integer", cost = "integer" }
+key = ["deal_id"]
+`),
+    );
+    const answer = (ret: object) =>
+      read(model, { query: { start: { type: "Deal" }, return: ret } as never });
+    const result = (ret: object) => {
+      const a = answer(ret);
+      if (!("ok" in a)) throw new Error(JSON.stringify(a));
+      return (a.ok as { result: unknown }).result;
+    };
+    const days = { days_between: ["opened_on", "closed_at"] };
+    // A date from its midnight UTC; a date to the month only, or none, skipped.
+    expect(
+      result({ aggregate: { fn: "avg", at: 0, expr: days, group_by: { at: 0, prop: "stage" } } }),
+    ).toEqual({
+      kind: "grouped_aggregate",
+      groups: [
+        { value: { untrusted: "won" }, aggregate: (30.5 + 10) / 2, values: 2 },
+        { value: { untrusted: "lost" }, aggregate: null, values: 0, skipped: 1 },
+        { value: { untrusted: "open" }, aggregate: null, values: 0, skipped: 1 },
+      ],
+      total_groups: 3,
+    });
+    // A ratio by zero is none; so is one missing a prop.
+    expect(
+      result({ aggregate: { fn: "max", at: 0, expr: { ratio: ["amount", "cost"] } } }),
+    ).toEqual({ kind: "aggregate", value: 2.5, values: 1, skipped: 3 });
+    expect(
+      result({ aggregate: { fn: "sum", at: 0, expr: { diff: ["amount", "cost"] } } }),
+    ).toEqual({ kind: "aggregate", value: 110, values: 2, skipped: 2 });
+    // The slowest first, the deals with none last; a column shows each.
+    const rows = result({
+      rows: {
+        columns: [{ at: 0, prop: "name" }, { at: 0, expr: days }],
+        order_by: { at: 0, expr: days, desc: true },
+      },
+    }) as { rows: { cells: unknown[] }[] };
+    expect(rows.rows.map((r) => r.cells)).toEqual([
+      ["d1", 30.5],
+      ["d2", 10],
+      ["d3", null],
+      ["d4", null],
+    ]);
+    // What the type doesn't have, or `name`, is no operand.
+    for (const ret of [
+      { aggregate: { fn: "sum", at: 0, expr: { diff: ["amount", "nope"] } } },
+      { aggregate: { fn: "sum", at: 0, expr: { diff: ["name", "amount"] } } },
+      { rows: { columns: [{ at: 0, expr: { ratio: ["nope", "cost"] } }] } },
+      { rows: { columns: [{ at: 0 }], order_by: { at: 0, expr: { ratio: ["nope", "cost"] } } } },
+    ])
+      expect(answer(ret), JSON.stringify(ret)).toMatchObject({
+        error: { code: "invalid" },
+      });
+  });
+
   it("answers typed queries: rows along steps, counts, text and ids", () => {
     const { model } = load();
     const ok = (q: Parameters<typeof query>[1]) => {

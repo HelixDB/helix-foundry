@@ -278,9 +278,8 @@ export function visualPlan(
       const value =
         output.kind === "count" ? output.count : (output.value ?? null);
       const detail =
-        output.kind === "aggregate"
-          ? `Over ${plural(output.values, "value")}`
-          : "";
+        output.kind === "aggregate" ? overValues(output.values, output.skipped) : "";
+      const skipped = output.kind === "aggregate" && !!output.skipped;
       const cell = cellOf(value);
       if (fits("figure"))
         return { kind: "figure", title, note: cut ?? "", value: cell, detail };
@@ -294,11 +293,15 @@ export function visualPlan(
             ...(output.kind === "aggregate"
               ? [{ label: "Values", numeric: true }]
               : []),
+            ...(skipped ? [{ label: "Skipped", numeric: true }] : []),
           ],
           rows: [
             [
               cell,
               ...(output.kind === "aggregate" ? [cellOf(output.values)] : []),
+              ...(output.kind === "aggregate" && skipped
+                ? [cellOf(output.skipped)]
+                : []),
             ],
           ],
         },
@@ -331,6 +334,8 @@ export function visualPlan(
       const measures = output.groups.map((g) =>
         cellOf("count" in g ? g.count : g.aggregate),
       );
+      // A computed measure's groups say how many entities had none of it.
+      const skipped = output.groups.some((g) => "skipped" in g && !!g.skipped);
       const table: VisualTable = {
         columns: [
           {
@@ -348,11 +353,13 @@ export function visualPlan(
           ...(output.kind === "grouped_aggregate"
             ? [{ label: "Values", numeric: true }]
             : []),
+          ...(skipped ? [{ label: "Skipped", numeric: true }] : []),
         ],
         rows: output.groups.map((g, i) => [
           values[i]!,
           measures[i]!,
           ...("values" in g ? [cellOf(g.values)] : []),
+          ...(skipped ? [cellOf("skipped" in g ? (g.skipped ?? 0) : 0)] : []),
         ]),
       };
       // A line has a point per date: the entities without one are in its
@@ -367,7 +374,7 @@ export function visualPlan(
               label: v.kind === "none" ? none : cellText(v),
               value: m.value,
               ...("values" in g
-                ? { detail: `Over ${plural(g.values, "value")}` }
+                ? { detail: overValues(g.values, g.skipped) }
                 : {}),
             },
           ];
@@ -403,9 +410,10 @@ export function visualPlan(
         columns.length,
         ...output.rows.map((row) => row.cells.length),
       );
+      // A column with neither a prop nor a computed number is its entity.
       const rows = output.rows.map((row) =>
         Array.from({ length: width }, (_, i) =>
-          cellOf(row.cells[i], !columns[i]?.prop),
+          cellOf(row.cells[i], !columns[i]?.prop && !columns[i]?.expr),
         ),
       );
       const cells = (i: number) => rows.map((row) => row[i]!);
@@ -475,6 +483,21 @@ export function visualPlan(
       return { kind: "table", title, note, table };
     }
   }
+}
+
+/**
+ * What an aggregate is over: its values, and the entities a computed
+ * measure had none of, when any.
+ *
+ * @example
+ * overValues(3); // "Over 3 values"
+ * overValues(2, 1); // "Over 2 values · 1 without one, skipped"
+ */
+export function overValues(values: number, skipped?: number): string {
+  return (
+    `Over ${plural(values, "value")}` +
+    (skipped ? ` · ${skipped} without one, skipped` : "")
+  );
 }
 
 /** A visual the page can draw: its query, and the output it shows. */
