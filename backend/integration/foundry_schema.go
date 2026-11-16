@@ -47,7 +47,8 @@ var foundryOperationDocs = []foundryOperationDoc{
 			"Returns the source, its token_url (where a person makes a send token: no tool returns one) and the send tool."},
 	{name: "add_sample_data",
 		doc: "{}: adds the made-up Acme Corp sample company to the workspace, as Foundry's own sample does: a read-only PostgreSQL connector \"Acme Corp\" to its six tables, whose sync it queues (its login never passes through you), " +
-			"and its 9 documents in the document set \"Acme Corp sample\"; what the workspace already has of it is kept. Name the ontology \"Acme Corp customers\" for Foundry to show it as the sample, then generate it with sample \"acme\"."},
+			"and its 9 documents in the document set \"Acme Corp sample\"; what the workspace already has of it is kept. Name the ontology \"Acme Corp customers\" for Foundry to show it as the sample, then generate it with sample \"acme\". " +
+			"The draft calls no model, but loads read the documents with the workspace's model, so adding them is refused (FOUNDRY_AI_NOT_CONFIGURED) on a local install with no AI provider."},
 	{name: "sync_connector", doc: "{}.", events: "{}. An API source syncs when pieces arrive, so it needs none."},
 	{name: "generate_ontology",
 		doc: "{goal, connector_ids, document_set_ids, no_connectors, sample}, each optional. " + generateReads,
@@ -92,8 +93,9 @@ var foundryOperationDocs = []foundryOperationDoc{
 			"resolve {resolve: {entity_key}} with one of its candidates or {resolve: {not_in_data: true}}; " +
 			"prop {prop: {text|integer|number|boolean: value}} (an integer as a string of digits) or {prop: {null: true}} to remove the property; " +
 			"release {release: {statement_hash}} to approve the statement it holds back or {reject: {statement_hash}} to say it is wrong, with its statement_hash. " +
-			"A resolve applies from the next load: one that chooses an entity also links that name to it in every document of that load where the load would otherwise ask, " +
-			"and not_in_data applies to the review's document only."},
+			"A resolve, a release and a prop apply to the current load at once (" + toolFoundryListReviewDecisions + "'s applied says what became of each): " +
+			"a resolve that chooses an entity also links that name to it in every document of that load where the load would otherwise ask, " +
+			"and not_in_data applies to the review's document only; a resolve of a name the load already links another way applies from the next load. A reject is sent to no load."},
 	{name: "create_dashboard",
 		doc: "{name, description, spec}: a dashboard of the workspace, unpinned, which every member sees and reads as themselves; " +
 			"a name of 1 to 120 characters, a description of at most 1000, and a spec (none for no tiles yet). Preview each tile with " + toolFoundryPreviewDashboardTile + " first. " +
