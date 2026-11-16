@@ -15,11 +15,13 @@ import {
   cellOf,
   cellText,
   chartHeight,
+  columnHeadings,
   drawable,
   placeVisuals,
   visualPlan,
   type VisualPlan,
 } from "@/web/areas/ontology/ask-visuals";
+import { NO_NAMING, type Naming } from "@/web/areas/explore/naming";
 import { contractErrors } from "../../mock/agent-contract";
 
 // Ask's visuals (contract 3.11.0): a result's recorded query outputs and an
@@ -435,7 +437,7 @@ describe("visual plans", () => {
     expect(visualPlan(avg, AVERAGE, { kind: "table" })).toMatchObject({
       table: {
         columns: [
-          { label: "Average of Invoice.amount_due", numeric: true },
+          { label: "Average of Invoice amount due", numeric: true },
           { label: "Values", numeric: true },
         ],
         rows: [
@@ -457,7 +459,7 @@ describe("visual plans", () => {
     });
     expect(chartOf(plan)).toEqual({
       kind: "bar",
-      label: "Invoice.status",
+      label: "Invoice status",
       measure: "Count",
       horizontal: false,
       points: [
@@ -468,7 +470,7 @@ describe("visual plans", () => {
     });
     if (plan.kind !== "chart") return;
     expect(plan.table.columns).toEqual([
-      { label: "Invoice.status", numeric: false },
+      { label: "Invoice status", numeric: false },
       { label: "Count", numeric: true },
     ]);
     expect(plan.table.rows[2]).toEqual([
@@ -528,8 +530,8 @@ describe("visual plans", () => {
     });
     expect(chartOf(plan)).toMatchObject({
       kind: "bar",
-      label: "Ticket.priority",
-      measure: "Average of Ticket: days from opened_at to closed_at",
+      label: "Ticket priority",
+      measure: "Average of Ticket: days from opened at to closed at",
       points: [
         {
           label: "high",
@@ -541,8 +543,8 @@ describe("visual plans", () => {
     });
     if (plan.kind !== "chart") return;
     expect(plan.table.columns.map((c) => c.label)).toEqual([
-      "Ticket.priority",
-      "Average of Ticket: days from opened_at to closed_at",
+      "Ticket priority",
+      "Average of Ticket: days from opened at to closed at",
       "Values",
       "Skipped",
     ]);
@@ -625,7 +627,7 @@ describe("visual plans", () => {
     expect(chartOf(plan)).toMatchObject({
       kind: "bar",
       label: "Deal",
-      measure: "Deal: days from opened_on to closed_on",
+      measure: "Deal: days from opened on to closed on",
       // The deal with none isn't drawn.
       points: [
         {
@@ -664,8 +666,8 @@ describe("visual plans", () => {
     expect(plan.note).toBe("3 of 12 groups · 1 group left out");
     expect(chartOf(plan)).toEqual({
       kind: "bar",
-      label: "Customer.name",
-      measure: "Sum of Invoice.amount_due",
+      label: "Customer",
+      measure: "Sum of Invoice amount due",
       horizontal: true,
       // An aggregate of no values has no bar; the table keeps its row.
       points: [
@@ -680,8 +682,8 @@ describe("visual plans", () => {
     if (plan.kind !== "chart") return;
     expect(plan.table.rows).toHaveLength(3);
     expect(plan.table.columns.map((c) => c.label)).toEqual([
-      "Customer.name",
-      "Sum of Invoice.amount_due",
+      "Customer",
+      "Sum of Invoice amount due",
       "Values",
     ]);
     // Nine short labels turn sideways too.
@@ -715,7 +717,7 @@ describe("visual plans", () => {
     };
     expect(chartOf(visualPlan(byDay, signed))).toEqual({
       kind: "line",
-      label: "Invoice.signed_on",
+      label: "Invoice signed on",
       measure: "Count",
       horizontal: false,
       // Each at its date's time, for a time axis.
@@ -753,7 +755,7 @@ describe("visual plans", () => {
       "2026-10-02",
       "2026-09-30",
       "2026-10-01T09:00:00Z",
-      "No signed_on",
+      "No signed on",
     ]);
   });
 
@@ -869,7 +871,7 @@ describe("visual plans", () => {
     if (plan.kind !== "chart") throw new Error(plan.kind);
     // A number column, so it sorts as numbers, each shown as written.
     expect(plan.table.columns[0]).toEqual({
-      label: "Invoice.quantity",
+      label: "Invoice quantity",
       numeric: true,
     });
     expect(plan.table.rows.map((r) => r[0])).toEqual([
@@ -923,9 +925,9 @@ describe("visual plans", () => {
     if (plan.kind !== "table") return;
     expect(plan.table.columns).toEqual([
       { label: "Invoice", numeric: false },
-      { label: "Invoice.amount_due", numeric: true },
+      { label: "Invoice amount due", numeric: true },
       { label: "Customer", numeric: false },
-      { label: "Invoice.terms", numeric: false },
+      { label: "Invoice terms", numeric: false },
     ]);
     expect(plan.table.rows[0]).toEqual([
       {
@@ -948,7 +950,7 @@ describe("visual plans", () => {
     expect(bars).toEqual({
       kind: "bar",
       label: "Invoice",
-      measure: "Invoice.amount_due",
+      measure: "Invoice amount due",
       horizontal: false,
       // A row without the number has no bar.
       points: [
@@ -1097,6 +1099,155 @@ describe("visual plans", () => {
         { label: "None", value: 1 },
       ],
     });
+  });
+});
+
+describe("column headings", () => {
+  const PATH: OntologyQuery = {
+    start: { type: "Invoice" },
+    steps: [
+      { via: "billed_to", dir: "out", to: "Customer" },
+      { via: "refers", dir: "out", to: "Customer" },
+    ],
+    return: { count: {} },
+  };
+  // Invoices are named by their number; customers declare no names.
+  const NAMING: Naming = {
+    ...NO_NAMING,
+    version: "v1",
+    types: new Map([
+      [
+        "Invoice",
+        {
+          name: "Invoice",
+          props: [{ name: "number", type: "string" }],
+          key: ["number"],
+          names: ["number"],
+        },
+      ],
+    ]),
+  };
+
+  it("head a names prop by its type, and any other prop after it in words", () => {
+    const heading = columnHeadings({
+      start: { type: "Invoice" },
+      steps: [{ via: "billed_to", dir: "out", to: "Customer" }],
+      return: { count: {} },
+    });
+    expect(heading({ at: 1, prop: "name" })).toBe("Customer");
+    expect(heading({ at: 0, prop: "status" })).toBe("Invoice status");
+    expect(heading({ at: 0, prop: "amount_due" })).toBe("Invoice amount due");
+    // The entity itself, and a null prop, are the type.
+    expect(heading({ at: 0 })).toBe("Invoice");
+    expect(heading({ at: 0, prop: null })).toBe("Invoice");
+    // Without a version, only `name` names a type.
+    expect(heading({ at: 0, prop: "number" })).toBe("Invoice number");
+  });
+
+  it("go by the version's names props", () => {
+    const heading = columnHeadings(PATH, NAMING);
+    expect(heading({ at: 0, prop: "number" })).toBe("Invoice");
+    expect(heading({ at: 0, prop: "name" })).toBe("Invoice");
+    expect(heading({ at: 0, prop: "status" })).toBe("Invoice status");
+    // A type the version doesn't declare names by `name` alone.
+    expect(heading({ at: 1, prop: "number" })).toBe("Customer (1) number");
+  });
+
+  it("keep the prop when the entity has a column of its own", () => {
+    const heading = columnHeadings(PATH, NAMING);
+    expect(heading({ at: 0, prop: "number" }, true)).toBe("Invoice number");
+    expect(heading({ at: 0, prop: "status" }, true)).toBe("Invoice status");
+    expect(heading({ at: 0 }, true)).toBe("Invoice");
+  });
+
+  it("name a type at more than one position by its position", () => {
+    const heading = columnHeadings(PATH);
+    expect(heading({ at: 1, prop: "name" })).toBe("Customer (1)");
+    expect(heading({ at: 2, prop: "tier" })).toBe("Customer (2) tier");
+    expect(heading({ at: 2 })).toBe("Customer (2)");
+  });
+
+  it("say a computed number in words, and a position the query lacks by its place", () => {
+    const heading = columnHeadings(PATH);
+    expect(
+      heading({ at: 0, expr: { days_between: ["opened_on", "closed_on"] } }),
+    ).toBe("Invoice: days from opened on to closed on");
+    expect(heading({ at: 0, expr: { ratio: ["won_count", "quoted"] } })).toBe(
+      "Invoice: won count ÷ quoted",
+    );
+    // An expr wins over a prop, and over a names prop.
+    expect(
+      heading({ at: 0, prop: "name", expr: { diff: ["revenue", "cost"] } }),
+    ).toBe("Invoice: revenue − cost");
+    expect(heading({ at: 7, prop: "name" })).toBe("position 7 name");
+    expect(heading({ at: 7 })).toBe("position 7");
+  });
+
+  it("head rows' columns in a plan, data and order untouched", () => {
+    const query: OntologyQuery = {
+      start: { type: "Invoice" },
+      steps: [{ via: "billed_to", dir: "out", to: "Customer" }],
+      return: {
+        rows: {
+          columns: [
+            { at: 1, prop: "name" },
+            { at: 0, prop: "number" },
+            { at: 0, prop: "amount_due" },
+          ],
+        },
+      },
+    };
+    const rows = output({
+      kind: "rows",
+      rows: [{ cells: ["Globex", "INV-1", 3], edges: [] }],
+      total: 1,
+    });
+    const plan = visualPlan(rows, query, { kind: "table" }, NAMING);
+    if (plan.kind !== "table") throw new Error(plan.kind);
+    expect(plan.table.columns.map((c) => c.label)).toEqual([
+      "Customer",
+      "Invoice",
+      "Invoice amount due",
+    ]);
+    expect(plan.table.rows[0]!.map(cellText)).toEqual([
+      "Globex",
+      "INV-1",
+      "3",
+    ]);
+    // Beside its entity's column, a names prop keeps its prop.
+    const withEntity: OntologyQuery = {
+      ...query,
+      return: {
+        rows: {
+          columns: [
+            { at: 1 },
+            { at: 1, prop: "name" },
+            { at: 0, prop: "number" },
+          ],
+        },
+      },
+    };
+    const both = visualPlan(
+      output({
+        kind: "rows",
+        rows: [
+          {
+            cells: [{ type: "Customer", id: "c1", name: "Globex" }, "Globex", "INV-1"],
+            edges: [],
+          },
+        ],
+        total: 1,
+      }),
+      withEntity,
+      { kind: "table" },
+      NAMING,
+    );
+    if (both.kind !== "table") throw new Error(both.kind);
+    expect(both.table.columns.map((c) => c.label)).toEqual([
+      "Customer",
+      "Customer name",
+      "Invoice",
+    ]);
   });
 });
 
