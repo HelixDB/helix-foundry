@@ -8,7 +8,6 @@
 export const LOCAL = process.env.NEXT_PUBLIC_FOUNDRY_MODE === "local";
 
 // Whether this build has Founder (areas/agent; NEXT_PUBLIC_FOUNDRY_ASSISTANT,
-// set in next.config.ts: local builds and the mock, not the hosted stamps
-// until their backend serves it). With it, a member who isn't a grantee asks
+// set in next.config.ts: every build). With it, a member who isn't a grantee asks
 // Founder on /ask; the Analyst answers under it.
 export const FOUNDER = !!process.env.NEXT_PUBLIC_FOUNDRY_ASSISTANT;

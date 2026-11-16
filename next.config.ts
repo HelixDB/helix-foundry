@@ -101,11 +101,9 @@ const nextConfig: NextConfig = {
           ? databuddy.clientId
           : "",
     NEXT_PUBLIC_BOTID: botid ? "1" : "",
-    // Founder (src/web/areas/agent): a local install's, the mock's and the
-    // dev stamp's, whose backend serves it ("1"); not prod's until its
-    // backend does.
-    NEXT_PUBLIC_FOUNDRY_ASSISTANT:
-      mode === "local" || appEnv !== "prod" ? "1" : "",
+    // Founder (src/web/areas/agent): every build's, since every backend
+    // serves it (prod's from helixsvc with foundry.agent on).
+    NEXT_PUBLIC_FOUNDRY_ASSISTANT: "1",
   },
   async headers() {
     return [
