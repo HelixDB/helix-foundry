@@ -542,10 +542,10 @@ func TestAFailedTurnFailsItsStep(t *testing.T) {
 	run := f.queue(weekly)
 	f.task.advance(context.Background(), run)
 	turn := f.db.endTurn(t, model.FoundryAgentTurnFailed)
-	why := "the workspace has spent this month's $20.00 of automations"
+	why := "the workspace has spent this month's $20.00 of workflows"
 	turn.Error = &why
 	f.task.advance(context.Background(), run)
-	assert.Equal(t, "The workspace has spent this month's $20.00 of automations.", *f.db.nodes[run.ID]["ask"].Error)
+	assert.Equal(t, "The workspace has spent this month's $20.00 of workflows.", *f.db.nodes[run.ID]["ask"].Error)
 	assert.Equal(t, model.FoundryAutomationRunFailed, f.db.finished[run.ID].Status)
 }
 

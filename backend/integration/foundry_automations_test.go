@@ -266,7 +266,7 @@ func TestAutomationOperations(t *testing.T) {
 		require.NoError(t, err)
 		_, err = op.Execute(context.Background(), s, reader(), "conf-1")
 		require.Error(t, err)
-		assert.Equal(t, "workflow", TargetKind(target))
+		assert.Equal(t, "automation", TargetKind(target), "the audit keeps the kind automation")
 		assert.Empty(t, TargetKind("automation:"+autoWorkspace+"/"+autoID), "the old target kind is no kind")
 	})
 }

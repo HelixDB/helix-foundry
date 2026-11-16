@@ -805,13 +805,20 @@ func CutFoundryTarget(target, kind string) (string, string, bool) {
 	return workspaceID, id, ok && ValidIDs([]string{workspaceID, id})
 }
 
-// TargetKind is the audit resource kind of a target, or empty for one that doesn't parse.
+// TargetKind is the audit resource kind of a target, or empty for one that doesn't parse. A
+// workflow: target is audited as kind automation, the name the audit kept from before the rename.
 func TargetKind(target string) string {
 	kind, _, ok := strings.Cut(target, ":")
-	if !ok || (kind != "tenant" && kind != "workspace" && kind != "connector" && kind != "ontology" && kind != "dashboard" && kind != "workflow") {
+	switch {
+	case !ok:
+		return ""
+	case kind == "workflow":
+		return "automation"
+	case kind == "tenant" || kind == "workspace" || kind == "connector" || kind == "ontology" || kind == "dashboard":
+		return kind
+	default:
 		return ""
 	}
-	return kind
 }
 
 type CreateOntologyPayload struct {

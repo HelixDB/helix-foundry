@@ -201,7 +201,7 @@ func (s *Service) ListFoundryAutomations(ctx context.Context, identity *Identity
 
 func (s *Service) GetFoundryAutomation(ctx context.Context, identity *Identity, call *Call, input FoundryAutomationInput) (
 	FoundryAutomationDetailOutput, int, error) {
-	call.ResourceKind, call.ResourceID = "workflow", input.AutomationID
+	call.ResourceKind, call.ResourceID = "automation", input.AutomationID
 	if !ValidIDs([]string{input.WorkspaceID, input.AutomationID}) {
 		return FoundryAutomationDetailOutput{}, 0, errCodeInvalidArguments
 	}
@@ -218,7 +218,7 @@ func (s *Service) GetFoundryAutomation(ctx context.Context, identity *Identity, 
 
 func (s *Service) ListFoundryAutomationRuns(ctx context.Context, identity *Identity, call *Call, input ListFoundryAutomationRunsInput) (
 	ListFoundryAutomationRunsOutput, int, error) {
-	call.ResourceKind, call.ResourceID = "workflow", input.AutomationID
+	call.ResourceKind, call.ResourceID = "automation", input.AutomationID
 	if !ValidIDs([]string{input.WorkspaceID, input.AutomationID}) || len(input.PageToken) > 1024 {
 		return ListFoundryAutomationRunsOutput{}, 0, errCodeInvalidArguments
 	}
@@ -239,7 +239,7 @@ func (s *Service) ListFoundryAutomationRuns(ctx context.Context, identity *Ident
 
 func (s *Service) GetFoundryAutomationRun(ctx context.Context, identity *Identity, call *Call, input GetFoundryAutomationRunInput) (
 	FoundryAutomationRunDetailOutput, int, error) {
-	call.ResourceKind, call.ResourceID = "workflow", input.AutomationID
+	call.ResourceKind, call.ResourceID = "automation", input.AutomationID
 	if !ValidIDs([]string{input.WorkspaceID, input.AutomationID, input.RunID}) {
 		return FoundryAutomationRunDetailOutput{}, 0, errCodeInvalidArguments
 	}
