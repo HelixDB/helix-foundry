@@ -944,3 +944,24 @@ button.ak-call-head:hover {
 .ak-trace-status > .ak-call-tool {
   order: 0;
 }
+/* One question shown inline (ask-inline.tsx), in Founder's dock about
+   400px wide: no question bubble or avatar column, and tighter spacing. */
+.ak-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-15);
+  min-width: 0;
+}
+.ak-inline .ak-reply-body {
+  gap: var(--hf-space-1);
+  padding-top: 0;
+}
+.ak-inline-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hf-space-1);
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}

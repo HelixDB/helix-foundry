@@ -16,7 +16,7 @@ import {
   type AgentStep,
 } from "@/web/areas/agent/model";
 
-// The Assistant's cards (src/web/areas/agent/model.ts): each of the 27
+// Founder's cards (src/web/areas/agent/model.ts): each of the 27
 // operations' displays as the backend's display.go writes them (its
 // display_test.go's), read without trust, worded by its card, and where a
 // ran one opens; a connect step's form; a call a limit kept from running.
@@ -917,19 +917,19 @@ describe("cardView", () => {
       ["a reject", "Reject the held statement", "Reject", "Sales graph"],
       [
         "a runtime with its helper running",
-        "Run new Assistant threads on your Claude subscription",
+        "Run new Founder threads on your Claude subscription",
         "Switch",
         "this workspace",
       ],
       [
         "a runtime whose helper isn't running",
-        "Run new Assistant threads on your Claude subscription",
+        "Run new Founder threads on your Claude subscription",
         "Switch",
         "this workspace",
       ],
       [
         "back to the workspace's model",
-        "Run new Assistant threads on the workspace’s AI model",
+        "Run new Founder threads on the workspace’s AI model",
         "Switch",
         "this workspace",
       ],
@@ -1070,7 +1070,7 @@ describe("cardView", () => {
       "your click approves its steps",
     );
     expect(of("an automation set up").cost).toBe(
-      "Its Assistant steps spend the workspace’s automations budget.",
+      "Its Founder steps spend the workspace’s automations budget.",
     );
     // A status this page doesn't know is left out.
     expect(
@@ -1090,7 +1090,7 @@ describe("cardView", () => {
         of(name).facts.map((f) => [f.label, "value" in f ? f.value : ""]),
       );
     expect(facts("a dashboard made")).toEqual({
-      Name: "“Invoices by status” (as the Assistant wrote it)",
+      Name: "“Invoices by status” (as Founder wrote it)",
       Tiles: "Invoices by status (Sales graph), Customers (gone1)",
     });
     expect(facts("a dashboard of no tiles yet").Tiles).toBe("None");
@@ -1109,6 +1109,26 @@ describe("cardView", () => {
     expect(of("a dashboard published").caution).toBe(
       "Anyone who has the link sees this data.",
     );
+  });
+
+  it("says what a dashboard made at once is, and that Undo deletes it", () => {
+    const [, op, display] = DISPLAYS.find(([n]) => n === "a dashboard made")!;
+    const card = parseCard(op, display) as AgentCard;
+    const auto = cardView(card, true);
+    expect(auto.title).toBe("Made the dashboard “Invoices by status”");
+    expect(auto.does).toBe(
+      "Founder made it because you asked for a dashboard. It isn’t pinned or published, and Undo deletes it.",
+    );
+    // Its facts, run and target stay the card's.
+    expect({ ...auto, title: "", does: "" }).toEqual({
+      ...cardView(card),
+      title: "",
+      does: "",
+    });
+    // Only a new dashboard runs at once: any other card keeps its words.
+    const other = DISPLAYS.find(([n]) => n === "a dashboard renamed")!;
+    const renamed = parseCard(other[1], other[2]) as AgentCard;
+    expect(cardView(renamed, true)).toEqual(cardView(renamed));
   });
 
   it("says where new threads run, and that a helper must run first", () => {
@@ -1130,7 +1150,7 @@ describe("cardView", () => {
       "From then on": "Foundry’s AI model",
     });
     expect(of("back to the workspace's model").does).toMatch(
-      /count toward its Assistant budget/,
+      /count toward its Founder budget/,
     );
     expect(facts("a helper revoked")).toEqual({
       Helper: "Ada's Mac",

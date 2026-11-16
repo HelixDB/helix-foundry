@@ -247,6 +247,13 @@ export type AnalyticsEvents = {
     target_named_by_user: boolean;
   };
   agent_action_refused: { reason: Refusal };
+  // An action that ran at once, without a card's click (a new dashboard the
+  // person's message asked for), and how it ended; then the person's Undo.
+  agent_action_auto_ran: {
+    operation: AgentOperationName;
+    outcome: "succeeded" | "failed" | "unknown";
+  };
+  agent_action_undone: { operation: AgentOperationName };
   // Where a local install's Assistant runs (Settings › AI models): the
   // runtime chosen, a pairing code made, a helper seen paired after one, a
   // helper revoked.
