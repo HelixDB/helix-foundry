@@ -11,7 +11,9 @@ import {
 
 // Sign-in through the WFE-brokered flow (mock WFE and mock WorkOS), with the
 // code WorkOS emails an unverified address and a company's single sign-on,
-// the session's refresh, sign-out, and what the /papi BFF refuses.
+// signing in with an email and password (and making an account and
+// resetting its password that way), the session's refresh, sign-out, and
+// what the /papi BFF refuses.
 
 /** What the main page, Founder's, asks of a new chat on Customer contracts. */
 const HELLO = "What do you want to know about Customer contracts?";
@@ -105,6 +107,8 @@ async function startSignIn(
   provider: "GitHub" | "Microsoft" = "GitHub",
 ) {
   await page.getByRole("button", { name: `Continue with ${provider}` }).click();
+  // The sign-in page has an Email field of its own: wait for the mock's.
+  await page.waitForURL(/\/mock\/authorize\?/);
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
 }
@@ -216,6 +220,177 @@ test("signs in through the company's single sign-on when it requires it", async 
   ).toBeVisible();
   expect((await mock.stats()).loginStarts).toBe(2);
   expect(await pendingLogins(page)).toEqual([]);
+});
+
+test("signs in with an email and password", async ({ page }) => {
+  await page.goto("/data");
+  await expect(page).toHaveURL(/\/login\?return_to=%2Fdata$/);
+  const form = page.getByRole("form", { name: "Sign in" }),
+    email = form.getByLabel("Email"),
+    password = form.getByLabel("Password"),
+    submit = form.getByRole("button", { name: "Sign in" });
+  await expect(submit).toBeDisabled();
+  await email.fill("ada@example.com");
+  await password.fill("not-her-password");
+  await submit.click();
+  await expect(form.getByRole("alert")).toHaveText(
+    "That email and password don’t match. Try again, or reset your password.",
+  );
+  await expect(password).toHaveAttribute("aria-invalid", "true");
+  expect(await sessionCookie(page)).toBeUndefined();
+  // Typing again clears it.
+  await password.fill("correct-horse-battery");
+  await expect(form.getByRole("alert")).toHaveCount(0);
+  await submit.click();
+  await expect(page).toHaveURL(/\/data$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Connectors" }),
+  ).toBeVisible();
+  expect((await sessionCookie(page))?.httpOnly).toBe(true);
+  // No page at WorkOS, so no pending sign-in.
+  expect((await mock.stats()).loginStarts).toBe(0);
+  expect(await pendingLogins(page)).toEqual([]);
+});
+
+test("creates an account with a password, verifying its email", async ({
+  page,
+}) => {
+  await page.goto("/login?return_to=%2Fdata");
+  await page.getByRole("link", { name: "Create one" }).click();
+  await expect(page).toHaveURL(/\/login\/sign-up\?return_to=%2Fdata$/);
+  await expect(
+    page.getByRole("heading", { name: "Create your Helix account" }),
+  ).toBeVisible();
+  const name = page.getByLabel("Name"),
+    email = page.getByLabel("Email"),
+    password = page.getByLabel("Password"),
+    create = page.getByRole("button", { name: "Create account" });
+  await name.fill("Grace Hopper");
+  // An address with an account already.
+  await email.fill("ada@example.com");
+  await password.fill("a-long-password");
+  await create.click();
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toHaveText(
+    "An account already uses this email. Sign in instead, or reset its password.",
+  );
+  // WorkOS's rules, in its words.
+  await email.fill("grace@example.com");
+  await password.fill("short");
+  await create.click();
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toHaveText(
+    "Password must be at least 10 characters long.",
+  );
+  await password.fill("a-long-password");
+  await create.click();
+  // WorkOS emails a new address a code first.
+  await expect(page).toHaveURL(/\/login\/verify\?flow=[\w-]{43}$/);
+  await expect(
+    page.getByText("Enter the code we sent to grace@example.com"),
+  ).toBeVisible();
+  await page.getByLabel("Verification code").fill("424242");
+  await page.getByRole("button", { name: "Verify email" }).click();
+  await expect(page).toHaveURL(/\/data$/);
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toBeVisible();
+  expect(await pendingLogins(page)).toEqual([]);
+
+  // Verified now: signing in again asks for no code.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  const form = page.getByRole("form", { name: "Sign in" });
+  await form.getByLabel("Email").fill("grace@example.com");
+  await form.getByLabel("Password").fill("a-long-password");
+  await form.getByRole("button", { name: "Sign in" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toBeVisible();
+});
+
+test("resets a password from the emailed link", async ({ page }) => {
+  await page.goto("/login");
+  const form = page.getByRole("form", { name: "Sign in" });
+  await form.getByLabel("Email").fill("ada@example.com");
+  await page.getByRole("link", { name: "Forgot your password?" }).click();
+  await expect(page).toHaveURL(/\/login\/forgot\?email=ada%40example\.com$/);
+  await expect(
+    page.getByRole("heading", { name: "Reset your password" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveValue("ada@example.com");
+  await page.getByRole("button", { name: "Email me a link" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Check your email" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("If an account uses ada@example.com"),
+  ).toBeVisible();
+  // An address without an account reads the same, and gets no link.
+  await page.getByRole("button", { name: "send another" }).click();
+  await page.getByLabel("Email").fill("nobody@example.com");
+  await page.getByRole("button", { name: "Email me a link" }).click();
+  await expect(
+    page.getByText("If an account uses nobody@example.com"),
+  ).toBeVisible();
+  const resets = await mock.passwordResets();
+  expect(resets.map((r) => r.email)).toEqual(["ada@example.com"]);
+
+  // A link the mock never sent.
+  await page.goto("/reset-password?token=forged");
+  await expect(page).toHaveURL(/\/login\/reset$/);
+  await page.getByLabel("New password").fill("a-brand-new-password");
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toHaveText(
+    "Reset link is invalid or expired.",
+  );
+
+  // The emailed one: its token never shows in the page's URL.
+  await page.goto(`/reset-password?token=${resets[0]!.token}`);
+  await expect(page).toHaveURL(/\/login\/reset$/);
+  expect(
+    (await page.context().cookies()).find((c) => c.name === "foundry-reset")
+      ?.httpOnly,
+  ).toBe(true);
+  // Too short, in WorkOS's words; the token stays for another try.
+  await page.getByLabel("New password").fill("short");
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toHaveText(
+    "Password must be at least 10 characters long.",
+  );
+  await page.getByLabel("New password").fill("a-brand-new-password");
+  await page.getByRole("button", { name: "Change password" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Password changed" }),
+  ).toBeVisible();
+  expect(
+    (await page.context().cookies()).some((c) => c.name === "foundry-reset"),
+  ).toBe(false);
+  await page.getByRole("link", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await form.getByLabel("Email").fill("ada@example.com");
+  await form.getByLabel("Password").fill("a-brand-new-password");
+  await form.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/ask\//);
+  // The link works once.
+  expect(await mock.passwordResets()).toEqual([]);
+});
+
+test("a password sign-up goes through the company's single sign-on when it requires it", async ({
+  page,
+}) => {
+  await page.goto("/login/sign-up?return_to=%2Fdata");
+  await page.getByLabel("Name").fill("Grace Hopper");
+  await page.getByLabel("Email").fill("grace@sso.example");
+  await page.getByLabel("Password").fill("a-long-password");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Mock single sign-on" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Email")).toHaveValue("grace@sso.example");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page).toHaveURL(/\/data$/);
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toBeVisible();
 });
 
 test("refreshes an expired session once for parallel calls", async ({
