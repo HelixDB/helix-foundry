@@ -25,9 +25,9 @@ import (
 //  3. foundry-read evaluates the reads with the load's version's rules; its
 //     statuses (the workspace's read limit, a paused database, a load the
 //     database doesn't hold) are the caller's.
-//  4. With workflow_run_id, the reads and their result are recorded under
-//     that open run of the ontology's workflow (trackedRun, checked before
-//     the read).
+//  4. With workflow_run_id (the MCP's use_case_run_id), the reads and their
+//     result are recorded under that open run of the ontology's use case (a
+//     workflow in the RPCs' names; trackedRun, checked before the read).
 func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFoundryGraphRequest) (*foundryv1.ReadFoundryGraphResponse, error) {
 	if s.deps.FoundryRead == nil {
 		return nil, status.Error(codes.Unavailable, "graph reads are not available here")
