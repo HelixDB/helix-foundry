@@ -81,6 +81,43 @@
   text-decoration-color: var(--hf-border-strong);
   text-underline-offset: 3px;
 }
+/* A button in a gate's fine print, as its links read. */
+.hf-gate-link {
+  padding: 0;
+  color: var(--hf-text-2);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+/* Fields in a gate's form: the form's gap spaces them. */
+.hf-gate-body .hf-field {
+  margin-top: 0;
+}
+.hf-gate-body .hf-form-error {
+  margin: 0;
+}
+/* "or" between the providers and the email form, on a rule. */
+.hf-gate-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: var(--hf-space-3) 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.hf-gate-or::before,
+.hf-gate-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--hf-border);
+}
+.hf-gate-or + .hf-gate-body {
+  margin-top: var(--hf-space-2);
+}
 .hf-provider-logo {
   flex: none;
   width: 16px;

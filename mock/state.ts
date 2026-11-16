@@ -17,6 +17,8 @@ export type MockUser = {
   // WorkOS hasn't seen the address verified: its next sign-in emails a
   // code first (mock/routes/auth.ts).
   emailUnverified?: true;
+  // Set by a password sign-up or reset; Ada's is PASSWORD.
+  password?: string;
 };
 export type Membership = {
   id: string;
@@ -45,6 +47,8 @@ export const db = {
   logins: new Map<string, PendingLogin>(),
   // Exchanges waiting for the emailed code, by the login's sessionId.
   verifications: new Map<string, { userId: string }>(),
+  // The reset links POST /v1/auth/password:forgot emailed: token → user.
+  passwordResets: new Map<string, string>(),
   workspaces: new Map<string, Workspace>(),
   memberships: [] as Membership[],
 };
@@ -107,12 +111,18 @@ export const EMAIL_CODE = "424242";
 // sign-on (WorkOS's domainSsoRequired): any other way in answers
 // ssoRequired, and AUTH_PROVIDER_SSO signs them in. No other domain has SSO.
 export const SSO_DOMAIN = "sso.example";
+// Ada's password. A password sign-up's address is one WorkOS hasn't seen
+// verified, so it asks for EMAIL_CODE, and a password shorter than
+// PASSWORD_MIN is refused with WorkOS's reason.
+export const PASSWORD = "correct-horse-battery";
+export const PASSWORD_MIN = 10;
 
 export function resetState() {
   db.users.clear();
   db.sessions.clear();
   db.logins.clear();
   db.verifications.clear();
+  db.passwordResets.clear();
   db.workspaces.clear();
   db.memberships.length = 0;
   stats.loginStarts = 0;
@@ -132,6 +142,7 @@ export function resetState() {
     firstName: "Ada",
     lastName: "Lovelace",
     createdAt: SEED_TIME,
+    password: PASSWORD,
   };
   db.users.set(ada.id, ada);
   db.workspaces.set("ws_acme", {
