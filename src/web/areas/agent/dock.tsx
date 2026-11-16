@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
   type RefObject,
+  type TextareaHTMLAttributes,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -75,6 +76,7 @@ import {
   HELPER_COMMANDS,
   RUNTIMES,
   MAX_MESSAGE,
+  promptHeight,
   NOT_RUN_TEXT,
   STARTS_WORK,
   STOP_TEXT,
@@ -228,20 +230,25 @@ export function AgentDock({
             onRetry={() => void thread.refetch()}
             onNavigate={onNavigate}
           />
-          <Composer
-            threadId={threadId}
-            thread={threadId ? thread.data : undefined}
-            runtime={where?.runtime ?? "api"}
-            hostState={where?.state ?? "ready"}
-            onNavigate={onNavigate}
-            onSent={(id) => {
-              if (id !== threadId) open(id);
-              void qc.invalidateQueries({ queryKey: [ws, "agent", "threads"] });
-              void qc.invalidateQueries({
-                queryKey: [ws, "agent", "thread", id],
-              });
-            }}
-          />
+          <div className="ag-dock-composer">
+            <Composer
+              threadId={threadId}
+              thread={threadId ? thread.data : undefined}
+              runtime={where?.runtime ?? "api"}
+              hostState={where?.state ?? "ready"}
+              minRows={threadId ? 1 : 2}
+              onNavigate={onNavigate}
+              onSent={(id) => {
+                if (id !== threadId) open(id);
+                void qc.invalidateQueries({
+                  queryKey: [ws, "agent", "threads"],
+                });
+                void qc.invalidateQueries({
+                  queryKey: [ws, "agent", "thread", id],
+                });
+              }}
+            />
+          </div>
         </>
       )}
       {deleting && (
@@ -1081,7 +1088,8 @@ function PlainText({
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
  * turn. A page that holds a conversation gives its own `placeholder` and
- * may start it with `initialText` (a suggestion's prompt).
+ * may start it with `initialText` (a suggestion's prompt); a new
+ * conversation's box starts taller (`minRows`) than a reply's.
  */
 export function Composer({
   threadId,
@@ -1092,6 +1100,7 @@ export function Composer({
   onNavigate,
   placeholder = "Ask about your workspace, or ask it to do something…",
   initialText = "",
+  minRows = 2,
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
   threadId: string;
@@ -1105,6 +1114,7 @@ export function Composer({
   onNavigate?: () => void;
   placeholder?: string;
   initialText?: string;
+  minRows?: number;
 }) {
   const { id: ws, role } = useWorkspace(),
     location = useLocation(),
@@ -1131,7 +1141,7 @@ export function Composer({
     sending = useRef(false);
   // The dock opens ready to write, the caret after any text it starts with
   // and that end in view: before paint, and again once the field has sized
-  // itself to its text (field-sizing), which a browser may do after.
+  // itself to its text (PromptInput), which a resize may redo after.
   useLayoutEffect(() => {
     const end = () => {
       const el = input.current;
@@ -1205,26 +1215,35 @@ export function Composer({
     `${length - MAX_MESSAGE} characters too long.`
   ) : busy ? (
     "You can send once Founder has finished."
-  ) : null;
+  ) : (
+    "Enter to send · Shift+Enter for a new line"
+  );
   return (
     <form
       className="ag-composer"
       aria-label="Message Founder"
+      aria-busy={pending || undefined}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
-      {context && (
-        <PageChip context={context} onDrop={() => setDropped(pageKey)} />
-      )}
-      <div className="ag-input-row">
-        <textarea
-          ref={input}
+      <div
+        className="ag-box"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) input.current?.focus();
+        }}
+      >
+        {context && (
+          <PageChip context={context} onDrop={() => setDropped(pageKey)} />
+        )}
+        <PromptInput
+          inputRef={input}
           className="ag-input"
           aria-label="Message"
-          aria-describedby={caption ? hint : undefined}
-          rows={2}
+          aria-describedby={hint}
+          minRows={minRows}
+          maxRows={8}
           value={text}
           placeholder={placeholder}
           onChange={(e) => setText(e.target.value)}
@@ -1240,9 +1259,9 @@ export function Composer({
           }}
         />
         {live ? (
-          <Button
-            size="sm"
-            icon={Square}
+          <button
+            type="button"
+            className="ag-send"
             aria-label="Stop"
             title="Stop"
             onClick={async () => {
@@ -1251,31 +1270,34 @@ export function Composer({
                 queryKey: [ws, "agent", "thread", threadId],
               });
             }}
-          />
+          >
+            <Square size={13} fill="currentColor" aria-hidden />
+          </button>
         ) : (
-          <Button
+          <button
             type="submit"
-            variant="primary"
-            size="sm"
-            icon={ArrowUp}
+            className="ag-send"
             aria-label="Send"
             title="Send"
-            pending={pending}
-            disabled={blocked}
-          />
+            disabled={blocked || pending}
+          >
+            {pending ? (
+              <LoaderCircle size={17} className="hf-spin" aria-hidden />
+            ) : (
+              <ArrowUp size={17} aria-hidden />
+            )}
+          </button>
         )}
       </div>
-      {caption && (
-        <p
-          id={hint}
-          className={cx("ag-hint", (tooLong || !!checkFailed) && "is-error")}
-        >
-          {caption}
-        </p>
-      )}
+      <p
+        id={hint}
+        className={cx("ag-status", (tooLong || !!checkFailed) && "is-error")}
+      >
+        {caption}
+      </p>
       <AiRefusal action="Founder" error={error} ready={modelReady}>
         {!!error && (
-          <p className="ag-card-error" role="alert">
+          <p className="ag-status is-error" role="alert">
             {agentRefusal(error) !== "FOUNDRY_AGENT_HOST_OFFLINE" ? (
               sentence((error as Error).message)
             ) : hostState === "unpaired" ? (
@@ -1295,6 +1317,55 @@ export function Composer({
       </AiRefusal>
     </form>
   );
+}
+
+/**
+ * A textarea that grows with its text from `minRows` to `maxRows` lines,
+ * then scrolls down, never sideways (promptHeight): Founder's composer's
+ * and the Analyst's. It sets its own height, so a long placeholder (a
+ * suggestion previewed) never moves the page.
+ */
+export function PromptInput({
+  value,
+  minRows,
+  maxRows,
+  inputRef,
+  ...rest
+}: {
+  value: string;
+  minRows: number;
+  maxRows: number;
+  inputRef: RefObject<HTMLTextAreaElement | null>;
+} & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "rows">) {
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const fit = () => {
+      const style = getComputedStyle(el);
+      el.style.height = "auto";
+      const { height, scrolls } = promptHeight({
+        line: parseFloat(style.lineHeight) || 22,
+        padding: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
+        content: el.scrollHeight,
+        minRows,
+        maxRows,
+      });
+      el.style.height = `${height}px`;
+      el.style.overflowY = scrolls ? "auto" : "hidden";
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    // A new width rewraps the text.
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (width === el.clientWidth) return;
+      width = el.clientWidth;
+      fit();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [value, minRows, maxRows]);
+  return <textarea {...rest} ref={inputRef} rows={minRows} value={value} />;
 }
 
 /** "Looking at: <ontology> / <load>" or "<dashboard>", named from what the app has read. */
@@ -1320,7 +1391,7 @@ function PageChip({
 const DropChip = ({ onDrop }: { onDrop: () => void }) => (
   <button
     type="button"
-    className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon"
+    className="ag-chip-drop"
     aria-label="Don’t send this page"
     title="Don’t send this page"
     onClick={onDrop}

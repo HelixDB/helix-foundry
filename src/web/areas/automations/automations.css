@@ -1358,12 +1358,6 @@
   min-height: 0;
   padding: var(--hf-space-4) var(--hf-space-2);
   overflow-y: auto;
-  background-color: var(--hf-sunken);
-  background-image: radial-gradient(
-    var(--hf-border-strong) 1.2px,
-    transparent 1.2px
-  );
-  background-size: 20px 20px;
 }
 .au-new-inner {
   display: grid;
@@ -1401,21 +1395,6 @@
 .au-new-composer {
   justify-self: stretch;
   text-align: left;
-}
-.au-new-composer .ag-composer {
-  padding: 12px;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius-lg);
-  background: var(--hf-surface);
-  box-shadow: var(--hf-shadow-2);
-}
-.au-new-composer .ag-input {
-  min-height: 96px;
-}
-/* A suggestion's prompt previewed as the placeholder never moves the page
-   (the chip under the pointer with it). */
-.au-new-composer .ag-input:placeholder-shown {
-  field-sizing: fixed;
 }
 /* Four suggestions in a row under the composer; two by two, then one. */
 .au-suggestions {
@@ -1503,7 +1482,6 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  background: var(--hf-surface);
 }
 .au-chat .ag-log-body {
   width: 100%;
@@ -1513,12 +1491,11 @@
 }
 .au-chat-composer {
   flex: none;
-  border-top: 1px solid var(--hf-border);
-}
-.au-chat-composer .ag-composer {
+  width: 100%;
   max-width: 760px;
   margin: 0 auto;
-  border-top: 0;
+  padding: var(--hf-space-1) var(--hf-space-2)
+    calc(var(--hf-space-15) + env(safe-area-inset-bottom));
 }
 .au-chat .ag-runtime {
   max-width: 760px;
