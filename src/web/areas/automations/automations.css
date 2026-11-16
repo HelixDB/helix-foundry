@@ -1008,6 +1008,18 @@
   background: var(--hf-selected);
   color: var(--hf-text);
 }
+/* Steps moved on the canvas saving on their own, said quietly. */
+.au-layout-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  white-space: nowrap;
+}
+.au-layout-saved:empty {
+  display: none;
+}
 .au-unsaved {
   display: flex;
   flex-wrap: wrap;
