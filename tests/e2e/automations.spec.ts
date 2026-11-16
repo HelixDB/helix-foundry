@@ -309,7 +309,10 @@ test("its composer wraps and never scrolls sideways, before and after sending", 
     .getByRole("list", { name: "Suggestions" })
     .getByRole("button", { name: "Contract check" })
     .hover();
-  await expect(message).toHaveAttribute("placeholder", /^When new documents arrive/);
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^When new documents arrive/,
+  );
   expect(await fits()).toBe(true);
   expect(await message.evaluate((el) => el.clientHeight)).toBe(tall);
   // An unbroken word wraps too.
