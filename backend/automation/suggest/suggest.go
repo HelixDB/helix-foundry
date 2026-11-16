@@ -226,11 +226,16 @@ var (
 
 // clean is s as a suggestion's field keeps it, its whitespace collapsed, or
 // why it can't be one: empty or past limit characters, a control character
-// (a newline among them), a link, markup, or an id.
+// (a newline among them) or an invisible format character (a bidi override,
+// a zero-width space: text that reads otherwise than it holds), a link,
+// markup, or an id.
 func clean(s string, limit int) (string, error) {
 	for _, r := range s {
-		if unicode.IsControl(r) {
+		switch {
+		case unicode.IsControl(r):
 			return "", fmt.Errorf("a control character")
+		case unicode.Is(unicode.Cf, r):
+			return "", fmt.Errorf("an invisible format character")
 		}
 	}
 	s = collapse(s)
