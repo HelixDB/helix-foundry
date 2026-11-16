@@ -777,7 +777,7 @@ function save(
         return fail("INVALID_ARGUMENT", `models.${role}.price.rates.${rates}`);
       if (
         kind === "FOUNDRY_AI_KIND_COHERE" &&
-        given.rates.cachedInputUsdPerMtok
+        given.rates.cachedInputUsdPerMtok?.trim()
       )
         return fail(
           "INVALID_ARGUMENT",
@@ -791,7 +791,7 @@ function save(
       )
         return fail(
           "INVALID_ARGUMENT",
-          `models.${role}.price can be free only for Ollama and OpenAI-compatible servers`,
+          `models.${role}.price can be free only for Ollama and custom OpenAI-compatible servers`,
         );
       models[role] = { name, free: {} };
     } else if (given?.tableAs) {

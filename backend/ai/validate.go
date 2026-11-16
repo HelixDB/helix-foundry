@@ -138,7 +138,7 @@ func (s Settings) Validate(r Rules) error {
 			}
 		case PriceFree:
 			if !kind.Free() {
-				return invalid(field+".price", "can be free only for Ollama and OpenAI-compatible servers")
+				return invalid(field+".price", "can be free only for Ollama and custom OpenAI-compatible servers")
 			}
 		default:
 			return invalid(field+".price", "is required")

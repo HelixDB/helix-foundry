@@ -702,7 +702,7 @@ describe("OpenAI and Azure OpenAI", () => {
       );
     await refuse(
       { verify: { name: "gpt-x", free: {} } },
-      "models.verify.price can be free only for Ollama and OpenAI-compatible servers",
+      "models.verify.price can be free only for Ollama and custom OpenAI-compatible servers",
     );
     const unpriced = await refuse(
       { extract: { name: "gpt-unknown", table: {} } },
@@ -1126,7 +1126,7 @@ describe("Amazon Bedrock", () => {
     );
     await refuse(
       { draft: { name: SONNET, free: {} } },
-      "models.draft.price can be free only for Ollama and OpenAI-compatible servers",
+      "models.draft.price can be free only for Ollama and custom OpenAI-compatible servers",
     );
     for (const name of [BEDROCK_KEY, "bedrock-api-key-YmVkcm9jaw"])
       await refuse(
@@ -1265,7 +1265,7 @@ describe("Cohere", () => {
       ],
       [
         { free: {} },
-        "models.draft.price can be free only for Ollama and OpenAI-compatible servers",
+        "models.draft.price can be free only for Ollama and custom OpenAI-compatible servers",
       ],
       [
         { tableAs: "command-a-03-2025" },

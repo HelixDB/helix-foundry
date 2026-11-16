@@ -70,6 +70,13 @@ func (k Kind) Key() KeyRule {
 // run on the owner's own hardware.
 func (k Kind) Free() bool { return k == KindOllama || k == KindCompatible }
 
+// Reasons reports whether the kind's models are sent the reasoning knob:
+// all but Cohere's, whose Compatibility API takes reasoning_effort only as
+// none or high while the engine also sends low and medium (a question's
+// turns), so a probe that passed with it would leave every question
+// refused. Cohere's models think as Cohere's own default has them.
+func (k Kind) Reasons() bool { return k != KindCohere }
+
 // Provider is where a workspace's model calls go: one struct per kind.
 type Provider interface {
 	Kind() Kind
@@ -101,6 +108,24 @@ type Cohere struct{}
 // CohereBaseURL is Cohere's Compatibility API, which serves Chat Completions
 // with tools and strict structured output.
 const CohereBaseURL = "https://api.cohere.ai/compatibility/v1"
+
+// cohereMaxOutput is the most one response of a Cohere model may write: its
+// API refuses a larger max_tokens, and a draft's step asks for up to 64,000
+// tokens and a question's 16,000. Read from Cohere's own refusals on
+// 2026-11-16. A model not listed gets cohereLeastOutput, the least of them.
+var cohereMaxOutput = map[string]uint32{
+	"command-a-03-2025":           8192,
+	"command-a-plus-05-2026":      64000,
+	"command-a-reasoning-08-2025": 32768,
+	"command-a-vision-07-2025":    8192,
+	"command-a-translate-08-2025": 8000,
+	"command-r7b-12-2024":         4096,
+	"command-r-plus-08-2024":      4096,
+	"command-r-08-2024":           4096,
+	"north-mini-code-1-0":         64000,
+}
+
+const cohereLeastOutput = 4096
 
 // Ollama is an Ollama server's native API at BaseURL, which takes no key.
 // ContextTokens is the context window it is asked to load models with.

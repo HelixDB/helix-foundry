@@ -391,6 +391,15 @@ describe("Cohere", () => {
   const COHERE = "FOUNDRY_AI_KIND_COHERE";
   const RATES = { inputUsdPerMtok: "2.5", outputUsdPerMtok: "10" };
 
+  it("is called at the WFE's Compatibility API address", () => {
+    // The backend's ai.CohereBaseURL, which its model ids name.
+    const go = readFileSync(
+      new URL("../../backend/ai/settings.go", import.meta.url),
+      "utf8",
+    );
+    expect(go).toContain(`CohereBaseURL = "${AI.COHERE_BASE_URL}"`);
+  });
+
   it("is called as an OpenAI-compatible server at its Compatibility API", () => {
     expect(AI.providerKind({ cohere: {} })).toBe(COHERE);
     expect(AI.PROVIDERS[COHERE].agent).toBe("openai_compatible");

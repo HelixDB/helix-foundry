@@ -119,15 +119,12 @@ func (s Settings) endpoint(callTimeout time.Duration) ontologyagent.Endpoint {
 	return e
 }
 
-// spec is m as the contract writes it: Ollama's models with the server's
-// context window and, once tested, the digest revision. Cohere's never send
-// the reasoning knob: its Compatibility API takes reasoning_effort only as
-// none or high, and the engine sends low and medium too (a question's turns,
-// a title), so a probe that passed with it would leave every question
-// refused; its models think as Cohere's own default has them.
+// spec is m as the contract writes it: the reasoning knob only where its
+// kind takes it (Kind.Reasons), Ollama's models with the server's context
+// window and, once tested, the digest revision, and Cohere's under their
+// output ceiling (cohereMaxOutput).
 func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.ModelSpec {
-	_, cohere := s.Provider.(Cohere)
-	spec := ontologyagent.ModelSpec{Name: m.Name, Reasoning: reasoning && !cohere}
+	spec := ontologyagent.ModelSpec{Name: m.Name, Reasoning: reasoning && s.Provider.Kind().Reasons()}
 	switch p := m.Price.(type) {
 	case PriceTable:
 		spec.Price = ontologyagent.PriceTable{}
@@ -138,6 +135,12 @@ func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.M
 	case PriceFree:
 		spec.Price = ontologyagent.PriceFree{}
 	}
+	if _, ok := s.Provider.(Cohere); ok {
+		spec.MaxOutputTokens = cohereLeastOutput
+		if most, known := cohereMaxOutput[m.Name]; known {
+			spec.MaxOutputTokens = most
+		}
+	}
 	if o, ok := s.Provider.(Ollama); ok {
 		spec.ContextTokens, spec.Revision = o.ContextTokens, revision
 	}
@@ -145,9 +148,9 @@ func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.M
 }
 
 // ProbeRequest is the agent's test of s, saved as config configID: every
-// role's model as it would run, reasoning on (the probe turns it off where a
-// model refuses it), and a title on the extraction model, under ProbeMaxUSD
-// and the deployment's probe timeout.
+// role's model as it would run, reasoning on where its kind takes it (the
+// probe turns it off where a model refuses it), and a title on the
+// extraction model, under ProbeMaxUSD and the deployment's probe timeout.
 func (d *Deployment) ProbeRequest(configID string, s Settings, timeout time.Duration) ontologyagent.ProbeRequest {
 	m := s.Models
 	title := s.spec(m.Extract, false, "")

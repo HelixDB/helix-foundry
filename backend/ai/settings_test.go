@@ -25,6 +25,15 @@ func claudeRoles(t *testing.T) Roles {
 // every is a model per role, all of them m.
 func every(m Model) Roles { return Roles{Draft: m, Ask: m, Extract: m, Verify: m} }
 
+// Only Cohere's models go without the reasoning knob.
+func TestKindReasons(t *testing.T) {
+	for _, k := range Kinds {
+		if k.Reasons() != (k != KindCohere) {
+			t.Errorf("%s.Reasons() = %v", k, k.Reasons())
+		}
+	}
+}
+
 func TestSettingsJSON(t *testing.T) {
 	// Every kind and every price form survives the settings column as it was
 	// saved, so a config is read back exactly as the probe tested it.
