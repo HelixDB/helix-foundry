@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
@@ -505,6 +506,12 @@ type backend struct {
 	// answered are the generations' answers sent; answerErr refuses them.
 	answered  []*foundryv1.AnswerOntologyGenerationRequest
 	answerErr error
+	// question is what an ask and a get_question answer: q1, answered,
+	// unless a test says.
+	question *foundryv1.FoundryQuestion
+	// created are the dashboards made; deleted the ids of those deleted.
+	created []*foundryv1.CreateFoundryDashboardRequest
+	deleted []string
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
@@ -577,7 +584,25 @@ func (b *backend) ListFoundryOntologies(context.Context, *foundryv1.ListFoundryO
 
 func (b *backend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	b.asked = append(b.asked, r)
-	return &foundryv1.FoundryQuestionResponse{Question: &foundryv1.FoundryQuestion{Id: "q1", Status: "answered"}}, nil
+	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
+}
+
+func (b *backend) GetFoundryQuestion(context.Context, *foundryv1.GetFoundryQuestionRequest, ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
+	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
+}
+
+// CreateFoundryDashboard makes dash<n>, unpinned and unpublished, as the
+// backend makes every new dashboard.
+func (b *backend) CreateFoundryDashboard(_ context.Context, r *foundryv1.CreateFoundryDashboardRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryDashboardResponse, error) {
+	b.created = append(b.created, r)
+	return &foundryv1.FoundryDashboardResponse{Dashboard: &foundryv1.FoundryDashboard{Id: fmt.Sprintf("dash%d", len(b.created)), Name: r.GetName(),
+		Description: r.GetDescription(), SpecJson: r.GetSpecJson(), Revision: 1, CanEdit: true, CanDelete: true}}, nil
+}
+
+func (b *backend) DeleteFoundryDashboard(_ context.Context, r *foundryv1.DeleteFoundryDashboardRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	b.deleted = append(b.deleted, r.GetId())
+	return &emptypb.Empty{}, nil
 }
 
 func (b *backend) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (
@@ -682,7 +707,7 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 	t.Helper()
 	keys, err := secretbox.NewKeyring("k1", map[string][]byte{"k1": []byte(strings.Repeat("k", 32))})
 	require.NoError(t, err)
-	b := &backend{}
+	b := &backend{question: &foundryv1.FoundryQuestion{Id: "q1", Status: "answered"}}
 	h := &harness{db: &memStore{ontologies: []*model.FoundryOntology{{ID: ontology, WorkspaceID: ws, Name: "Sales graph"}}},
 		model: &scripted{steps: steps}, backend: b, keys: keys}
 	service := (&integration.Service{Foundry: b, Actions: integration.FoundryClients{FoundryServiceClient: b}, Confirmations: &confirmations{},
@@ -813,7 +838,9 @@ func TestTheAssistantPreparesDashboards(t *testing.T) {
 	assert.Equal(t, "update_dashboard", renamed.Operation)
 	assert.JSONEq(t, `{"dashboard":{"id":"dash1","name":"Revenue","published":true},"name":"Revenue by month"}`, string(renamed.Display))
 	assert.True(t, renamed.TargetNamedByUser, "the page the person was on named it")
+	assert.Equal(t, model.FoundryAgentActionPrepared, renamed.Status, "an edit waits for the person")
 	assert.Equal(t, "create_dashboard", h.db.actions[1].Operation)
+	assert.Equal(t, model.FoundryAgentActionSucceeded, h.db.actions[1].Status, "a new dashboard the message asked for runs at once")
 	assert.JSONEq(t, `{"name":"Pipeline","spec":{"tiles":[]}}`, string(h.db.actions[1].Display))
 	for _, op := range []string{"create_dashboard", "update_dashboard", "delete_dashboard", "pin_dashboard", "publish_dashboard", "unpublish_dashboard"} {
 		assert.True(t, Operations[op], op)
@@ -830,6 +857,39 @@ func TestTheNewAutomationPageIsSaid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, `<page_context>{"creating_automation":true}</page_context>`)
 	assert.Contains(t, h.model.requests[0].System, "creating_automation")
+}
+
+// The person's time zone reaches the model as data in <page_context>, and
+// the prompt tells it to use that zone without asking.
+func TestThePersonsTimeZoneIsSaid(t *testing.T) {
+	h := newHarness(t, say("Done."))
+	turn := message("Every Monday at 8, summarise the overdue invoices")
+	turn.PageContext = json.RawMessage(`{"new_automation":true,"time_zone":"America/New_York"}`)
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+	assert.Contains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text,
+		`<page_context>{"creating_automation":true,"time_zone":"America/New_York"}</page_context>`)
+	assert.Contains(t, h.model.requests[0].System, "the time_zone in <page_context> (their browser's), without asking for it")
+}
+
+// A zone stored before it was checked, or no zone at all, is never said.
+func TestATimeZoneThatIsntOneIsNotSaid(t *testing.T) {
+	for _, zone := range []string{"Mars/Olympus", "Local", ""} {
+		h := newHarness(t, say("Hello."))
+		turn := message("Hi")
+		turn.PageContext, _ = json.Marshal(PageContext{TimeZone: zone})
+		_, err := h.runner.Run(context.Background(), turn)
+		require.NoError(t, err)
+		assert.NotContains(t, h.model.requests[0].Messages[0].Content[0].(llm.Text).Text, "page_context", zone)
+	}
+}
+
+// Step instructions name things, never ids; time zones offered are words.
+func TestThePromptKeepsIdsAndZoneIdsFromPeople(t *testing.T) {
+	assert.Contains(t, systemPrompt, `naming what it acts on by its name ("the Acme Corp customers ontology"), never by an id`)
+	assert.Contains(t, systemPrompt, `label each in words people read, such as "London (UK time)" or "New York (US Eastern)", never as an IANA id`)
+	assert.NotContains(t, systemPrompt, "ask them for it when you can't tell")
+	assert.Contains(t, automationPrompt(&automationStep{name: "Weekly"}), "names what it acts on by name, not id")
 }
 
 // A page context naming nothing of the workspace tells the model nothing.
@@ -989,7 +1049,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-11", PromptVersion)
+	assert.Equal(t, "assistant-13", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {
@@ -1301,7 +1361,7 @@ func TestAFailedToolCheckRefusesTheTurn(t *testing.T) {
 	for check, words := range map[ai.AssistantCheck]string{
 		ai.AssistantNoToolCall: "claude-sonnet-5-5, doesn't call tools",
 		ai.AssistantAuth:       "Claude refused the workspace's key",
-		ai.AssistantRefused:    "Claude refused the Assistant's calls to claude-sonnet-5-5",
+		ai.AssistantRefused:    "Claude refused Founder's calls to claude-sonnet-5-5",
 	} {
 		h := newHarness(t, say("never"))
 		h.runner.AI = fixedAI{check: check}

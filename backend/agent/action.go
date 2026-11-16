@@ -24,7 +24,7 @@ func RunAction(ctx context.Context, sessions integration.SessionHost, keys *secr
 	}
 	token, err := keys.Open(a.TokenSealed, a.KeyID, a.ID)
 	if err != nil {
-		return failed("the action's confirmation can't be opened; ask the Assistant to prepare it again")
+		return failed("the action's confirmation can't be opened; ask Founder to prepare it again")
 	}
 	var payload map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(a.Payload))

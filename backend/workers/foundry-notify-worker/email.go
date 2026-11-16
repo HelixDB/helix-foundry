@@ -296,7 +296,7 @@ func automationRunEmail(name, note string, said []string, pending int, run strin
 	}
 	for _, s := range said {
 		if s = unlinked(s); s != "" {
-			m.paragraphs = append(m.paragraphs, paragraph{Text: "The Assistant: " + s})
+			m.paragraphs = append(m.paragraphs, paragraph{Text: "Founder: " + s})
 		}
 	}
 	switch {

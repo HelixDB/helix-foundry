@@ -14,6 +14,7 @@ import { Button, Tag, cx } from "../kit";
 import {
   MAX_OWN,
   answerText,
+  optionText,
   answersOf,
   canLeave,
   canLeaveRest,
@@ -31,7 +32,7 @@ import {
 } from "./model";
 
 // The question-by-question flow, shared by a generation's page, an
-// unfinished ontology's setup and the Assistant's dock: a strip of the
+// unfinished ontology's setup and Founder's dock: a strip of the
 // questions (each answered one showing its answer, and opened again with a
 // click) and Review; one question at a time, its options a list the arrows
 // move through (radios for one, checkboxes for several, the recommended
@@ -394,7 +395,7 @@ function Step({
                   </span>
                   <span className="qf-option-body">
                     <span className="qf-option-label">
-                      {o.label}
+                      {optionText(o.label)}
                       {o.label ===
                         (q.ask as { recommended: string | null })
                           .recommended && <Tag tone="accent">Recommended</Tag>}
@@ -541,7 +542,7 @@ export function QuestionList({ questions }: { questions: Question[] }) {
               {q.ask.options.map((o) => (
                 <li key={o.label}>
                   <span className="qf-option-label">
-                    {o.label}
+                    {optionText(o.label)}
                     {o.label ===
                       (q.ask as { recommended: string | null }).recommended && (
                       <Tag tone="accent">Recommended</Tag>

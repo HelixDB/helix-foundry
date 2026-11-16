@@ -649,7 +649,7 @@ func TestAConditionTakesItsBranch(t *testing.T) {
 	assert.Equal(t, model.FoundryAutomationNodeBlocked, f.status(run.ID, "mail"))
 	end := f.db.finished[run.ID]
 	assert.Equal(t, model.FoundryAutomationRunFailed, end.Status)
-	assert.Equal(t, `The condition step "late" failed: The Assistant gave no yes-or-no answer.`, end.Error)
+	assert.Equal(t, `The condition step "late" failed: Founder gave no yes-or-no answer.`, end.Error)
 	require.NotNil(t, end.Notice, "its owner is told when it pauses")
 	assert.Equal(t, model.FoundryNotifyAutomationPaused, end.Notice.Kind)
 	assert.Equal(t, f.task.cfg.PauseAfterFailures, end.PauseAfter)
@@ -846,7 +846,7 @@ func TestWithoutTheAssistantOrEmail(t *testing.T) {
 	run := f.queue(spec(`[{"from":"start","to":"ask"},{"from":"start","to":"mail"}]`, node("start", "trigger", `{"kind":"manual"}`),
 		node("ask", "assistant", `{"instruction":"Look"}`), node("mail", "notify", `{"message":""}`)))
 	f.task.advance(context.Background(), run)
-	assert.Equal(t, "The Assistant isn't available here.", *f.db.nodes[run.ID]["ask"].Error)
+	assert.Equal(t, "Founder isn't available here.", *f.db.nodes[run.ID]["ask"].Error)
 	assert.Equal(t, "Not emailed: this install sends no email.", f.output(t, run.ID, "mail").Summary)
 	assert.Empty(t, f.db.notices)
 	end := f.db.finished[run.ID]
@@ -1019,7 +1019,7 @@ func TestARunsAnswerSaysWhatItsStepsFound(t *testing.T) {
 	f.db.endTurn(t, model.FoundryAgentTurnDone, agent.Said{Text: "I looked."})
 	f.task.advance(context.Background(), run)
 	answer = f.db.finished[run.ID].Answer
-	assert.True(t, strings.HasPrefix(answer, `The run failed: The condition step "late" failed: The Assistant gave no yes-or-no answer.`), answer)
+	assert.True(t, strings.HasPrefix(answer, `The run failed: The condition step "late" failed: Founder gave no yes-or-no answer.`), answer)
 	assert.Contains(t, answer, `- The notify step "mail" blocked`)
 
 	// One that ended before its steps says only why.

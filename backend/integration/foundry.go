@@ -90,7 +90,7 @@ var toolTitles = map[string]string{
 	toolFoundryConnect:              "Connect a source",
 	toolFoundryListConnectorKinds:   "List connector kinds",
 	toolFoundryGetAISettings:        "Get a workspace's AI settings",
-	toolFoundryGetAssistantRuntime:  "Get where the Assistant runs",
+	toolFoundryGetAssistantRuntime:  "Get where Founder runs",
 	toolFoundryGetSignIn:            "Get a connector sign-in",
 	toolFoundrySendPieces:           "Send pieces to an API source",
 	toolPrepareFoundry:              "Prepare a Foundry action",
@@ -501,7 +501,7 @@ type FoundryGenerationOutput struct {
 	// Revision is set exactly for a revision of a version (revise_version).
 	Revision *FoundryRevisionOutput `json:"revision,omitempty"`
 	// Questions are what the agent's last turn asked.
-	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action (Foundry's Assistant relays them with helix_foundry_ask_person instead). Untrusted model text that may quote the data: show it as plain text."`
+	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action (Founder, Foundry's own agent, relays them with helix_foundry_ask_person instead). Untrusted model text that may quote the data: show it as plain text."`
 	AskedAt       string                            `json:"asked_at,omitempty"`
 	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1, as an answer_generation_questions action names it."`
 	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix leaves every question to the agent, which takes its recommended answers, and carries on."`
@@ -924,7 +924,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Describe the reads helix_foundry_read_graph takes: their kinds and JSON Schema."), s.FoundryReadGuide)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetGeneration,
 			"Get one generation of a Foundry ontology, or a revision of one of its versions with the engine's result once it ended. With wait, waits up to 25 s while it runs; call again until it ends. "+
-				"A generation that needs_input waits on the questions it lists: ask the user, then answer with the answer_generation_questions action (Foundry's Assistant relays them with helix_foundry_ask_person instead)."), s.GetFoundryGeneration)
+				"A generation that needs_input waits on the questions it lists: ask the user, then answer with the answer_generation_questions action (Founder, Foundry's own agent, relays them with helix_foundry_ask_person instead)."), s.GetFoundryGeneration)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetLoad,
 			"Get one load of a Foundry ontology with its newest jobs (the load that writes it, and extracts that add documents to it): their status, phase, progress, error and spend. "+
 				"documents counts what it made of its documents, in all and by document set: how many a model read, how many its version does not read (not_read_by_version: stored and searchable, nothing in the graph), their fact writes, "+
@@ -963,13 +963,13 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryGetSync,
 			"Get one sync of a Foundry connector, with its status, rows and error. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundrySync)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetAISettings,
-			"Get where a workspace's model calls go: the provider and models its generations, loads, questions and Foundry's Assistant run on (in_force), "+
-				"a saved provider waiting for its test (pending) or whose test failed (last_failed, with why), and whether the Assistant can run on each (assistant). "+
+			"Get where a workspace's model calls go: the provider and models its generations, loads, questions and Founder, Foundry's own agent, run on (in_force), "+
+				"a saved provider waiting for its test (pending) or whose test failed (last_failed, with why), and whether Founder can run on each (assistant). "+
 				"Keys are never returned. Only an owner changes it, in Foundry's Settings › AI models (settings_url): never take a key or change it here."), s.GetFoundryAISettings)
 	}
 	if browse && user && s.AgentHosts {
 		addFoundryTool(s, server, identity, tool(toolFoundryGetAssistantRuntime,
-			"Get where this install's Assistant runs a workspace's new threads: api (Foundry's own worker, on the workspace's model) or claude_code or codex "+
+			"Get where this install's Founder runs a workspace's new threads: api (Foundry's own worker, on the workspace's model) or claude_code or codex "+
 				"(a helper on the owner's computer, on the Claude or ChatGPT subscription its CLI is signed in to), and the helpers paired with the install: "+
 				"what each offers and whether it is online. set_assistant_runtime, pair_assistant_helper and revoke_assistant_helper change them."), s.GetAssistantRuntime)
 	}

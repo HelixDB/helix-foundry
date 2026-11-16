@@ -146,7 +146,7 @@ test("an agent's run shows its request, what it read and asked, and its answer",
   await page.goBack();
 
   // Its question opens in Analyst.
-  await calls.getByRole("link", { name: "Open it in Analyst" }).click();
+  await calls.getByRole("link", { name: "Open the answer" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/ask/ont_acme_contracts.*${asked.body.question.id}`),
   );

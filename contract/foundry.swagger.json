@@ -6950,7 +6950,7 @@
         "NULL_VALUE"
       ],
       "default": "NULL_VALUE",
-      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
+      "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
     },
     "rpcStatus": {
       "type": "object",
@@ -8528,6 +8528,10 @@
         "newAutomation": {
           "type": "boolean",
           "description": "The person is on the page that starts a new automation."
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "The IANA time zone the person's browser names (America/New_York): the\nAssistant's default for a schedule. One that isn't a zone Go's database\nhas, or longer than 64 characters, is dropped, never refused."
         }
       },
       "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."

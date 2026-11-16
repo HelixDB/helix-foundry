@@ -17,6 +17,7 @@ import type {
 } from "../../../shared/wfe";
 import { AUTOMATION_REFUSALS } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
+import { zoneOffset, zoneTime } from "../../../shared/time-zone";
 import { ApiError } from "../../api";
 
 // Automations, as pure functions (backend/automation is the contract): an
@@ -267,7 +268,7 @@ function readNode(wire: {
           allow: z.array(z.unknown()).nullish(),
         })
         .safeParse(raw);
-      if (!read.success) return at("an Assistant step is {instruction, allow}");
+      if (!read.success) return at("a Founder step is {instruction, allow}");
       const instruction = read.data.instruction.trim();
       if (!textFits(instruction, 1, LIMITS.instruction))
         return at(
@@ -276,7 +277,7 @@ function readNode(wire: {
       const allow = read.data.allow || [];
       if (allow.length > LIMITS.allow)
         return at(
-          `an Assistant step runs at most ${LIMITS.allow} actions unasked, not ${allow.length}`,
+          `a Founder step runs at most ${LIMITS.allow} actions unasked, not ${allow.length}`,
         );
       const actions: AutomationAction[] = [];
       for (const a of allow) {
@@ -501,8 +502,8 @@ function checkGraph(
       return {
         error: `${name(n.id)} can't check ${name(from.id)}: ${
           n.config.check === "answer"
-            ? "an answer is an Assistant step's"
-            : "a count is an Assistant step's, or a document_arrived or sync_finished trigger's"
+            ? "an answer is a Founder step's"
+            : "a count is a Founder step's, or a document_arrived or sync_finished trigger's"
         }`,
         nodeId: n.id,
       };
@@ -771,22 +772,29 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const dayName = (d: Weekday) => cap(d);
 
 /**
- * A schedule's times in words, its zone after them unless it is `here`.
+ * A schedule's times in words, in its zone's: a day's and a week's time
+ * name the zone ("New York time"), an hour's minute only in a zone whose
+ * offset isn't whole hours, the one place the minute past differs.
  *
  * @example
- * scheduleText({ kind: "schedule", every: "week", weekday: "monday", at: "09:00", time_zone: "Europe/London" }, "Europe/London");
- * // "every Monday at 09:00"
+ * scheduleText({ kind: "schedule", every: "week", weekday: "monday", at: "09:00", time_zone: "Europe/London" });
+ * // "every Monday at 09:00 London time"
  */
-export function scheduleText(s: ScheduleTrigger, here?: string) {
-  const when =
-    s.every === "hour"
-      ? s.minute === 0
+export function scheduleText(s: ScheduleTrigger) {
+  if (s.every === "hour") {
+    const when =
+      s.minute === 0
         ? "every hour, on the hour"
-        : `every hour at ${s.minute} past`
-      : s.every === "day"
-        ? `every day at ${s.at}`
-        : `every ${dayName(s.weekday)} at ${s.at}`;
-  return s.time_zone === here ? when : `${when} (${s.time_zone})`;
+        : `every hour at ${s.minute} past`;
+    return validZone(s.time_zone) && zoneOffset(s.time_zone).includes(":")
+      ? `${when}, ${zoneTime(s.time_zone)}`
+      : when;
+  }
+  const when =
+    s.every === "day"
+      ? `every day at ${s.at}`
+      : `every ${dayName(s.weekday)} at ${s.at}`;
+  return `${when} ${zoneTime(s.time_zone)}`;
 }
 
 const OUTCOME_WORDS: Record<Outcome, string> = {
@@ -802,10 +810,10 @@ const OUTCOME_WORDS: Record<Outcome, string> = {
  * triggerText({ kind: "sync_finished", connector_id: "c1", outcome: "succeeded" }, { ...NO_NAMES, connector: () => "Stripe" });
  * // "a sync of “Stripe” succeeds"
  */
-export function triggerText(t: AutomationTrigger, names: Names, here?: string) {
+export function triggerText(t: AutomationTrigger, names: Names) {
   switch (t.kind) {
     case "schedule":
-      return scheduleText(t, here);
+      return scheduleText(t);
     case "sync_finished":
       return `a sync of ${quoted(names.connector(t.connector_id), "a connection")} ${OUTCOME_WORDS[t.outcome]}`;
     case "load_ready":
@@ -876,7 +884,7 @@ export function conditionText(
 /** Each kind's name, as the builder offers a new step of it. */
 export const KIND_LABELS: Record<Kind, string> = {
   trigger: "Start",
-  assistant: "Ask the Assistant",
+  assistant: "Ask Founder",
   action: "Sync, load or refresh",
   condition: "Check an answer or a count",
   notify: "Email me",
@@ -884,7 +892,7 @@ export const KIND_LABELS: Record<Kind, string> = {
 /** Each kind's name, as a step's head says it. */
 export const KIND_HEADS: Record<Kind, string> = {
   trigger: "When",
-  assistant: "Assistant",
+  assistant: "Founder",
   action: "Action",
   condition: "If",
   notify: "Email",
@@ -895,21 +903,16 @@ export const KIND_HEADS: Record<Kind, string> = {
  * `email` is whether a notify step emails here (false on a local build,
  * where it only notes the run).
  */
-export function nodeText(
-  n: AutomationNode,
-  names: Names,
-  email: boolean,
-  here?: string,
-) {
+export function nodeText(n: AutomationNode, names: Names, email: boolean) {
   switch (n.kind) {
     case "trigger":
       return n.config.kind === "manual"
         ? "only when you run it"
-        : `when ${triggerText(n.config, names, here)}`;
+        : `when ${triggerText(n.config, names)}`;
     case "assistant":
       return n.config.instruction.trim()
-        ? `ask the Assistant: “${n.config.instruction}”`
-        : "ask the Assistant";
+        ? `ask Founder: “${n.config.instruction}”`
+        : "ask Founder";
     case "action":
       return actionText(n.config, names);
     case "condition":
@@ -929,15 +932,10 @@ export function nodeText(
  * them); a step a condition's false branch leads to says "otherwise".
  *
  * @example
- * sentence(spec, names, true, "UTC");
- * // "Every Monday at 09:00, sync “Stripe”, then ask the Assistant: “…”, then email you what it found."
+ * sentence(spec, names, true);
+ * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask Founder: “…”, then email you what it found."
  */
-export function sentence(
-  spec: AutomationSpec,
-  names: Names,
-  email: boolean,
-  here?: string,
-) {
+export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
   const read = parseSpec(spec);
   // Steps that can't be read yet go as the canvas lays them out, top down.
   const order = read.ok
@@ -952,8 +950,8 @@ export function sentence(
     t.config.kind === "manual"
       ? "When you run it"
       : t.config.kind === "schedule"
-        ? cap(triggerText(t.config, names, here))
-        : `When ${triggerText(t.config, names, here)}`;
+        ? cap(triggerText(t.config, names))
+        : `When ${triggerText(t.config, names)}`;
   const steps = order
     .map((id) => nodeOf(spec, id)!)
     .filter((n) => n.kind !== "trigger");
@@ -961,7 +959,7 @@ export function sentence(
     steps.reduce((text, n, i) => {
       const otherwise = edgesInto(spec, n.id).some((e) => e.branch === "false"),
         after = i > 0 && steps[i - 1]!.kind === "condition" ? ", " : ", then ";
-      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email, here)}`;
+      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email)}`;
     }, head) + "."
   );
 }
@@ -990,7 +988,7 @@ export function incomplete(n: AutomationNode): string | undefined {
         ? n.config.allow?.some((a) => !actionTarget(a))
           ? "Choose what each allowed action acts on"
           : undefined
-        : "Write what the Assistant should do";
+        : "Write what Founder should do";
     case "action":
       return actionTarget(n.config)
         ? undefined
@@ -1007,7 +1005,7 @@ export function incomplete(n: AutomationNode): string | undefined {
 // -------------------------------------------------------------- suggestions
 
 /**
- * The new-automation page's suggestions: prompts for the Assistant, each an
+ * The new-automation page's suggestions: prompts for Founder, each an
  * outcome, under its title and the hue of its icon (`--hf-<tone>-soft` and
  * `-text`). A click puts the prompt in the composer; nothing is sent.
  */
@@ -1077,7 +1075,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "weekly-summary",
     title: "Weekly summary by email",
     description:
-      "Every Monday morning, the Assistant reads an ontology and emails you what changed.",
+      "Every Monday morning, Founder reads an ontology and emails you what changed.",
     needs: ["ontology"],
     build: (c) => ({
       name: "Weekly summary",
@@ -1123,7 +1121,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "sync-and-summarise",
     title: "Sync, then summarise",
     description:
-      "Every morning, sync a connection, then have the Assistant email you a summary.",
+      "Every morning, sync a connection, then have Founder email you a summary.",
     needs: ["connector"],
     build: (c) => ({
       name: `Morning ${c.connector?.name || "sync"}`,
@@ -1215,7 +1213,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "check-documents",
     title: "Check new documents",
     description:
-      "When documents arrive in a set, the Assistant reads them and emails you only if one needs attention.",
+      "When documents arrive in a set, Founder reads them and emails you only if one needs attention.",
     needs: ["set"],
     build: (c) => ({
       name: `Check ${c.set?.name || "new documents"}`,
@@ -1263,7 +1261,7 @@ export const TEMPLATES: readonly Template[] = [
     id: "load-ready-report",
     title: "Report on each new load",
     description:
-      "When a load of an ontology is ready, the Assistant checks it and emails you what it found.",
+      "When a load of an ontology is ready, Founder checks it and emails you what it found.",
     needs: ["ontology"],
     build: (c) => ({
       name: `${c.ontology?.name || "Ontology"} load report`,

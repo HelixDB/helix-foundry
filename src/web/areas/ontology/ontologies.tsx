@@ -34,16 +34,20 @@ import { lastOntology, ontologyName, useOntology } from "./scope";
  * routes catch up. A grantee with nothing shared is told so instead.
  * `reads` (Ask and the Explorer) opens only an ontology the user reads
  * (../workspace/access-model.ts readAccess): a member who can't query its
- * database reads only those their source grants cover.
+ * database reads only those their source grants cover. `keepQuery` (Ask)
+ * carries the link's query to the ontology's page (a Founder thread's
+ * `?chat=`).
  */
 export function OpenOntology({
   title,
   to,
   reads = false,
+  keepQuery = false,
 }: {
   title: string;
   to: (ontologyId: string) => string;
   reads?: boolean;
+  keepQuery?: boolean;
 }) {
   const me = useWorkspace(),
     { id: ws, grantee } = me;
@@ -53,13 +57,13 @@ export function OpenOntology({
     ),
     last = lastOntology(ws);
   const open = ontologies.find((o) => o.id === last) ?? ontologies[0];
+  const { pathname, search } = useLocation(),
+    navigate = useNavigate();
   const target = open
-    ? to(open.id)
+    ? to(open.id) + (keepQuery ? search : "")
     : list.data && !grantee && !list.data.ontologies?.length
       ? paths.newOntology()
       : null;
-  const { pathname } = useLocation(),
-    navigate = useNavigate();
   // The router renders a followed link's route in a transition, so this page
   // can still render after the address has moved on: compare the address.
   useEffect(() => {

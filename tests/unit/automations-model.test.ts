@@ -269,7 +269,7 @@ describe("parseSpec", () => {
     );
   });
 
-  it("reads Assistant steps, actions and conditions as the backend does", () => {
+  it("reads Founder steps, actions and conditions as the backend does", () => {
     const one = (n: AutomationNode, from: AutomationNode = manual) =>
       error(
         spec(
@@ -297,9 +297,7 @@ describe("parseSpec", () => {
           })),
         ),
       ),
-    ).toBe(
-      "node ask: an Assistant step runs at most 10 actions unasked, not 11",
-    );
+    ).toBe("node ask: a Founder step runs at most 10 actions unasked, not 11");
     const sync = { operation: "sync_connector", connector_id: "c1" };
     expect(one(ask("x", [sync, sync]))).toBe(
       "node ask: allow names sync_connector on the same target twice",
@@ -343,10 +341,10 @@ describe("parseSpec", () => {
       one(node("if", "condition", { check: "answer", equals: "maybe" }), ask()),
     ).toMatch(/a condition is/);
     expect(one(yes)).toBe(
-      "node if can't check node start: an answer is an Assistant step's",
+      "node if can't check node start: an answer is a Founder step's",
     );
     expect(one(most)).toBe(
-      "node if can't check node start: a count is an Assistant step's, or a document_arrived or sync_finished trigger's",
+      "node if can't check node start: a count is a Founder step's, or a document_arrived or sync_finished trigger's",
     );
     // A count follows the documents that arrived.
     const arrived = node("start", "trigger", {
@@ -726,10 +724,12 @@ describe("schedules", () => {
 describe("words", () => {
   it("says each trigger, action and condition", () => {
     expect(
-      scheduleText(
-        { kind: "schedule", every: "hour", minute: 0, time_zone: "UTC" },
-        "UTC",
-      ),
+      scheduleText({
+        kind: "schedule",
+        every: "hour",
+        minute: 0,
+        time_zone: "America/New_York",
+      }),
     ).toBe("every hour, on the hour");
     expect(
       scheduleText({
@@ -738,13 +738,33 @@ describe("words", () => {
         minute: 5,
         time_zone: "UTC",
       }),
-    ).toBe("every hour at 5 past (UTC)");
+    ).toBe("every hour at 5 past");
+    // An hour's minute names a zone only where it isn't whole hours off.
     expect(
-      scheduleText(
-        { kind: "schedule", every: "day", at: "07:30", time_zone: "UTC" },
-        "UTC",
-      ),
-    ).toBe("every day at 07:30");
+      scheduleText({
+        kind: "schedule",
+        every: "hour",
+        minute: 5,
+        time_zone: "Asia/Kolkata",
+      }),
+    ).toBe("every hour at 5 past, Kolkata time");
+    expect(
+      scheduleText({
+        kind: "schedule",
+        every: "day",
+        at: "07:30",
+        time_zone: "UTC",
+      }),
+    ).toBe("every day at 07:30 UTC");
+    expect(
+      scheduleText({
+        kind: "schedule",
+        every: "week",
+        weekday: "monday",
+        at: "08:00",
+        time_zone: "America/New_York",
+      }),
+    ).toBe("every Monday at 08:00 New York time");
     expect(
       triggerText(
         { kind: "sync_finished", connector_id: "c1", outcome: "failed" },
@@ -807,9 +827,9 @@ describe("words", () => {
   it("says a notify step as this Foundry sends it", () => {
     const quiet = node("tell", "notify", { message: "" });
     expect(nodeText(tell, NO_NAMES, true)).toBe("email you “Done”");
-    expect(nodeText(ask("  "), NO_NAMES, true)).toBe("ask the Assistant");
+    expect(nodeText(ask("  "), NO_NAMES, true)).toBe("ask Founder");
     expect(nodeText(ask("Sum up."), NO_NAMES, true)).toBe(
-      "ask the Assistant: “Sum up.”",
+      "ask Founder: “Sum up.”",
     );
     expect(nodeText(quiet, NO_NAMES, true)).toBe("email you what it found");
     expect(nodeText(quiet, NO_NAMES, false)).toBe(
@@ -823,8 +843,8 @@ describe("words", () => {
       timeZone: "Europe/London",
       connector: { id: "c1", name: "Stripe" },
     });
-    expect(sentence(weekly.spec, names, true, "Europe/London")).toBe(
-      "Every day at 08:00, sync “Stripe”, then ask the Assistant: “Summarise anything that needs attention today, such as overdue invoices or records that changed overnight.”, then email you “This morning’s summary”.",
+    expect(sentence(weekly.spec, names, true)).toBe(
+      "Every day at 08:00 London time, sync “Stripe”, then ask Founder: “Summarise anything that needs attention today, such as overdue invoices or records that changed overnight.”, then email you “This morning’s summary”.",
     );
     const check = TEMPLATES.find((t) => t.id === "check-documents")!.build({
       timeZone: "UTC",
@@ -838,8 +858,8 @@ describe("words", () => {
         { from: "needs", to: "other", branch: "false" as const },
       ],
     };
-    expect(sentence(both, names, true, "UTC")).toMatch(
-      /^When documents arrive in “General”, ask the Assistant: .*, then if the answer is yes, email you “A new document needs your attention”, then otherwise email you what it found\.$/,
+    expect(sentence(both, names, true)).toMatch(
+      /^When documents arrive in “General”, ask Founder: .*, then if the answer is yes, email you “A new document needs your attention”, then otherwise email you what it found\.$/,
     );
     expect(sentence(simple, names, false)).toBe(
       "When you run it, note what it found in the run (this Foundry sends no email).",
@@ -865,7 +885,7 @@ describe("words", () => {
         node("t", "trigger", { kind: "document_arrived", set_id: "" }),
       ),
     ).toBe("Choose a document set");
-    expect(incomplete(ask(""))).toBe("Write what the Assistant should do");
+    expect(incomplete(ask(""))).toBe("Write what Founder should do");
     expect(
       incomplete(ask("x", [{ operation: "create_load", ontology_id: "" }])),
     ).toBe("Choose what each allowed action acts on");
@@ -962,7 +982,7 @@ describe("edits", () => {
     expect(y("ask").y).toBe(150);
     // Blank, it can't be read yet: its sentence goes top down.
     expect(sentence(added.spec, NO_NAMES, false)).toBe(
-      "When you run it, ask the Assistant: “Summarise.”, then ask the Assistant, then note what it found in the run (this Foundry sends no email), then note what it found in the run (this Foundry sends no email).",
+      "When you run it, ask Founder: “Summarise.”, then ask Founder, then note what it found in the run (this Foundry sends no email), then note what it found in the run (this Foundry sends no email).",
     );
     // After the last step, nothing to take over: joined after it.
     const end = addStep(chain, "notify", "last");

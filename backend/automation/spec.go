@@ -535,14 +535,14 @@ type wireAssistant struct {
 func parseAssistant(raw json.RawMessage) (AssistantNode, error) {
 	var w wireAssistant
 	if err := decodeStrict(raw, &w); err != nil {
-		return AssistantNode{}, fmt.Errorf("an Assistant step is {instruction, allow}: %w", err)
+		return AssistantNode{}, fmt.Errorf("a Founder step is {instruction, allow}: %w", err)
 	}
 	out := AssistantNode{Instruction: strings.TrimSpace(w.Instruction)}
 	if err := checkText(out.Instruction, 1, MaxInstructionChars, "its instruction"); err != nil {
 		return AssistantNode{}, err
 	}
 	if len(w.Allow) > MaxAllowed {
-		return AssistantNode{}, fmt.Errorf("an Assistant step runs at most %d actions unasked, not %d", MaxAllowed, len(w.Allow))
+		return AssistantNode{}, fmt.Errorf("a Founder step runs at most %d actions unasked, not %d", MaxAllowed, len(w.Allow))
 	}
 	for _, raw := range w.Allow {
 		a, err := ParseAction(raw)

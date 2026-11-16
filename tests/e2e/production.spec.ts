@@ -3,16 +3,19 @@ import { expect, explorer, loadContracts, signIn, test } from "./support/mock";
 
 // Getting into production: creating an ontology, then querying it through the
 // Helix MCP. Acme already has ontologies, so its next step is the MCP prompt.
-// Only the Analyst shows them, in a card. The sample doesn't count as an
-// ontology (sample.spec.ts).
+// Only /ask shows them (Founder's page, in the Analyst's chrome), in a card.
+// The sample doesn't count as an ontology (sample.spec.ts).
 
 const A = "/ask/ont_acme_contracts";
+/** A new chat's composer, centred under its question. */
+const composerOf = (page: Page) =>
+  page.getByRole("main").getByRole("form", { name: "Message Founder" });
 const production = (page: Page) =>
   page.getByRole("region", { name: "Getting into production" });
 const toggle = (page: Page) =>
   production(page).getByRole("button", { name: /^Getting into production/ });
 
-test("the Analyst's card copies the prompt, minimises, and floats beside the conversation", async ({
+test("the card on /ask copies the prompt, minimises, and floats beside the conversation", async ({
   page,
   context,
 }) => {
@@ -23,7 +26,7 @@ test("the Analyst's card copies the prompt, minimises, and floats beside the con
   await page.goto(`${A}?new=1`);
   const card = production(page),
     copy = card.getByRole("button", { name: "Copy prompt" }),
-    composer = page.getByRole("form", { name: "Ask a question" });
+    composer = composerOf(page);
 
   // Open, with the ontology done, under the bar's right, beside the column.
   await expect(toggle(page)).toHaveAttribute("aria-expanded", "true");
@@ -74,7 +77,7 @@ test("the card is a box in the top right on a laptop, and a row on a phone", asy
 }) => {
   await signIn(page);
   await loadContracts(page);
-  const composer = page.getByRole("form", { name: "Ask a question" }),
+  const composer = composerOf(page),
     copy = production(page).getByRole("button", { name: "Copy prompt" });
 
   // On a laptop it starts open, in the corner, clear of a new thread's composer.
@@ -113,7 +116,7 @@ test("the card is a box in the top right on a laptop, and a row on a phone", asy
   await toggle(page).click();
 });
 
-test("only the Analyst shows it, reading past a value it can't read", async ({
+test("only /ask shows it, reading past a value it can't read", async ({
   page,
 }) => {
   await signIn(page);

@@ -48,7 +48,7 @@ func (s *AgentSessions) Session(ctx context.Context, actor ports.Actor, confirm 
 	case err != nil:
 		return integration.Session{}, err
 	case actor.Source != ports.SourceUser || actor.UserID != owner.ID:
-		return integration.Session{}, status.Error(codes.PermissionDenied, "the Assistant acts only for the install's owner")
+		return integration.Session{}, status.Error(codes.PermissionDenied, "Founder acts only for the install's owner")
 	}
 	w, err := s.auth.directory.Workspace(ctx, actor.WorkspaceID)
 	switch {

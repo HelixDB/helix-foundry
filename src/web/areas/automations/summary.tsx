@@ -20,7 +20,7 @@ import {
   useNow,
 } from "../../kit";
 import { useWorkspace } from "../../ui";
-import { ZONES } from "./inspector";
+import { zoneOptions } from "./inspector";
 import {
   LIMITS,
   eventText,
@@ -58,8 +58,8 @@ const startsText = (spec: Draft["spec"], names: Names) => {
   return t.kind === "manual"
     ? "only when it is run by hand"
     : t.kind === "schedule"
-      ? triggerText(t, names, here())
-      : `when ${triggerText(t, names, here())}`;
+      ? triggerText(t, names)
+      : `when ${triggerText(t, names)}`;
 };
 
 /** Why its Save waits: what each problem names opens its step. */
@@ -144,7 +144,7 @@ export function Summary({
       </div>
       {status && <StatusBadge status={status.dot} label={status.label} />}
       <p className="au-summary-text">
-        {sentence(draft.spec, lists.names, email, here())}
+        {sentence(draft.spec, lists.names, email)}
       </p>
       {draft.description && (
         <p className="au-summary-note">{draft.description}</p>
@@ -300,7 +300,7 @@ export function RunHead({
           {
             label: "Cost",
             value: usdText(run.usdMicros),
-            hint: "What its Assistant steps spent.",
+            hint: "What its Founder steps spent.",
           },
         ]}
       />
@@ -374,9 +374,7 @@ export function SettingsPanel({
                 label="Time zone"
                 value={t.time_zone}
                 disabled={!editable}
-                options={[...new Set([t.time_zone, here(), ...ZONES])].map(
-                  (z) => ({ value: z, label: z.replaceAll("_", " ") }),
-                )}
+                options={zoneOptions(t.time_zone)}
                 onChange={(time_zone) =>
                   onChange({
                     spec: setConfig(draft.spec, trigger.id, {

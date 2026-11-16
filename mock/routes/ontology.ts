@@ -1,4 +1,5 @@
 import type {
+  AgentDraftQuestion,
   AgentBundleDefinition,
   AnswerOntologyGenerationRequest,
   OntologyEdit,
@@ -94,7 +95,7 @@ import {
 // `reviseOutcome` "budget": a revision measuring rules on a comparable load
 // is refused for its budget (./ontology-revise.ts).
 //
-// `ontologyQuestions: true` has the agent ask before it drafts, as the
+// `ontologyQuestions: true` (or "time_zone", ZONE_QUESTIONS) has the agent ask before it drafts, as the
 // engine's blocking ask_user does (ENGINE_QUESTIONS, as the WFE gives
 // them): once it has run, a new generation waits (needs_input) with no
 // draft, still the ontology's one live generation, on round 1 of its
@@ -110,14 +111,16 @@ import { comparableSchema, reviseDefinition } from "./ontology-revise";
 import { checkAnswers, type CheckedAnswer } from "../agent-questions";
 import {
   ENGINE_QUESTIONS,
+  ZONE_QUESTIONS,
   wfeQuestion,
 } from "../fixtures/generation-questions";
 
 type Outcome = "succeed" | "fail" | "retry" | "auth";
 type Knobs = {
   ontologyDatabaseHidden?: boolean;
-  // A new generation asks ENGINE_QUESTIONS before it drafts.
-  ontologyQuestions?: boolean;
+  // A new generation asks ENGINE_QUESTIONS before it drafts; "time_zone"
+  // asks ZONE_QUESTIONS instead.
+  ontologyQuestions?: boolean | "time_zone";
   ontologyStepMs?: number;
   ontologyOutcome?: Outcome;
   // "budget": measuring a revision's rules on a comparable load takes past
@@ -155,8 +158,8 @@ type StoredGeneration = OntologyGeneration & { ontologyId: string };
 type Plan = {
   stepMs: number;
   outcome: Outcome;
-  // It asks ENGINE_QUESTIONS once it has run, until answered.
-  asks?: boolean;
+  // What it asks once it has run, until answered.
+  asks?: false | AgentDraftQuestion[];
   // When its run is timed from: its creation, else when it was answered.
   from?: number;
   revision?: ReviseOntologyVersionRequest & { overBudget: boolean };
@@ -652,7 +655,7 @@ function advance(g: StoredGeneration) {
   if (plan.asks) {
     Object.assign(g, {
       status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT",
-      questions: ENGINE_QUESTIONS.map(wfeQuestion),
+      questions: plan.asks.map(wfeQuestion),
       questionRound: (g.questionRound || 0) + 1,
       askedAt: finishedAt,
     });
@@ -1300,7 +1303,12 @@ export const ontologyRoutes: MockRoute[] = [
         stepMs: knobs.ontologyStepMs ?? STEP_MS,
         outcome: knobs.ontologyOutcome ?? "succeed",
         // The sample's draft is ready-made: no agent asks.
-        asks: !!knobs.ontologyQuestions && !sample,
+        asks:
+          !!knobs.ontologyQuestions &&
+          !sample &&
+          (knobs.ontologyQuestions === "time_zone"
+            ? ZONE_QUESTIONS
+            : ENGINE_QUESTIONS),
       });
       return ok({
         generation: generationOut(g),

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activeSection,
   allSections,
+  footNav,
   granteeNav,
+  linkedSections,
   navSection,
   primaryNav,
   secondaryNav,
@@ -15,15 +17,26 @@ import {
 // other sections' panels beside it.
 
 describe("the sections", () => {
-  it("lists Ask first, then Dashboards, Automations, Ontologies and Connectors", () => {
+  it("lists Ask first, then Dashboards, Automations and Ontologies, with Connectors at the foot", () => {
     expect(primaryNav.map((n) => [n.label, n.to])).toEqual([
       ["Analyst", "/ask"],
       ["Dashboards", "/dashboards"],
       ["Automations", "/automations"],
       ["Ontologies", "/ontology"],
+    ]);
+    expect(footNav.map((n) => [n.label, n.to])).toEqual([
       ["Connectors", "/data"],
     ]);
     expect(secondaryNav.map((n) => n.label)).toEqual(["Settings"]);
+    // The palette and the fallback list them in the sidebar's order.
+    expect(linkedSections.map((n) => n.id)).toEqual([
+      "ask",
+      "dashboards",
+      "automations",
+      "ontology",
+      "data",
+      "settings",
+    ]);
   });
 
   it("gives a grantee Analyst, Dashboards and Ontologies", () => {
@@ -39,6 +52,32 @@ describe("the sections", () => {
     expect(navSection("explore")).toBe("ontology");
     expect(navSection("data")).toBe("data");
     expect(navSection(undefined)).toBeUndefined();
+  });
+});
+
+describe("on a build with Founder", () => {
+  // The build is read as the module loads (src/shared/deployment.ts).
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("names Ask Founder, its sidebar's threads Threads, and keeps a grantee's Analyst", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_FOUNDRY_ASSISTANT", "1");
+    const nav = await import("@/web/shell/nav");
+    expect(nav.primaryNav[0]).toMatchObject({
+      id: "ask",
+      label: "Founder",
+      to: "/ask",
+      match: ["/ask"],
+    });
+    expect(nav.granteeNav.map((n) => [n.id, n.label, n.to])).toEqual([
+      ["ask", "Analyst", "/ask"],
+      ["dashboards", "Dashboards", "/dashboards"],
+      ["ontology", "Ontologies", "/ontology"],
+    ]);
+    expect(nav.sectionSidebars.ask?.label).toBe("Threads");
   });
 });
 

@@ -50,11 +50,11 @@ var agentIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 // the Assistant is FAILED_PRECONDITION, reason FOUNDRY_AGENT_DISABLED.
 func (s *Service) agentUser(ctx context.Context, workspaceID string) (string, error) {
 	if !s.deps.Cfg.Foundry.Agent.Enabled {
-		return "", foundryPrecondition(workspaceID, "FOUNDRY_AGENT_DISABLED", "the Assistant isn't available here")
+		return "", foundryPrecondition(workspaceID, "FOUNDRY_AGENT_DISABLED", "Founder isn't available here")
 	}
 	a := actor(ctx)
 	if a.Source != ports.SourceUser || a.UserID == "" || a.ServiceCredentialID != "" {
-		return "", status.Error(codes.PermissionDenied, "the Assistant answers people signed in to Foundry")
+		return "", status.Error(codes.PermissionDenied, "Founder answers people signed in to Foundry")
 	}
 	return a.UserID, nil
 }
@@ -101,6 +101,10 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	token := req.GetClientToken()
 	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
 		DashboardID: req.GetPageContext().GetDashboardId(), NewAutomation: req.GetPageContext().GetNewAutomation()}
+	// A browser's zone Go's database lacks is dropped: the Assistant asks then.
+	if _, err := automation.Zone(req.GetPageContext().GetTimeZone()); err == nil {
+		page.TimeZone = req.GetPageContext().GetTimeZone()
+	}
 	switch {
 	case token == "" || len(token) > maxClientTokenLength:
 		return nil, status.Errorf(codes.InvalidArgument, "client_token is required, at most %d characters", maxClientTokenLength)
@@ -198,7 +202,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	var refusal foundrymodel.FoundryAgentRefusal
 	if sent && errors.As(err, &refusal) {
 		// The draft has the answers: only the Assistant's reply is refused.
-		refusal.Detail = "your answers reached the draft, which carries on from them, but the Assistant can't reply: " + refusal.Detail
+		refusal.Detail = "your answers reached the draft, which carries on from them, but Founder can't reply: " + refusal.Detail
 		err = refusal
 	}
 	if refused, ok := agentRefusal(ws, err); ok {
@@ -405,7 +409,7 @@ func (s *Service) CancelFoundryAgentTurn(ctx context.Context, req *foundryv1.Can
 // agentSessions is the host's session port, refusing while it has none.
 func (s *Service) agentSessions() (integration.SessionHost, error) {
 	if s.deps.AgentSessions == nil || s.deps.ConnectorKeys == nil {
-		return nil, status.Error(codes.Unavailable, "the Assistant's actions aren't available on this host")
+		return nil, status.Error(codes.Unavailable, "Founder's actions aren't available on this host")
 	}
 	return s.deps.AgentSessions, nil
 }
@@ -689,7 +693,7 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {
 		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID,
-			NewAutomation: page.NewAutomation}
+			NewAutomation: page.NewAutomation, TimeZone: page.TimeZone}
 	}
 	if t.Error != nil {
 		out.Error = *t.Error

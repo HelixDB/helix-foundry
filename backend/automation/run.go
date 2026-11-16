@@ -42,7 +42,7 @@ const (
 
 func (c AnswerIs) Evaluate(out Output) (bool, error) {
 	if out.Answer == nil {
-		return false, errors.New("the Assistant gave no yes-or-no answer")
+		return false, errors.New("Founder gave no yes-or-no answer")
 	}
 	return *out.Answer == c.Yes, nil
 }
@@ -79,9 +79,9 @@ func (CountIs) checks(config Config) bool {
 	return false
 }
 
-func (AnswerIs) needs() string { return "an answer is an Assistant step's" }
+func (AnswerIs) needs() string { return "an answer is a Founder step's" }
 func (CountIs) needs() string {
-	return "a count is an Assistant step's, or a document_arrived or sync_finished trigger's"
+	return "a count is a Founder step's, or a document_arrived or sync_finished trigger's"
 }
 
 type wireCheck struct {

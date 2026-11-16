@@ -588,6 +588,56 @@ describe("mock dashboards", () => {
     });
     expect(missing.status).toBe(400);
   });
+
+  it("takes both visuals of an invoices answer as tiles that read", async () => {
+    Object.assign(config, { askStepMs: 10 });
+    await loaded();
+    const asked = (
+      await call("POST", `${O}/questions`, {
+        question:
+          "Which invoices are billed to each account, and which are unpaid?",
+        clientToken: "q",
+      })
+    ).body.question;
+    later(60_000);
+    const q = (await call("GET", `${O}/questions/${asked.id}`)).body.question;
+    const result = JSON.parse(q.resultJson);
+    let d: wfe.FoundryDashboard = await create();
+    for (const [i, v] of result.answer.visuals.entries())
+      d = (
+        await call("POST", `${D}/${d.id}:add-question-visual`, {
+          expectedRevision: String(i + 1),
+          ontologyId: "ont_acme_contracts",
+          questionId: asked.id,
+          evidenceId: v.evidence_id,
+        })
+      ).body.dashboard;
+    const s = JSON.parse(d.specJson || "{}") as wfe.DashboardSpec;
+    expect(s.tiles.map((t) => [t.title, t.visual])).toEqual([
+      ["Invoices by account", { kind: "table" }],
+      ["Unpaid or overdue invoices", { kind: "bar" }],
+    ]);
+    expect(s.tiles.map((t) => t.query)).toEqual(
+      result.queries.map((r: { query: unknown }) => r.query),
+    );
+    // Each reads through the load: the rows by account, the groups by status.
+    const read = async (t: wfe.DashboardTile) =>
+      JSON.parse(
+        (
+          await call("POST", `${D}:preview-tile`, {
+            tileJson: JSON.stringify(t),
+          })
+        ).body.outcomeJson,
+      ).ok.result;
+    expect(await read(s.tiles[0]!)).toMatchObject({ kind: "rows" });
+    expect(await read(s.tiles[1]!)).toMatchObject({
+      kind: "group_count",
+      groups: [
+        { value: { untrusted: "open" }, count: 9 },
+        { value: { untrusted: "uncollectible" }, count: 7 },
+      ],
+    });
+  });
 });
 
 describe("a restricted member's dashboards", () => {

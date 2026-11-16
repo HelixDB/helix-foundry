@@ -46,7 +46,9 @@ type ToolCalled struct {
 // ToolReturned is what the tool answered: its structured output, untrusted
 // data, unless it failed (error) or was too large to show (truncated). A
 // call that never ran says why as not_run, which the site words for the
-// person (the model is told in words of its own), with no error.
+// person (the model is told in words of its own), with no error. An ask or
+// get_question that returned names its Analyst question (question), whatever
+// the output's size, so the site shows the Analyst's answer in place.
 type ToolReturned struct {
 	ToolUseID string       `json:"tool_use_id"`
 	Name      string       `json:"name"`
@@ -55,6 +57,40 @@ type ToolReturned struct {
 	Output    any          `json:"output,omitempty"`
 	Truncated bool         `json:"truncated,omitempty"`
 	NotRun    NotRunReason `json:"not_run,omitempty"`
+	Question  *QuestionRef `json:"question,omitempty"`
+}
+
+// QuestionRef names the Analyst question an ask or get_question call returned, kept whatever the output's size.
+type QuestionRef struct {
+	OntologyID string `json:"ontology_id"`
+	ID         string `json:"id"`
+	LoadID     string `json:"load_id,omitempty"`
+	ThreadID   string `json:"thread_id,omitempty"`
+	Status     string `json:"status,omitempty"`
+}
+
+// questionOf is the Analyst question a call of name that returned output
+// names: its input's ontology and its output's question, for an ask or a
+// get_question; nil for any other call, or one whose input or output names
+// none.
+func questionOf(name string, input json.RawMessage, output any) *QuestionRef {
+	if name != toolAsk && name != toolGetQuestion {
+		return nil
+	}
+	var in struct {
+		OntologyID string `json:"ontology_id"`
+	}
+	var out struct {
+		ID       string `json:"id"`
+		LoadID   string `json:"load_id"`
+		ThreadID string `json:"thread_id"`
+		Status   string `json:"status"`
+	}
+	raw, err := json.Marshal(output)
+	if err != nil || json.Unmarshal(input, &in) != nil || json.Unmarshal(raw, &out) != nil || in.OntologyID == "" || out.ID == "" {
+		return nil
+	}
+	return &QuestionRef{OntologyID: in.OntologyID, ID: out.ID, LoadID: out.LoadID, ThreadID: out.ThreadID, Status: out.Status}
 }
 
 // NotRunReason is why a call the model wrote never ran: a closed set.
@@ -76,7 +112,9 @@ const (
 )
 
 // ActionCard is an action the agent prepared, for its person to run or
-// dismiss: the action's own fields are read from the thread.
+// dismiss: the action's own fields are read from the thread. Auto is one
+// that ran at once under autoRun, because the person's message asked for
+// it; never an automation's approved action or a click.
 type ActionCard struct {
 	ActionID          string          `json:"action_id"`
 	Operation         string          `json:"operation"`
@@ -86,22 +124,25 @@ type ActionCard struct {
 	Display           json.RawMessage `json:"display"`
 	TargetNamedByUser bool            `json:"target_named_by_user"`
 	ExpiresAt         time.Time       `json:"expires_at"`
+	Auto              bool            `json:"auto,omitempty"`
 }
 
 // ActionResult opens the turn the agent goes on from an action in: how the
-// person's click ended.
+// person's click ended. In a turn that ran an action at once, it is how that
+// ended: Auto as on its ActionCard.
 type ActionResult struct {
 	ActionID  string          `json:"action_id"`
 	Operation string          `json:"operation"`
 	Status    string          `json:"status"`
 	Result    json.RawMessage `json:"result,omitempty"`
 	Error     string          `json:"error,omitempty"`
+	Auto      bool            `json:"auto,omitempty"`
 }
 
 // Asked shows the person the questions the turn asks them
-// (toolAskPerson), which it ends waiting on (StopAsked): the Assistant's
-// own, or a generation's, as its agent wrote them (Generation set). They
-// are the agents' words, which may quote the data: plain text.
+// (toolAskPerson), which it ends waiting on (StopAsked): Founder's own, or
+// a generation's, as its agent wrote them (Generation set). They are the
+// agents' words, which may quote the data: plain text.
 type Asked struct {
 	Questions  []agentquestion.Question `json:"questions"`
 	Generation *AskedGeneration         `json:"generation,omitempty"`

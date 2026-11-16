@@ -40,7 +40,7 @@ import { isProRequired } from "./pro-gate";
 // until another page. A workspace still onboarding goes back to its wizard
 // once its AI runs. Owners see what runs as the form's choice; everyone
 // else reads one line. A local install's owner also chooses where the
-// Assistant runs, below it (../agent/runtime-settings.tsx).
+// Founder runs, below it (../agent/runtime-settings.tsx).
 
 // The kinds this site has a form for, and the provider message each sends
 // given the Azure endpoint typed (normalized, or empty until it is one) and
@@ -178,7 +178,7 @@ export function AiTab() {
         typed={saved && saved.id === ai.active?.id ? saved.key : ""}
         onSaved={setSaved}
       />
-      {/* Where the Assistant runs: a local install's owner may run it on
+      {/* Where Founder runs: a local install's owner may run it on
           their own subscription. */}
       {LOCAL && <AssistantRuntimePanel />}
     </>
@@ -206,7 +206,7 @@ function Status({ ai }: { ai: FoundryAi }) {
 
 /**
  * For owners, above their choice: no provider yet, a pause, a save under
- * test, the last save's failed test, and the Assistant's failed tool check
+ * test, the last save's failed test, and Founder's failed tool check
  * of the setting in force.
  */
 function Notices({ ai }: { ai: FoundryAi }) {

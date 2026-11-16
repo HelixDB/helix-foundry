@@ -1,9 +1,10 @@
 import type { AgentQuestionAnswer } from "../../shared/wfe";
 import { isRecord } from "../../shared/json";
+import { zoneLabel } from "../../shared/time-zone";
 
 // Questions an agent asks the person, asked one at a time: the ontology
 // agent's about a draft (a generation that needs input) and the
-// Assistant's (helix_foundry_ask_person), one shape (the WFE's
+// Founder's (helix_foundry_ask_person), one shape (the WFE's
 // AgentQuestion). This is the flow's pure half: reading the questions
 // without trust, what the person has chosen so far, how each key and click
 // moves it, what it sends, and what a tab keeps of it. Every string an
@@ -507,18 +508,28 @@ export function answersOf(
  * answerText({ options: [], text: "60 days" }); // "“60 days”"
  */
 export function answerText(a: { options?: readonly string[]; text?: string }) {
-  const parts = [...(a.options ?? [])];
+  const parts = (a.options ?? []).map(optionText);
   if (a.text) parts.push(`“${a.text}”`);
   if (parts.length < 3) return parts.join(" and ");
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
+
+/**
+ * An option's label as shown: a time zone id in words ("New York ·
+ * GMT−5"), anything else as written. The label itself stays the answer.
+ *
+ * @example
+ * optionText("America/New_York"); // "New York · GMT−5" (in January)
+ * optionText("Weekly"); // "Weekly"
+ */
+export const optionText = (label: string) => zoneLabel(label) ?? label;
 
 /** What a question left to `agent` takes, in words. */
 export const leftText = (q: Question, agent = "the agent") => {
   const left = `Left to ${agent}`;
   if (q.ask.kind === "choice")
     return q.ask.recommended
-      ? `${left}: it recommends ${q.ask.recommended}`
+      ? `${left}: it recommends ${optionText(q.ask.recommended)}`
       : left;
   return q.ask.suggested ? `${left}: it suggests “${q.ask.suggested}”` : left;
 };

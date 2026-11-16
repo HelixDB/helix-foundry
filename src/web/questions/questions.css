@@ -1,6 +1,6 @@
 /* The question-by-question flow (flow.tsx): a strip of the questions and
    Review, one question at a time, its options a list. Its own width decides
-   its layout (a page's panel, the Assistant's dock, a phone). */
+   its layout (a page's panel, Founder's dock, a phone). */
 
 .qf {
   container-type: inline-size;

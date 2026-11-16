@@ -1838,16 +1838,17 @@ export function threadsOf(questions: readonly FoundryQuestion[]): Thread[] {
 }
 
 /** A heading of the thread list: when its threads were last asked in. */
-export type ThreadGroup = {
+export type ThreadGroup<T = Thread> = {
   label: "Today" | "Previous 7 days" | "Older";
-  threads: Thread[];
+  threads: T[];
 };
 
 /**
  * Threads, newest first as threadsOf sorts them, grouped by when their
- * newest question was asked, in local time: today (or later, for a clock
- * behind the server's), the 7 days before today, then older or undated.
- * Each group keeps its threads' order; empty groups are left out.
+ * newest question was asked (`last`; Founder's threads too, founder-model.ts),
+ * in local time: today (or later, for a clock behind the server's), the 7
+ * days before today, then older or undated. Each group keeps its threads'
+ * order; empty groups are left out.
  *
  * @example
  * const at = (id: string, last: Date) => ({ id, questions: [], last: last.toISOString(), live: false });
@@ -1857,16 +1858,16 @@ export type ThreadGroup = {
  * ).map((g) => [g.label, g.threads.map((t) => t.id)]);
  * // [["Today", ["a"]], ["Previous 7 days", ["b"]], ["Older", ["c"]]]
  */
-export function threadGroups(
-  threads: readonly Thread[],
+export function threadGroups<T extends { last: string }>(
+  threads: readonly T[],
   now: Date,
-): ThreadGroup[] {
+): ThreadGroup<T>[] {
   const day = (back: number) =>
     new Date(now.getFullYear(), now.getMonth(), now.getDate() - back).getTime();
   const today = day(0),
     week = day(7);
   // An unreadable date is NaN, which no comparison holds: Older.
-  const labelOf = (t: Thread): ThreadGroup["label"] => {
+  const labelOf = (t: T): ThreadGroup["label"] => {
     const at = Date.parse(t.last);
     return at >= today ? "Today" : at >= week ? "Previous 7 days" : "Older";
   };

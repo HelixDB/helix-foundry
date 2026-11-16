@@ -608,11 +608,11 @@ export function aiAssistantFailure(ws: string): string | undefined {
     model = c.models.ask.name;
   switch (c.check) {
     case "auth":
-      return `${p} refused the workspace's key for the Assistant. An owner can check it in Settings › AI models.`;
+      return `${p} refused the workspace's key for Founder. An owner can check it in Settings › AI models.`;
     case "no_tool_call":
-      return `The workspace's model, ${model}, doesn't call tools, which the Assistant needs. An owner can choose another in Settings › AI models.`;
+      return `The workspace's model, ${model}, doesn't call tools, which Founder needs. An owner can choose another in Settings › AI models.`;
     case "refused":
-      return `${p} refused the Assistant's calls to ${model}. An owner can choose another model in Settings › AI models.`;
+      return `${p} refused Founder's calls to ${model}. An owner can choose another model in Settings › AI models.`;
     default:
       return undefined;
   }

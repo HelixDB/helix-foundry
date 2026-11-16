@@ -10,25 +10,32 @@ import {
   STOP_TEXT,
   accountText,
   agentRefusal,
-  analystLink,
+  answerBlocks,
+  autoState,
   cardState,
   helperAccount,
   isAgentOperation,
+  madeDashboard,
   pageContext,
   parseAgentEvent,
   planName,
   payloadText,
   pretty,
+  questionOf,
+  stepLabel,
   reduceTurnEvents,
   resultLink,
   inAppPath,
   textParts,
   threadKey,
   threadRuntime,
+  type AgentBlock,
+  type AgentQuestionRef,
+  type AgentStep,
   type TurnStream,
 } from "@/web/areas/agent/model";
 
-// The Assistant dock's pure logic (src/web/areas/agent/model.ts): what page
+// Founder's dock's pure logic (src/web/areas/agent/model.ts): what page
 // is sent, which of the model's words become links, how polled events fold
 // into a turn, and what an action's card offers.
 
@@ -246,6 +253,107 @@ describe("parseAgentEvent", () => {
       },
     ],
     [
+      // An ask's question, kept however large its output.
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+        truncated: true,
+        question: {
+          ontology_id: "ont_1",
+          id: "q_1",
+          load_id: "load_1",
+          thread_id: "q_0",
+          status: "answered",
+        },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+        truncated: true,
+        question: {
+          ontology_id: "ont_1",
+          id: "q_1",
+          load_id: "load_1",
+          thread_id: "q_0",
+          status: "answered",
+        },
+      },
+    ],
+    [
+      // A load or thread id that isn't one is left out, and so is a status
+      // that isn't text.
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_get_question",
+        is_error: false,
+        question: {
+          ontology_id: "ont_1",
+          id: "q_1",
+          load_id: "../l",
+          thread_id: 3,
+          status: 1,
+        },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_get_question",
+        is_error: false,
+        question: { ontology_id: "ont_1", id: "q_1" },
+      },
+    ],
+    [
+      // A question whose ontology or own id isn't one is dropped whole.
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+        question: { ontology_id: "../o", id: "q_1" },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+      },
+    ],
+    [
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+        question: { ontology_id: "ont_1" },
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+      },
+    ],
+    [
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+        question: "q_1",
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "t",
+        name: "helix_foundry_ask",
+        is_error: false,
+      },
+    ],
+    [
       { type: "tool_result", tool_use_id: "t", is_error: true, error: "no" },
       {
         type: "tool_result",
@@ -278,6 +386,85 @@ describe("parseAgentEvent", () => {
         display: { ontology: { id: "o" }, version: { id: "v" }, extra: "x" },
         target_named_by_user: true,
         expires_at: "2030-01-01T00:00:00Z",
+      },
+    ],
+    [
+      // Ran at once: only true counts.
+      {
+        type: "action_card",
+        action_id: "a",
+        operation: "create_dashboard",
+        target: "workspace:ws",
+        payload_hash: "h",
+        target_named_by_user: true,
+        expires_at: "2030-01-01T00:00:00Z",
+        auto: true,
+      },
+      {
+        type: "action_card",
+        action_id: "a",
+        operation: "create_dashboard",
+        target: "workspace:ws",
+        payload: undefined,
+        payload_hash: "h",
+        display: undefined,
+        target_named_by_user: true,
+        expires_at: "2030-01-01T00:00:00Z",
+        auto: true,
+      },
+    ],
+    [
+      {
+        type: "action_card",
+        action_id: "a",
+        operation: "create_dashboard",
+        auto: "yes",
+      },
+      {
+        type: "action_card",
+        action_id: "a",
+        operation: "create_dashboard",
+        target: "",
+        payload: undefined,
+        payload_hash: "",
+        display: undefined,
+        target_named_by_user: false,
+        expires_at: "",
+      },
+    ],
+    [
+      {
+        type: "action_result",
+        action_id: "a",
+        operation: "create_dashboard",
+        status: "succeeded",
+        result: { id: "dash_1" },
+        auto: true,
+      },
+      {
+        type: "action_result",
+        action_id: "a",
+        operation: "create_dashboard",
+        status: "succeeded",
+        result: { id: "dash_1" },
+        auto: true,
+      },
+    ],
+    [
+      {
+        type: "action_result",
+        action_id: "a",
+        operation: "create_load",
+        status: "failed",
+        error: "e",
+        auto: 1,
+      },
+      {
+        type: "action_result",
+        action_id: "a",
+        operation: "create_load",
+        status: "failed",
+        error: "e",
       },
     ],
     [
@@ -341,7 +528,7 @@ describe("parseAgentEvent", () => {
       },
     ],
     [
-      // A generation it can't read: the Assistant's own questions.
+      // A generation it can't read: Founder's own questions.
       { type: "questions", questions: [], generation: { ontology_id: "o" } },
       { type: "questions", questions: [] },
     ],
@@ -519,7 +706,13 @@ describe("reduceTurnEvents", () => {
           result: { kind: "returned", output: { ok: 1 }, truncated: false },
         },
       },
-      { kind: "card", actionId: "a1", operation: "create_load", named: false },
+      {
+        kind: "card",
+        actionId: "a1",
+        operation: "create_load",
+        named: false,
+        auto: false,
+      },
       { kind: "text", text: "Done." },
     ]);
     expect(s.ended).toEqual({ status: "done", reason: "max_steps" });
@@ -614,6 +807,113 @@ describe("reduceTurnEvents", () => {
       reason: "failed",
       error: "boom",
     });
+  });
+
+  it("ends an action that ran at once on its card, with no line of its own", () => {
+    const s = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, {
+          type: "tool_call",
+          tool_use_id: "t1",
+          name: "helix_foundry_prepare_operation",
+          input: { operation: "create_dashboard" },
+        }),
+        event(2, {
+          type: "action_card",
+          action_id: "a1",
+          operation: "create_dashboard",
+          target_named_by_user: true,
+          auto: true,
+        }),
+        event(3, {
+          type: "action_result",
+          action_id: "a1",
+          operation: "create_dashboard",
+          status: "succeeded",
+          result: { id: "dash_1" },
+          auto: true,
+        }),
+        event(4, {
+          type: "tool_result",
+          tool_use_id: "t1",
+          name: "helix_foundry_prepare_operation",
+          is_error: false,
+          output: { action_id: "a1", status: "ran" },
+        }),
+      ],
+      status: "done",
+      lastSeq: 4,
+    });
+    expect(s.blocks).toEqual([
+      {
+        kind: "step",
+        step: {
+          id: "t1",
+          name: "helix_foundry_prepare_operation",
+          input: { operation: "create_dashboard" },
+          result: {
+            kind: "returned",
+            output: { action_id: "a1", status: "ran" },
+            truncated: false,
+          },
+        },
+      },
+      {
+        kind: "card",
+        actionId: "a1",
+        operation: "create_dashboard",
+        named: true,
+        auto: true,
+      },
+    ]);
+  });
+
+  it("keeps the question an ask returned on its step, however large", () => {
+    const s = reduceTurnEvents(EMPTY_STREAM, {
+      events: [
+        event(1, {
+          type: "tool_call",
+          tool_use_id: "t1",
+          name: "helix_foundry_ask",
+          input: { ontology_id: "ont_1", question: "Which invoices?" },
+        }),
+        event(2, {
+          type: "tool_result",
+          tool_use_id: "t1",
+          name: "helix_foundry_ask",
+          is_error: false,
+          truncated: true,
+          question: {
+            ontology_id: "ont_1",
+            id: "q_1",
+            load_id: "load_1",
+            status: "running",
+          },
+        }),
+      ],
+      status: "done",
+      lastSeq: 2,
+    });
+    expect(s.blocks).toEqual([
+      {
+        kind: "step",
+        step: {
+          id: "t1",
+          name: "helix_foundry_ask",
+          input: { ontology_id: "ont_1", question: "Which invoices?" },
+          result: {
+            kind: "returned",
+            output: undefined,
+            truncated: true,
+            question: {
+              ontologyId: "ont_1",
+              questionId: "q_1",
+              loadId: "load_1",
+            },
+          },
+        },
+      },
+    ]);
   });
 
   it("answers a second result of one call as a step of its own", () => {
@@ -825,31 +1125,123 @@ describe("live text", () => {
 });
 
 describe("tools", () => {
-  it("opens an ask's ontology in the Analyst", () => {
-    expect(
-      analystLink({
+  const returned = (
+    name: string,
+    input: unknown,
+    output: unknown,
+    question?: AgentQuestionRef,
+  ): AgentStep => ({
+    id: "t",
+    name,
+    input,
+    result: {
+      kind: "returned",
+      output,
+      truncated: false,
+      ...(question && { question }),
+    },
+  });
+
+  it.each<[string, AgentStep, unknown]>([
+    [
+      "an ask's question, from its output and input",
+      returned(
+        "helix_foundry_ask",
+        { ontology_id: "ont_1", question: "Which?" },
+        { id: "q_1", load_id: "load_1", thread_id: "q_0", status: "answered" },
+      ),
+      {
+        ontologyId: "ont_1",
+        questionId: "q_1",
+        loadId: "load_1",
+        threadId: "q_0",
+      },
+    ],
+    [
+      "a get_question's, without the ids that aren't ones",
+      returned(
+        "helix_foundry_get_question",
+        { ontology_id: "ont_1", question_id: "q_1" },
+        { id: "q_1", load_id: "../l", thread_id: 7 },
+      ),
+      { ontologyId: "ont_1", questionId: "q_1" },
+    ],
+    [
+      "the event's question first, when the output was cut",
+      returned("helix_foundry_ask", { ontology_id: "ont_1" }, undefined, {
+        ontologyId: "ont_2",
+        questionId: "q_9",
+      }),
+      { ontologyId: "ont_2", questionId: "q_9" },
+    ],
+    [
+      "nothing for an input whose ontology isn't an id",
+      returned("helix_foundry_ask", { ontology_id: "../x" }, { id: "q_1" }),
+      undefined,
+    ],
+    [
+      "nothing for an output without an id",
+      returned("helix_foundry_ask", { ontology_id: "ont_1" }, { status: "x" }),
+      undefined,
+    ],
+    [
+      "nothing for an input that isn't an object",
+      returned("helix_foundry_ask", null, { id: "q_1" }),
+      undefined,
+    ],
+    [
+      "nothing for another tool",
+      returned(
+        "helix_foundry_get_load",
+        { ontology_id: "ont_1" },
+        { id: "load_1" },
+        { ontologyId: "ont_1", questionId: "q_1" },
+      ),
+      undefined,
+    ],
+    [
+      "nothing for an ask that failed",
+      {
         id: "t",
         name: "helix_foundry_ask",
         input: { ontology_id: "ont_1" },
-      }),
-    ).toBe("/ask/ont_1");
-    expect(
-      analystLink({
+        result: { kind: "failed", error: "30 questions an hour" },
+      },
+      undefined,
+    ],
+    [
+      "nothing for an ask that never ran",
+      {
         id: "t",
         name: "helix_foundry_ask",
-        input: { ontology_id: "../x" },
-      }),
-    ).toBeUndefined();
-    expect(
-      analystLink({ id: "t", name: "helix_foundry_ask", input: null }),
-    ).toBeUndefined();
-    expect(
-      analystLink({
-        id: "t",
-        name: "helix_foundry_get_load",
         input: { ontology_id: "ont_1" },
-      }),
-    ).toBeUndefined();
+        result: { kind: "not_run", reason: "asks" },
+      },
+      undefined,
+    ],
+    [
+      "nothing for an ask still running",
+      { id: "t", name: "helix_foundry_ask", input: { ontology_id: "ont_1" } },
+      undefined,
+    ],
+  ])("reads %s", (_, step, ref) => {
+    expect(questionOf(step)).toEqual(ref);
+  });
+
+  it("shows a question's answer once, under the last step naming it", () => {
+    const step = (id: string, name: string, q: string): AgentBlock => ({
+      kind: "step",
+      step: { ...returned(name, { ontology_id: "ont_1" }, { id: q }), id },
+    });
+    const blocks: AgentBlock[] = [
+      step("a", "helix_foundry_ask", "q_1"),
+      { kind: "text", text: "Still working." },
+      step("b", "helix_foundry_get_question", "q_1"),
+      step("c", "helix_foundry_ask", "q_2"),
+      step("d", "helix_foundry_get_load", "load_1"),
+    ];
+    expect([...answerBlocks(blocks)].sort()).toEqual([2, 3]);
+    expect(answerBlocks([]).size).toBe(0);
   });
 
   it("shows JSON indented and text as it is", () => {
@@ -962,6 +1354,39 @@ describe("actions", () => {
     ).toBeUndefined();
   });
 
+  it.each<[string, Partial<FoundryAgentAction>, boolean, string]>([
+    ["running", { status: "executing" }, false, "making"],
+    ["not yet recorded as run", { status: "prepared" }, false, "making"],
+    ["made", { status: "succeeded" }, false, "made"],
+    ["made, then gone", { status: "succeeded" }, true, "undone"],
+    ["failed", { status: "failed" }, false, "failed"],
+    ["lost", { status: "unknown" }, false, "unknown"],
+    [
+      "of a status this page doesn't know",
+      { status: "weird" as never },
+      false,
+      "unknown",
+    ],
+  ])("words an action that ran at once: %s", (_, a, gone, state) => {
+    expect(autoState(action(a), gone)).toBe(state);
+  });
+
+  it("reads the dashboard a ran create_dashboard made, and nothing else", () => {
+    const made = (a: Partial<FoundryAgentAction>) =>
+      madeDashboard(action({ operation: "create_dashboard", ...a }));
+    expect(made({ resultJson: '{"result":{"id":"dash_1"}}' })).toBe("dash_1");
+    expect(made({ resultJson: '{"result":{"id":"../d"}}' })).toBeUndefined();
+    expect(made({ resultJson: '{"result":"dash_1"}' })).toBeUndefined();
+    expect(made({ resultJson: "{" })).toBeUndefined();
+    expect(made({})).toBeUndefined();
+    expect(
+      made({
+        operation: "create_load",
+        resultJson: '{"result":{"id":"load_1"}}',
+      }),
+    ).toBeUndefined();
+  });
+
   it("shows the payload indented, or as stored when it isn't JSON", () => {
     expect(payloadText(action({}))).toBe('{\n  "version_id": "v_3"\n}');
     expect(payloadText(action({ payloadJson: "not json" }))).toBe("not json");
@@ -973,7 +1398,7 @@ describe("agentRefusal", () => {
     new ApiError("no", 400, 9, [
       { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason },
     ]);
-  it("reads the Assistant's own reasons only", () => {
+  it("reads Founder's own reasons only", () => {
     expect(agentRefusal(refusal("FOUNDRY_AGENT_ACTION_EXPIRED"))).toBe(
       "FOUNDRY_AGENT_ACTION_EXPIRED",
     );
@@ -990,7 +1415,7 @@ it("keeps the open thread per workspace", () => {
   expect(threadKey("ws_1")).toBe("foundry.agent.thread:ws_1");
 });
 
-describe("where the Assistant runs", () => {
+describe("where Founder runs", () => {
   const host = (accounts: FoundryAgentHost["accounts"]): FoundryAgentHost => ({
     id: "h",
     runtimes: ["claude_code"],
@@ -1251,5 +1676,28 @@ describe("where the Assistant runs", () => {
       run: `npx -y ${HELPER_PACKAGE} run`,
       install: `npx -y ${HELPER_PACKAGE} install`,
     });
+  });
+});
+
+describe("stepLabel", () => {
+  const prepare = (output: unknown) => ({
+    id: "t",
+    name: "helix_foundry_prepare_operation",
+    input: {},
+    result: { kind: "returned" as const, output, truncated: false },
+  });
+  it("says a prepare that ran at once ran", () => {
+    expect(stepLabel(prepare({ status: "ran" }))).toBe("Ran an action");
+  });
+  it("keeps the tool's label for a prepare left as a card, and any other step", () => {
+    expect(stepLabel(prepare({ status: "awaiting_person" }))).toBe(
+      "Prepared an action",
+    );
+    expect(stepLabel({ id: "t", name: "helix_foundry_ask", input: {} })).toBe(
+      "Asked the Analyst",
+    );
+    expect(
+      stepLabel({ id: "t", name: "helix_foundry_unknown", input: {} }),
+    ).toBe("helix_foundry_unknown");
   });
 });

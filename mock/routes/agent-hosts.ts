@@ -223,7 +223,7 @@ export function hostOffline(
     !LOCAL_TOKEN
       ? "no helper runs this thread here"
       : old
-        ? `the Codex on ${old.name} is older than ${CODEX_MIN}, the oldest Foundry runs the Assistant on: update it there, then send again in a minute`
+        ? `the Codex on ${old.name} is older than ${CODEX_MIN}, the oldest Foundry runs Founder on: update it there, then send again in a minute`
         : unstarted
           ? `the Codex on ${unstarted.name} didn't start: run codex --version there to see why, then send again in a minute`
           : `no helper running ${runtime} has been seen in the last 30 seconds: start it on your computer, then send again`,
@@ -340,12 +340,12 @@ function owner(ws: string, userId: string): MockReply | undefined {
     return refused(
       ws,
       "FOUNDRY_AGENT_HOSTS_LOCAL_ONLY",
-      "the Assistant runs on a subscription only on a local install",
+      "Founder runs on a subscription only on a local install",
     );
   if (m.role !== "WORKSPACE_ROLE_OWNER")
     return fail(
       "PERMISSION_DENIED",
-      "only the workspace's owner chooses where the Assistant runs",
+      "only the workspace's owner chooses where Founder runs",
     );
   return undefined;
 }

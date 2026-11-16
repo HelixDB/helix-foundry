@@ -43,8 +43,8 @@ func TestAnAutomationsCallsAreRecordedUnderItsWorkflowRun(t *testing.T) {
 	start := h.db.uses.starts[0]
 	assert.Equal(t, model.FoundryAutomationWorkflowStart{WorkspaceID: ws, AutomationRunID: "run1", OntologyID: ontology, Input: start.Input}, start)
 	assert.Contains(t, start.Input, `Run by hand. The automation "Nightly load" ran these steps, in order:`)
-	assert.Contains(t, start.Input, `1. Assistant step "ask": Load the Sales graph (It may load the current version of the ontology "Sales graph" unasked.)`)
-	assert.Contains(t, start.Input, `2. Notify step "mail": email its owner, with what the Assistant steps before it said.`)
+	assert.Contains(t, start.Input, `1. Founder step "ask": Load the Sales graph (It may load the current version of the ontology "Sales graph" unasked.)`)
+	assert.Contains(t, start.Input, `2. Notify step "mail": email its owner, with what the Founder steps before it said.`)
 	assert.Equal(t, 1, h.backend.loads, "the approved load ran")
 
 	for _, tool := range h.model.requests[0].Tools {

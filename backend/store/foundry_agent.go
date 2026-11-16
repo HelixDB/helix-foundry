@@ -128,7 +128,7 @@ VALUES (?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Ti
 				Detail: fmt.Sprintf("you have sent %d messages in the last hour; try again later", lastHour)}
 		case maxMicros > 0 && settled+maxMicros > limits.CapMicros:
 			return model.FoundryAgentRefusal{Reason: model.FoundryAgentBudget,
-				Detail: fmt.Sprintf("the workspace has spent this month's $%.2f of the Assistant", float64(limits.CapMicros)/1e6)}
+				Detail: fmt.Sprintf("the workspace has spent this month's $%.2f of Founder", float64(limits.CapMicros)/1e6)}
 		}
 		var answers json.RawMessage
 		if answering {
@@ -144,7 +144,7 @@ SELECT ?, ?, ?, ?, runtime, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_thread
 			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			if live, liveErr := tx.liveFoundryAgentTurn(ctx, t.ThreadID); liveErr == nil && live {
-				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "the Assistant is still answering in this thread"}
+				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "Founder is still answering in this thread"}
 			}
 			return ErrConflict
 		}
@@ -271,7 +271,7 @@ WHERE thread_id=? AND status='executing' AND decided_at < NOW(6) - INTERVAL ? MI
 		return err
 	}
 	if live {
-		return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "the Assistant is still answering in this thread"}
+		return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "Founder is still answering in this thread"}
 	}
 	return nil
 }
@@ -432,7 +432,7 @@ FROM foundry_agent_turns WHERE id=? AND `+dueFoundryAgentTurn+` FOR UPDATE`, can
 				return tx.endFoundryAgentTurn(ctx, t.ID, model.FoundryAgentTurnCancelled, "the thread was deleted")
 			}
 			// A turn is reserved against its own pool: people's or automations'.
-			l, pool := claim.Limits, "the Assistant"
+			l, pool := claim.Limits, "Founder"
 			automation := t.AutomationRunID != nil
 			if automation {
 				l, pool = claim.Automations, "automations"
