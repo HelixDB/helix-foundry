@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 type Call = { url: string; init: RequestInit };
 let calls: Call[], replies: Response[], assigned: string[];
 
-// Sign-out's event, in the order the page leaves after it.
+// Sign-out's event, in the order the page leaves after it; `analyticsFail`
+// makes it throw.
+let analyticsFail = false;
 vi.mock("@/web/analytics", () => ({
-  signedOut: async () => void assigned.push("signed out"),
+  signedOut: async () => {
+    if (analyticsFail) throw new Error("tracker failed");
+    assigned.push("signed out");
+  },
 }));
 
 const json = (status: number, body: unknown) =>
@@ -18,6 +23,7 @@ const json = (status: number, body: unknown) =>
   });
 
 beforeEach(() => {
+  analyticsFail = false;
   calls = [];
   replies = [];
   assigned = [];
@@ -307,6 +313,45 @@ describe("signOut()", () => {
     replies.push(json(401, { code: "UNAUTHENTICATED" }));
     await signOut();
     expect(assigned).toEqual(["signed out", "/login"]);
+  });
+
+  it("leaves for sign-in though its analytics fail", async () => {
+    const { signOut } = await load();
+    analyticsFail = true;
+    replies.push(
+      json(200, { token: "t", expiresInSeconds: 3600 }),
+      json(200, {}),
+    );
+    await signOut();
+    expect(assigned).toEqual(["/login"]);
+  });
+
+  it("goes to sign-in again on a page the back button restores", async () => {
+    const shown: ((e: { persisted: boolean }) => void)[] = [];
+    vi.stubGlobal("window", {
+      location: {
+        pathname: "/data",
+        search: "",
+        hash: "",
+        assign: (to: string) => assigned.push(to),
+      },
+      addEventListener: (
+        type: string,
+        f: (e: { persisted: boolean }) => void,
+      ) => type === "pageshow" && shown.push(f),
+    });
+    const { goToSignIn, signOut } = await load();
+    replies.push(json(401, { code: "UNAUTHENTICATED" }));
+    await signOut();
+    goToSignIn();
+    expect(assigned).toEqual(["signed out", "/login"]);
+    shown.forEach((f) => f({ persisted: true }));
+    goToSignIn();
+    expect(assigned).toEqual([
+      "signed out",
+      "/login",
+      "/login?return_to=%2Fdata",
+    ]);
   });
 
   it("isn't raced to sign-in by a call refused while it signs out", async () => {
