@@ -224,12 +224,16 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                             onReview && "is-active",
                           )}
                           aria-current={onReview ? "page" : undefined}
+                          aria-label={
+                            reviewOpen > 0
+                              ? `Review, ${formatNumber(reviewOpen)} open`
+                              : undefined
+                          }
                         >
                           <span>Review</span>
                           {reviewOpen > 0 && (
-                            <span className="hf-nav-badge">
+                            <span className="hf-nav-badge" aria-hidden>
                               {formatNumber(reviewOpen)}
-                              <span className="hf-sr-only"> open</span>
                             </span>
                           )}
                         </Link>
