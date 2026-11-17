@@ -625,9 +625,7 @@ describe("Google Workspace's PDFs", () => {
       expect.stringContaining("a PDF whose text has been read"),
     ]);
     vi.setSystemTime(Date.now() + 2000);
-    await vi.waitFor(async () =>
-      expect((await generate()).status).toBe(200),
-    );
+    await vi.waitFor(async () => expect((await generate()).status).toBe(200));
   });
 });
 
