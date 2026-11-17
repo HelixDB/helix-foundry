@@ -81,7 +81,7 @@ To change one, add its variable to foundry's `environment` in `local/compose.yam
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.5, `foundry` 0.1.4 and `ontology-agent` 0.1.3. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.16.0 for these). To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.5, `foundry` 0.1.4 and `ontology-agent` 0.1.3. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.16.0 for these). Each, and HelixDB, is pinned by its tag and digest, so a tag pushed again never changes what runs. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first: without both set, the build fails with `build tag cannot contain a digest`. A `FOUNDRY_*IMAGE` override runs as given, a plain tag too.
 
 An older `FOUNDRY_IMAGE` or `FOUNDRY_AGENT_IMAGE` left in `local/.env` still starts, and then fails every draft, load and question with a contract mismatch (`the ontology agent speaks contract 4.11.0, not 4.16.0`). Remove the override, or set both to one release's images, and run `docker compose up -d` again.
 

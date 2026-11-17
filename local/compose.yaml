@@ -19,13 +19,20 @@
 # store at the same http://localhost:8333 foundry presigns them for.
 name: helix-foundry
 
-# One Foundry release's images; FOUNDRY_*IMAGE runs others, such as ones
-# built from source.
+# One Foundry release's images, each pinned by its tag and its multi-arch
+# index digest. A bump reads both from one
+# `docker buildx imagetools inspect <image>:<new tag>` (its first Digest,
+# the manifest list's, never a platform's) and changes them together: with
+# the old digest, the new tag still pulls the old image. FOUNDRY_*IMAGE runs
+# any other reference as given, plain tags included, such as ones built from
+# source; `docker compose build` needs FOUNDRY_SITE_IMAGE and FOUNDRY_IMAGE
+# set, since site and foundry have `build:` and a build tag cannot contain a
+# digest.
 x-images:
-  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.5}
-  foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.4}
-  agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.3}
-  helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.16}
+  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.5@sha256:2c882da505c9e662bb90b8f8c102b730f3243ebaacde3a5d65a9d047a9707260}
+  foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.4@sha256:db8ec848bf796320adeb9070f6cd3a9e01e7f3aab88be313f6a2c33510d52658}
+  agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.3@sha256:d178354b42e838120532de70eea436ecb7bac1085928aef89c035604e26359f6}
+  helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.16@sha256:c35a6aa4e0ae0e6e1df7d49a88698fb6ea6dc94ed441f83249297928810d4072}
   ollama: &ollama-image ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
 
 # Every service starts once init-secrets has.
