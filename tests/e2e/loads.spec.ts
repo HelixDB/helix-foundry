@@ -71,8 +71,9 @@ test("fails a load the model read no document of, and loads again once it can", 
   await expect(alert).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Failed").first()).toBeVisible();
   await expect(alert).toContainText(
-    "None of the load's documents could be read (1 document): The model provider's quota or credit ran out",
+    "None of the load's documents could be read (1 document): the model provider's quota or credit ran out; start a new load to read them.",
   );
+  await expect(alert.getByRole("button", { name: "Load data" })).toBeVisible();
   await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
 
   await mock.configure({ documentOutcome: "succeed" });
