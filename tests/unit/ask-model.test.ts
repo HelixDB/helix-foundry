@@ -2137,8 +2137,9 @@ describe("questions and threads", () => {
       result: failure,
     });
     // Helix's Claude's model failures say what failed, in the WFE's
-    // lowercase words made a sentence: a provider still busy, a request it
-    // rejected (Helix's bug), Helix's model account.
+    // lowercase words made a sentence: a provider still busy, one that
+    // stopped responding, a request it rejected (Helix's bug), Helix's model
+    // account.
     for (const [reason, house, shown] of [
       [
         "model_failed",
@@ -2149,6 +2150,11 @@ describe("questions and threads", () => {
         "model_rate_limited",
         "the model provider is busy; try again in a minute",
         "The model provider is busy; try again in a minute.",
+      ],
+      [
+        "model_timeout",
+        "the model provider stopped responding; ask again",
+        "The model provider stopped responding; ask again.",
       ],
       [
         "model_unsupported",
@@ -2168,7 +2174,8 @@ describe("questions and threads", () => {
         ),
       ).toEqual({ kind: "failed", error: shown, result: r });
     }
-    // With no words of the WFE's, the reason's own text.
+    // With no words of the WFE's, the reason's own text: a call that stopped
+    // responding, tried again, says so as the WFE does.
     const quiet = { ...failure, reason: "model_timeout" } as const;
     expect(
       questionView(
@@ -2176,7 +2183,7 @@ describe("questions and threads", () => {
       ),
     ).toEqual({
       kind: "failed",
-      error: "The model couldn’t be reached, after retries.",
+      error: "The model provider stopped responding; ask again.",
       result: quiet,
     });
     // A workspace's own provider's are the WFE's full sentences, shown as
@@ -2212,6 +2219,20 @@ describe("questions and threads", () => {
       error:
         "Claude refused the API key. An owner can enter a new one in Settings › AI models.",
       result: auth,
+    });
+    // A custom server's timeout names its host, lowercase, as written.
+    expect(
+      questionView(
+        q({
+          status: "failed",
+          error: "llm.example.com stopped responding; ask again.",
+          resultJson: JSON.stringify(quiet),
+        }),
+      ),
+    ).toEqual({
+      kind: "failed",
+      error: "llm.example.com stopped responding; ask again.",
+      result: quiet,
     });
     expect(
       questionView(
