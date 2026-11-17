@@ -3,7 +3,6 @@ package connector
 import (
 	"bufio"
 	"bytes"
-	"compress/flate"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -706,35 +705,12 @@ func (k *eventsKind) batchLines(ctx context.Context, b events.Batch) ([]events.L
 		return nil, fmt.Errorf("read event batch %d: %w", b.Seq, err)
 	}
 	defer func() { _ = body.Close() }() // best-effort: only read
-	gz, err := gzip.NewReader(body)
-	var data []byte
-	if err == nil {
-		// One byte past the recorded size tells a longer object apart
-		// without reading it all; a whole one is read to its checksum.
-		data, err = io.ReadAll(io.LimitReader(gz, b.Bytes+1))
-	}
-	var flateErr flate.CorruptInputError
-	switch {
-	// An empty object (io.EOF before a header) or a broken gzip stream is
-	// not one a send wrote. A truncated stream reads as io.ErrUnexpectedEOF
-	// whether the object or the connection was cut, so it is retried.
-	case errors.Is(err, io.EOF) || errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) || errors.As(err, &flateErr):
+	lines, err := events.Lines(body, b)
+	if errors.Is(err, events.ErrCorrupt) {
 		return nil, corruptBatch(b.Seq, err)
-	case err != nil:
+	}
+	if err != nil {
 		return nil, fmt.Errorf("read event batch %d: %w", b.Seq, err)
-	case int64(len(data)) != b.Bytes:
-		return nil, corruptBatch(b.Seq, fmt.Errorf("its object is not the %d bytes its row records", b.Bytes))
-	}
-	raw := bytes.Split(data, []byte("\n"))
-	// A whole object ends with a newline, so the split leaves one empty tail.
-	if len(raw) != b.Pieces+1 || len(raw[b.Pieces]) != 0 {
-		return nil, corruptBatch(b.Seq, fmt.Errorf("its object is not the %d lines its row records", b.Pieces))
-	}
-	lines := make([]events.Line, b.Pieces)
-	for i := range lines {
-		if lines[i], err = events.DecodeLine(raw[i]); err != nil {
-			return nil, corruptBatch(b.Seq, err)
-		}
 	}
 	return lines, nil
 }
