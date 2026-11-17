@@ -567,7 +567,8 @@ const resolved = new WeakMap<object, MockNode>();
 
 /** The one entity a lookup names: as the read resolved it, or if it names exactly one. */
 function nodeOf(m: Model, ref: unknown): MockNode | undefined {
-  if (ref && typeof ref === "object" && resolved.has(ref)) return resolved.get(ref);
+  if (ref && typeof ref === "object" && resolved.has(ref))
+    return resolved.get(ref);
   const found = lookupOf(m, ref);
   return found.length === 1 ? found[0] : undefined;
 }
