@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { claudeAccount } from "../src/account.ts";
-import { claudeCli, failureOf } from "../src/claude.ts";
+import { checkAccount, claudeAccount } from "../src/account.ts";
+import { claudeCli, cliEnv, failureOf } from "../src/claude.ts";
 import {
   configPath,
   forgetThread,
@@ -80,9 +80,6 @@ beforeEach(async () => {
     FAKE_CLAUDE_SCENARIO: "answer",
     // No Codex is found here unless a test names one.
     FOUNDRY_CODEX_PATH: join(dir, "no-codex"),
-    // A key in the person's shell reaches the CLI as it is: Claude Code
-    // chooses its own sign-in, and the helper restricts none of its methods.
-    ANTHROPIC_API_KEY: "sk-ant-theirs",
   };
 });
 
@@ -239,6 +236,9 @@ describe("pairing", () => {
 
 describe("a turn on Claude Code", () => {
   it("runs with Foundry's tools alone and reports what the model wrote", async () => {
+    // A key in the person's shell reaches the CLI as it is: Claude Code
+    // chooses its own sign-in, and the helper restricts none of its methods.
+    env.ANTHROPIC_API_KEY = "sk-ant-theirs";
     const outcome = await runTurn(turn(), options());
     assert.equal(outcome, "answered");
     const entries = await logged();
@@ -708,6 +708,40 @@ describe("the helper", () => {
       runtime: "claude_code",
       state: "signed_out",
     });
+    assert.deepEqual(
+      claudeAccount({
+        subscriptionType: "max",
+        apiKeySource: "ANTHROPIC_API_KEY",
+      }),
+      { runtime: "claude_code", state: "signed_in" },
+      "a key outranks the plan: its turns bill the key's account",
+    );
+    assert.deepEqual(
+      claudeAccount({ subscriptionType: "max", apiKeySource: "none" }),
+      { runtime: "claude_code", state: "signed_in", subscription: "max" },
+    );
+  });
+
+  it("passes the person's environment on as it is, with their other MCP sources and IDE off", () => {
+    const e = cliEnv({
+      ANTHROPIC_API_KEY: "sk-ant-…",
+      ANTHROPIC_AUTH_TOKEN: "tok",
+      HOME: "/home/ada",
+      UNSET: undefined,
+    });
+    assert.equal(e.ANTHROPIC_API_KEY, "sk-ant-…");
+    assert.equal(e.ANTHROPIC_AUTH_TOKEN, "tok");
+    assert.equal(e.HOME, "/home/ada");
+    assert.ok(!("UNSET" in e));
+    assert.equal(e.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+  });
+
+  it("says a CLI signed in with a key isn't on a subscription", async () => {
+    env.ANTHROPIC_API_KEY = "sk-ant-theirs";
+    assert.deepEqual(await checkAccount(FAKE_CLAUDE, env), {
+      runtime: "claude_code",
+      state: "signed_in",
+    });
   });
 
   it("words a CLI's failures", () => {
@@ -723,6 +757,15 @@ describe("the helper", () => {
       end: "failed",
       failure: "rate_limited",
     });
+    assert.deepEqual(
+      failureOf("Credit balance is too low"),
+      {
+        end: "failed",
+        failure: "cli_error",
+        detail: "Credit balance is too low",
+      },
+      "an API account out of credit is no sign-out: /login wouldn't help",
+    );
     assert.deepEqual(failureOf("boom"), {
       end: "failed",
       failure: "cli_error",

@@ -333,7 +333,7 @@ You run inside Codex on the person's computer, on their ChatGPT plan. Foundry's 
 	}
 	return `
 
-You run inside Claude Code on the person's computer, signed in to their own Claude account. Your only tools here are Foundry's, reached through the MCP server named foundry: use them as described above, under their names there. Claude Code's own instructions, above Foundry's, speak of tools for coding that this session doesn't offer: you have no shell, no files and no web access, and you need none, since everything you know of this workspace comes from Foundry's tools.`
+You run inside Claude Code on the person's computer, signed in to their own Claude account. Your only tools here are Foundry's, reached through the MCP server named foundry: use them as described above, under their names there. Claude Code's own instructions, above Foundry's, speak of tools for coding that this session doesn't offer: you have no shell, no files and no web access, and you need none, since everything you know of this workspace comes from Foundry's tools. Where Claude Code's instructions on tone or format differ from Foundry's, follow Foundry's.`
 }
 
 // labels names each helper's runtime for people.

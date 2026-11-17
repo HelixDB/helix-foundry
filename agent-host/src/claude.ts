@@ -121,7 +121,7 @@ export function claudeOptions(
 export function failureOf(text: string): End {
   const t = text.toLowerCase();
   if (
-    /(\/login|not logged in|log in|invalid api key|oauth token|authentication|unauthorized|credit balance)/.test(
+    /(\/login|not logged in|log in|invalid api key|oauth token|authentication|unauthorized)/.test(
       t,
     )
   )
