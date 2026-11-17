@@ -75,7 +75,6 @@ describe("remindersConfig", () => {
   );
 });
 
-
 describe("stopReminders", () => {
   it("tells the door the address signed in", async () => {
     const fetch = vi.fn(async () => Response.json({}));

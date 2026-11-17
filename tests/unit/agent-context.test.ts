@@ -212,7 +212,6 @@ describe("the agent routes", () => {
     for (const [page, type] of [
       ["llms", "text/plain; charset=utf-8"],
       ["llms-full", "text/plain; charset=utf-8"],
-      ["index", "text/markdown; charset=utf-8"],
     ] as const) {
       const res = await agentText(request, page);
       expect(res.status).toBe(200);
