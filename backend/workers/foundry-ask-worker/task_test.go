@@ -763,7 +763,7 @@ func TestAnswer(t *testing.T) {
 	// the agent gives; it keeps the result and is charged what it spent.
 	t.Run("words each failure's reason", func(t *testing.T) {
 		for reason, want := range map[ontologyagent.AskFailure]string{
-			ontologyagent.AskModelFailed: "could not be reached", ontologyagent.AskModelRefused: "declined",
+			ontologyagent.AskModelFailed: "provider is busy", ontologyagent.AskModelRefused: "declined",
 			ontologyagent.AskNoAnswer: "without an answer", ontologyagent.AskLoadUnknown: "no longer in the database",
 			ontologyagent.AskLoadMismatch: "another version", ontologyagent.AskStoreFailed: "graph could not be read",
 		} {
@@ -1336,7 +1336,7 @@ func TestModelKeys(t *testing.T) {
 			want string
 			ops  bool
 		}{
-			"Helix's key refused":     {false, "the model could not be reached; ask again", true},
+			"Helix's key refused":     {false, "Helix's model account can't take questions right now; on-call has been told, so try again later", true},
 			"the owner's key refused": {true, "Claude refused the API key. An owner can enter a new one in Settings › AI models.", false},
 		} {
 			h := newHarness(t)

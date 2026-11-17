@@ -307,7 +307,7 @@ test("its composer wraps and never scrolls sideways, before and after sending", 
 }) => {
   await mock.configure({ agentStepMs: 400, automationSuggestionsMs: 0 });
   await signIn(page);
-  await page.goto("/automations/new");
+  await page.goto("/workflows/new");
   const message = page.getByRole("textbox", { name: "Message" });
   // Wider than it is: text wraps, the field grows down, never sideways.
   const fits = () =>
@@ -335,7 +335,7 @@ test("its composer wraps and never scrolls sideways, before and after sending", 
   expect(await fits()).toBe(true);
   await message.fill("Every Monday, email me what changed last week.");
   await message.press("Enter");
-  await expect(page).toHaveURL(/\/automations\/new\?thread=/);
+  await expect(page).toHaveURL(/\/workflows\/new\?thread=/);
   // While Founder works, Stop holds Send's place.
   await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
   expect(await fits()).toBe(true);
@@ -637,11 +637,16 @@ test("starts from a template, runs only once approved, runs now, and colours the
   await page.getByRole("link", { name: "Workflows", exact: true }).click();
   await expect(page).toHaveURL(/\/workflows$/);
   await page.getByRole("link", { name: /^Sync, then summarise/ }).click();
-  // The template's steps, its connection the workspace's first, said in
-  // words and drawn on the canvas.
-  await expect(inspector(page).locator(".au-summary-text")).toContainText(
-    /Every day at 08:00 (UTC|.+ time), sync “Stripe”, then ask Founder:/,
+  // The template's description leads; its steps, its connection the
+  // workspace's first, are listed in words and drawn on the canvas.
+  await expect(inspector(page).locator(".au-summary-text")).toHaveText(
+    "A fresh sync and a short summary, every morning.",
   );
+  const preview = inspector(page).getByRole("list", { name: "Steps" });
+  await expect(preview.getByRole("listitem")).toHaveCount(4);
+  await expect(preview).toContainText(/every day at 08:00 (UTC|.+ time)/);
+  await expect(preview).toContainText("Sync “Stripe”");
+  await expect(preview).toContainText("Ask Founder:");
   await expect(canvas(page).locator(".au-node")).toHaveCount(4);
   await expect(live(page)).toBeDisabled();
   await page
@@ -757,9 +762,15 @@ test("edits its steps in the outline, and waits for approval until approved", as
   await inspector(page)
     .getByRole("button", { name: "Back to the summary" })
     .click();
+  // The template's description still leads; the steps, as edited, are listed.
   await expect(inspector(page).locator(".au-summary-text")).toHaveText(
-    "When a sync of “Stripe” succeeds, email you “Stripe synced”.",
+    "A new load after every successful sync.",
   );
+  const edited = inspector(page).getByRole("list", { name: "Steps" });
+  await expect(edited.getByRole("listitem")).toHaveText([
+    "When a sync of “Stripe” succeeds",
+    "Email you “Stripe synced”",
+  ]);
   await page.getByRole("button", { name: "Review and save" }).click();
   await page.getByRole("button", { name: "Save, turn on later" }).click();
 
