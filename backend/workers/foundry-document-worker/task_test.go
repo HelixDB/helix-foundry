@@ -355,6 +355,28 @@ func TestDocumentReads(t *testing.T) {
 	})
 }
 
+// A connector's PDF (Google Drive's) is read from its stored original as an
+// uploaded one is: its text stored beside it, or a scan failed for good.
+func TestConnectorPDFReads(t *testing.T) {
+	b := &bucket{objects: map[string][]byte{}}
+	text, scan := claimOf(b, "drive", model.FoundryMediaPDF, onePagePDF("Globex renews in March")),
+		claimOf(b, "scan", model.FoundryMediaPDF, onePagePDF(""))
+	for _, c := range []*model.FoundryFileReadClaim{text, scan} {
+		c.Document.Source = &model.FoundryDocumentSource{ExternalID: "file-" + c.Document.ID, Version: "1|v", At: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)}
+	}
+	q := newQueue(text, scan)
+	newTask(t, q, b).drain(context.Background())
+	pdf, ok := q.outcomes["drive"].(model.FoundryPDFRead)
+	if !ok || pdf.Pages != 1 || string(b.objects[pdf.ArtifactKey]) != "Globex renews in March\n" ||
+		pdf.ArtifactKey != document.TextKey("ws-1", "drive", model.FoundryFileReadStandard, pdf.TextSHA256) {
+		t.Fatalf("drive = %+v, stored %q", q.outcomes["drive"], b.objects[pdf.ArtifactKey])
+	}
+	failed, ok := q.outcomes["scan"].(model.FoundryFileUnreadable)
+	if !ok || failed.Error.Code != model.FoundryFileReadUnsupported || failed.Error.Message != read.ScannedPDF {
+		t.Fatalf("scan = %+v", q.outcomes["scan"])
+	}
+}
+
 func TestPDFReadWakes(t *testing.T) {
 	ctx := context.Background()
 

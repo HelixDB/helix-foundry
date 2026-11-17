@@ -266,7 +266,7 @@ func (s *mysqlDB) CompleteFoundryDocumentUpload(ctx context.Context, workspaceID
 WHERE id=? AND workspace_id=? AND status='pending_upload'`, id, workspaceID); err != nil {
 			return err
 		}
-		if err := tx.queueFoundryFileRead(ctx, id); err != nil {
+		if err := tx.queueFoundryFileRead(ctx, []string{id}); err != nil {
 			return err
 		}
 		var setID string

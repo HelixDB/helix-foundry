@@ -196,6 +196,7 @@ func New(d Deps) (*Task, error) {
 		MaxBytes:         d.Cfg.Foundry.Sync.MaxTableBytes,
 		Documents:        documents,
 		MaxDocumentBytes: d.Cfg.Foundry.Documents.MaxBytes,
+		MaxPDFBytes:      d.Cfg.Foundry.Documents.MaxPDFBytes,
 		MaxPerStream:     d.Cfg.Foundry.Documents.MaxPerStream,
 		PurgeGrace:       d.Cfg.Foundry.Sync.ReplacedSnapshotGrace,
 		MonthBudget:      d.Cfg.Foundry.Graph.MonthBudget,

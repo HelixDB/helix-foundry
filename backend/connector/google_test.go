@@ -302,15 +302,19 @@ func TestGoogleConnector(t *testing.T) {
 			t.Fatalf("Hint = %q, DisplayName = %q", hint, kind.DisplayName())
 		}
 	})
-	t.Run("keeps every Doc and every transcript in sets of the files table", func(t *testing.T) {
+	t.Run("keeps every Doc, transcript and PDF in sets of the files table", func(t *testing.T) {
 		streams := kind.(DocumentKind).Streams(Source{Settings: googleSettings})
-		if len(streams) != 2 || streams[0].Name != "docs" || streams[0].Table != "files" || streams[0].Title != "Docs" ||
+		if len(streams) != 3 || streams[0].Name != "docs" || streams[0].Table != "files" || streams[0].Title != "Docs" ||
 			streams[0].Format != Markdown || streams[0].Keep != (Keep{}) || streams[0].Problem() != "" {
 			t.Fatalf("streams = %+v", streams)
 		}
 		if s := streams[1]; s.Name != "transcripts" || s.Table != "files" || s.Title != "Transcripts" || s.Format != WebVTT ||
 			s.Format.MediaType() != "text/vtt" || s.Keep != (Keep{}) || s.Problem() != "" {
 			t.Fatalf("streams[1] = %+v", s)
+		}
+		if s := streams[2]; s.Name != "pdfs" || s.Table != "files" || s.Title != "PDFs" || s.Format != PDF ||
+			s.Format.MediaType() != "application/pdf" || s.Keep != (Keep{}) || s.Problem() != "" {
+			t.Fatalf("streams[2] = %+v", s)
 		}
 	})
 
@@ -1603,6 +1607,154 @@ func TestGoogleTranscripts(t *testing.T) {
 			},
 		}}
 		if _, err := pass(t, w, &granolaDocs{}); err == nil || !strings.Contains(err.Error(), "transcript call1 is listed without its modifiedTime") {
+			t.Fatalf("SyncPass error = %v, want the listing refused", err)
+		}
+	})
+}
+
+// googlePDFFiles are Drive's PDFs: contract, a shared drive's scan, the
+// newest, one Drive refuses to give since the listing, and four withheld:
+// one its owner keeps viewers from downloading, one listed with no size,
+// one over googlePDFMaxBytes, and one named .vtt that is a PDF. A .pdf name
+// on another type is no PDF.
+const googlePDFFiles = `{"files":[
+	{"id":"contract","name":"Globex  MSA.pdf","mimeType":"application/pdf","owners":[{"emailAddress":"Ada@acme.com"}],"size":"21",
+		"modifiedTime":"2026-11-03T10:00:00Z","webViewLink":"https://drive.google.com/file/d/contract/view","version":"5"},
+	{"id":"scan","name":"Signed order.pdf","mimeType":"application/pdf","driveId":"drv1","size":"14",
+		"modifiedTime":"2026-11-05T09:30:00Z","webViewLink":"https://drive.google.com/file/d/scan/view","version":"2"},
+	{"id":"gone","name":"Old.pdf","mimeType":"application/pdf","size":"9","modifiedTime":"2026-11-04T08:00:00Z","version":"1"},
+	{"id":"locked","name":"Board.pdf","mimeType":"application/pdf","size":"90","modifiedTime":"2026-11-07T08:00:00Z","version":"1",
+		"capabilities":{"canDownload":false}},
+	{"id":"nosize","name":"Shortcut.pdf","mimeType":"application/pdf","modifiedTime":"2026-11-07T08:00:00Z","version":"1"},
+	{"id":"big","name":"Annual report.pdf","mimeType":"application/pdf","size":"3145729","modifiedTime":"2026-11-07T08:00:00Z","version":"1"},
+	{"id":"misnamed","name":"call.vtt","mimeType":"application/pdf","size":"21","modifiedTime":"2026-11-01T08:00:00Z","version":"1"},
+	{"id":"notpdf","name":"Notes.pdf","mimeType":"application/vnd.google-apps.document","modifiedTime":"2026-10-01T08:00:00Z","version":"1"}]}`
+
+// googlePDFBodies are what downloading each PDF gives: bytes that are no
+// UTF-8, as a PDF's are.
+var googlePDFBodies = map[string]string{
+	"contract": "%PDF-1.7\n\xe2\xe3\xcf\xd3 Globex",
+	"scan":     "%PDF-1.4\n\x00\xff scan",
+	"misnamed": "%PDF-1.7\n\xe2\xe3\xcf\xd3 Globex",
+}
+
+func TestGooglePDFs(t *testing.T) {
+	ctx := context.Background()
+	routes := func(t *testing.T, answers map[string]func(*http.Request) (int, string)) map[string]func(*http.Request) (int, string) {
+		routes := map[string]func(*http.Request) (int, string){
+			"/drive/v3/files":  func(*http.Request) (int, string) { return http.StatusOK, googlePDFFiles },
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`}),
+			"/drive/v3/files/gone": googleFailure(http.StatusNotFound, "File not found: gone.", "notFound"),
+			"/drive/v3/files/notpdf/export": func(*http.Request) (int, string) {
+				return http.StatusOK, "## Notes"
+			},
+		}
+		for id, body := range googlePDFBodies {
+			routes["/drive/v3/files/"+id] = func(r *http.Request) (int, string) {
+				if r.URL.RawQuery != "alt=media&supportsAllDrives=true" {
+					t.Errorf("download query = %s", r.URL.RawQuery)
+				}
+				if answer := answers[id]; answer != nil {
+					return answer(r)
+				}
+				return http.StatusOK, body
+			}
+		}
+		return routes
+	}
+	pass := func(t *testing.T, w *googleWorkspace, docs DocumentWriter) (*rowSink, error) {
+		t.Helper()
+		sink := &rowSink{}
+		_, err := googleAt(t, w).SyncPass(ctx, googleSource(), []Table{{Name: "files"}}, map[string]RowWriter{"files": sink}, docs)
+		return sink, err
+	}
+	// offered are the offers' stream and id, without their versions.
+	offered := func(docs *granolaDocs) []string {
+		var out []string
+		for _, offer := range docs.offers {
+			out = append(out, strings.Join(strings.Fields(offer)[:2], " "))
+		}
+		return out
+	}
+
+	t.Run("downloads each PDF it wants, newest first, and puts its bytes as they are", func(t *testing.T) {
+		w := &googleWorkspace{routes: routes(t, nil)}
+		docs := &granolaDocs{want: map[string]bool{"pdfs": true}}
+		sink, err := pass(t, w, docs)
+		if err != nil || len(sink.rows) != 8 {
+			t.Fatalf("SyncPass = %v, rows = %d", err, len(sink.rows))
+		}
+		// The withheld are not offered, so a full read removes what the stream holds of them.
+		if got := offered(docs); fmt.Sprint(got) != "[pdfs scan pdfs gone pdfs contract pdfs misnamed docs notpdf]" {
+			t.Fatalf("offers = %q", docs.offers)
+		}
+		if !strings.HasPrefix(docs.offers[2], "pdfs contract 1|2026-11-03T10:00:00Z|5|") {
+			t.Fatalf("contract's version = %q", docs.offers[2])
+		}
+		if fmt.Sprint(docs.drops) != "[pdfs gone]" || fmt.Sprint(docs.putNames()) != "[pdfs scan pdfs contract pdfs misnamed]" {
+			t.Fatalf("drops = %v, puts = %v", docs.drops, docs.putNames())
+		}
+		contract := docs.puts[1].doc
+		if string(contract.Text) != googlePDFBodies["contract"] || contract.Title != "Globex MSA.pdf" ||
+			contract.URL != "https://drive.google.com/file/d/contract/view" || !contract.At.Equal(time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)) {
+			t.Fatalf("contract = %+v", contract)
+		}
+		if string(docs.puts[0].doc.Text) != googlePDFBodies["scan"] {
+			t.Fatalf("scan = %q", docs.puts[0].doc.Text)
+		}
+		for _, id := range []string{"locked", "nosize", "big"} {
+			if asked := w.requested("/drive/v3/files/" + id); len(asked) != 0 {
+				t.Fatalf("downloaded withheld %s: %v", id, asked)
+			}
+		}
+	})
+	t.Run("downloads only the PDFs it wants", func(t *testing.T) {
+		w := &googleWorkspace{routes: routes(t, nil)}
+		docs := &granolaDocs{want: map[string]bool{"transcripts": true}}
+		if _, err := pass(t, w, docs); err != nil || len(docs.offers) != 5 || len(docs.puts) != 0 || len(w.requested("/drive/v3/files/")) != 0 {
+			t.Fatalf("SyncPass = %v, offers = %q, downloads = %v", err, docs.offers, w.requested("/drive/v3/files/"))
+		}
+	})
+	t.Run("versions a PDF by its name, owner and link too, which its bytes don't show", func(t *testing.T) {
+		renamed := func(*http.Request) (int, string) {
+			return http.StatusOK, strings.Replace(googlePDFFiles, `"Globex  MSA.pdf"`, `"Globex MSA (signed).pdf"`, 1)
+		}
+		before, after := &granolaDocs{}, &granolaDocs{}
+		if _, err := pass(t, &googleWorkspace{routes: routes(t, nil)}, before); err != nil {
+			t.Fatal(err)
+		}
+		w := &googleWorkspace{routes: routes(t, nil)}
+		w.routes["/drive/v3/files"] = renamed
+		if _, err := pass(t, w, after); err != nil {
+			t.Fatal(err)
+		}
+		if before.offers[2] == after.offers[2] || before.offers[1] != after.offers[1] {
+			t.Fatalf("offers before = %q, after = %q", before.offers, after.offers)
+		}
+	})
+	t.Run("skips a PDF Drive fails to give, keeping what its stream holds", func(t *testing.T) {
+		noBackoff(t)
+		before := testutil.ToFloat64(googleDocsSkipped)
+		w := &googleWorkspace{routes: routes(t, map[string]func(*http.Request) (int, string){
+			"contract": func(*http.Request) (int, string) { return http.StatusBadGateway, `` },
+		})}
+		docs := &granolaDocs{want: map[string]bool{"pdfs": true}}
+		if _, err := pass(t, w, docs); err != nil || fmt.Sprint(docs.putNames()) != "[pdfs scan pdfs misnamed]" ||
+			fmt.Sprint(docs.drops) != "[pdfs gone]" {
+			t.Fatalf("SyncPass = %v, puts = %v, drops = %v", err, docs.putNames(), docs.drops)
+		}
+		if skipped := testutil.ToFloat64(googleDocsSkipped) - before; skipped != 1 {
+			t.Fatalf("skipped %v, want contract", skipped)
+		}
+	})
+	t.Run("fails a PDF listed without its modified time", func(t *testing.T) {
+		w := &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{}`}),
+			"/drive/v3/files": func(*http.Request) (int, string) {
+				return http.StatusOK, `{"files":[{"id":"p1","name":"a.pdf","mimeType":"application/pdf","size":"10"}]}`
+			},
+		}}
+		if _, err := pass(t, w, &granolaDocs{}); err == nil || !strings.Contains(err.Error(), "PDF p1 is listed without its modifiedTime") {
 			t.Fatalf("SyncPass error = %v, want the listing refused", err)
 		}
 	})

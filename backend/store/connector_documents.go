@@ -186,6 +186,10 @@ WHERE document_id IN (`+idPlaceholders(len(added))+`) AND workspace_id=? AND cre
 				}
 				return fmt.Errorf("insert connector documents: %w", err)
 			}
+			// A PDF is read as an upload is, by the document worker.
+			if err := tx.queueFoundryFileRead(ctx, added); err != nil {
+				return fmt.Errorf("queue connector documents' reads: %w", err)
+			}
 		}
 		for _, u := range p.Update {
 			if _, err := sqlTx.ExecContext(ctx, `UPDATE foundry_documents SET name=?, source_version=?, source_at=?, source_url=?
@@ -208,8 +212,9 @@ WHERE id=? AND set_id=? AND status='uploaded'`, u.Name, u.Version, u.At.UTC(), u
 }
 
 // removeConnectorDocuments deletes the documents of p.Remove still uploaded
-// in p.SetID, with a purge row each, and counts them. The caller holds the
-// set's lock.
+// in p.SetID, with a purge row each, and their reads, as
+// DeleteFoundryDocument does, and counts them. The caller holds the set's
+// lock.
 func (s *mysqlDB) removeConnectorDocuments(ctx context.Context, p model.ConnectorDocumentsPublish) (int, error) {
 	if len(p.Remove) == 0 {
 		return 0, nil
@@ -241,6 +246,10 @@ WHERE id IN (`+idPlaceholders(len(p.Remove))+`) AND set_id=? AND status='uploade
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_documents SET status='deleted', deleted_at=NOW(6)
 WHERE id IN (`+idPlaceholders(len(ids))+`)`, toAnySlice(ids)...); err != nil {
 		return 0, fmt.Errorf("delete removed connector documents: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_document_reads WHERE document_id IN (`+idPlaceholders(len(ids))+`)`,
+		toAnySlice(ids)...); err != nil {
+		return 0, fmt.Errorf("delete removed connector documents' reads: %w", err)
 	}
 	return len(ids), nil
 }

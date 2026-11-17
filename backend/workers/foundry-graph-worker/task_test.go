@@ -1585,6 +1585,44 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	// A connector's PDF (Google Drive's) is staged as an upload's is: from
+	// the text its read stored (TextKey), not its original; one whose read
+	// failed is recorded with the read's code.
+	t.Run("stages a connector's read PDF from its text, and records a failed one", func(t *testing.T) {
+		h := newHarness(t)
+		at := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+		key := document.TextKey("ws-1", "doc-b", model.FoundryFileReadStandard, strings.Repeat("b", 64))
+		for i, read := range []*model.FoundryFileRead{
+			{Status: model.FoundryFileReadSucceeded, ArtifactKey: &key},
+			{Status: model.FoundryFileReadFailed, Error: &model.FoundryFileReadError{Code: model.FoundryFileReadUnsupported, Message: "Scanned PDF: no text to read"}},
+		} {
+			d := h.store.pending[i+1]
+			d.MediaType, d.Read = model.FoundryMediaPDF, read
+			d.Source = &model.FoundryDocumentSource{ExternalID: "drive-" + d.ID, Version: "1|v", At: at}
+		}
+		h.bucket.objects[document.Key("ws-1", "doc-b")] = []byte("%PDF-1.7 \xff the original")
+		h.bucket.objects[key] = []byte("Globex renews in March\n")
+		var staged []byte
+		h.agent.extract = func(req string, stream agentv1.Agent_ExtractServer) error {
+			staged, _ = os.ReadFile(filepath.Join(h.workDir, "jobs/job-1/docs/doc-b.txt"))
+			return extractAll(req, stream)
+		}
+		if outcome := h.run(t, loadJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+		_, extracts := h.agent.calls()
+		extract := decodeExtract(t, extracts[0])
+		sent := slices.IndexFunc(extract.Documents, func(d ontologyagent.ExtractDocument) bool { return d.DocID == "doc-b" })
+		if sent < 0 || extract.Documents[sent].MediaType != ontologyagent.MediaPlainText || string(staged) != "Globex renews in March\n" {
+			t.Fatalf("documents = %+v, staged %q", extract.Documents, staged)
+		}
+		scanned := h.store.pending[2].ID
+		if got := h.store.extractions[scanned]; got == nil || got.Status != model.FoundryExtractionFailed ||
+			*got.Error != (model.FoundryExtractionError{Code: model.FoundryExtractionErrorCode(model.FoundryFileReadUnsupported), Retryable: false}) {
+			t.Fatalf("%s recorded %+v", scanned, got)
+		}
+	})
+
 	// A PDF whose read failed is never sent: the load records it failed
 	// with the read's code, for good, and the document's read says why.
 	t.Run("records a PDF whose read failed with the read's code", func(t *testing.T) {

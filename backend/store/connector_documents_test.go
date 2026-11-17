@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	gomysql "github.com/go-sql-driver/mysql"
+	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -424,6 +426,130 @@ func TestPublishConnectorDocuments(t *testing.T) {
 			store.ErrConnectorOwned, "a change to the set")
 		assert.ErrorIs(t, c.db.DeleteFoundryDocumentSet(ctx, ws, c.setID), store.ErrConnectorOwned, "a delete of the set")
 		assert.Equal(t, []string{"not_1=" + n1 + "@1|a"}, c.index(t))
+	})
+}
+
+// readStatus is each document's standard read's status, "" for none.
+func readStatus(t *testing.T, ids ...string) []string {
+	t.Helper()
+	out := make([]string, len(ids))
+	for i, docID := range ids {
+		err := testDB.QueryRow(`SELECT status FROM foundry_document_reads WHERE document_id=? AND mode='standard'`, docID).Scan(&out[i])
+		if !errors.Is(err, sql.ErrNoRows) {
+			require.NoError(t, err)
+		}
+	}
+	return out
+}
+
+// A connector's PDF (Google Drive's) is read as an uploaded one is: its
+// publish queues its read, the document worker claims it, and a load
+// holding it waits for that read, whose end has the load read it as work
+// no person started.
+func TestConnectorPDFs(t *testing.T) {
+	ctx := context.Background()
+	day := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	pdf := func(c connectorSync, tag, externalID string) *model.FoundryDocument {
+		d := c.note(tag, externalID, "1|a", day)
+		d.Name, d.MediaType = tag+".pdf", model.FoundryMediaPDF
+		return d
+	}
+
+	t.Run("queues a read for each PDF a publish adds, and none for text", func(t *testing.T) {
+		c := newConnectorSync(t, newFoundryFixture(t, "CP1"), "CP1")
+		ws := c.ontology.WorkspaceID
+		p1, n1 := id26("FD-p1"), id26("FD-n1")
+		late := pdf(c, "late", "f9")
+		_, err := c.db.PublishConnectorDocuments(ctx, c.publish("CP1-a", []*model.FoundryDocument{late}, nil), c.sync.ID, syncWorker)
+		require.ErrorIs(t, err, store.ErrReservationExpired)
+		assert.Equal(t, []string{""}, readStatus(t, late.ID), "a refused publish queues nothing")
+
+		c.published(t, c.publish("CP1-b", []*model.FoundryDocument{pdf(c, "p1", "f1"), c.note("n1", "not_1", "1|a", day)}, nil))
+		assert.Equal(t, []string{"queued", ""}, readStatus(t, p1, n1))
+		d, err := c.db.GetFoundryDocument(ctx, ws, p1)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryFileReadReading, d.ReadState())
+		_, ok := d.TextKey()
+		assert.False(t, ok, "no text before its read")
+
+		readPDF(t, c.foundryFixture, p1, pdfRead(p1))
+		d, err = c.db.GetFoundryDocument(ctx, ws, p1)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryFileReadReady, d.ReadState())
+		key, ok := d.TextKey()
+		assert.True(t, ok)
+		assert.Equal(t, pdfRead(p1).ArtifactKey, key)
+
+		// The same bytes at a new version (renamed in Drive) change it in place and keep its read.
+		c.published(t, c.publish("CP1-c", nil, []model.ConnectorDocumentUpdate{{ID: p1, Name: "renamed.pdf", Version: "1|b", At: day}}))
+		assert.Equal(t, []string{"succeeded"}, readStatus(t, p1))
+		none, err := c.db.ClaimFoundryFileRead(ctx, pdfTypes, id.New(), time.Minute, wake)
+		require.NoError(t, err)
+		assert.Nil(t, none, "a read PDF is never read again")
+	})
+
+	t.Run("deletes the reads of what it replaces or removes, and of a deleted connector's documents", func(t *testing.T) {
+		c := newConnectorSync(t, newFoundryFixture(t, "CP2"), "CP2")
+		ws := c.ontology.WorkspaceID
+		p1, p2, p1b := id26("FD-p1"), id26("FD-p2"), id26("FD-p1b")
+		c.published(t, c.publish("CP2-a", []*model.FoundryDocument{pdf(c, "p1", "f1"), pdf(c, "p2", "f2")}, nil))
+		// One read is put off: its row would outlive its document.
+		claim, err := c.db.ClaimFoundryFileRead(ctx, pdfTypes, id.New(), time.Minute, wake)
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+		require.NoError(t, c.db.FinishFoundryFileRead(ctx, claim.Document.ID, model.FoundryFileReadStandard, *claim.Read.ClaimToken,
+			model.FoundryFileReadRetry{At: time.Now().Add(time.Hour), Message: "storage was down"}, wake))
+
+		c.published(t, c.publish("CP2-b", []*model.FoundryDocument{pdf(c, "p1b", "f1")}, nil, p1, p2))
+		assert.Equal(t, []string{"", "", "queued"}, readStatus(t, p1, p2, p1b), "a new version is read again")
+		require.NoError(t, c.db.DeleteConnector(ctx, ws, c.connector.ID))
+		assert.Equal(t, []string{""}, readStatus(t, p1b))
+		none, err := c.db.ClaimFoundryFileRead(ctx, pdfTypes, id.New(), time.Minute, wake)
+		require.NoError(t, err)
+		assert.Nil(t, none)
+	})
+
+	t.Run("a load waits for a PDF's read, then reads it, or records it failed with the read's code", func(t *testing.T) {
+		c := newConnectorSync(t, newFoundryFixture(t, "CP3"), "CP3")
+		load := c.loadReading(t, "L1", c.setID)
+		c.loaded(t, "w1")
+		text, scan := id26("FD-text"), id26("FD-scan")
+		reads := c.published(t, c.publish("CP3", []*model.FoundryDocument{pdf(c, "text", "f1"), pdf(c, "scan", "f2")}, nil))
+		assert.Equal(t, []model.FoundryDocumentRead{{OntologyID: c.ontology.ID, Outcome: model.FoundryDocumentReadReading}}, reads)
+		assert.ElementsMatch(t, []string{scan, text}, members(t, load))
+		assert.Empty(t, pendingIDs(t, c.foundryFixture, load), "neither is sent while it is read")
+		assert.Nil(t, c.liveJob(t))
+
+		scanned := model.FoundryFileUnreadable{Error: model.FoundryFileReadError{Code: model.FoundryFileReadUnsupported, Message: "Scanned PDF: no text to read"}}
+		for range 2 {
+			claim, err := c.db.ClaimFoundryFileRead(ctx, pdfTypes, id.New(), time.Minute, wake)
+			require.NoError(t, err)
+			require.NotNil(t, claim)
+			require.NotNil(t, claim.Document.Source, "a connector's document")
+			var outcome model.FoundryFileReadOutcome = pdfRead(claim.Document.ID)
+			if claim.Document.ID == scan {
+				outcome = scanned
+			}
+			require.NoError(t, c.db.FinishFoundryFileRead(ctx, claim.Document.ID, model.FoundryFileReadStandard, *claim.Read.ClaimToken, outcome, wake))
+		}
+		job := c.liveJob(t)
+		require.NotNil(t, job, "the reads' ends queued an extract")
+		assert.Equal(t, model.FoundryGraphJobExtract, job.Kind)
+		assert.Equal(t, load, job.LoadID)
+		assert.Nil(t, job.RequestedByUserID, "work no person started")
+		pending, err := c.db.ListPendingFoundryDocuments(ctx, load)
+		require.NoError(t, err)
+		require.Len(t, pending, 2)
+		for _, d := range pending {
+			key, ok := d.TextKey()
+			if d.ID == scan {
+				assert.False(t, ok)
+				assert.Equal(t, model.FoundryFileReadUnsupported, d.Read.Error.Code)
+				continue
+			}
+			assert.True(t, ok)
+			assert.Equal(t, pdfRead(text).ArtifactKey, key)
+		}
 	})
 }
 

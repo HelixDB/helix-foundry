@@ -173,13 +173,14 @@ var errFilesReset = errors.New("google: the files table is read in full")
 // row, and the syncer its document. A file moved between shared drives
 // keeps its row and document, with its new drive, whichever feed shows the
 // move first, and when the other shows it only at the next read. Once every
-// feed is read, as a full read lists before it exports, the Docs and
-// transcripts shown are offered, newest first (googleExporter): a changed
-// one is exported or downloaded again. One its owner no longer lets the
-// user download, or a transcript grown past googleTranscriptMaxBytes, loses
-// the document its stream holds, if Drive's version of it changed; a full
-// read leaves it out. So does a file the Transcripts stream holds that is
-// no transcript now (one named .vtt renamed, or given another type).
+// feed is read, as a full read lists before it exports, the Docs,
+// transcripts and PDFs shown are offered, newest first (googleExporter): a
+// changed one is exported or downloaded again. One its owner no longer lets
+// the user download, a transcript grown past googleTranscriptMaxBytes, or a
+// PDF grown past googlePDFMaxBytes, loses the document its stream holds, if
+// Drive's version of it changed; a full read leaves it out. So does a file
+// the Transcripts or PDFs stream holds that is no transcript or PDF now
+// (one named .vtt renamed, or either given another type).
 //
 // The files table is reset, and read in full, when there is no cursor; when
 // the shared drives the user can read changed (one joined has no token; one
@@ -212,8 +213,9 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 			}
 		}
 	}
-	// pending are the Docs to offer, by id, as last shown.
-	pending := map[string]googleDoc{}
+	// pending are the documents to offer, by id, as last shown: a file's
+	// own, and the removal of what another stream holds of it.
+	pending := map[string][]googleDoc{}
 	each := func(change googleFeedChange) error {
 		if change.ChangeType == "drive" {
 			if !slices.Contains(drives, change.DriveID) {
@@ -235,10 +237,17 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 		if err != nil {
 			return err
 		}
+		var docs []googleDoc
 		if doc != nil {
-			pending[id] = *doc
-		} else if _, held := w.Held(googleTranscriptsStream.Name, id); held {
-			pending[id] = googleDoc{stream: googleTranscriptsStream.Name, id: id, version: googleNoTranscript, withheld: true}
+			docs = append(docs, *doc)
+		}
+		for _, stream := range []string{googleTranscriptsStream.Name, googlePDFsStream.Name} {
+			if _, held := w.Held(stream, id); held && (doc == nil || doc.stream != stream) {
+				docs = append(docs, googleDoc{stream: stream, id: id, version: googleNotOfStream, withheld: true})
+			}
+		}
+		if len(docs) > 0 {
+			pending[id] = docs
 		}
 		return w.Upsert("files", row)
 	}
@@ -283,8 +292,8 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 		w.Reset("files", reset)
 		return c.filesStart(ctx, drives)
 	}
-	docs := slices.SortedFunc(maps.Values(pending), func(a, b googleDoc) int {
-		return cmp.Or(b.modified.Compare(a.modified), strings.Compare(a.id, b.id))
+	docs := slices.SortedFunc(slices.Values(slices.Concat(slices.Collect(maps.Values(pending))...)), func(a, b googleDoc) int {
+		return cmp.Or(b.modified.Compare(a.modified), strings.Compare(a.id, b.id), strings.Compare(a.stream, b.stream))
 	})
 	exporter := googleExporter{c: c, docs: w}
 	for _, doc := range docs {
