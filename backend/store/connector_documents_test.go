@@ -551,6 +551,51 @@ func TestConnectorPDFs(t *testing.T) {
 			assert.Equal(t, pdfRead(text).ArtifactKey, key)
 		}
 	})
+
+	// The issue's case: a loaded PDF is replaced at the source by a new
+	// version, which is then refused for download. Each step leaves the load
+	// holding only the version readable now: the old one is taken out, the
+	// new one sent once read, then taken out in turn.
+	t.Run("keeps only the version readable now through a replacement and a refused download", func(t *testing.T) {
+		c := newConnectorSync(t, newFoundryFixture(t, "CP4"), "CP4")
+		v1, v2 := id26("FD-v1"), id26("FD-v2")
+		c.published(t, c.publish("CP4-a", []*model.FoundryDocument{pdf(c, "v1", "f1")}, nil))
+		readPDF(t, c.foundryFixture, v1, pdfRead(v1))
+		load := c.loadReading(t, "L1", c.setID)
+		c.loaded(t, "w1", v1)
+		removed := func() []string {
+			t.Helper()
+			ids, err := c.db.ListRemovedFoundryDocuments(ctx, load)
+			require.NoError(t, err)
+			return ids
+		}
+
+		replacement := pdf(c, "v2", "f1")
+		replacement.Source.Version = "1|b"
+		c.published(t, c.publish("CP4-b", []*model.FoundryDocument{replacement}, nil, v1))
+		assert.Equal(t, []string{v1}, removed(), "the old version is taken out")
+		assert.Equal(t, []string{"", "queued"}, readStatus(t, v1, v2))
+		assert.Empty(t, pendingIDs(t, c.foundryFixture, load), "the new version waits for its read")
+		removal := c.liveJob(t)
+		require.NotNil(t, removal)
+		c.claimed(t, "w2", removal.ID)
+		require.NoError(t, c.db.RecordFoundryDocumentRemoval(ctx, removal.ID, "w2", v1))
+		c.ended(t, "w2", removal.ID, model.FoundryGraphJobSucceeded, next("CP4-x"))
+		assert.Empty(t, removed())
+		assert.Equal(t, []string{v2}, members(t, load))
+
+		readPDF(t, c.foundryFixture, v2, pdfRead(v2))
+		assert.Equal(t, []string{v2}, pendingIDs(t, c.foundryFixture, load), "read, it is sent")
+		_, finish := c.finish(t, "w3", "CP4-y", model.FoundryGraphJobSucceeded, v2)
+		assert.Equal(t, model.FoundryGraphJobEnded, finish)
+		assert.Empty(t, pendingIDs(t, c.foundryFixture, load))
+
+		// Drive now refuses its download: the sync drops it.
+		c.published(t, c.publish("CP4-c", nil, nil, v2))
+		assert.Equal(t, []string{v2}, removed(), "the refused version is taken out")
+		assert.Equal(t, []string{""}, readStatus(t, v2))
+		require.NotNil(t, c.liveJob(t), "an extract takes it out")
+	})
 }
 
 func TestConnectorDocumentFanOut(t *testing.T) {

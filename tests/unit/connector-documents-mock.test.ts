@@ -589,6 +589,46 @@ describe("Google Workspace's PDFs", () => {
     const [old] = await byIds([edited.id]);
     expect(old).toMatchObject({ status: "deleted", read: null });
   });
+
+  it("forgets a PDF's read when its connection is deleted mid-read", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const pdfs = await setOf("pdfs");
+    const ids = (await page(`setId=${pdfs!.id}`)).documents.map((d) => d.id);
+    expect(
+      (await call("DELETE", `${WS}/connectors/${connectorId}`)).status,
+    ).toBe(200);
+    // The reads started by the sync end after the delete, and the read time
+    // passes: none comes back.
+    await new Promise((r) => setTimeout(r, 200));
+    vi.setSystemTime(Date.now() + 5000);
+    expect(await setOf("pdfs")).toBeUndefined();
+    for (const d of await byIds(ids))
+      expect(d).toMatchObject({ status: "deleted", read: null });
+  });
+
+  it("drafts from a PDFs set only once one of its PDFs has text", async () => {
+    await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const pdfs = await setOf("pdfs");
+    const generate = () =>
+      call("POST", `${WS}/ontologies/ont_acme_contracts:generate`, {
+        noConnectors: true,
+        documentSetIds: [pdfs!.id],
+      });
+    // Its PDFs are still being read: the WFE refuses, saying what it needs.
+    const early = await generate();
+    expect(refusal(early)).toEqual([
+      FAILED_PRECONDITION,
+      expect.stringContaining("a PDF whose text has been read"),
+    ]);
+    vi.setSystemTime(Date.now() + 2000);
+    await vi.waitFor(async () =>
+      expect((await generate()).status).toBe(200),
+    );
+  });
 });
 
 describe("a connector's sets and documents", () => {

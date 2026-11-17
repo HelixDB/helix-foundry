@@ -761,6 +761,32 @@ func TestSyncerDocuments(t *testing.T) {
 			t.Fatalf("documents = %q, owed = %d", got, f.store.owed)
 		}
 	})
+	// The store queues a read for each added document only, so a renamed
+	// PDF keeps its read and a changed one is read again.
+	t.Run("changes a PDF in place on the same bytes, and replaces it on new bytes", func(t *testing.T) {
+		pdf := note{id: "n1", version: "1", at: day(1), text: "%PDF-1.7\n\xff\x00one"}
+		kind := newNoteKind(connector.CaptureFull, pdf)
+		kind.streams = []connector.Stream{pdfsStream}
+		f := newNoteFixture(t, kind)
+		f.syncer.MaxPDFBytes = 400
+		f.run(t, "sync-1")
+		id, objects := f.liveID("pdfs", "n1"), f.documents.puts
+		kind.notes["notes"] = []note{edited(pdf, "")}
+		f.run(t, "sync-2")
+		p := f.store.publishes[1]
+		if f.liveID("pdfs", "n1") != id || f.store.docs[id].Source.Version != "2|b" || f.documents.puts != objects ||
+			len(p.Update) != 1 || len(p.Add)+len(p.Remove) != 0 {
+			t.Fatalf("document = %+v, publish = %+v", f.store.docs[id], p)
+		}
+		kind.notes["notes"] = []note{{id: "n1", version: "3", at: day(1), text: "%PDF-1.7\n\xff\x00two"}}
+		f.run(t, "sync-3")
+		p = f.store.publishes[2]
+		added := f.liveID("pdfs", "n1")
+		if added == id || len(p.Add) != 1 || p.Add[0].ID != added || p.Add[0].MediaType != model.FoundryMediaPDF ||
+			!slices.Equal(p.Remove, []string{id}) || f.held(t, "pdfs")["n1"] != "pdfs: %PDF-1.7\n\xff\x00two" {
+			t.Fatalf("publish = %+v", p)
+		}
+	})
 	t.Run("reads a live index of more than one page", func(t *testing.T) {
 		kind := newNoteKind(connector.CaptureFull, n1)
 		f := newNoteFixture(t, kind)
