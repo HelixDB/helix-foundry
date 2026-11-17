@@ -28,17 +28,6 @@ export const mock = {
   /** The mock's settings now: what the knobs below have counted down to. */
   settings: async (): Promise<{ startingQueries?: Record<string, number> }> =>
     (await (await fetch(`${MOCK}/__mock/stats`)).json()).config,
-  /** The landing page's reminders the mock's door holds (mock/reminders.ts). */
-  reminders: async (): Promise<
-    {
-      email: string;
-      timeZone: string;
-      consent: string;
-      status: "scheduled" | "done" | "stopped";
-      nextSendAt: string | null;
-      stopReason: "signed_in" | null;
-    }[]
-  > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
   /** The reset links the mock's forgot emailed, oldest first (mock/routes/auth.ts). */
   passwordResets: async (): Promise<{ email: string; token: string }[]> =>
     (await (await fetch(`${MOCK}/__mock/password-resets`)).json()).resets,
@@ -54,9 +43,6 @@ export const mock = {
   configure: (config: {
     // Seeds Customer contracts' demo workflows and 45 days of their runs.
     workflowDemo?: boolean;
-    // New reminders the door takes an hour (300).
-    remindersPerHour?: number;
-    remindersPerClientPerHour?: number;
     accessTokenTtlSeconds?: number;
     allowedRegions?: string[];
     checkoutCardOnFile?: boolean;

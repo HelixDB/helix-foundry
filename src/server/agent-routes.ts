@@ -1,22 +1,19 @@
-import { landingMarkdown } from "@/landing/markdown";
 import { LOCAL } from "@/shared/deployment";
 import {
   PROD,
-  SOURCE,
   aiCatalog,
   docsText,
   llmsFullTxt,
   llmsTxt,
   mcpManifest,
-  setupPrompt,
   siteOf,
   type Site,
 } from "./agent-context";
 
-// The answers of the site's agent routes (src/app/llms.txt, llms-full.txt,
-// index.md and .well-known): a 200 in the format asked for, readable from
+// The answers of the site's agent routes (src/app/llms.txt, llms-full.txt
+// and .well-known): a 200 in the format asked for, readable from
 // any origin and cached by the CDN for 5 minutes. A local build serves none
-// of them: it has no landing page and serves no crawler. Off prod they say
+// of them: it serves no crawler. Off prod they say
 // noindex, as robots.txt does.
 
 const headers = (contentType: string) => ({
@@ -43,11 +40,6 @@ const TEXT = {
           docsText("/llms-full.txt"),
         ])),
       ),
-  },
-  index: {
-    type: "text/markdown; charset=utf-8",
-    body: async (site: Site) =>
-      landingMarkdown(site.origin, SOURCE, setupPrompt(site)),
   },
 } as const;
 
