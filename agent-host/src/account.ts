@@ -67,22 +67,27 @@ export async function signedIn(
 /**
  * The CLI's account as Foundry is told it: on a subscription (its plan),
  * signed in some other way (an API account, whose turns don't bill the
- * subscription), or signed out.
+ * subscription), or signed out. A key Claude Code signs in with
+ * (apiKeySource) outranks its subscription login, so a plan reported beside
+ * one is never taken as the account its turns bill.
  *
  * @example
  * claudeAccount({ subscriptionType: "max", email: "ada@example.com" });
  * // { runtime: "claude_code", state: "signed_in", subscription: "max" }
+ * claudeAccount({ subscriptionType: "max", apiKeySource: "ANTHROPIC_API_KEY" });
+ * // { runtime: "claude_code", state: "signed_in" }: the key bills, not the plan
  * claudeAccount({}); // { runtime: "claude_code", state: "signed_out" }
  */
 export function claudeAccount(info: AccountInfo): Account {
-  const plan = [...(info.subscriptionType ?? "")]
+  const source = (s?: string) => !!s && s !== "none";
+  const keyed = source(info.apiKeySource);
+  const plan = [...(keyed ? "" : (info.subscriptionType ?? ""))]
     // Printable ASCII, so 32 characters are at most Foundry's 32 bytes.
     .filter((c) => c >= " " && c <= "~")
     .join("")
     .slice(0, MAX_SUBSCRIPTION);
   if (plan)
     return { runtime: "claude_code", state: "signed_in", subscription: plan };
-  const source = (s?: string) => !!s && s !== "none";
   return info.email || source(info.tokenSource) || source(info.apiKeySource)
     ? { runtime: "claude_code", state: "signed_in" }
     : { runtime: "claude_code", state: "signed_out" };
