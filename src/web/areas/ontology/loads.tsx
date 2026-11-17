@@ -81,6 +81,7 @@ import {
   loadRetry,
   loadDocumentPlan,
   loadDocumentTotals,
+  loadUnreadText,
   loadDocumentsOutcome,
   loadDocumentsText,
   loadSetsLine,
@@ -237,9 +238,11 @@ export function LoadButton({
       documents.data || [],
       scope,
       bundle.routes.ok ? bundle.routes.value : [],
+      // A document the current load failed to read was not read: reading it
+      // again is paid for.
       new Set(
         (read.data?.documents || [])
-          .filter((d) => d.extraction)
+          .filter((d) => d.extraction && d.extraction.status !== "failed")
           .map((d) => d.id),
       ),
       ids,
@@ -1142,6 +1145,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
   // What the load made of every document it holds, as the WFE counted it: a
   // job's progress counts a document it only stored as done.
   const totals = loadDocumentTotals(l);
+  const unread = loadUnreadText(l, now);
   return (
     <Page>
       <PageHeader
@@ -1263,7 +1267,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
               )
             }
             action={
-              changed &&
+              (changed || (l.unread?.documents ?? 0) > 0) &&
               version.data?.version?.isCurrent && (
                 <LoadButton
                   version={version.data.version}
@@ -1274,7 +1278,24 @@ export function LoadPage({ loadId }: { loadId: string }) {
             }
           />
         )}
-        {j.status === "budget_exhausted" && (
+        {unread && (
+          <Callout
+            icon={TriangleAlert}
+            title={loadBadge(l).label}
+            text={unread}
+            action={
+              l.current && (
+                <ButtonLink
+                  size="sm"
+                  to={paths.ontologyConnections(o, "failed")}
+                >
+                  See what wasn’t read
+                </ButtonLink>
+              )
+            }
+          />
+        )}
+        {j.status === "budget_exhausted" && !unread && (
           <Callout
             icon={CircleGauge}
             tone="muted"

@@ -1763,3 +1763,51 @@ describe("name outcomes", () => {
     expect(nameDecisionText(undefined)).toBeUndefined();
   });
 });
+
+// A document the model failed says why, by its failure class, and who
+// reads it again: Helix on its own when the provider is to blame.
+describe("failureText for the model's failures", () => {
+  it("names the provider's quota, account or business", () => {
+    expect(
+      failureText({ code: "model", retryable: true, modelFailure: "quota" }),
+    ).toBe(
+      "The model provider’s quota or credit ran out, so the model couldn’t read it. Helix tries again on its own.",
+    );
+    expect(
+      failureText({
+        code: "model",
+        retryable: true,
+        modelFailure: "rate_limited",
+      }),
+    ).toBe(
+      "The model provider was busy, so the model couldn’t read it. Helix tries again on its own.",
+    );
+    expect(
+      failureText({ code: "model", retryable: true, modelFailure: "auth" }),
+    ).toMatch(/refused the account.*Helix tries again on its own\.$/);
+  });
+  it("leaves other failures to the next load", () => {
+    expect(
+      failureText({
+        code: "model",
+        retryable: true,
+        modelFailure: "context_too_long",
+      }),
+    ).toBe("It was too long for the model to read. The next load tries again.");
+    expect(
+      failureText({
+        code: "model",
+        retryable: true,
+        modelFailure: "unsupported",
+      }),
+    ).toBe("The model couldn’t read it. The next load tries again.");
+    expect(failureText({ code: "model", retryable: true })).toBe(
+      "The model couldn’t read it. The next load tries again.",
+    );
+    expect(
+      failureText({ code: "store", retryable: true, modelFailure: "quota" }),
+    ).toBe(
+      "The database couldn’t store what was read. The next load tries again.",
+    );
+  });
+});

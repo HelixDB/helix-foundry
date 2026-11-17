@@ -40,6 +40,7 @@ import {
   scopeReadsText,
   type AgentMapping,
   type AgentRoute,
+  loadUnreadText,
 } from "@/web/areas/ontology/model";
 
 // The Ontology area's logic for databases and loads: which databases an
@@ -889,5 +890,86 @@ describe("what a load and a version read of their documents", () => {
     expect(leftOutSetText("src_0123456789abcdef file.notes", sets)).toBe(
       "src_0123456789abcdef file.notes",
     );
+  });
+});
+
+// The 2026-11-14 outage: every document of a load failed on the model's
+// quota, and the load read "Ready". A ready or partial load the model left
+// documents unread of now says how many and why, and never "Ready" alone.
+describe("a load the model left documents unread of", () => {
+  const unread = (documents: number, rereadAt?: string) => ({
+    documents,
+    modelFailure: "quota",
+    reason: "provider quota",
+    rereadAt,
+  });
+
+  it("reads ready, with how many weren't read and why", () => {
+    for (const status of ["ready", "partial"] as const) {
+      expect(loadBadge({ id: "l", status, unread: unread(9) })).toEqual({
+        status: "stale",
+        label: "Ready, 9 documents not read (provider quota)",
+      });
+    }
+    expect(
+      loadBadge({ id: "l", status: "ready", unread: unread(1) }).label,
+    ).toBe("Ready, 1 document not read (provider quota)");
+    // A failed load says so; none unread is plain ready.
+    expect(
+      loadBadge({ id: "l", status: "failed", unread: unread(9) }).label,
+    ).toBe("Failed");
+    expect(
+      loadBadge({ id: "l", status: "ready", unread: { documents: 0 } }),
+    ).toEqual({ status: "succeeded", label: "Ready" });
+    expect(
+      loadBadge({ id: "l", status: "ready", unread: { documents: 2 } }).label,
+    ).toBe("Ready, 2 documents not read");
+  });
+
+  it("says when they are read", () => {
+    const now = Date.parse("2026-11-14T12:29:00Z");
+    expect(
+      loadUnreadText(
+        { status: "partial", unread: unread(9, "2026-11-14T12:41:00Z") },
+        now,
+      ),
+    ).toBe(
+      "9 documents weren’t read: the model provider’s quota or credit ran out, so none of their names or facts are in the graph. Helix reads them again on its own in about 12 minutes.",
+    );
+    expect(
+      loadUnreadText(
+        { status: "ready", unread: unread(1, "2026-11-14T12:29:30Z") },
+        now,
+      ),
+    ).toMatch(
+      /^1 document wasn’t read: .* none of its names .* Helix reads it again on its own within a minute\.$/,
+    );
+    expect(
+      loadUnreadText(
+        { status: "ready", unread: unread(3, "2026-11-14T18:29:00Z") },
+        now,
+      ),
+    ).toMatch(/in about 6 hours\.$/);
+    expect(
+      loadUnreadText({
+        status: "ready",
+        unread: { documents: 2, reason: "model error" },
+      }),
+    ).toBe(
+      "2 documents weren’t read: the model rejected the request, so none of their names or facts are in the graph. The next job into this load, or a new load, reads them.",
+    );
+    expect(
+      loadUnreadText({ status: "ready", unread: { documents: 2 } }),
+    ).toMatch(/^2 documents weren’t read: the model failed them,/);
+  });
+
+  it("says nothing of a load the model read, or a failed one", () => {
+    expect(loadUnreadText({ status: "ready" })).toBeUndefined();
+    expect(
+      loadUnreadText({ status: "ready", unread: { documents: 0 } }),
+    ).toBeUndefined();
+    expect(
+      loadUnreadText({ status: "failed", unread: unread(9) }),
+    ).toBeUndefined();
   });
 });
