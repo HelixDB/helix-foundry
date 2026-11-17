@@ -14,6 +14,11 @@ export type MockUser = {
   firstName: string;
   lastName: string;
   createdAt: string;
+  // WorkOS hasn't seen the address verified: its next sign-in emails a
+  // code first (mock/routes/auth.ts).
+  emailUnverified?: true;
+  // Set by a password sign-up or reset; Ada's is PASSWORD.
+  password?: string;
 };
 export type Membership = {
   id: string;
@@ -30,6 +35,8 @@ export type PendingLogin = {
   state: string;
   redirectUri: string;
   provider: string;
+  // AUTH_PROVIDER_SSO's email, which chose the company's IdP.
+  email?: string;
   code?: string;
   userId?: string;
 };
@@ -38,6 +45,10 @@ export const db = {
   users: new Map<string, MockUser>(),
   sessions: new Map<string, MockSession>(),
   logins: new Map<string, PendingLogin>(),
+  // Exchanges waiting for the emailed code, by the login's sessionId.
+  verifications: new Map<string, { userId: string }>(),
+  // The reset links POST /v1/auth/password:forgot emailed: token → user.
+  passwordResets: new Map<string, string>(),
   workspaces: new Map<string, Workspace>(),
   memberships: [] as Membership[],
 };
@@ -91,10 +102,27 @@ export function onReset(reset: () => void) {
 export const SEED_EMAIL = "ada@example.com";
 const SEED_TIME = "2026-10-01T09:00:00.000Z";
 
+// Sign-in's rules (mock/routes/auth.ts). A new address containing
+// "unverified" is one WorkOS hasn't seen verified, as a GitHub or Microsoft
+// account's often is: its first sign-in asks for the code WorkOS would have
+// emailed, which in the mock is always this one.
+export const EMAIL_CODE = "424242";
+// Addresses at this domain belong to a company that requires its single
+// sign-on (WorkOS's domainSsoRequired): any other way in answers
+// ssoRequired, and AUTH_PROVIDER_SSO signs them in. No other domain has SSO.
+export const SSO_DOMAIN = "sso.example";
+// Ada's password. A password sign-up's address is one WorkOS hasn't seen
+// verified, so it asks for EMAIL_CODE, and a password shorter than
+// PASSWORD_MIN is refused with WorkOS's reason.
+export const PASSWORD = "correct-horse-battery";
+export const PASSWORD_MIN = 10;
+
 export function resetState() {
   db.users.clear();
   db.sessions.clear();
   db.logins.clear();
+  db.verifications.clear();
+  db.passwordResets.clear();
   db.workspaces.clear();
   db.memberships.length = 0;
   stats.loginStarts = 0;
@@ -114,6 +142,7 @@ export function resetState() {
     firstName: "Ada",
     lastName: "Lovelace",
     createdAt: SEED_TIME,
+    password: PASSWORD,
   };
   db.users.set(ada.id, ada);
   db.workspaces.set("ws_acme", {

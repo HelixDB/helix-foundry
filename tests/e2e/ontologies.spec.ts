@@ -83,7 +83,7 @@ test("creates an ontology on an existing database and explores what it holds", a
   await orders.check();
   // Back keeps what was chosen; the browser's Back and Forward too. Back is
   // a history entry of its own, so the browser's Back returns from it.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(page.getByLabel("Ontology name")).toHaveValue("Orders");
   await page.goBack();
@@ -109,25 +109,25 @@ test("creates an ontology on an existing database and explores what it holds", a
     page.getByRole("heading", { level: 1, name: "Orders" }),
   ).toBeVisible();
 
-  // Its pages sit under its row in the panel; the Explorer, a section of
-  // its own, opens it: with nothing loaded it says to finish setting it up,
-  // and reads nothing of what the team already put in the database.
-  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  // Its pages sit under its row in the panel; its Explorer opens from
+  // there: with nothing loaded it says to finish setting it up, and reads
+  // nothing of what the team already put in the database.
   await expect(list.locator(".on-panel-row")).toHaveCount(4);
   await expect(list.getByRole("link", { name: /^Orders/ })).toHaveAttribute(
     "aria-current",
     "true",
   );
-  // Its Overview, then Documents, what it reads of the workspace's, with
-  // its count, then the Review queue, Suggestions and Workflows.
+  // Its Overview, then its Explorer, then Connections, what it reads, then
+  // Review and Usage.
   await expect(list.locator(".hf-subnav-link")).toHaveText([
     "Overview",
-    /^Documents\d*$/,
-    "Review queue",
-    "Suggestions",
-    "Workflows",
+    "Explorer",
+    "Connections",
+    "Review",
+    "Usage",
   ]);
-  await nav.getByRole("link", { name: "Explorer" }).click();
+  await list.getByRole("link", { name: "Explorer" }).click();
+  await expect(page).toHaveURL(/\/explore\/ont_\w+$/);
   await expect(
     page.getByRole("heading", { level: 1, name: "Explorer" }),
   ).toBeVisible();
@@ -150,10 +150,10 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   await nav.getByRole("link", { name: "Ontologies" }).click();
   await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts$/);
   await expect(nav.locator(".hf-nav-link")).toHaveText([
-    "Analyst",
+    "Founder",
+    "Dashboards",
+    "Workflows",
     "Ontologies",
-    "Explorer",
-    "Connectors",
   ]);
   await expect(panel).toBeVisible();
   await expect(nav.getByRole("link", { name: "Ontologies" })).toHaveAttribute(
@@ -170,23 +170,22 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
     /^(Loaded|Not loaded|Failed|Loading|Queued)$/,
   );
   // Only the open one's pages show, the page open marked: its Overview,
-  // Documents, with its documents as a file system under it (none yet),
-  // the Review queue, Suggestions and Workflows.
-  const pages = list.locator(".hf-subnav-link");
-  await expect(pages).toHaveText([
-    "Overview",
-    /^Documents\d*$/,
-    "Review queue",
-    "Suggestions",
-    "Workflows",
-  ]);
-  await expect(list).toContainText("No documents yet");
+  // Explorer, Connections, Review and Usage; no
+  // documents under Connections.
+  const pages = list.locator(".hf-subnav-link"),
+    names = ["Overview", "Explorer", "Connections", "Review", "Usage"];
+  await expect(pages).toHaveText(names);
+  await expect(list.getByRole("tree")).toHaveCount(0);
   const current = list.locator('.hf-subnav-link[aria-current="page"]');
   await expect(current).toHaveText("Overview");
-  // Documents opens the list, the panel otherwise as it was.
-  await list.getByRole("link", { name: /^Documents/ }).click();
-  await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts\/documents$/);
-  await expect(current).toHaveText(/^Documents/);
+  await expect(list.getByRole("link", { name: "Explorer" })).toHaveAttribute(
+    "href",
+    "/explore/ont_acme_contracts",
+  );
+  // Connections opens its page, the panel otherwise as it was.
+  await list.getByRole("link", { name: "Connections" }).click();
+  await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts\/connections$/);
+  await expect(current).toHaveText("Connections");
   await expect(list.locator(".on-panel-row")).toHaveCount(3);
   await page.goto("/ontology/ont_acme_contracts");
   await expect(current).toHaveText("Overview");
@@ -206,13 +205,7 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
     page.getByRole("heading", { level: 1, name: "Renewals" }),
   ).toBeVisible();
   await expect(renewals).toHaveAttribute("aria-current", "true");
-  await expect(pages).toHaveText([
-    "Overview",
-    /^Documents\d*$/,
-    "Review queue",
-    "Suggestions",
-    "Workflows",
-  ]);
+  await expect(pages).toHaveText(names);
   await expect(current).toHaveText("Overview");
   // Nothing toggles the panel: it always shows.
   await expect(
@@ -298,7 +291,7 @@ test("gives a new workspace only the wizard until its first ontology", async ({
     /^1Connect your data or upload documents.*2Goal.*3Review and create/s,
   );
   await expect(page.getByLabel("Ontology name")).toHaveCount(0);
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(wizard).toBeVisible();
 
   // Its first ontology, named from what it drafts from, opens every page,
@@ -386,9 +379,8 @@ test("on a phone, shows the rail and the ontologies in the drawer", async ({
     "page",
   );
   const panel = drawer.getByRole("complementary", { name: "Ontologies" });
-  // Its documents are a file system under its Documents (none yet here).
-  await expect(panel.getByRole("link", { name: /^Documents/ })).toBeVisible();
-  await expect(panel).toContainText("No documents yet");
+  await expect(panel.getByRole("link", { name: "Explorer" })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Connections" })).toBeVisible();
   // Another ontology closes the drawer.
   await panel.getByRole("link", { name: /^Renewals/ }).click();
   await expect(drawer).toHaveCount(0);

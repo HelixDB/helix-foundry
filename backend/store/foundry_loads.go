@@ -122,6 +122,8 @@ func (s *mysqlDB) isFoundryRefreshJob(ctx context.Context, job *model.FoundryGra
 // for budget: a refresh with none left loads the tables and replays what its
 // documents' saved extractions hold, at $0. An ontology with refresh off or
 // no current load owes nothing any more, and its owed refresh is forgotten.
+// A refresh load is started by the automation run whose sync owed the
+// refresh, when one did (OweFoundryRefreshes), at that sync's depth.
 func (s *mysqlDB) QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error) {
 	queued := false
 	err := s.WithTx(ctx, func(txDB Store) error {
@@ -153,10 +155,18 @@ func (s *mysqlDB) QueueFoundryRefresh(ctx context.Context, workspaceID, ontology
 			if err := tx.insertFoundryGraphJob(ctx, job); err != nil {
 				return err
 			}
-		} else if err := tx.queueFullFoundryRefresh(ctx, o, versionID, job); err != nil {
-			return err
+		} else {
+			if err := tx.queueFullFoundryRefresh(ctx, o, versionID, job); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads l JOIN foundry_ontologies o ON o.id = l.ontology_id
+SET l.started_by_automation_run_id=o.refresh_cause_run_id, l.automation_chain_depth=o.refresh_cause_depth
+WHERE l.id=? AND o.refresh_cause_run_id IS NOT NULL`, job.LoadID); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL WHERE id=?`, o.ID); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL, refresh_cause_run_id=NULL, refresh_cause_depth=NULL WHERE id=?`,
+			o.ID); err != nil {
 			return err
 		}
 		queued = true
@@ -197,8 +207,10 @@ VALUES (?, ?, ?, ?, 'writing', ?, ?)`, job.ID, job.WorkspaceID, job.OntologyID, 
 	// Every decision an Extract takes: a reject is the site's to read, and is
 	// sent to no engine, and neither is an approval of a claim it rejects
 	// (foundryRejected), as only an older binary leaves both.
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`)
-SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind<>'reject'
+	// Each with its name's key (name_key), by which an Extract finds the
+	// aliases its documents write.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, name_key)
+SELECT ?, `+foundryReviewDecisionColumns+`, name_key FROM foundry_review_decisions r WHERE r.ontology_id=? AND r.kind<>'reject'
   AND NOT (r.kind='release' AND `+foundryRejected("r", "r.ontology_id")+`)`, job.LoadID, job.OntologyID); err != nil {
 		return err
 	}
@@ -323,8 +335,10 @@ WHERE m.load_id=? GROUP BY m.set_id ORDER BY m.set_id`, loadID)
 // saved since it copied its decisions: with no job live and no extract
 // queued, they are carried to it and a resend (resend's id and requester)
 // queued for their documents, as a job's end does (queueFoundryResend); a
-// live or queued job's end carries them otherwise. ErrNotFound means the
-// ontology is not live or has no such load not yet deleted.
+// live or queued job's end carries them otherwise. The resolves saved since
+// join it at once (makeFoundryLoadCurrent), their documents owed, sent by
+// that resend or the job's end. ErrNotFound means the ontology is not live
+// or has no such load not yet deleted.
 func (s *mysqlDB) SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
 	budget model.FoundryGraphBudget) (queued bool, err error) {
 	err = s.WithTx(ctx, func(txDB Store) error {
@@ -351,17 +365,18 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 		case purged:
 			return FoundryLoadPurged
 		}
-		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, loadID, ontologyID); err != nil {
+		// The live job's row before any decision's (the carry writes them), as
+		// a worker recording a decision's outcome locks them.
+		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
+		if err != nil {
 			return err
 		}
-		o.CurrentLoadID = &loadID
+		if err := tx.makeFoundryLoadCurrent(ctx, o, loadID); err != nil {
+			return err
+		}
 		// What the load waits for is what joined it: the uploads since it was
 		// written join it now.
 		if err := tx.snapshotFoundryLoadDocuments(ctx, loadID); err != nil {
-			return err
-		}
-		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
-		if err != nil {
 			return err
 		}
 		if live == nil {
@@ -369,7 +384,7 @@ FROM foundry_load_enrichments WHERE load_id=?`, loadID).Scan(&purged); {
 			if err != nil || queued {
 				return err
 			}
-			_, err = tx.queueFoundryResend(ctx, o, resend, 0)
+			_, err = tx.queueFoundryResend(ctx, o, resend, 0, true)
 			return err
 		}
 		waiting, err := tx.countWaitingFoundryDocuments(ctx, loadID)

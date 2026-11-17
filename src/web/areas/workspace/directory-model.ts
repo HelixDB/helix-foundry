@@ -34,6 +34,15 @@ export function directoryView(
   };
 }
 
+/**
+ * Whether a failed read of the directory means the panel isn't for this
+ * workspace: refused (403), or a WFE without the route (404, 501). Any other
+ * failure (a 429, a 5xx, a timeout) is said, with Retry, never taken for
+ * "no directory sync here".
+ */
+export const directoryNotOffered = (status: number | undefined) =>
+  status === 403 || status === 404 || status === 501;
+
 /** The provider's name for copy, or "your directory" when the WFE sends none. */
 export const providerName = (provider: string | undefined) =>
   provider?.trim() || "your directory";

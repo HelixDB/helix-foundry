@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
@@ -37,6 +38,44 @@ type queue struct {
 	spendErr  error
 	// since is the month the last sum began at.
 	since time.Time
+	// waiting are the generations waiting for answers, answered what each
+	// was answered with, and answerErr what answering fails with.
+	waiting   []*model.OntologyGeneration
+	answered  map[string][]agentquestion.Answer
+	answerErr error
+	// askedBefore is the time the last listing of overdue ones was cut at.
+	askedBefore time.Time
+}
+
+func (q *queue) ListOntologyGenerationsAskedBefore(_ context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.askedBefore = asked
+	var out []*model.OntologyGeneration
+	for _, gen := range q.waiting {
+		if gen.Questions.AskedAt.Before(asked) && len(out) < limit {
+			out = append(out, gen)
+		}
+	}
+	return out, nil
+}
+
+func (q *queue) AnswerOntologyGeneration(_ context.Context, _, id string, draftRev uint64, answers []agentquestion.Answer) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.answerErr != nil {
+		return q.answerErr
+	}
+	if q.answered == nil {
+		q.answered = map[string][]agentquestion.Answer{}
+	}
+	for _, gen := range q.waiting {
+		if gen.ID == id && gen.Questions.DraftRev == draftRev {
+			q.answered[id] = answers
+			return nil
+		}
+	}
+	return store.ErrNotFound
 }
 
 func (q *queue) SumFoundryGraphJobSpend(_ context.Context, _ string, since time.Time) (int64, error) {
@@ -84,7 +123,7 @@ var now = time.Date(2026, time.October, 17, 12, 0, 0, 0, time.UTC)
 
 func newTask(q *queue, g generatorFunc) *Task {
 	return &Task{
-		cfg:   config.OntologyConfig{Lease: 30 * time.Millisecond, Timeout: time.Minute, MaxAttempts: 3},
+		cfg:   config.OntologyConfig{Lease: 30 * time.Millisecond, Timeout: time.Minute, MaxAttempts: 3, AnswerDays: 7, MaxQuestionRounds: 3},
 		graph: config.GraphConfig{MonthlyUSD: 100, MaxJobUSD: 20},
 		queue: q, generator: g, workerID: "worker-1", now: func() time.Time { return now },
 	}
@@ -102,6 +141,76 @@ func spent(err error) generatorFunc {
 }
 
 func TestFoundryOntologyWorker(t *testing.T) {
+	// A turn that asked stores no version: the generation waits for the
+	// answers, with the state to carry on from.
+	t.Run("leaves a generation that asked waiting for answers", func(t *testing.T) {
+		asked := &model.OntologyGenerationAsked{State: []byte(`{"draft":{"rev":2}}`), DraftRev: 2,
+			Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}}}}
+		q := newQueue(&model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
+			Input: model.OntologyGenerationInput{LoadWhenReady: true}})
+		newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+			return ontologygen.Result{Format: model.OntologyFormatAgentBundle, Asked: asked, Model: "claude-opus-5-5", InputTokens: 900}, nil
+		}).drain(context.Background())
+		got := q.outcomes["g1"]
+		if got.Status != model.OntologyGenerationNeedsInput || got.Asked != asked || got.Result != nil || got.Load != nil || got.RetryAt != nil ||
+			got.InputTokens != 900 {
+			t.Fatalf("outcome = %+v", got)
+		}
+	})
+
+	// Each answer pays for a turn, so asking again after the last round
+	// fails the generation, and asking before it waits again.
+	t.Run("fails a generation that asks past its rounds of questions", func(t *testing.T) {
+		asked := &model.OntologyGenerationAsked{State: []byte(`{}`), DraftRev: 9,
+			Questions: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q9", Text: "And now?", Blocking: true}}}}
+		for round, want := range map[int]model.OntologyGenerationStatus{2: model.OntologyGenerationNeedsInput, 3: model.OntologyGenerationFailed} {
+			q := newQueue(&model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
+				Questions: &model.OntologyQuestions{Round: round, DraftRev: 8, Answers: []agentquestion.Answer{{QuestionID: "q8", Text: "Yes"}}}})
+			newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+				return ontologygen.Result{Asked: asked, InputTokens: 50}, nil
+			}).drain(context.Background())
+			got := q.outcomes["g1"]
+			if got.Status != want || got.InputTokens != 50 || (want == model.OntologyGenerationFailed) != (got.Asked == nil) {
+				t.Fatalf("round %d: outcome = %+v", round, got)
+			}
+		}
+	})
+
+	// Questions no one answers in foundry.ontology.answer_days take the
+	// agent's defaults, so they never hold the ontology.
+	t.Run("answers overdue questions with the agent's defaults", func(t *testing.T) {
+		overdue := func(id string, askedAt time.Time) *model.OntologyGeneration {
+			return &model.OntologyGeneration{ID: id, OntologyID: "ont-1", Status: model.OntologyGenerationNeedsInput,
+				Questions: &model.OntologyQuestions{DraftRev: 3, AskedAt: askedAt, Asked: []model.OntologyQuestion{
+					{Question: agentquestion.Question{ID: "q1", Text: "Is a customer an account?", Blocking: true}},
+					{Question: agentquestion.Question{ID: "q2", Text: "How often?", Choice: &agentquestion.Choice{
+						Options: []agentquestion.Option{{Label: "Monthly"}, {Label: "Yearly"}}, Multiple: true}, Recommended: "Monthly"}},
+				}}}
+		}
+		q := newQueue()
+		q.waiting = []*model.OntologyGeneration{overdue("g-old", now.Add(-8*24*time.Hour)), overdue("g-new", now.Add(-time.Hour))}
+		newTask(q, spent(nil)).drain(context.Background())
+		if !q.askedBefore.Equal(now.Add(-7 * 24 * time.Hour)) {
+			t.Fatalf("listed those asked before %s", q.askedBefore)
+		}
+		// Left to the agent, which takes its recommended answers as its own.
+		want := []agentquestion.Answer{{QuestionID: "q1", Left: true}, {QuestionID: "q2", Left: true}}
+		if len(q.answered) != 1 || fmt.Sprint(q.answered["g-old"]) != fmt.Sprint(want) {
+			t.Fatalf("answered = %v", q.answered)
+		}
+
+		// One answered or cancelled meanwhile, or a store that fails, leaves
+		// the rest of the tick to run.
+		for _, err := range []error{store.ErrNotFound, errors.New("db down")} {
+			q := newQueue(&model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1})
+			q.waiting, q.answerErr = []*model.OntologyGeneration{overdue("g-old", now.Add(-8*24*time.Hour))}, err
+			newTask(q, spent(nil)).drain(context.Background())
+			if q.outcomes["g1"].Status != model.OntologyGenerationSucceeded {
+				t.Fatalf("%v: due generations still run, got %+v", err, q.outcomes)
+			}
+		}
+	})
+
 	// The draft is a generated version credited to whoever asked for it.
 	t.Run("stores the draft of a successful generation", func(t *testing.T) {
 		user := "user-1"
@@ -205,6 +314,29 @@ func TestFoundryOntologyWorker(t *testing.T) {
 			if !strings.Contains(logged, `"level":"`+tc.level+`","msg":"ontology generation attempt failed"`) ||
 				strings.Contains(logged, `"code":"Internal","description":"`+description+`"`) != (tc.level == "ERROR") {
 				t.Fatalf("%s: logged %s", name, logged)
+			}
+		}
+	})
+	// A claim past max_attempts takes back a generation whose attempts ended
+	// without recording an outcome: it fails without another turn.
+	t.Run("fails a generation claimed past its attempts without running it", func(t *testing.T) {
+		for _, tc := range []struct {
+			attempt int
+			runs    bool
+		}{{3, true}, {4, false}, {13, false}} {
+			q := newQueue(&model.OntologyGeneration{ID: "g1", Attempts: tc.attempt})
+			ran := false
+			newTask(q, func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+				ran = true
+				return ontologygen.Result{Format: model.OntologyFormatFoundryV1, Definition: []byte(`{"entities":[]}`)}, nil
+			}).drain(context.Background())
+			got := q.outcomes["g1"]
+			if ran != tc.runs {
+				t.Fatalf("attempt %d of 3: ran = %v", tc.attempt, ran)
+			}
+			if !tc.runs && (got.Status != model.OntologyGenerationFailed ||
+				got.Error != fmt.Sprintf("the generation failed; Helix gave up after %d attempts", tc.attempt-1)) {
+				t.Fatalf("attempt %d of 3: outcome = %+v", tc.attempt, got)
 			}
 		}
 	})

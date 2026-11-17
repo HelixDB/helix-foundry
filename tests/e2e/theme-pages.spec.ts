@@ -8,6 +8,7 @@ import {
   loadVersion3,
   makeContractsCurrent,
   mock,
+  postToWfe,
   signIn,
   test,
   uploadInData,
@@ -95,7 +96,7 @@ test("every main page in both themes", async ({ page }, info) => {
   test.setTimeout(240_000);
   // Animations off: what is checked is where they end.
   await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
-  await mock.configure({ loadStepMs: 100, askStepMs: 100 });
+  await mock.configure({ loadStepMs: 100, askStepMs: 100, agentStepMs: 100 });
   const failures: string[] = [];
   const shoot = async (name: string) => {
     for (const theme of THEMES) {
@@ -161,7 +162,7 @@ test("every main page in both themes", async ({ page }, info) => {
   await visit("loads", `${O}#loads`);
   await visit("load", load);
 
-  await visit("documents", `${O}/documents`);
+  await visit("connections", `${O}/connections`);
   await page.getByRole("link", { name: "contract.md" }).first().click();
   await settle(page);
   await shoot("document");
@@ -187,18 +188,109 @@ test("every main page in both themes", async ({ page }, info) => {
   await settle(page);
   await shoot("entity");
 
-  // Ask: a new thread, then a thread with its answer.
+  // Founder's page: a new chat, then a chat with the Analyst's answer
+  // inline, then that answer's Analyst thread, read only.
   await visit("ask", "/ask/ont_acme_contracts");
-  const form = page.getByRole("form", { name: "Ask a question" });
+  const form = page
+    .getByRole("main")
+    .getByRole("form", { name: "Message Founder" });
   await form
-    .getByRole("textbox", { name: /^Question/ })
-    .fill("Who signed the services agreement?");
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
+    .getByRole("textbox", { name: "Message" })
+    .fill("Which customers have unpaid or overdue invoices?");
+  await form.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByRole("region", { name: "Answer" })).toBeVisible({
     timeout: 20_000,
   });
+  await expect(
+    page.getByText(
+      "That's the answer, from the current load of Customer contracts.",
+    ),
+  ).toBeVisible({ timeout: 20_000 });
   await settle(page);
   await shoot("ask-thread");
+  await page.getByRole("link", { name: "Open the full answer" }).click();
+  await expect(page).toHaveURL(/\?thread=/);
+  await expect(page.getByRole("region", { name: "Answer" })).toBeVisible();
+  await settle(page);
+  await shoot("ask-analyst-thread");
+
+  // Founder's dock (Founder's page has none), with an answer and its step
+  // opened.
+  await page.goto(O);
+  await expect(
+    page.getByRole("button", { name: "Founder", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary", { name: "Founder" });
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("What ontologies do I have?");
+  await dock.getByRole("textbox", { name: "Message" }).press("Enter");
+  await expect(dock.getByText(/^This workspace has \d+ ontolog/)).toBeVisible({
+    timeout: 20_000,
+  });
+  // The dock holds the page's thread: its newest step.
+  await dock.getByText("Listed the ontologies").last().click();
+  await settle(page);
+  await shoot("assistant");
+  await page.keyboard.press("ControlOrMeta+j");
+
+  // Automations: the overview and its templates, a new one's conversation,
+  // a template's draft on the canvas, one with a run, its settings.
+  await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
+  await visit("automations-empty", "/workflows");
+  await visit("automation-new-chat", "/workflows/new");
+  await visit("automation-new", "/workflows/new?template=check-documents");
+  const A = "/v1/workspaces/ws_acme/foundry/automations";
+  const made = (
+    await postToWfe(page, A, {
+      name: "Morning summary",
+      clientToken: "theme",
+      specJson: JSON.stringify({
+        v: 1,
+        nodes: [
+          {
+            id: "start",
+            kind: "trigger",
+            config: { kind: "manual" },
+            position: { x: 0, y: 0 },
+          },
+          {
+            id: "ask",
+            kind: "assistant",
+            config: { instruction: "Summarise overdue invoices." },
+            position: { x: 0, y: 150 },
+          },
+          {
+            id: "tell",
+            kind: "notify",
+            config: { message: "Summary" },
+            position: { x: 0, y: 300 },
+          },
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "tell" },
+        ],
+      }),
+    })
+  ).automation;
+  await visit("automation-unapproved", `/workflows/${made.id}`);
+  await postToWfe(page, `${A}/${made.id}:approve`, {
+    expectedRevision: made.revision,
+  });
+  const ran = (
+    await postToWfe(page, `${A}/${made.id}:run`, { clientToken: "theme" })
+  ).run;
+  await page.goto(`/workflows/${made.id}/runs/${ran.id}`);
+  await expect(
+    page.getByRole("main").getByText("Succeeded", { exact: true }).first(),
+  ).toBeVisible({ timeout: 20_000 });
+  await settle(page);
+  await shoot("automation-run");
+  await visit("automation", `/workflows/${made.id}`);
+  await visit("automation-settings", `/workflows/${made.id}?tab=settings`);
+  await visit("automations", "/workflows");
 
   await visit("settings", "/settings");
   await visit("members", "/settings/members");

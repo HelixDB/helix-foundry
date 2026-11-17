@@ -455,7 +455,7 @@ func (s *Service) ReviseOntologyVersion(ctx context.Context, req *foundryv1.Revi
 		gen.RequestedByUserID = &user
 	}
 	if err := s.deps.DB.EnqueueOntologyGeneration(ctx, gen, s.deps.Cfg.Foundry.Ontology.PerHour); errors.Is(err, foundrystore.ErrConflict) {
-		return nil, status.Error(codes.AlreadyExists, "an ontology generation is already queued or running")
+		return nil, status.Error(codes.AlreadyExists, generationLive)
 	} else if errors.Is(err, foundrystore.ErrNotFound) {
 		return nil, status.Error(codes.NotFound, "ontology not found")
 	} else if err != nil {

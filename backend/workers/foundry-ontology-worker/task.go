@@ -14,6 +14,7 @@ import (
 	"go.uber.org/dig"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -55,6 +56,10 @@ type generationQueue interface {
 	ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (*model.OntologyGeneration, error)
 	RenewOntologyGenerationLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) error
+	// ListOntologyGenerationsAskedBefore and AnswerOntologyGeneration answer
+	// questions no one answered in time (answerOverdue).
+	ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error)
+	AnswerOntologyGeneration(ctx context.Context, ontologyID, id string, draftRev uint64, answers []agentquestion.Answer) error
 	// SumFoundryGraphJobSpend is what a first draft's load checks the
 	// month's budget with, as CreateFoundryLoad does.
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
@@ -144,8 +149,14 @@ func (t *Task) Stop(ctx context.Context) error {
 	return err
 }
 
-// drain runs due generations until none is left.
+// overdueBatch is how many overdue generations one tick answers; the next
+// tick answers more.
+const overdueBatch = 50
+
+// drain answers overdue questions, then runs due generations until none is
+// left.
 func (t *Task) drain(ctx context.Context) {
+	t.answerOverdue(ctx)
 	for ctx.Err() == nil {
 		gen, err := t.queue.ClaimOntologyGeneration(ctx, t.workerID, t.cfg.Lease)
 		if err != nil {
@@ -159,9 +170,50 @@ func (t *Task) drain(ctx context.Context) {
 	}
 }
 
+// answerOverdue answers, with the agent's defaults
+// (agentquestion.Check), the questions of each generation that has waited
+// longer than foundry.ontology.answer_days, and queues it to carry on, so
+// questions no one answers never hold an ontology. One answered or
+// cancelled meanwhile is left as it is.
+func (t *Task) answerOverdue(ctx context.Context) {
+	overdue, err := t.queue.ListOntologyGenerationsAskedBefore(ctx, t.now().Add(-t.cfg.AnswerWait()), overdueBatch)
+	if err != nil {
+		log.From(ctx).Error("list overdue ontology generation questions failed", "err", err)
+		return
+	}
+	for _, gen := range overdue {
+		answers, err := agentquestion.Check(gen.Questions.Questions(), nil, true)
+		if err == nil {
+			err = t.queue.AnswerOntologyGeneration(ctx, gen.OntologyID, gen.ID, gen.Questions.DraftRev, answers)
+		}
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+		case err != nil:
+			log.From(ctx).Error("answer overdue ontology generation questions failed", "generation", gen.ID, "err", err)
+		default:
+			log.From(ctx).Info("answered overdue ontology generation questions with the agent's defaults", "generation", gen.ID)
+		}
+	}
+}
+
 // process runs one attempt while renewing its lease, then records the outcome.
 // Losing the lease cancels the attempt: another worker owns the generation now.
 func (t *Task) process(ctx context.Context, gen *model.OntologyGeneration) {
+	// Past max_attempts, its attempts ended without recording an outcome (a
+	// worker stopped, or the store refused it), and a claim took it back when
+	// the lease ran out: another turn would spend the model again for the
+	// same end, so it fails now.
+	if gen.Attempts > t.cfg.MaxAttempts {
+		log.From(ctx).Error("ontology generation gave up: its attempts ended without an outcome", "generation", gen.ID, "attempts", gen.Attempts-1)
+		failed := model.OntologyGenerationOutcome{Status: model.OntologyGenerationFailed,
+			Error: fmt.Sprintf("the generation failed; Helix gave up after %d attempts", gen.Attempts-1)}
+		if err := t.queue.FinishOntologyGeneration(ctx, gen.ID, t.workerID, failed); err != nil {
+			log.From(ctx).Warn("finish ontology generation failed", "generation", gen.ID, "err", err)
+			return
+		}
+		generations.WithLabelValues("failed").Inc()
+		return
+	}
 	runCtx, cancel := context.WithTimeout(ctx, t.cfg.Timeout)
 	defer cancel()
 	stopRenewing := t.renewLease(runCtx, cancel, gen.ID)
@@ -193,6 +245,8 @@ func (t *Task) process(ctx context.Context, gen *model.OntologyGeneration) {
 	switch {
 	case outcome.Status == model.OntologyGenerationSucceeded:
 		generations.WithLabelValues("succeeded").Inc()
+	case outcome.Status == model.OntologyGenerationNeedsInput:
+		generations.WithLabelValues("needs_input").Inc()
 	case outcome.RetryAt != nil:
 		generations.WithLabelValues("retried").Inc()
 	default:
@@ -254,8 +308,11 @@ func sampleDraft(gen *model.OntologyGeneration) (ontologygen.Result, error) {
 	return result, nil
 }
 
-// outcome decides what an attempt leaves behind: a draft version, a retry
-// after a backoff that doubles from a minute, or a failure for good. The
+// outcome decides what an attempt leaves behind: a draft version, the
+// questions the agent asked (needs_input), a retry after a backoff that
+// doubles from a minute, or a failure for good. Each answer pays for
+// another turn, so a turn that asks once the generation has had
+// foundry.ontology.max_question_rounds rounds fails it. The
 // agent's internal error is Helix's bug: it is logged as an error, for
 // on-call, and gets ontologyagent.InternalAttempts attempts at most. The
 // version's scope is the sets the generation read: for a revision, its
@@ -265,6 +322,16 @@ func sampleDraft(gen *model.OntologyGeneration) (ontologygen.Result, error) {
 func (t *Task) outcome(ctx context.Context, gen *model.OntologyGeneration, result ontologygen.Result, err error) model.OntologyGenerationOutcome {
 	usage := model.OntologyGenerationOutcome{
 		Model: result.Model, ModelProvider: result.ModelProvider, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
+	}
+	if err == nil && result.Asked != nil {
+		if gen.Questions != nil && gen.Questions.Round >= t.cfg.MaxQuestionRounds {
+			log.From(ctx).Warn("ontology generation asked past its rounds of questions", "generation", gen.ID, "rounds", gen.Questions.Round)
+			usage.Status = model.OntologyGenerationFailed
+			usage.Error = fmt.Sprintf("the ontology agent kept asking after %d rounds of questions; generate again with a goal that says more", gen.Questions.Round)
+			return usage
+		}
+		usage.Status, usage.Asked = model.OntologyGenerationNeedsInput, result.Asked
+		return usage
 	}
 	if err == nil {
 		usage.Status = model.OntologyGenerationSucceeded

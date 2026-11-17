@@ -38,6 +38,8 @@ func TestReadBody(t *testing.T) {
 		{"cut off after the value", io.MultiReader(strings.NewReader(validBody), failing{errors.New("connection reset")}), http.StatusBadRequest, codeInvalidArguments},
 		{"empty", strings.NewReader(""), http.StatusBadRequest, codeInvalidArguments},
 		{"only space", strings.NewReader(" \n"), http.StatusBadRequest, codeInvalidArguments},
+		{"naming its run by the old field", strings.NewReader(`{"client_token":"t","workflow_run_id":"run-1","pieces":[{"id":"o-1","data":{}}]}`),
+			http.StatusBadRequest, codeInvalidArguments},
 	} {
 		t.Run("answers a body "+c.name, func(t *testing.T) {
 			_, fail := readBody(c.reader)
@@ -53,8 +55,8 @@ func TestReadBody(t *testing.T) {
 		require.Nil(t, fail)
 		assert.Equal(t, body{ClientToken: "t", Pieces: []bodyPiece{{ID: "o-1", OccurredAt: "2026-01-02T03:04:05Z", Data: json.RawMessage(`{ "n" : 1.10 }`)}}}, b)
 	})
-	t.Run("reads a send's workflow run, and forwards it", func(t *testing.T) {
-		b, fail := readBody(strings.NewReader(`{"client_token":"` + clientToken + `","workflow_run_id":"run-1","pieces":[{"id":"o-1","data":{}}]}`))
+	t.Run("reads a send's use case run, and forwards it", func(t *testing.T) {
+		b, fail := readBody(strings.NewReader(`{"client_token":"` + clientToken + `","use_case_run_id":"run-1","pieces":[{"id":"o-1","data":{}}]}`))
 		require.Nil(t, fail)
 		assert.Equal(t, "run-1", b.WorkflowRunID)
 		req, fail := sendRequest(b, "workspace-1", "source-1", events.Limits{MaxPieces: 3, MaxBytes: 100, MaxPieceBytes: 50})

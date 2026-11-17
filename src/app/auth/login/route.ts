@@ -1,23 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { authConfig, isTrustedUrl } from "@/server/config";
-import {
-  cookieOptions,
-  expireCookie,
-  loginCookiePrefix,
-} from "@/server/cookies";
-import {
-  LOGIN_TRANSACTION_TTL_SECONDS,
-  loginCookieName,
-  loginFlowId,
-  sealLoginTransaction,
-} from "@/server/login-transaction";
+import { authConfig } from "@/server/config";
+import { setLoginCookie, signInErrorPath, startLogin } from "@/server/sign-in";
 import { parseReturnPath } from "@/shared/return-path";
-import {
-  FOUNDRY_APPLICATION,
-  type AuthProvider,
-  type StartLoginRequest,
-  type StartLoginResponse,
-} from "@/shared/wfe";
+import type { AuthProvider } from "@/shared/wfe";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,19 +21,15 @@ const PROVIDERS: Record<string, AuthProvider> = {
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-// Earlier sign-ins still pending that a new one keeps, for other tabs.
-const KEPT_LOGINS = 2;
-
 function fail(
   request: NextRequest,
   reason: "request" | "unavailable",
   returnPath?: string,
 ) {
-  const to = new URL("/login", request.url);
-  to.searchParams.set("error", reason);
-  if (returnPath && returnPath !== "/")
-    to.searchParams.set("return_to", returnPath);
-  return NextResponse.redirect(to, { status: 303, headers: NO_STORE });
+  return NextResponse.redirect(
+    new URL(signInErrorPath(reason, returnPath), request.url),
+    { status: 303, headers: NO_STORE },
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -72,60 +53,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(canonical, { status: 307, headers: NO_STORE });
   }
 
-  let started: StartLoginResponse;
-  try {
-    const body: StartLoginRequest = {
-      redirectUri: config.redirectUri.toString(),
-      provider,
-      application: FOUNDRY_APPLICATION,
-    };
-    const res = await fetch(new URL("/v1/auth/login:start", config.wfeOrigin), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
-      redirect: "manual",
-    });
-    if (!res.ok) return unavailable();
-    started = await res.json();
-  } catch {
-    return unavailable();
-  }
-  if (typeof started.url !== "string" || typeof started.sessionId !== "string")
-    return unavailable();
-  let authorize: URL;
-  try {
-    authorize = new URL(started.url);
-  } catch {
-    return unavailable();
-  }
-  if (!isTrustedUrl(authorize)) return unavailable();
-
-  const prefix = loginCookiePrefix(config),
-    flowId = loginFlowId(authorize.searchParams.get("state") || ""),
-    name = flowId && loginCookieName(prefix, flowId),
-    sealed = sealLoginTransaction(
-      { sessionId: started.sessionId, returnPath },
-      config.cookiePassword,
-    );
-  if (!name || !sealed) return unavailable();
-  const response = NextResponse.redirect(authorize, {
+  const started = await startLogin(config, { provider, returnPath });
+  if (!started) return unavailable();
+  const response = NextResponse.redirect(started.authorize, {
     status: 307,
     headers: NO_STORE,
   });
-  response.cookies.set({
-    name,
-    value: sealed,
-    ...cookieOptions(config),
-    maxAge: LOGIN_TRANSACTION_TTL_SECONDS,
-  });
-  // An abandoned sign-in's cookie stays until it expires, so a page starting
-  // sign-in after sign-in could grow the Cookie header until the site refuses
-  // every request. Only the newest few stay; browsers send the oldest first.
-  request.cookies
-    .getAll()
-    .filter((c) => c.name.startsWith(prefix) && c.name !== name)
-    .slice(0, -KEPT_LOGINS)
-    .forEach((c) => expireCookie(response, c.name, config));
+  setLoginCookie(response, request, config, started);
   return response;
 }

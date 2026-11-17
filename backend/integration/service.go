@@ -36,12 +36,17 @@ const (
 // None of its callbacks may trust actor fields from a client's request.
 type Identity struct {
 	User, Agent, ServiceKey bool
-	WorkspaceID             string
-	EventSource             *EventSourceIdentity
-	HasPermission           func(Permission) bool
-	Allows                  func(workspaceID, projectID string, grant Grant) bool
-	Authorize               func(context.Context, any, Grant, ...string) error
-	WithScope               func(context.Context, string, bool) context.Context
+	// WorkspaceID is a service key's own Workspace, which an empty workspace_id names.
+	WorkspaceID string
+	// OnlyWorkspace is, for a user, the Workspace an empty workspace_id names: the one they
+	// belong to, read when a call leaves workspace_id empty, so a Workspace made since the
+	// host last read their memberships counts; empty for a user of several. Nil names none.
+	OnlyWorkspace func(context.Context) string
+	EventSource   *EventSourceIdentity
+	HasPermission func(Permission) bool
+	Allows        func(workspaceID, projectID string, grant Grant) bool
+	Authorize     func(context.Context, any, Grant, ...string) error
+	WithScope     func(context.Context, string, bool) context.Context
 	// FoundryGrants says source grants give it something, though it reads no database: it
 	// discovers the read tools, and each call is decided as it is made.
 	FoundryGrants bool
@@ -49,6 +54,9 @@ type Identity struct {
 	// admitted ctx as one. Nil on a host without grants.
 	AsGrantee func(context.Context) context.Context
 	IsGrantee func(context.Context) bool
+	// Confirm is who confirms the actions it prepares (agent.go); nil is the
+	// caller, as the MCP's clients do.
+	Confirm ConfirmMode
 }
 
 type EventSourceIdentity struct{ WorkspaceID, ConnectorID string }
@@ -92,7 +100,7 @@ type Runner func(context.Context, string, Invocation) (*mcp.CallToolResult, any,
 type Service struct {
 	Foundry FoundryBackendAPI
 	Actions FoundryActionAPI
-	// Workflows is the backend's workflow RPCs; nil leaves the workflow tools out.
+	// Workflows is the backend's workflow RPCs, behind the use case tools; nil leaves them out.
 	Workflows               FoundryWorkflowBackendAPI
 	Directory               Directory
 	Confirmations           Confirmations
@@ -107,10 +115,22 @@ type Service struct {
 	// SampleDatabase is where the host serves the sample company's tables, for add_sample_data;
 	// nil where it serves none.
 	SampleDatabase *SampleDatabase
+	// AgentHosts is whether the host has helpers that run the Assistant on its owner's Claude or
+	// ChatGPT subscription (a standalone install): only then is toolFoundryGetAssistantRuntime
+	// registered and its operations offered.
+	AgentHosts bool
 	// SignIn is whether the host offers connecting a connector by signing in at its provider
 	// (hosted: pipes.enabled). Only then are the sign-in tools registered; a local install
 	// has no provider accounts and leaves it false.
 	SignIn bool
+	// PublicDashboards is whether the host offers dashboards' public links
+	// (config.PublicDashboards: hosted, with foundry.dashboards.public_enabled).
+	// Only then are publish_dashboard and unpublish_dashboard offered.
+	PublicDashboards bool
+	// AutomationsOff is whether the host has workflows turned off (foundry.automations.enabled
+	// false), where the backend refuses every workflow route: its workflow tools are then not
+	// registered and their operations not offered. The zero value offers them.
+	AutomationsOff bool
 }
 
 func (s *Service) AddTools(server *mcp.Server, identity *Identity) {

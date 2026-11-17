@@ -1,8 +1,8 @@
-// Workflows area: what a window of workflow runs came to (GET
-// .../workflows:insights), in the pieces both pages build from. The overview
-// (WorkflowsPage) answers whether the ontology pays off and what to change:
-// a sentence, the impact cards and the chosen one's trend, then the
-// workflows side by side and what to change. A workflow's page answers how
+// Workflows area (shown as Usage): what a window of use case runs came to
+// (GET .../workflows:insights), in the pieces both pages build from. The
+// Usage page (WorkflowsPage) answers whether the ontology pays off and what
+// to change: a sentence, the impact cards and the chosen one's trend, then
+// the use cases side by side and what to change. A use case's page answers how
 // its task goes and why: a strip of its numbers with where its runs went,
 // then its runs, then what to change for it. Both narrow to one who started
 // runs and a window; counts stand in for rates of too few runs (MIN_SAMPLE).
@@ -22,7 +22,6 @@ import {
   YAxis,
 } from "recharts";
 import type {
-  FoundryPrincipal,
   FoundryWorkflowInsightIssue,
   FoundryWorkflowInsights,
   FoundryWorkflowInsightTotals,
@@ -64,8 +63,10 @@ import {
   metricText,
   rollingDays,
   verdictDay,
-  principalKey,
-  starterLabel,
+  segmentStarter,
+  starterKey,
+  starterText,
+  type Starter,
   suggestionGoal,
   verdictParts,
   verdictRuns,
@@ -89,9 +90,15 @@ export function useInsights(workflowId?: string) {
     { id: o } = useOntology();
   const [days, setDays] = useState(30),
     [metric, setMetric] = useState<InsightMetric>("helped"),
-    [who, setWho] = useState<FoundryPrincipal>();
+    [who, setWho] = useState<Starter>();
+  // A workflow's runs are its use case's.
   const query = useQuery(
-    workflowQueries.insights(ws, o, { workflowId, days, startedBy: who }),
+    workflowQueries.insights(ws, o, {
+      workflowId:
+        workflowId ?? (who && "automation" in who ? who.workflowId : undefined),
+      days,
+      startedBy: who && "principal" in who ? who.principal : undefined,
+    }),
   );
   // Everyone's, for the list of who started runs: the same query while no
   // one is chosen.
@@ -145,10 +152,12 @@ export function InsightsToolbar({
       {!own && agents.length > 0 && (
         <FilterSelect
           label="Started by"
-          value={principalKey(who)}
+          value={starterKey(who)}
           onChange={(key) =>
             setWho(
-              agents.find((a) => principalKey(a.principal) === key)?.principal,
+              agents
+                .map(segmentStarter)
+                .find((s) => s && starterKey(s) === key),
             )
           }
           options={[
@@ -158,8 +167,8 @@ export function InsightsToolbar({
               hint: plural(everyone.data?.totals?.runs || 0, "run"),
             },
             ...agents.map((a) => ({
-              value: principalKey(a.principal),
-              label: starterLabel(a.principal, names, user.id),
+              value: starterKey(segmentStarter(a)),
+              label: starterText(segmentStarter(a), names, user.id),
               hint: plural(a.totals?.runs || 0, "run"),
             })),
           ]}
@@ -271,18 +280,19 @@ function metricDetail(
   switch (metric) {
     case "runs": {
       const calls = callsPerRun(t);
-      return `${formatNumber(t?.open || 0)} open · ${formatNumber(assessed)} assessed${calls === undefined ? "" : ` · ${calls.toFixed(1)} calls a run`}`;
+      const silent = t?.neverCalled || 0;
+      return `${formatNumber(t?.open || 0)} open · ${formatNumber(assessed)} assessed${silent ? ` · ${formatNumber(silent)} didn’t use the ontology` : ""}${calls === undefined ? "" : ` · ${calls.toFixed(1)} calls a run`}`;
     }
     case "helped":
       return few
-        ? `assessed ${assessed === 1 ? "run" : "runs"}, too few for a rate`
-        : `of ${plural(assessed, "assessed run")}`;
+        ? `assessed ${assessed === 1 ? "run" : "runs"} that called it, too few for a rate`
+        : `of ${plural(assessed, "assessed run")} that called it`;
     case "backed":
       return few
         ? "claims backed by what agents read"
         : `of ${plural(claimsOf(t), "claim")}, backed by what agents read`;
     case "misleading":
-      return `${plural(t?.claimsContradicted || 0, "claim")} contradicted · ${plural(verdictRuns(t, "unused"), "run")} never used it`;
+      return `${plural(t?.claimsContradicted || 0, "claim")} contradicted · ${plural(verdictRuns(t, "unused"), "run")} used nothing it read`;
   }
 }
 
@@ -393,13 +403,21 @@ export function TrendPanel({
   if (metric === "runs") {
     // Runs a day, stacked by verdict: how many, and how the ontology did.
     const days = (data.series || []).map(verdictDay);
-    const keys = [...VERDICTS, "pending"].filter((k) =>
+    const keys = [...VERDICTS, "not_called", "pending"].filter((k) =>
       days.some((d) => Number(d[k]) > 0),
     );
     const color = (k: string) =>
-      k === "pending" ? "var(--hf-border-strong)" : `var(--hf-verdict-${k})`;
+      k === "pending"
+        ? "var(--hf-border-strong)"
+        : k === "not_called"
+          ? "var(--hf-muted)"
+          : `var(--hf-verdict-${k})`;
     const name = (k: string) =>
-      k === "pending" ? "Not assessed yet" : VERDICT_LABELS[k as Verdict].label;
+      k === "pending"
+        ? "Not assessed yet"
+        : k === "not_called"
+          ? "Didn’t use the ontology"
+          : VERDICT_LABELS[k as Verdict].label;
     return (
       <Panel
         title="Runs a day, by how much the ontology helped"
@@ -533,7 +551,7 @@ export function TrendPanel({
 }
 
 /**
- * A workflow's numbers in one strip of equal cells, and under them where its
+ * A use case's numbers in one strip of equal cells, and under them where its
  * runs went: one sentence when none left on the way, else each step with
  * what left before it.
  */
@@ -633,7 +651,7 @@ function IssueList({
 /**
  * What to change: the gaps the assessments named and the changes they
  * suggested, side by side in one panel, most runs first. An owner or admin
- * ticks suggestions and drafts one version with them. On a workflow's page
+ * ticks suggestions and drafts one version with them. On a use case's page
  * (`onIssue`), an issue's runs narrow its runs list.
  */
 export function ChangesPanel({
@@ -655,8 +673,8 @@ export function ChangesPanel({
     suggestions = data.suggestions || [];
   if (!gaps.length && !suggestions.length) return null;
   const manage = canManage(role);
-  // What a gap or suggestion came to: its runs (on a workflow's page, a
-  // button narrowing the runs to them), its workflows, and the latest.
+  // What a gap or suggestion came to: its runs (on a use case's page, a
+  // button narrowing the runs to them), its use cases, and the latest.
   const meta = (s: FoundryWorkflowInsightIssue) => {
     const key = issueKey(s.text || "");
     const runs = plural(s.runs || 0, "run");
@@ -679,7 +697,7 @@ export function ChangesPanel({
         {workflowNames &&
           (s.workflowIds || []).length > 0 &&
           ` · ${(s.workflowIds || [])
-            .map((id) => workflowNames.get(id) || "A workflow")
+            .map((id) => workflowNames.get(id) || "A use case")
             .join(", ")}`}
         {s.lastAt && s.lastRunId && s.lastWorkflowId && (
           <>

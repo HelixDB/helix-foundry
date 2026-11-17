@@ -3,7 +3,7 @@
 // (koanf tags, with HELIX_ environment overrides), so the same settings mean
 // the same thing in every deployment:
 //
-//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify
+//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify, agent
 //	billing.autumn.foundry.* Billing           the plan catalog and the checkout return page
 //	backend.foundry_read.*   Read              where the API reaches foundry-read
 //
@@ -90,20 +90,118 @@ func (l *LiveAIDefault) Store(d DetectedAIDefault) { l.v.Store(&d) }
 // People enrichment, event sources, the emails Foundry sends and the
 // reminders people ask for on its landing page.
 type Foundry struct {
-	Connectors ConnectorsConfig `koanf:"connectors"`
-	Sync       SyncConfig       `koanf:"sync"`
-	Ontology   OntologyConfig   `koanf:"ontology"`
-	AI         AIConfig         `koanf:"ai"`
-	Documents  DocumentsConfig  `koanf:"documents"`
-	Graph      GraphConfig      `koanf:"graph"`
-	Read       ReadConfig       `koanf:"read"`
-	Ask        AskConfig        `koanf:"ask"`
-	Enrichment EnrichmentConfig `koanf:"enrichment"`
-	Events     EventsConfig     `koanf:"events"`
-	Notify     NotifyConfig     `koanf:"notify"`
-	Reminders  RemindersConfig  `koanf:"reminders"`
-	Heal       HealConfig       `koanf:"heal"`
-	Workflows  WorkflowsConfig  `koanf:"workflows"`
+	Connectors  ConnectorsConfig  `koanf:"connectors"`
+	Sync        SyncConfig        `koanf:"sync"`
+	Ontology    OntologyConfig    `koanf:"ontology"`
+	AI          AIConfig          `koanf:"ai"`
+	Documents   DocumentsConfig   `koanf:"documents"`
+	Graph       GraphConfig       `koanf:"graph"`
+	Read        ReadConfig        `koanf:"read"`
+	Ask         AskConfig         `koanf:"ask"`
+	Enrichment  EnrichmentConfig  `koanf:"enrichment"`
+	Events      EventsConfig      `koanf:"events"`
+	Notify      NotifyConfig      `koanf:"notify"`
+	Reminders   RemindersConfig   `koanf:"reminders"`
+	Heal        HealConfig        `koanf:"heal"`
+	Workflows   WorkflowsConfig   `koanf:"workflows"`
+	Agent       AssistantConfig   `koanf:"agent"`
+	Dashboards  DashboardsConfig  `koanf:"dashboards"`
+	Automations AutomationsConfig `koanf:"automations"`
+}
+
+// AutomationsConfig drives automations (package automation,
+// api/automations.go, the foundry-automation-worker): a person's graph of
+// steps Foundry runs as them when its trigger fires. Its Assistant steps are
+// the Assistant's turns, run by the foundry-agent-worker (foundry.agent must
+// be enabled for them), under a monthly budget and a running cap of
+// automations' own, apart from what people's turns spend: an hourly
+// automation would otherwise spend the month's Assistant in days, and lock
+// people out of it. Off unless enabled: the API refuses automations and the
+// worker idles; a standalone install turns it on.
+type AutomationsConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// HTTP is the worker's health listener.
+	HTTP ServiceHTTPConfig `koanf:"http"`
+	// PollInterval is how often the worker fires schedules due, looks for
+	// ended work, and walks runs.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	// Lease is how long a claimed run stays owned without a renewal, renewed
+	// before each step: at least MinAutomationLease, so it outlasts the
+	// longest action a step runs.
+	Lease time.Duration `koanf:"lease"`
+	// MaxAttempts caps the attempts that failed of one run; RetryBackoff is
+	// the wait before the next, doubling.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+	// Settle is how long after work ended an event trigger counts it: every
+	// transaction that ended work before it has committed by then.
+	Settle time.Duration `koanf:"settle"`
+	// WatchEvery is how often one event trigger looks for ended work;
+	// WatchBatch how many look in one tick.
+	WatchEvery time.Duration `koanf:"watch_every"`
+	WatchBatch int           `koanf:"watch_batch"`
+	// MaxPerWorkspace is how many automations a workspace keeps.
+	MaxPerWorkspace int `koanf:"max_per_workspace"`
+	// RunsPerDay is how many runs a workspace's automations start in any 24
+	// hours; past it a trigger's run is recorded skipped, and Run now refused.
+	RunsPerDay int `koanf:"runs_per_day"`
+	// MonthlyUSD is a workspace's monthly budget for its automations'
+	// Assistant steps, reserved as each turn is claimed; MaxUSD caps one
+	// step's turn; MaxRunning is how many of those turns run at once.
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	MaxUSD     float64 `koanf:"max_usd"`
+	MaxRunning int     `koanf:"max_running"`
+	// PauseAfterFailures pauses an automation whose runs failed that many
+	// times in a row, and emails its owner; FailureBackoff is how long a
+	// failed run holds back its automation's next, doubling with each
+	// failure in a row, up to a day.
+	PauseAfterFailures int           `koanf:"pause_after_failures"`
+	FailureBackoff     time.Duration `koanf:"failure_backoff"`
+	// StepWait is how long a run waits for an Assistant step's turn before
+	// it reads it again.
+	StepWait time.Duration `koanf:"step_wait"`
+}
+
+// AutomationActionTimeout bounds one action step's call in the
+// foundry-automation-worker; MinAutomationLease, the least
+// foundry.automations.lease, outlasts it and the writes around it, as the
+// worker renews a run's lease before each step.
+const (
+	AutomationActionTimeout = 2 * time.Minute
+	MinAutomationLease      = 2 * AutomationActionTimeout
+)
+
+// MaxMicros is one Assistant step's cap, in millionths of a US dollar.
+func (a AutomationsConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) }
+
+// MonthlyMicros is a workspace's monthly automations budget, in millionths
+// of a US dollar.
+func (a AutomationsConfig) MonthlyMicros() int64 { return int64(math.Round(a.MonthlyUSD * 1e6)) }
+
+// validate checks what the API and both workers read: the caps.
+func (a AutomationsConfig) validate() error {
+	switch {
+	case a.MaxPerWorkspace < 1 || a.RunsPerDay < 1 || a.MaxRunning < 1 || a.PauseAfterFailures < 1:
+		return fmt.Errorf("foundry.automations max_per_workspace, runs_per_day, max_running and pause_after_failures must be positive")
+	case a.MaxUSD <= 0 || a.MonthlyUSD < a.MaxUSD:
+		return fmt.Errorf("foundry.automations.max_usd must be positive, and monthly_usd at least it")
+	}
+	return nil
+}
+
+// DashboardsConfig drives dashboards (package dashboard, api/dashboards.go).
+type DashboardsConfig struct {
+	// PublicEnabled lets owners and admins publish a dashboard's snapshot at a
+	// public link, served by the foundry-events door. Off, publishing is
+	// refused and every link answers not found at once. A standalone install
+	// never publishes, whatever it says (PublicDashboards).
+	PublicEnabled bool `koanf:"public_enabled"`
+}
+
+// PublicDashboards reports whether dashboards may be published at public
+// links: foundry.dashboards.public_enabled, and never on a standalone install.
+func (c *Config) PublicDashboards() bool {
+	return c.Foundry.Dashboards.PublicEnabled && !c.Host.Local
 }
 
 // WorkflowsConfig drives workflows' runs: an agent's request, every call it
@@ -647,6 +745,73 @@ func (a AskConfig) validate() error {
 	return nil
 }
 
+// AssistantConfig is the Assistant (foundry.agent): Foundry's own agent,
+// which a person talks to in the site and which prepares actions they run
+// with a click. The foundry-agent-worker runs its turns on the workspace's
+// model provider (the ask model) and Foundry's tools, under budgets of its
+// own, apart from questions'. Off unless enabled: hosted, sends are refused
+// and the worker idles; a standalone install turns it on.
+type AssistantConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// HTTP is the worker's health listener.
+	HTTP         ServiceHTTPConfig `koanf:"http"`
+	PollInterval time.Duration     `koanf:"poll_interval"`
+	// Lease is how long a claimed turn stays owned without a renewal.
+	Lease time.Duration `koanf:"lease"`
+	// Concurrency is how many turns one worker runs at once.
+	Concurrency int `koanf:"concurrency"`
+	// MaxAttempts caps a turn's attempts; a turn that stopped resumes from
+	// what its transcript committed.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+	// Defer is how long a turn held back by its workspace's running turns or
+	// their reservations waits before it is tried again.
+	Defer time.Duration `koanf:"defer"`
+	// MaxUSD, MaxSteps and MaxWallSecs cap one turn: its spend, model calls
+	// and time.
+	MaxUSD      float64 `koanf:"max_usd"`
+	MaxSteps    int     `koanf:"max_steps"`
+	MaxWallSecs int     `koanf:"max_wall_secs"`
+	// PerHour is how many messages one user may send in an hour;
+	// MonthlyUSD a workspace's monthly budget, reserved as each turn is
+	// claimed; MaxRunning its turns at once.
+	PerHour    int     `koanf:"per_hour"`
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	MaxRunning int     `koanf:"max_running"`
+	// ContextTokens is about how much of the transcript a call sends: the
+	// oldest turns past it are left out (the first message stays).
+	ContextTokens int `koanf:"context_tokens"`
+	// MaxPendingActions is how many prepared actions a thread may wait on
+	// its person for at once.
+	MaxPendingActions int `koanf:"max_pending_actions"`
+}
+
+// MaxMicros is a turn's cap, MaxUSD, in millionths of a US dollar.
+func (a AssistantConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) }
+
+// MonthlyMicros is a workspace's monthly budget, in millionths of a US dollar.
+func (a AssistantConfig) MonthlyMicros() int64 { return int64(math.Round(a.MonthlyUSD * 1e6)) }
+
+// AttemptTimeout bounds one attempt of a turn: its wall time and a minute
+// for its last tool call and settling.
+func (a AssistantConfig) AttemptTimeout() time.Duration {
+	return time.Duration(a.MaxWallSecs)*time.Second + time.Minute
+}
+
+func (a AssistantConfig) validate() error {
+	switch {
+	case a.MaxUSD <= 0 || a.MaxSteps < 1 || a.MaxWallSecs < 1:
+		return fmt.Errorf("foundry.agent max_usd, max_steps and max_wall_secs must be positive")
+	case a.MonthlyUSD < a.MaxUSD:
+		return fmt.Errorf("foundry.agent.monthly_usd must be at least max_usd")
+	case a.PerHour < 1 || a.MaxRunning < 1 || a.MaxPendingActions < 1:
+		return fmt.Errorf("foundry.agent per_hour, max_running and max_pending_actions must be positive")
+	case a.ContextTokens < 8000:
+		return fmt.Errorf("foundry.agent.context_tokens must be at least 8000")
+	}
+	return nil
+}
+
 // GraphAgentConfig is the ontology agent sidecar of the graph worker.
 type GraphAgentConfig struct {
 	Addr string `koanf:"addr"`
@@ -737,8 +902,23 @@ type OntologyConfig struct {
 	MaxTables int `koanf:"max_tables"`
 	// PerHour caps the generations a workspace may start in an hour; the
 	// backend checks it when one is requested.
-	PerHour int         `koanf:"per_hour"`
-	Agent   AgentConfig `koanf:"agent"`
+	PerHour int `koanf:"per_hour"`
+	// AnswerDays is how long a generation waits for answers to the agent's
+	// questions: after it, the worker answers each with the agent's default
+	// and carries on, so an ontology is never held by questions no one
+	// answers. The API says when (answers_due_at).
+	AnswerDays int `koanf:"answer_days"`
+	// MaxQuestionRounds caps the rounds of questions one generation may
+	// ask: each answer pays for another turn, which counts toward no hourly
+	// cap, so a turn that asks once the generation has had this many fails
+	// it.
+	MaxQuestionRounds int         `koanf:"max_question_rounds"`
+	Agent             AgentConfig `koanf:"agent"`
+}
+
+// AnswerWait is AnswerDays as a duration.
+func (o OntologyConfig) AnswerWait() time.Duration {
+	return time.Duration(o.AnswerDays) * 24 * time.Hour
 }
 
 // AgentConfig is the ontology agent the worker drafts with: a
@@ -814,6 +994,12 @@ type AIModels struct {
 // (AskReadyWait, and its probeTail and finishTimeout). The lease covers it
 // all, so no other replica probes the same key while one still is.
 const AIProbeOverhead = time.Minute
+
+// AIToolCheckTimeout bounds the Assistant's tool check of a setting the
+// sidecar passed (llm.CheckTools, its few calls together), which the
+// foundry-ask-worker runs while foundry.agent is on: the lease covers it
+// too, past AIProbeOverhead, so a slow probe never leaves it no time.
+const AIToolCheckTimeout = 2 * time.Minute
 
 // AIProbe is how the foundry-ask-worker tests a saved choice: it
 // polls every PollInterval, a probe runs at most Timeout under a Lease of at
@@ -1275,7 +1461,7 @@ var CaptureMethods = []string{"full", "cursor", "events", "log"}
 // DefaultPlans is Free, Pro and Max, none of them sold.
 func DefaultPlans() []PlanConfig {
 	// Free has the SaaS kinds and event sources, whose rows Helix holds.
-	free := []string{"stripe", "workos", "posthog", "github", "linear", "calcom", "granola", "slack", "notion", "google", "events"}
+	free := []string{"stripe", "workos", "posthog", "github", "linear", "calcom", "granola", "slack", "notion", "google", "databuddy", "events"}
 	every := append(slices.Clone(free), "postgres", "mysql", "s3")
 	return []PlanConfig{
 		{Code: "free", DisplayName: "Free", Kinds: free, Sync: SyncRulesConfig{
@@ -1427,12 +1613,20 @@ type Roles struct {
 	// foundry-ask-worker, foundry-enrichment-worker,
 	// foundry-notify-worker and foundry-heal-worker.
 	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker, HealWorker bool
+	// AgentWorker is the foundry-agent-worker, the Assistant's turns.
+	AgentWorker bool
+	// AutomationWorker is the foundry-automation-worker: it fires
+	// automations and walks their runs, its Assistant steps queued as the
+	// Assistant's turns, so it calls no model itself.
+	AutomationWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
-// load and answer, and foundry-read, which titles. The API only reads and
-// saves the setting.
-func (r Roles) modelCalls() bool { return r.OntologyWorker || r.GraphWorker || r.AskWorker || r.Read }
+// load and answer, the Assistant's, and foundry-read, which titles. The API
+// only reads and saves the setting.
+func (r Roles) modelCalls() bool {
+	return r.OntologyWorker || r.GraphWorker || r.AskWorker || r.AgentWorker || r.Read
+}
 
 // Validate checks c for a process that runs roles, beyond what each value's
 // type says: a standalone install's own rules first (Host.Local), then each
@@ -1657,6 +1851,39 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	if roles.AgentWorker && f.Agent.Enabled {
+		a := f.Agent
+		switch {
+		case a.HTTP.Listen == "":
+			return fmt.Errorf("foundry.agent.http.listen must be set when 'foundry-agent-worker' is in tasks")
+		case a.PollInterval <= 0 || a.Lease < 30*time.Second || a.Concurrency < 1 || a.MaxAttempts < 1 || a.RetryBackoff <= 0 || a.Defer <= 0:
+			return fmt.Errorf("foundry.agent poll_interval, concurrency, max_attempts, retry_backoff and defer must be positive, and lease at least 30s")
+		}
+	}
+	// The API checks a user's limits when they send; the worker when it claims.
+	if (roles.API || roles.AgentWorker) && f.Agent.Enabled {
+		if err := f.Agent.validate(); err != nil {
+			return err
+		}
+	}
+	// The API and the automation worker check automations' caps, and the
+	// agent worker claims their turns under them, whether or not automations
+	// are on here: another process may queue them.
+	if (roles.API || roles.AutomationWorker) && f.Automations.Enabled || roles.AgentWorker && f.Agent.Enabled {
+		if err := f.Automations.validate(); err != nil {
+			return err
+		}
+	}
+	if roles.AutomationWorker && f.Automations.Enabled {
+		a := f.Automations
+		switch {
+		case a.HTTP.Listen == "":
+			return fmt.Errorf("foundry.automations.http.listen must be set when 'foundry-automation-worker' is in tasks")
+		case a.PollInterval <= 0 || a.Lease < MinAutomationLease || a.MaxAttempts < 1 || a.RetryBackoff <= 0 || a.Settle <= 0 || a.WatchEvery <= 0 ||
+			a.WatchBatch < 1 || a.FailureBackoff <= 0 || a.StepWait <= 0:
+			return fmt.Errorf("foundry.automations poll_interval, max_attempts, retry_backoff, settle, watch_every, watch_batch, failure_backoff and step_wait must be positive, and lease at least %s (twice an action step's timeout)", MinAutomationLease)
+		}
+	}
 	// The API reads and saves the setting; the workers and foundry-read
 	// make the model calls.
 	if roles.modelCalls() || roles.API {
@@ -1664,8 +1891,18 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	if p := f.AI.Probe; roles.AskWorker && f.Agent.Enabled && p.Lease < p.Timeout+AIProbeOverhead+AIToolCheckTimeout {
+		return fmt.Errorf("foundry.ai.probe.lease %s must be at least its timeout %s plus %s, and %s for Founder's tool check while foundry.agent is on",
+			p.Lease, p.Timeout, AIProbeOverhead, AIToolCheckTimeout)
+	}
 	if roles.API && f.Ontology.PerHour < 1 {
 		return fmt.Errorf("foundry.ontology.per_hour must be positive")
+	}
+	if (roles.API || roles.OntologyWorker || roles.NotifyWorker) && f.Ontology.AnswerDays < 1 {
+		return fmt.Errorf("foundry.ontology.answer_days must be positive")
+	}
+	if roles.OntologyWorker && f.Ontology.MaxQuestionRounds < 1 {
+		return fmt.Errorf("foundry.ontology.max_question_rounds must be positive")
 	}
 	if roles.EnrichmentWorker {
 		if f.Sync.DataBucket == "" {
@@ -1748,6 +1985,10 @@ func Defaults() Config {
 		MaxAttempts:  3,
 		MaxTables:    50,
 		PerHour:      10,
+		AnswerDays:   7,
+		// MaxQuestionRounds is 3: a draft rarely needs more, and a fourth
+		// ask means the goal is too thin to draft from.
+		MaxQuestionRounds: 3,
 		// Limits fit the 15m timeout with AgentAttemptMargin to spare; a
 		// deployment that lets turns run longer raises both.
 		Agent: AgentConfig{
@@ -1762,7 +2003,7 @@ func Defaults() Config {
 		Kinds:       []string{"anthropic"},
 		CallTimeout: 10 * time.Minute,
 		Probe: AIProbe{
-			PollInterval: 2 * time.Second, Timeout: 2 * time.Minute, Lease: 3 * time.Minute, PerHour: 10, MaxAttempts: 3,
+			PollInterval: 2 * time.Second, Timeout: 2 * time.Minute, Lease: 5 * time.Minute, PerHour: 10, MaxAttempts: 3,
 		},
 	}, Documents: DocumentsConfig{
 		MaxBytes:        1 << 20,
@@ -1855,6 +2096,41 @@ func Defaults() Config {
 		Every:        24 * time.Hour,
 		RetryAfter:   15 * time.Minute,
 		Lease:        2 * time.Minute,
+	}, Dashboards: DashboardsConfig{
+		PublicEnabled: true,
+	}, Agent: AssistantConfig{
+		HTTP:              ServiceHTTPConfig{Listen: ":8102"},
+		PollInterval:      time.Second,
+		Lease:             time.Minute,
+		Concurrency:       4,
+		MaxAttempts:       3,
+		RetryBackoff:      10 * time.Second,
+		Defer:             15 * time.Second,
+		MaxUSD:            0.5,
+		MaxSteps:          20,
+		MaxWallSecs:       240,
+		PerHour:           30,
+		MonthlyUSD:        30,
+		MaxRunning:        2,
+		ContextTokens:     100_000,
+		MaxPendingActions: 3,
+	}, Automations: AutomationsConfig{
+		HTTP:               ServiceHTTPConfig{Listen: ":8103"},
+		PollInterval:       5 * time.Second,
+		Lease:              5 * time.Minute,
+		MaxAttempts:        3,
+		RetryBackoff:       30 * time.Second,
+		Settle:             2 * time.Minute,
+		WatchEvery:         30 * time.Second,
+		WatchBatch:         200,
+		MaxPerWorkspace:    50,
+		RunsPerDay:         200,
+		MonthlyUSD:         20,
+		MaxUSD:             0.5,
+		MaxRunning:         2,
+		PauseAfterFailures: 3,
+		FailureBackoff:     5 * time.Minute,
+		StepWait:           5 * time.Second,
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,

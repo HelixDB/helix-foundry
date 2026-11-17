@@ -2,7 +2,14 @@ import type { ComponentType } from "react";
 import type { LucideIcon } from "lucide-react";
 
 // Sidebar sections, in shell/nav.ts.
-export type SectionId = "data" | "ontology" | "explore" | "ask" | "settings";
+export type SectionId =
+  | "data"
+  | "ontology"
+  | "explore"
+  | "ask"
+  | "dashboards"
+  | "automations"
+  | "settings";
 
 // A sub-page shown under its section in the sidebar while the section is active.
 export type NavChild = {
@@ -56,8 +63,13 @@ export type SectionPanel =
 // What a section shows in the sidebar itself, under the sections, while it
 // is open (Ask's threads): `component`, rendered outside the page's routes
 // as a "component" panel is, in a region named by `label` that fills the
-// rest of the sidebar and scrolls on its own.
-export type SidebarSection = { label: string; component: PanelComponent };
+// rest of the sidebar and scrolls on its own. `shows`, given, keeps it to
+// the paths it accepts (Automations' list, only on an automation's pages).
+export type SidebarSection = {
+  label: string;
+  component: PanelComponent;
+  shows?: (pathname: string) => boolean;
+};
 
 // What each area contributes to the shell: sidebar children per section (an
 // area may fill several sections), fixed or from the page's path (the pages

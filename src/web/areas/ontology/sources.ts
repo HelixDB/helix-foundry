@@ -133,6 +133,9 @@ export function useSources(drafted: OntologyGenerationTable[] = []) {
       (connectors.isPending ||
         documents.isPending ||
         (connectors.isSuccess && agentIds.isPending)),
+    // The connectors couldn't be read: nothing is named.
+    error: connectors.error,
+    retry: () => void connectors.refetch(),
     resolve,
     byAgentId: (sourceId: string) => resolve({ kind: "agent", sourceId }),
     // A schema card's member: the table, its connector's logo and name.

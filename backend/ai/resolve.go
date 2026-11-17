@@ -56,6 +56,10 @@ type Resolved struct {
 	Report ProbeReport
 	// CallTimeout bounds each JSON or text call's attempt (foundry.ai.call_timeout).
 	CallTimeout time.Duration
+	// Rules are the deployment's for the provider's endpoint: a call dials
+	// only addresses they allow (hosted, public ones), whatever its host
+	// resolves to by then.
+	Rules Rules
 }
 
 // Label names the provider for the user, as failure copy does: "Claude"
@@ -73,6 +77,8 @@ func Label(p Provider) string {
 		return "Azure OpenAI"
 	case Bedrock:
 		return "Amazon Bedrock"
+	case Cohere:
+		return "Cohere"
 	case Ollama:
 		return "Ollama"
 	case Compatible:
@@ -90,7 +96,35 @@ func Label(p Provider) string {
 type ProbeReport struct {
 	Checks []ProbeCheck  `json:"checks"`
 	Ollama *OllamaReport `json:"ollama,omitempty"`
+	// Assistant is whether the ask model called a tool on the Assistant's
+	// own wire (package agent/llm), which the agent's checks don't run.
+	Assistant AssistantCheck `json:"assistant,omitempty"`
 }
+
+// AssistantCheck is what the Assistant's tool check of a setting found: a
+// closed set, stored in probe_report. Only an answer that will be the same
+// next time is recorded; a check the provider couldn't answer (rate limited,
+// unavailable) is left unchecked, and a turn finds out for itself.
+type AssistantCheck string
+
+const (
+	// AssistantUnchecked: no check ran (the Assistant is off, or the check
+	// couldn't), or the setting was probed before checks were.
+	AssistantUnchecked AssistantCheck = ""
+	// AssistantPassed: the model called the tool, its input JSON.
+	AssistantPassed AssistantCheck = "passed"
+	// AssistantAuth: the provider refused the key on this wire.
+	AssistantAuth AssistantCheck = "auth"
+	// AssistantRefused: the provider refused the request itself: a model it
+	// doesn't serve there, or tools it doesn't take.
+	AssistantRefused AssistantCheck = "refused"
+	// AssistantNoToolCall: the model answered without calling the tool.
+	AssistantNoToolCall AssistantCheck = "no_tool_call"
+)
+
+// Runs reports whether the Assistant may run on a setting the check found c:
+// unchecked runs, and fails as it goes if it must.
+func (c AssistantCheck) Runs() bool { return c == AssistantUnchecked || c == AssistantPassed }
 
 // ProbeCheck is one role's check.
 type ProbeCheck struct {
@@ -149,7 +183,7 @@ func (r *Resolver) Resolve(ctx context.Context, workspaceID string) (Resolved, e
 		if def == nil {
 			return Resolved{}, ErrNotConfigured
 		}
-		return Resolved{Source: SourceDefault, Settings: def.Settings, Key: def.Key, CallTimeout: r.Deployment.CallTimeout}, nil
+		return Resolved{Source: SourceDefault, Settings: def.Settings, Key: def.Key, CallTimeout: r.Deployment.CallTimeout, Rules: r.Deployment.Rules}, nil
 	case err != nil:
 		return Resolved{}, fmt.Errorf("read the workspace's AI setting: %w", err)
 	}
@@ -165,7 +199,7 @@ func (r *Resolver) Resolve(ctx context.Context, workspaceID string) (Resolved, e
 	if err != nil {
 		return Resolved{}, fmt.Errorf("%w: %v", ErrSettingsUnreadable, err)
 	}
-	out := Resolved{Source: SourceWorkspace, Settings: settings, ConfigID: c.ID, CallTimeout: r.Deployment.CallTimeout}
+	out := Resolved{Source: SourceWorkspace, Settings: settings, ConfigID: c.ID, CallTimeout: r.Deployment.CallTimeout, Rules: r.Deployment.Rules}
 	if len(c.ProbeReport) > 0 {
 		if err := json.Unmarshal(c.ProbeReport, &out.Report); err != nil {
 			return Resolved{}, fmt.Errorf("%w: probe report: %v", ErrSettingsUnreadable, err)
@@ -195,7 +229,9 @@ func (r *Resolver) ResolveServed(ctx context.Context, workspaceID string, provid
 	if err != nil {
 		return Resolved{}, err
 	}
-	if kind := resolved.Settings.Provider.Kind(); !slices.Contains(providers, string(kind)) {
+	// The kind the agent calls, which is the setting's own but for Cohere's,
+	// called as an OpenAI-compatible server.
+	if kind := resolved.endpoint().Provider.Kind(); !slices.Contains(providers, string(kind)) {
 		return Resolved{}, fmt.Errorf("%w: %s", ErrNotServed, kind)
 	}
 	return resolved, nil

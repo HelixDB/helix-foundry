@@ -1,7 +1,14 @@
 // Ontology area: route components lazy-loaded by main.tsx.
 import "./ontology.css";
 import { lazy } from "react";
-import { Route, Routes, useParams } from "react-router-dom";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router-dom";
+import { FOUNDER } from "../../../shared/deployment";
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { AskPage } from "./ask";
@@ -18,12 +25,12 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's documents, its suggestions, its workflows, its database's
-// explorer and its records are areas of their own, loaded when first opened (the explorer's canvas is
-// large). The Explorer and Ask are sections of their own too (ExploreRoutes,
-// AskRoutes), still under the ontology's scope.
-const DocumentsPage = lazy(() =>
-    import("../documents").then((m) => ({ default: m.DocumentsPage })),
+// An ontology's connections and documents, its Review page, its Usage pages,
+// its database's explorer and its records are loaded when first opened (the
+// explorer's canvas is large). The Explorer and Ask have route tables of
+// their own (ExploreRoutes, AskRoutes), still under the ontology's scope.
+const ConnectionsPage = lazy(() =>
+    import("./connections").then((m) => ({ default: m.ConnectionsPage })),
   ),
   DocumentPage = lazy(() =>
     import("../documents").then((m) => ({ default: m.OntologyDocumentPage })),
@@ -37,11 +44,8 @@ const DocumentsPage = lazy(() =>
   RecordsPage = lazy(() =>
     import("../records").then((m) => ({ default: m.RecordsPage })),
   ),
-  SuggestionsPage = lazy(() =>
-    import("../suggestions").then((m) => ({ default: m.SuggestionsPage })),
-  ),
-  ReviewQueuePage = lazy(() =>
-    import("../reviews").then((m) => ({ default: m.ReviewQueuePage })),
+  ReviewPage = lazy(() =>
+    import("../reviews/page").then((m) => ({ default: m.ReviewPage })),
   ),
   WorkflowsPage = lazy(() =>
     import("../workflows").then((m) => ({ default: m.WorkflowsPage })),
@@ -51,6 +55,10 @@ const DocumentsPage = lazy(() =>
   ),
   WorkflowRunPage = lazy(() =>
     import("../workflows").then((m) => ({ default: m.WorkflowRunPage })),
+  ),
+  // Founder's page brings the dock's conversation with it.
+  FounderPage = lazy(() =>
+    import("./founder-page").then((m) => ({ default: m.FounderPage })),
   );
 
 // /ontology/:ontologyId/versions/:versionId
@@ -67,6 +75,43 @@ export function OntologyGenerationPage() {
 export function OntologyLoadPage() {
   const { loadId = "" } = useParams();
   return <LoadPage key={loadId} loadId={loadId} />;
+}
+
+// /ontology/:ontologyId/documents, the list before it was Connections:
+// old links and emails keep their query (?status=).
+function ToConnections() {
+  const { ontologyId = "" } = useParams(),
+    { search } = useLocation();
+  return (
+    <Navigate to={paths.ontologyConnections(ontologyId) + search} replace />
+  );
+}
+
+// /ontology/:ontologyId/workflows/*, before use cases moved to the Usage
+// page: old links (agents', the backend's before the rename) keep their
+// query and hash.
+function ToUsage() {
+  const { pathname, search, hash } = useLocation();
+  return (
+    <Navigate
+      to={
+        pathname.replace(/^(\/ontology\/[^/]+)\/workflows/, "$1/usage") +
+        search +
+        hash
+      }
+      replace
+    />
+  );
+}
+
+// /ontology/:ontologyId/suggestions, before it was the Review page's
+// Ontology tab: old links keep their query.
+function ToReviewOntology() {
+  const { ontologyId = "" } = useParams(),
+    { search } = useLocation();
+  const query = new URLSearchParams(search);
+  query.set("tab", "ontology");
+  return <Navigate to={`${paths.review(ontologyId)}?${query}`} replace />;
 }
 
 // /ontology/:ontologyId/loads/:loadId/rule-breaks
@@ -100,16 +145,18 @@ export function OntologyRoutes() {
           path="loads/:loadId/rule-breaks"
           element={<OntologyLoadRuleBreaksPage />}
         />
-        <Route path="documents" element={<DocumentsPage />} />
+        <Route path="connections" element={<ConnectionsPage />} />
+        <Route path="documents" element={<ToConnections />} />
         <Route path="documents/:documentId" element={<DocumentPage />} />
-        <Route path="suggestions" element={<SuggestionsPage />} />
-        <Route path="review" element={<ReviewQueuePage />} />
-        <Route path="workflows" element={<WorkflowsPage />} />
-        <Route path="workflows/:workflowId" element={<WorkflowPage />} />
+        <Route path="suggestions" element={<ToReviewOntology />} />
+        <Route path="review" element={<ReviewPage />} />
+        <Route path="usage" element={<WorkflowsPage />} />
+        <Route path="usage/:workflowId" element={<WorkflowPage />} />
         <Route
-          path="workflows/:workflowId/runs/:runId"
+          path="usage/:workflowId/runs/:runId"
           element={<WorkflowRunPage />}
         />
+        <Route path="workflows/*" element={<ToUsage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />
@@ -117,9 +164,10 @@ export function OntologyRoutes() {
   );
 }
 
-// /explore/*: the Explorer's route table, a section of its own: an
-// ontology's database as a graph, its records and an entity's page, inside
-// the ontology's scope. /explore opens an ontology's graph.
+// /explore/*: the Explorer's route table, opened from an ontology's row in
+// the Ontologies panel: its database as a graph, its records and an
+// entity's page, inside the ontology's scope. /explore opens an ontology's
+// graph.
 export function ExploreRoutes() {
   return (
     <Routes>
@@ -139,16 +187,25 @@ export function ExploreRoutes() {
 }
 
 // /ask/*: Ask's route table, a section of its own: questions about an
-// ontology's load, inside its scope. /ask opens an ontology's.
+// ontology's load, inside its scope. /ask opens an ontology's, keeping the
+// link's query (a Founder thread's `?chat=`). Where the build has Founder,
+// it is Founder's page (a grantee's read-only); else the Analyst's.
 export function AskRoutes() {
   return (
     <Routes>
       <Route
         index
-        element={<OpenOntology title="Analyst" to={paths.ask} reads />}
+        element={
+          <OpenOntology
+            title={FOUNDER ? "Founder" : "Analyst"}
+            to={paths.ask}
+            reads
+            keepQuery
+          />
+        }
       />
       <Route path=":ontologyId" element={<OntologyScope explores />}>
-        <Route index element={<AskPage />} />
+        <Route index element={FOUNDER ? <FounderPage /> : <AskPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />

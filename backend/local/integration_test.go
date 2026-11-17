@@ -25,10 +25,13 @@ import (
 )
 
 // Every method the shared tools authorize or call is one an install serves, but
-// for API sources' own, which only a host with them reaches (Service.Events). An
-// unlisted one fails its tool at every call, so this keeps them in step.
+// for API sources' own, which only a host with them reaches (Service.Events), and
+// dashboards' public links', which only a host with them offers
+// (Service.PublicDashboards). An unlisted one fails its tool at every call, so
+// this keeps them in step.
 func TestToolsUseOnlyServedMethods(t *testing.T) {
-	apiSourcesOnly := map[string]bool{"ListFoundryEventBatches": true, "SendFoundryEvents": true}
+	hostedOnly := map[string]bool{"ListFoundryEventBatches": true, "SendFoundryEvents": true,
+		"PublishFoundryDashboard": true, "UnpublishFoundryDashboard": true}
 	files, err := filepath.Glob("../integration/*.go")
 	require.NoError(t, err)
 	calls := regexp.MustCompile(`s\.(?:Foundry|Actions)\.([A-Z]\w+)\(`)
@@ -58,7 +61,7 @@ func TestToolsUseOnlyServedMethods(t *testing.T) {
 		require.True(t, seen[method], method)
 	}
 	for method := range seen {
-		if apiSourcesOnly[method] {
+		if hostedOnly[method] {
 			continue
 		}
 		_, served := methods[foundry(method)]
@@ -110,7 +113,7 @@ func TestIntegrationHandlerAnswersOnlyThisInstallsHosts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	auth, err := NewAuthenticator(strings.Repeat("t", MinSiteToken), &fakeDirectory{owner: &directory.User{ID: "owner"}}, fakeOntologies{}, logger)
 	require.NoError(t, err)
-	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, "http://foundry.internal:3000", logger)
+	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, true, "http://foundry.internal:3000", nil, logger)
 	for host, allowed := range map[string]bool{
 		"localhost": true, "localhost:8081": true, "LOCALHOST:8081": true, "127.0.0.1": true, "127.0.0.1:8081": true,
 		"[::1]": true, "[::1]:8081": true,
@@ -166,7 +169,7 @@ func TestIntegrationHandlerRefusalsAreTheContractsError(t *testing.T) {
 	owner := &directory.User{ID: "owner"}
 	auth, err := NewAuthenticator(token, &fakeDirectory{owner: owner}, fakeOntologies{}, logger)
 	require.NoError(t, err)
-	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, "http://localhost:3000", logger)
+	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, true, "http://localhost:3000", nil, logger)
 	call := func(method, path, bearer string, headers map[string]string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, nil)
 		r.Host = "localhost:8081"
@@ -191,4 +194,19 @@ func TestIntegrationHandlerRefusalsAreTheContractsError(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "cross-origin")
 
 	assertRefusal(t, call("GET", "/v1/ontologies/bad!id/questions/question-1", token, nil), http.StatusBadRequest, "invalid_arguments")
+}
+
+// The owner may leave workspace_id empty while the install has one live workspace, read afresh on
+// each call: none, or a second one, and it must be named.
+func TestOnlyWorkspaceIsTheInstallsOne(t *testing.T) {
+	db := freshDB(t)
+	ctx := context.Background()
+	require.NoError(t, Migrate(ctx, db))
+	dir := directory.NewStore(db)
+	only := onlyWorkspace(dir)
+	assert.Empty(t, only(ctx), "no workspace yet")
+	require.NoError(t, dir.CreateWorkspace(ctx, directory.Workspace{ID: "workspace-1", Slug: "one", DisplayName: "One", Region: "local"}))
+	assert.Equal(t, "workspace-1", only(ctx))
+	require.NoError(t, dir.CreateWorkspace(ctx, directory.Workspace{ID: "workspace-2", Slug: "two", DisplayName: "Two", Region: "local"}))
+	assert.Empty(t, only(ctx), "two workspaces: name one")
 }

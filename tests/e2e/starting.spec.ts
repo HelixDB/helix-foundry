@@ -3,8 +3,10 @@ import {
   createdOntology,
   expect,
   loadContracts,
+  makeContractsCurrent,
   mock,
   signIn,
+  startContractsLoad,
   startOntology,
   test,
 } from "./support/mock";
@@ -13,7 +15,8 @@ import {
 // rate_limit_unavailable for its first minutes. Within 15 minutes of its
 // ontology's creation the pages say it is starting and read it again by
 // themselves until it answers; an older ontology's database answering so
-// keeps the error card.
+// keeps the error card. A database of any age still building its indexes
+// holds a load, which the pages say is building them, never a failure.
 
 /**
  * Creates "Billing" on the empty sandbox database, as new as the ontology,
@@ -314,4 +317,55 @@ test("says the Loads page's counts and a compare wait for a new database, then s
   await expect(keys).toContainText("Added in v1 · 0", { timeout: 20_000 });
   await expect(keys).toContainText("Removed since v1 · 0");
   await expect(waiting).toHaveCount(0);
+});
+
+test("says a load waits while the database builds its indexes, then loads", async ({
+  page,
+}) => {
+  // Customer contracts was created long ago: its database building its
+  // indexes is no start and no failure. Two ingests find one still
+  // building, each waiting three steps (4.5 s) to try again.
+  await mock.configure({ loadStepMs: 1500 });
+  await signIn(page);
+  await makeContractsCurrent(page);
+  await mock.configure({ indexesPending: 2 });
+  await startContractsLoad(page);
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  const loadPage = page.url();
+  const building = page
+    .getByRole("status")
+    .filter({ hasText: "Building the database’s indexes" });
+  await expect(building).toContainText(
+    "The load carries on by itself once they’re ready.",
+    { timeout: 10_000 },
+  );
+  await expect(
+    page.getByRole("grid", { name: "Jobs" }).getByText("Building indexes"),
+  ).toBeVisible();
+  await expect(page.getByText(/still indexing/)).toHaveCount(0);
+  await expect(page.getByText("An attempt failed")).toHaveCount(0);
+  // So do the overview and its list of loads.
+  await page
+    .getByRole("complementary", { name: "Ontologies" })
+    .getByRole("link", { name: "Overview" })
+    .click();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "A load is waiting for the database’s indexes" }),
+  ).toContainText("The load carries on by itself once they’re ready.");
+  await expect(
+    page
+      .getByRole("grid", { name: "Loads" })
+      .getByRole("row")
+      .filter({
+        has: page.locator(`a[href$="${new URL(loadPage).pathname}"]`),
+      }),
+  ).toContainText("Tables and documents: building indexes");
+  await expect(page.getByText(/still indexing/)).toHaveCount(0);
+  await page.goto(loadPage);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(building).toHaveCount(0);
 });

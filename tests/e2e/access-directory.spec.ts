@@ -229,3 +229,23 @@ test("a directory chosen in the setup guide that never linked reads as unfinishe
     page.getByRole("button", { name: "Open setup guide" }),
   ).toBeVisible();
 });
+
+test("a directory read that fails says so, with Retry, rather than hiding directory sync", async ({
+  page,
+}) => {
+  // Three refusals outlast the query's own two retries.
+  await mock.configure({ directoryEntitled: true, directoryReadFailures: 3 });
+  await signIn(page);
+  await page.goto("/settings/access?tab=teams");
+  const panel = page
+    .locator(".hf-panel")
+    .filter({ has: page.getByRole("heading", { name: "Directory sync" }) });
+  await expect(panel.getByRole("alert")).toContainText(
+    "Couldn’t read directory sync.",
+  );
+  await panel.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    page.getByRole("button", { name: "Connect your directory" }),
+  ).toBeVisible();
+  await expect(panel.getByRole("alert")).toHaveCount(0);
+});

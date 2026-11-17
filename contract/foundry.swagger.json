@@ -479,6 +479,520 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:dismiss": {
+      "post": {
+        "operationId": "FoundryService_DismissFoundryAgentAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDismissFoundryAgentActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:execute": {
+      "post": {
+        "operationId": "FoundryService_ExecuteFoundryAgentAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceExecuteFoundryAgentActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/actions/{id}:refresh": {
+      "post": {
+        "operationId": "FoundryService_RefreshFoundryAgentAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceRefreshFoundryAgentActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/host-pairings": {
+      "post": {
+        "operationId": "FoundryService_CreateFoundryAgentHostPairing",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentHostPairingResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryAgentHostPairingBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/hosts/{id}:revoke": {
+      "post": {
+        "operationId": "FoundryService_RevokeFoundryAgentHost",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentHostResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceRevokeFoundryAgentHostBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/runtime": {
+      "get": {
+        "summary": "Where a local install's Assistant runs its new threads' turns: Foundry's\nown worker on the workspace's model provider (api), or a helper on the\nowner's machine driving the Claude Code or Codex CLI they signed in to\n(claude_code, codex), and the helpers paired with the install. A local\ninstall's owner's only: hosted Helix serves none of these\n(FAILED_PRECONDITION, reason FOUNDRY_AGENT_HOSTS_LOCAL_ONLY).",
+        "operationId": "FoundryService_GetFoundryAgentRuntime",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentRuntimeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryAgentRuntime",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentRuntimeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryAgentRuntimeBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/threads": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryAgentThreads",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAgentThreadsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/threads/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryAgentThread",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentThreadResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryAgentThread",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/turns": {
+      "post": {
+        "summary": "The Assistant: a person's conversations with Foundry's own agent, which\nreads the workspace with Foundry's tools and prepares actions only that\nperson runs, with a click. Each thread and its actions are its user's\nown: another user's answer NotFound. The UI polls a turn's events as it\npolls a question's.",
+        "operationId": "FoundryService_SendFoundryAgentMessage",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentTurnResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSendFoundryAgentMessageBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}/events": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryAgentTurnEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAgentTurnEventsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "afterSeq",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/agent/turns/{id}:cancel": {
+      "post": {
+        "operationId": "FoundryService_CancelFoundryAgentTurn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAgentTurnResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCancelFoundryAgentTurnBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ai": {
       "get": {
         "summary": "Helix Foundry model providers",
@@ -616,6 +1130,546 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automation-suggestions": {
+      "get": {
+        "summary": "Suggestions for Founder, written for one ontology's current version:\nprompts of four kinds (2 questions, 2 dashboards, 2 changes to the\nontology and 4 workflows, in that order) that fill a composer for the\nperson to edit and send, never run: Founder's new chat shows each\nkind's first 2 as cards, the new workflow page the workflows. Founder\nwrites them once per version in one call, on the workspace's cheapest\ntask model (the AI setting's extraction model), charged to its monthly\nbudget. Each kind is filled to its count, in order, from: questions,\nthe version's competency questions, then the model's; dashboards and\nworkflows, the model's, then the competency questions'; changes to the\nontology, its open audit findings and the connections and document sets\nit doesn't read, then the model's; then fixed examples. So until\nFounder has written them (generating), and where it can't (no AI\nprovider, Founder off, its budget or the workspace's 20 writes an hour\nspent, a failure), every kind still has its count. Without a current\nversion, every kind is fixed examples. Workflows are left out where the\ndeployment has none. Any signed-in member may read them (a grantee may\nnot); an ontology the workspace hasn't is NOT_FOUND.",
+        "operationId": "FoundryService_ListFoundryAutomationSuggestions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAutomationSuggestionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations": {
+      "get": {
+        "summary": "Automations (package automation): a person's graph of steps, WHEN its\ntrigger fires (a schedule, or a sync, load, upload or draft that ended)\nTHEN Assistant steps, approved actions, conditions and emails, run as\nthat person, its owner. Every member sees every automation of the\nworkspace and creates their own; only its owner edits, approves, resumes\nand runs one, as it runs as them; its owner or an owner or admin pauses,\ndeletes and cancels a run. An automation runs only once its owner\napproved its spec in Foundry (ApproveFoundryAutomation, which the MCP\nnever calls: an agent's create or edit waits for the person's click). A\ngrantee of source grants, a service key and an agent see none. Off\n(foundry.automations.enabled false) every route is FAILED_PRECONDITION,\nreason FOUNDRY_AUTOMATIONS_DISABLED.",
+        "operationId": "FoundryService_ListFoundryAutomations",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAutomationsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "statsDays",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "operationId": "FoundryService_CreateFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryAutomationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs": {
+      "get": {
+        "operationId": "FoundryService_ListFoundryAutomationRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAutomationRunsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "automationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryAutomationRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "automationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{automationId}/runs/{id}:cancel": {
+      "post": {
+        "operationId": "FoundryService_CancelFoundryAutomationRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "automationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCancelFoundryAutomationRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryAutomationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{id}:approve": {
+      "post": {
+        "operationId": "FoundryService_ApproveFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceApproveFoundryAutomationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{id}:pause": {
+      "post": {
+        "operationId": "FoundryService_PauseFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePauseFoundryAutomationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{id}:resume": {
+      "post": {
+        "operationId": "FoundryService_ResumeFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceResumeFoundryAutomationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/automations/{id}:run": {
+      "post": {
+        "operationId": "FoundryService_RunFoundryAutomation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAutomationRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceRunFoundryAutomationBody"
+            }
           }
         ],
         "tags": [
@@ -1167,6 +2221,467 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/FoundryServiceTestConnectorBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboard-settings": {
+      "get": {
+        "summary": "The workspace's dashboard settings: whether its dashboards may be\npublished at public links. Any member reads them (a grantee doesn't);\nonly an owner changes them.",
+        "operationId": "FoundryService_GetFoundryDashboardSettings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardSettingsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryDashboardSettings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardSettingsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryDashboardSettingsBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards": {
+      "get": {
+        "summary": "Dashboards: tiles of typed queries over ontologies' loads (package\ndashboard), which every member of the workspace sees and reads as\nthemselves through ReadFoundryGraph: a dashboard's page in Foundry is how\nit is shared inside the workspace. A member creates dashboards and edits\nand deletes their own while unpinned; owners and admins edit and delete\nany, pin them in every member's sidebar, and publish one's snapshot at a\npublic link for people outside the workspace (hosted only, with\nfoundry.dashboards.public_enabled, while the workspace has public links\non). A grantee of source grants sees the pinned ones and changes none.",
+        "operationId": "FoundryService_ListFoundryDashboards",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryDashboardsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "operationId": "FoundryService_CreateFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "delete": {
+        "operationId": "FoundryService_DeleteFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "operationId": "FoundryService_UpdateFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:add-question-visual": {
+      "post": {
+        "operationId": "FoundryService_AddFoundryDashboardQuestionVisual",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAddFoundryDashboardQuestionVisualBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:pin": {
+      "post": {
+        "operationId": "FoundryService_PinFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePinFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:publish": {
+      "post": {
+        "operationId": "FoundryService_PublishFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePublishFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards/{id}:unpublish": {
+      "post": {
+        "operationId": "FoundryService_UnpublishFoundryDashboard",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryDashboardResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUnpublishFoundryDashboardBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/dashboards:preview-tile": {
+      "post": {
+        "operationId": "FoundryService_PreviewFoundryDashboardTile",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PreviewFoundryDashboardTileResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePreviewFoundryDashboardTileBody"
             }
           }
         ],
@@ -2565,6 +4080,106 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:answer": {
+      "post": {
+        "operationId": "FoundryService_AnswerOntologyGeneration",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1OntologyGenerationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAnswerOntologyGenerationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/generations/{id}:cancel": {
+      "post": {
+        "operationId": "FoundryService_CancelOntologyGeneration",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1OntologyGenerationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCancelOntologyGenerationBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings": {
       "get": {
         "summary": "Self-healing suggestions: what audits of the ontology's current load\nfound its ontology and mappings lack, the top open ones by support.",
@@ -3231,6 +4846,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "includeWithdraws",
+            "description": "Also list the current load's withdraws, approvals taken back from it\n(contract 4.16.0, kind withdraw), with what became of each. A client\nbefore them leaves it unset and gets none: it has no way to show one.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -3359,6 +4981,61 @@
             "schema": {
               "$ref": "#/definitions/FoundryServiceSettleFoundryReviewLabelBody"
             }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews": {
+      "get": {
+        "summary": "The reviews the ontology's current load holds, as SettleFoundryReview\nreads them: each with what settles it. Read from the load's database as\nthe caller, a page at a time, or by review key.",
+        "operationId": "FoundryService_ListFoundryReviews",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryReviewsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "reviewKeys",
+            "description": "Only these reviews, at most 50, each listed once if the current load\nholds it; never with page_token.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "pageToken",
+            "description": "The next_page_token of a previous page, of the load still current:\nFAILED_PRECONDITION once another load became current.",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -3636,7 +5313,7 @@
         ]
       },
       "post": {
-        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem.",
+        "summary": "Workflows: an agent's task over an ontology, whose runs record what the\nagent read of the ontology and wrote to Foundry between its request and\nits answer. Owners and admins create and delete workflows; a caller that\nmay read the ontology's database starts and finishes runs, and reads\nthem. Foundry makes a workflow of each ontology an automation uses\n(FoundryWorkflow.automation) and records each of its runs there: only\nFoundry starts and finishes those runs (FAILED_PRECONDITION, reason\nFOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's own calls record\nunder them (a run's id alone records nothing), and the workflow is\ndeleted only once its automation is. A grantee sees none of them.",
         "operationId": "FoundryService_CreateFoundryWorkflow",
         "responses": {
           "200": {
@@ -4475,6 +6152,61 @@
         }
       }
     },
+    "FoundryServiceAddFoundryDashboardQuestionVisualBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        },
+        "ontologyId": {
+          "type": "string"
+        },
+        "questionId": {
+          "type": "string"
+        },
+        "evidenceId": {
+          "type": "string",
+          "description": "The query result, such as e2."
+        },
+        "pinLoad": {
+          "type": "boolean",
+          "description": "The tile reads the question's load rather than the current one."
+        }
+      },
+      "description": "AddFoundryDashboardQuestionVisualRequest adds an Analyst answer's query\nresult, as its visual shows it, to the dashboard at expected_revision as a\ntile of its own row, last: the query the question recorded, the visual's\nkind and title (else the question's text). The question must be answered and\nrecord evidence_id as a query result."
+    },
+    "FoundryServiceAnswerOntologyGenerationBody": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionAnswer"
+          }
+        },
+        "useDefaults": {
+          "type": "boolean"
+        },
+        "round": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The generation's question_round the answers are for."
+        }
+      },
+      "description": "AnswerOntologyGenerationRequest answers the round of questions a\ngeneration waits on (status needs_input) and queues it to carry on from\nwhere the agent asked. Each answer names one of its questions, at most\nonce, and answers it as AgentQuestionAnswer says. With use_defaults, every\nquestion left out is left to the agent (left_to_agent), which takes its\nrecommended answer, or decides, as its own choice; without, every\nblocking question must be answered, and a non-blocking one left out stays\nopen in the draft. INVALID_ARGUMENT otherwise, and for a round below 1. A generation that isn't waiting, or waits on another round\nthan round (the questions were answered, and the agent asked again), is\nFAILED_PRECONDITION. It needs what GenerateOntology needs: managing the\nontology, and an AI provider."
+    },
+    "FoundryServiceApproveFoundryAutomationBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "ApproveFoundryAutomationRequest is its owner's click on the spec they read\nat expected_revision: it becomes active, its schedule firing next at its\nfirst time after now, an event trigger counting only work that ends from\nnow. Only the owner, signed in to the site: an agent through the MCP, a\nkey or a grantee is PERMISSION_DENIED. Approving an approved spec again\nchanges nothing; another revision is FAILED_PRECONDITION, reason\nFOUNDRY_AUTOMATION_CHANGED."
+    },
     "FoundryServiceAskFoundryQuestionBody": {
       "type": "object",
       "properties": {
@@ -4517,9 +6249,21 @@
         }
       }
     },
+    "FoundryServiceCancelFoundryAgentTurnBody": {
+      "type": "object",
+      "description": "CancelFoundryAgentTurnRequest ends the caller's queued or running turn. One\nthat ended otherwise is FAILED_PRECONDITION."
+    },
+    "FoundryServiceCancelFoundryAutomationRunBody": {
+      "type": "object",
+      "description": "CancelFoundryAutomationRunRequest ends a live run cancelled, with the step\nit was running: the automation's owner, or an owner or admin. A run that\nended otherwise is FAILED_PRECONDITION, reason FOUNDRY_AUTOMATION_RUN_ENDED."
+    },
     "FoundryServiceCancelFoundryQuestionBody": {
       "type": "object",
       "description": "CancelFoundryQuestionRequest ends a queued or running question; a running\none is charged what it reserved. One that ended otherwise is\nFAILED_PRECONDITION."
+    },
+    "FoundryServiceCancelOntologyGenerationBody": {
+      "type": "object",
+      "description": "CancelOntologyGenerationRequest ends a generation that is queued, running\nor waiting for answers, storing no draft, so the ontology may generate\nagain; a running one's turn stops at the worker's next lease renewal. One\nthat ended is FAILED_PRECONDITION. It needs what GenerateOntology needs."
     },
     "FoundryServiceCompleteFoundryDocumentUploadBody": {
       "type": "object",
@@ -4544,6 +6288,54 @@
           "$ref": "#/definitions/v1ConnectorConfig"
         }
       }
+    },
+    "FoundryServiceCreateFoundryAgentHostPairingBody": {
+      "type": "object",
+      "description": "CreateFoundryAgentHostPairingRequest makes a one-time code, valid for 10\nminutes, that pairs a helper with the install: `npx\n@helixdb/foundry-agent-host pair \u003ccode\u003e` on the owner's machine."
+    },
+    "FoundryServiceCreateFoundryAutomationBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "1 to 120 characters."
+        },
+        "description": {
+          "type": "string",
+          "description": "At most 1,000 characters."
+        },
+        "specJson": {
+          "type": "string",
+          "description": "The spec: {\"v\": 1, \"nodes\": [...], \"edges\": [...]} (package automation)."
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "1 to 64 characters."
+        }
+      },
+      "description": "CreateFoundryAutomationRequest makes the caller's automation, waiting for\ntheir approval (needs_approval): it never runs until they approve it. The\nsame client_token returns the one it made. A spec that isn't one is\nINVALID_ARGUMENT, saying what is wrong; a spec naming a connector,\nontology, document set or dashboard the workspace hasn't, INVALID_ARGUMENT\ntoo; past the workspace's cap, FAILED_PRECONDITION, reason\nFOUNDRY_AUTOMATION_LIMIT."
+    },
+    "FoundryServiceCreateFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "1 to 120 characters."
+        },
+        "description": {
+          "type": "string",
+          "description": "At most 1,000 characters."
+        },
+        "specJson": {
+          "type": "string",
+          "description": "The spec: {\"v\": 1, \"tiles\": [...], \"layout\": {\"rows\": [...]}} (package\ndashboard); empty is a dashboard with no tiles."
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "1 to 64 characters."
+        }
+      },
+      "description": "CreateFoundryDashboardRequest makes a dashboard, unpinned. The same\nclient_token returns the one it made. Past the workspace's cap is\nFAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT; a spec that isn't one\nis INVALID_ARGUMENT, saying what is wrong."
     },
     "FoundryServiceCreateFoundryDocumentBody": {
       "type": "object",
@@ -4697,9 +6489,22 @@
       "type": "object",
       "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
     },
+    "FoundryServiceDismissFoundryAgentActionBody": {
+      "type": "object",
+      "description": "DismissFoundryAgentActionRequest records the caller's no; no turn starts."
+    },
     "FoundryServiceDismissFoundryHealFindingBody": {
       "type": "object",
       "description": "DismissFoundryHealFindingRequest dismisses an open finding by its\nfingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has\nno finding of; FAILED_PRECONDITION for one superseded. One already\ndismissed is returned as it is."
+    },
+    "FoundryServiceExecuteFoundryAgentActionBody": {
+      "type": "object",
+      "properties": {
+        "payloadHash": {
+          "type": "string"
+        }
+      },
+      "description": "ExecuteFoundryAgentActionRequest runs the caller's prepared action once,\nfor the payload they were shown (payload_hash), authorized again as the\ncaller. A thread with a live turn is FAILED_PRECONDITION (reason\nFOUNDRY_AGENT_THREAD_BUSY), as are an action that isn't prepared\n(FOUNDRY_AGENT_ACTION_NOT_PREPARED), another payload\n(FOUNDRY_AGENT_ACTION_CHANGED) and an expired confirmation\n(FOUNDRY_AGENT_ACTION_EXPIRED: refresh it). The action then ends\nsucceeded, failed or unknown, and the agent goes on from it in a new turn\n(continuation)."
     },
     "FoundryServiceFinishConnectorSignInBody": {
       "type": "object",
@@ -4788,6 +6593,23 @@
         }
       }
     },
+    "FoundryServicePauseFoundryAutomationBody": {
+      "type": "object",
+      "description": "PauseFoundryAutomationRequest stops the active automation's runs (a live\none goes on): its owner, or an owner or admin. One waiting for approval\nis FAILED_PRECONDITION, reason FOUNDRY_AUTOMATION_NOT_ACTIVE."
+    },
+    "FoundryServicePinFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "pinned": {
+          "type": "boolean"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or\nunpins it, at expected_revision: owners and admins only. Another revision is\nFAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_CHANGED, so what is pinned is\nwhat its pinner saw; past the workspace's pinned cap, reason\nFOUNDRY_DASHBOARD_LIMIT."
+    },
     "FoundryServicePreviewFoundryAccessChangeBody": {
       "type": "object",
       "properties": {
@@ -4796,6 +6618,29 @@
         }
       },
       "description": "PreviewFoundryAccessChangeRequest asks what a change would take away."
+    },
+    "FoundryServicePreviewFoundryDashboardTileBody": {
+      "type": "object",
+      "properties": {
+        "tileJson": {
+          "type": "string"
+        }
+      },
+      "description": "PreviewFoundryDashboardTileRequest checks a tile and reads it once, as the\ncaller: the tile as a spec writes it (package dashboard)."
+    },
+    "FoundryServicePublishFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        },
+        "expiry": {
+          "$ref": "#/definitions/v1FoundryDashboardLinkExpiry",
+          "description": "When the link ends, from now; unset keeps a live link's own."
+        }
+      },
+      "description": "PublishFoundryDashboardRequest reads every tile as the caller, an owner or\nadmin, and keeps their outputs as the dashboard's public snapshot, at its\nlink: a new one the first time or once the last one expired, the same one\nwhen published already. The snapshot is what the publisher reads; anyone\nwith the link sees it without signing in, and it changes only when\npublished again. The dashboard must still be at expected_revision\n(FOUNDRY_DASHBOARD_CHANGED) and have a tile. Refusals are\nFAILED_PRECONDITION with a reason: a caller who isn't an owner or admin,\nFOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY; a host without public links,\nFOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE; a workspace whose owner turned them\noff, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an\nontology it read that was deleted meanwhile or is being purged of People\nenrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;\na snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE; an expired link\npublished again with no expiry chosen, FOUNDRY_DASHBOARD_LINK_EXPIRED."
     },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
@@ -4825,6 +6670,14 @@
       },
       "description": "ReadFoundryGraphRequest reads a load of the ontology's database: entities\nwith the facts its version's rules derive, patterns, explanations (\"why\"),\nrule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each\nthe `reads` item of the ontology agent's read_request.json. NOT_FOUND for a\nload of another ontology or one deleted; FAILED_PRECONDITION while it is\nbeing deleted; RESOURCE_EXHAUSTED while the workspace has as many reads\nrunning as it may."
     },
+    "FoundryServiceRefreshFoundryAgentActionBody": {
+      "type": "object",
+      "description": "RefreshFoundryAgentActionRequest prepares the caller's expired (or\nprepared) action again as the caller, with no model call."
+    },
+    "FoundryServiceResumeFoundryAutomationBody": {
+      "type": "object",
+      "description": "ResumeFoundryAutomationRequest makes the owner's paused automation active\nagain, from now. One waiting for approval is FAILED_PRECONDITION, reason\nFOUNDRY_AUTOMATION_UNAPPROVED."
+    },
     "FoundryServiceReviseOntologyVersionBody": {
       "type": "object",
       "properties": {
@@ -4840,8 +6693,47 @@
         }
       }
     },
+    "FoundryServiceRevokeFoundryAgentHostBody": {
+      "type": "object",
+      "description": "RevokeFoundryAgentHostRequest unpairs a helper: its token and the tokens of\nthe turns it runs stop working at once. Revoking one already revoked\nreturns it."
+    },
     "FoundryServiceRevokeFoundryEventSourceTokenBody": {
       "type": "object"
+    },
+    "FoundryServiceRunFoundryAutomationBody": {
+      "type": "object",
+      "properties": {
+        "clientToken": {
+          "type": "string",
+          "description": "1 to 64 characters."
+        }
+      },
+      "description": "RunFoundryAutomationRequest queues a run of the owner's automation now, of\nits approved spec, active or paused. The same client_token returns the run\nit queued. A live run is FAILED_PRECONDITION, reason\nFOUNDRY_AUTOMATION_BUSY; one waiting for approval,\nFOUNDRY_AUTOMATION_UNAPPROVED; the workspace's runs of the day spent,\nRESOURCE_EXHAUSTED."
+    },
+    "FoundryServiceSendFoundryAgentMessageBody": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "description": "Required with answers: the thread of the turn they answer."
+        },
+        "text": {
+          "type": "string",
+          "description": "At most 4,000 characters."
+        },
+        "answers": {
+          "$ref": "#/definitions/v1FoundryAgentAnswers",
+          "description": "Answers to the questions answers.turn_id asked, which must be the\nthread's newest turn, done, having asked (FAILED_PRECONDITION, reason\nFOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers\namong them). Checked against its questions as AgentQuestionAnswer\nsays, every blocking one answered (INVALID_ARGUMENT otherwise).\nAnswers to a relayed generation's questions are sent to it first, as\nthe caller (answer_generation_questions, use_defaults when any is left\nout), while it still waits on that round: else FAILED_PRECONDITION,\nreason FOUNDRY_AGENT_QUESTIONS_CLOSED. A refusal of the send (the\ncaller may not answer it) is FAILED_PRECONDITION and queues nothing; a\nrefusal of the turn after it says the answers reached the draft."
+        },
+        "pageContext": {
+          "$ref": "#/definitions/v1FoundryAgentPageContext"
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "At most 64 characters."
+        }
+      },
+      "description": "SendFoundryAgentMessageRequest queues a person's message in their thread,\nor in a new one when thread_id is empty, or their answers to the\nquestions their thread's newest turn asked them. The same client_token\nreturns the turn it queued. A thread with a live turn, or an action\nrunning, is FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the\nuser's hourly messages and answers RESOURCE_EXHAUSTED; the month's budget\nFAILED_PRECONDITION."
     },
     "FoundryServiceSetCurrentFoundryLoadBody": {
       "type": "object",
@@ -4984,6 +6876,10 @@
         }
       }
     },
+    "FoundryServiceUnpublishFoundryDashboardBody": {
+      "type": "object",
+      "description": "UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its\nlink shows nothing: owners and admins only (else\nFOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY), whether or not public links are on."
+    },
     "FoundryServiceUpdateConnectorBody": {
       "type": "object",
       "properties": {
@@ -5021,6 +6917,66 @@
         }
       },
       "description": "UpdateFoundryAIRequest is an owner's change: back to the default at once,\nor a provider saved and tested before it is used (FoundryAI.pending);\nthe setting in force stays until the test passes. Bringing a key needs\nFoundry Pro or Max when hosted (FAILED_PRECONDITION, reason\nFOUNDRY_PRO_REQUIRED); a model Helix can't price needs rates\n(FAILED_PRECONDITION, reason FOUNDRY_AI_PRICE_REQUIRED); saves are capped\nper hour (RESOURCE_EXHAUSTED)."
+    },
+    "FoundryServiceUpdateFoundryAgentRuntimeBody": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string"
+        },
+        "confirmCodex": {
+          "type": "boolean",
+          "description": "The owner confirms what codex runs with (Settings › AI models shows it):\nkept, so it is asked once."
+        }
+      },
+      "description": "UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new\nthreads take (a thread keeps its own): api, claude_code or codex. codex\nruns with the owner's own Codex setup, so it needs their confirmation,\nonce (confirm_codex, kept as FoundryAgentRuntime.codex_confirmed_at):\nwithout it, codex is FAILED_PRECONDITION (reason\nFOUNDRY_AGENT_CODEX_UNCONFIRMED). A helper need not be online to choose\none; sending in its thread then is FAILED_PRECONDITION (reason\nFOUNDRY_AGENT_HOST_OFFLINE) until it is."
+    },
+    "FoundryServiceUpdateFoundryAutomationBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "specJson": {
+          "type": "string"
+        }
+      },
+      "description": "UpdateFoundryAutomationRequest edits the caller's automation at\nexpected_revision: each field set changes, at least one. A spec that\nchanges waits for its owner's approval again, stopping the automation\nuntil then; a name or description alone keeps it as it is. Another's\nautomation is PERMISSION_DENIED; another revision FAILED_PRECONDITION,\nreason FOUNDRY_AUTOMATION_CHANGED."
+    },
+    "FoundryServiceUpdateFoundryDashboardBody": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "type": "string",
+          "format": "int64"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "specJson": {
+          "type": "string"
+        }
+      },
+      "description": "UpdateFoundryDashboardRequest edits the dashboard at expected_revision: each\nfield set is changed, at least one. Another revision is FAILED_PRECONDITION,\nreason FOUNDRY_DASHBOARD_CHANGED; a dashboard the caller may not edit\n(another member's, or pinned, for a member) PERMISSION_DENIED."
+    },
+    "FoundryServiceUpdateFoundryDashboardSettingsBody": {
+      "type": "object",
+      "properties": {
+        "publicLinks": {
+          "type": "boolean"
+        }
+      },
+      "description": "UpdateFoundryDashboardSettingsRequest turns the workspace's public\ndashboard links on or off: owners only. Off, every link of the workspace\nshows nothing at once; on again, the links not unpublished meanwhile, and\nnot expired, show again."
     },
     "FoundryServiceUpdateFoundryDocumentBody": {
       "type": "object",
@@ -5129,6 +7085,72 @@
             "type": "object",
             "$ref": "#/definitions/protobufAny"
           }
+        }
+      }
+    },
+    "v1AgentQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string",
+          "description": "A few words naming the question, for a progress strip; may be empty."
+        },
+        "text": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionOption"
+          },
+          "description": "Empty for an answer in words."
+        },
+        "multiple": {
+          "type": "boolean",
+          "description": "Whether the person may pick several options; false without options."
+        },
+        "recommended": {
+          "type": "string",
+          "description": "The answer the agent recommends, which it takes as its own choice for a\nquestion left to it: the label of one of its options (shown first,\nmarked), or, without options, the words it suggests; empty for none."
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "A blocking question needs an answer; another may be left to the agent\n(its recommended answer, or the agent decides)."
+        }
+      },
+      "description": "A question an agent asks the person: the ontology agent of a generation\nthat needs input (OntologyGenerationQuestion), or the Assistant\n(FoundryAgentAsked). With no options it takes an answer in words; with\noptions (2 to 20, labels unique) the person picks one, or one or more when\nmultiple, and may always answer in their own words instead (one) or as\nwell (multiple). Its header, text, options and recommended answer are the\nagent's words and may quote the data: show them as plain text, never as\nmarkup. The site shows such questions one at a time, the recommended\noption first."
+    },
+    "v1AgentQuestionAnswer": {
+      "type": "object",
+      "properties": {
+        "questionId": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "description": "The person's answer to an AgentQuestion: the labels of the options chosen\n(in the question's order once checked) and their own words, at least one\nof the two. To a question without options, text alone; to one of one\noption, one option or text, not both; to one of several, one or more\noptions with text or without, or text alone. Text is 1 to 2000\ncharacters once trimmed."
+    },
+    "v1AgentQuestionOption": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "description": "One line on what choosing it means; may be empty."
         }
       }
     },
@@ -5347,6 +7369,9 @@
         },
         "google": {
           "$ref": "#/definitions/v1GoogleWorkspaceConnectorConfig"
+        },
+        "databuddy": {
+          "$ref": "#/definitions/v1DatabuddyConnectorConfig"
         }
       },
       "description": "ConnectorConfig is a connector's settings. Write-only fields come back empty."
@@ -5402,7 +7427,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, postgres, mysql, s3 or events."
+          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, databuddy, postgres, mysql, s3 or events."
         },
         "displayName": {
           "type": "string"
@@ -5863,6 +7888,28 @@
         }
       }
     },
+    "v1DatabuddyConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string",
+          "description": "Databuddy API key (dbdy_…) with the read:data scope; write-only."
+        },
+        "websiteIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The websites to read, by id; empty reads every website the key reads."
+        },
+        "historyDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days of history to keep, 1 to 365; 0 is 90."
+        }
+      },
+      "description": "DatabuddyConnectorConfig reads a Databuddy organization's web analytics:\nits websites, and per website its daily metrics, pages, referrers, custom\nevents, sessions and visitor profiles over a window of recent days."
+    },
     "v1DeleteFoundryDocumentSetResponse": {
       "type": "object"
     },
@@ -5973,6 +8020,18 @@
       "type": "object",
       "description": "Claude at api.anthropic.com."
     },
+    "v1FoundryAIAssistantCheck": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+        "FOUNDRY_AI_ASSISTANT_CHECK_PASSED",
+        "FOUNDRY_AI_ASSISTANT_CHECK_AUTH",
+        "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
+        "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL"
+      ],
+      "default": "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+      "description": "FoundryAIAssistantCheck is what the Assistant's tool check of a setting\nfound.\n\n - FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED: Not checked: the Assistant is off, the check couldn't run (the provider\nwas busy), or the probe hasn't passed. The Assistant runs on it.\n - FOUNDRY_AI_ASSISTANT_CHECK_PASSED: The ask model called a tool: the Assistant runs on it.\n - FOUNDRY_AI_ASSISTANT_CHECK_AUTH: The provider refused the key on the Assistant's calls.\n - FOUNDRY_AI_ASSISTANT_CHECK_REFUSED: The provider refused the Assistant's request: a model the endpoint\nlacks there, or tools it doesn't take.\n - FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL: The model answered without calling the tool: it can't run the Assistant."
+    },
     "v1FoundryAIAzureOpenAI": {
       "type": "object",
       "properties": {
@@ -5995,6 +8054,10 @@
         }
       },
       "description": "Amazon Bedrock, called with a Bedrock API key."
+    },
+    "v1FoundryAICohere": {
+      "type": "object",
+      "description": "Cohere's API, called through its OpenAI-compatible Chat Completions; its\nmodels are priced at the owner's own rates."
     },
     "v1FoundryAICompatAPI": {
       "type": "string",
@@ -6067,6 +8130,10 @@
         "label": {
           "type": "string",
           "description": "The provider as failure copy names it: \"Claude\", or a custom server's host."
+        },
+        "assistantCheck": {
+          "$ref": "#/definitions/v1FoundryAIAssistantCheck",
+          "description": "Whether the Assistant can run on it: its ask model's tool check on the\nAssistant's own wire, run once the probe passed while the Assistant is\non. A failed check never fails the setting: the rest of Foundry's model\nwork runs on it, and the Assistant refuses its turns, saying why."
         }
       },
       "description": "FoundryAIConfig is a provider an owner saved."
@@ -6120,7 +8187,8 @@
         "FOUNDRY_AI_KIND_AZURE_OPENAI",
         "FOUNDRY_AI_KIND_BEDROCK",
         "FOUNDRY_AI_KIND_OLLAMA",
-        "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE"
+        "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
+        "FOUNDRY_AI_KIND_COHERE"
       ],
       "default": "FOUNDRY_AI_KIND_UNSPECIFIED",
       "description": "FoundryAIKind is a model provider kind. Every kind is declared; a\ndeployment offers those its agent implements (FoundryAI.offered)."
@@ -6237,6 +8305,9 @@
         },
         "openaiCompatible": {
           "$ref": "#/definitions/v1FoundryAICompatible"
+        },
+        "cohere": {
+          "$ref": "#/definitions/v1FoundryAICohere"
         }
       },
       "description": "FoundryAIProvider is where a workspace's model calls go: one message per\nkind, holding that kind's endpoint settings and never a key."
@@ -6348,6 +8419,926 @@
       "default": "KIND_UNSPECIFIED",
       "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else."
     },
+    "v1FoundryAgentAction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "The operation and target, as the MCP's prepare names them (create_load,\nontology:\u003cworkspace\u003e/\u003contology\u003e)."
+        },
+        "target": {
+          "type": "string"
+        },
+        "payloadJson": {
+          "type": "string",
+          "description": "The canonical payload, and the hash Execute must send back."
+        },
+        "payloadHash": {
+          "type": "string"
+        },
+        "displayJson": {
+          "type": "string",
+          "description": "The names the server resolved for it, as JSON."
+        },
+        "targetNamedByUser": {
+          "type": "boolean",
+          "description": "False when the target's ids never appeared in the person's messages or\npage: the card warns."
+        },
+        "status": {
+          "type": "string",
+          "description": "prepared, executing, succeeded, failed, unknown (it ran and lost its\nanswer: never run again), expired or dismissed."
+        },
+        "resultJson": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "decidedByUserId": {
+          "type": "string"
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentAction is an action the agent prepared, which only its person\nruns."
+    },
+    "v1FoundryAgentActionResponse": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/v1FoundryAgentAction"
+        },
+        "continuation": {
+          "$ref": "#/definitions/v1FoundryAgentTurn",
+          "description": "The turn the agent goes on from the action's result in; unset unless it ran."
+        }
+      }
+    },
+    "v1FoundryAgentAnswers": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionAnswer"
+          }
+        }
+      },
+      "description": "FoundryAgentAnswers are the person's answers to the questions turn_id\nasked: one per question at most, as AgentQuestionAnswer says; a question\nleft out (only one that isn't blocking) is left to the Assistant."
+    },
+    "v1FoundryAgentAsked": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestion"
+          }
+        },
+        "generation": {
+          "$ref": "#/definitions/v1FoundryAgentAskedGeneration"
+        }
+      },
+      "description": "FoundryAgentAsked is what a turn asked its person: 1 to 4 questions of the\nAssistant's own (ids q1, q2, ...), or a generation's waiting round,\nrelayed as its agent wrote it, under its own question ids (generation\nset). Each question is the agent's words, plain text."
+    },
+    "v1FoundryAgentAskedGeneration": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "generationId": {
+          "type": "string"
+        },
+        "round": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryAgentAskedGeneration is a generation whose questions a turn relayed,\nand their round: SendFoundryAgentMessage sends the person's answers to it,\nas them, while it still waits on that round."
+    },
+    "v1FoundryAgentEvent": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "eventJson": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentEvent is one event a turn shows, as JSON: started, text,\ntext_delta, tool_call, tool_result, action_card, action_result,\nquestions, answers, automation_report and finished."
+    },
+    "v1FoundryAgentHost": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "The machine's name, as the helper gave it when it paired."
+        },
+        "runtimes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What it runs, as of its last call: claude_code, codex. A Codex older\nthan FoundryAgentRuntime.codex_min_version isn't run (its account says\noutdated)."
+        },
+        "version": {
+          "type": "string",
+          "description": "The helper's version and platform (darwin-arm64, linux-x64, ...)."
+        },
+        "platform": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Its last call; unset until its first after pairing, which starts\nnothing."
+        },
+        "online": {
+          "type": "boolean",
+          "description": "Seen within 30 seconds."
+        },
+        "revokedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Set once revoked; a revoked host is listed by nothing else."
+        },
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentHostAccount"
+          },
+          "description": "What its runtimes' CLIs are signed in to, as of its last call; empty\nuntil its first call after pairing."
+        }
+      },
+      "description": "FoundryAgentHost is a helper on the owner's machine, paired with the\ninstall: a process outside Docker that drives the Claude Code or Codex CLI\nthe owner signed in to, and calls back only to the install's loopback."
+    },
+    "v1FoundryAgentHostAccount": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "description": "claude_code or codex: one the helper offers."
+        },
+        "state": {
+          "type": "string",
+          "description": "signed_in, signed_out (its turns fail until the person signs in) or\nunknown (the CLI didn't start)."
+        },
+        "subscription": {
+          "type": "string",
+          "description": "The subscription's plan as the CLI names it (pro, max, team, plus, ...),\nonly when signed in on one; empty for a CLI signed in some other way,\nwhose turns don't bill a subscription."
+        },
+        "version": {
+          "type": "string",
+          "description": "The CLI's version as it says it (Codex's), when the helper read it."
+        },
+        "outdated": {
+          "type": "boolean",
+          "description": "A Codex older than Foundry runs (FoundryAgentRuntime.codex_min_version),\nor of no version the helper could read: no turn runs on it until it is\nupdated."
+        }
+      },
+      "description": "FoundryAgentHostAccount is what one of a helper's CLIs is signed in to, as\nthe helper last found it."
+    },
+    "v1FoundryAgentHostPairingResponse": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "hxp_ and 32 characters; shown once, never stored (only its SHA-256)."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "command": {
+          "type": "string",
+          "description": "The command that pairs a helper with it, ready to paste."
+        }
+      }
+    },
+    "v1FoundryAgentHostResponse": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "$ref": "#/definitions/v1FoundryAgentHost"
+        }
+      }
+    },
+    "v1FoundryAgentPageContext": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        },
+        "dashboardId": {
+          "type": "string",
+          "description": "The dashboard open, if any."
+        },
+        "newAutomation": {
+          "type": "boolean",
+          "description": "The person is on the page that starts a new automation."
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "The IANA time zone the person's browser names (America/New_York): the\nAssistant's default for a schedule. One that isn't a zone Go's database\nhas, or longer than 64 characters, is dropped, never refused."
+        }
+      },
+      "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."
+    },
+    "v1FoundryAgentRuntime": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "description": "api (Foundry's own worker, on the workspace's model provider),\nclaude_code or codex (a helper, on its owner's subscription)."
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentHost"
+          },
+          "description": "The helpers paired with the install and not revoked, newest first."
+        },
+        "online": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The helper runtimes a host online runs now (seen within 30 seconds): a\nthread of one not listed can't be sent to."
+        },
+        "codexConfirmedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the owner confirmed, once, that the Assistant runs on their own\nCodex setup (its MCP servers and plugins included), with its shell off\nand every command or file change it asks for declined, on their ChatGPT\nplan; unset until then. codex can't be chosen before it."
+        },
+        "codexMinVersion": {
+          "type": "string",
+          "description": "The oldest Codex a helper runs it on (x.y.z): one older is outdated."
+        }
+      },
+      "description": "FoundryAgentRuntime is where a local install's Assistant runs a\nworkspace's new threads, and the helpers that can run them."
+    },
+    "v1FoundryAgentRuntimeResponse": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "$ref": "#/definitions/v1FoundryAgentRuntime"
+        }
+      }
+    },
+    "v1FoundryAgentThread": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "The first message's start."
+        },
+        "runtime": {
+          "type": "string",
+          "description": "api (Foundry's own worker), claude_code or codex."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAgentThread is a conversation with the Assistant, private to its user."
+    },
+    "v1FoundryAgentThreadResponse": {
+      "type": "object",
+      "properties": {
+        "thread": {
+          "$ref": "#/definitions/v1FoundryAgentThread"
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentTurn"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentAction"
+          }
+        }
+      },
+      "description": "FoundryAgentThreadResponse is a thread with its newest 100 turns, oldest\nfirst, and every action the agent prepared in it."
+    },
+    "v1FoundryAgentTurn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "message, action_result, answers or automation."
+        },
+        "text": {
+          "type": "string",
+          "description": "The person's text, for a message."
+        },
+        "actionId": {
+          "type": "string",
+          "description": "The action an action_result turn goes on from."
+        },
+        "pageContext": {
+          "$ref": "#/definitions/v1FoundryAgentPageContext"
+        },
+        "status": {
+          "type": "string",
+          "description": "queued, running, done, failed or cancelled."
+        },
+        "error": {
+          "type": "string"
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64"
+        },
+        "steps": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "lastSeq": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Attempts claimed so far; a queued turn with attempts above 0 is retrying."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "asked": {
+          "$ref": "#/definitions/v1FoundryAgentAsked",
+          "description": "What the turn asked its person (helix_foundry_ask_person), which it\nended waiting on (its finished event's reason asked); unset when it asked\nnothing. The person answers it (SendFoundryAgentMessage with answers)\nwhile it is the thread's newest turn and done."
+        },
+        "answers": {
+          "$ref": "#/definitions/v1FoundryAgentAnswers",
+          "description": "An answers turn's: the turn it answers, and the person's answers."
+        }
+      },
+      "description": "FoundryAgentTurn is one turn of a thread: a person's message, or the result\nof an action they ran."
+    },
+    "v1FoundryAgentTurnResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "#/definitions/v1FoundryAgentTurn"
+        },
+        "thread": {
+          "$ref": "#/definitions/v1FoundryAgentThread"
+        }
+      }
+    },
+    "v1FoundryAutomation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "specJson": {
+          "type": "string",
+          "description": "The spec, as package automation writes it; empty in a list."
+        },
+        "revision": {
+          "type": "string",
+          "format": "int64",
+          "description": "Counts its edits, from 1: an edit or an approval names the revision it\nwas made from."
+        },
+        "specRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "Counts its spec's edits."
+        },
+        "ownerUserId": {
+          "type": "string",
+          "description": "The person it runs as, who alone edits, approves, resumes and runs it."
+        },
+        "status": {
+          "type": "string",
+          "description": "needs_approval (its spec waits for its owner's approval: new, or\nchanged), active (it runs when its trigger fires) or paused (it runs\nonly by hand)."
+        },
+        "pausedReason": {
+          "type": "string",
+          "description": "While paused: person (paused_by_user_id paused it), failures (its runs\nfailed pause_after_failures times in a row, and its owner was emailed)\nor owner_lost_access (its owner can no longer act in the workspace)."
+        },
+        "pausedByUserId": {
+          "type": "string"
+        },
+        "pausedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approvedSpecRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "The spec revision its owner last approved, at approved_at; 0 never."
+        },
+        "approvedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "triggerKind": {
+          "type": "string",
+          "description": "Its trigger's kind (schedule, sync_finished, load_ready,\ndocument_arrived, generation_finished or manual) and the connector,\nontology or document set an event trigger listens to."
+        },
+        "triggerTarget": {
+          "type": "string"
+        },
+        "nextRunAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "An active schedule's next time."
+        },
+        "failures": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Its runs that failed in a row, and when it may start another after them."
+        },
+        "backoffUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastRun": {
+          "$ref": "#/definitions/v1FoundryAutomationRun",
+          "description": "Its newest run, without its spec or steps; unset before its first."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "canEdit": {
+          "type": "boolean",
+          "description": "What the caller may do: edit it (its owner), approve it (its owner,\nwhile it needs approval), pause it (its owner, or an owner or admin,\nwhile active), resume it (its owner, while paused), run it now (its\nowner, unless it needs approval), delete it (its owner, or an owner or\nadmin)."
+        },
+        "canApprove": {
+          "type": "boolean"
+        },
+        "canPause": {
+          "type": "boolean"
+        },
+        "canResume": {
+          "type": "boolean"
+        },
+        "canRun": {
+          "type": "boolean"
+        },
+        "canDelete": {
+          "type": "boolean"
+        },
+        "lastFailedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When its newest failed run started, in a list; unset when none failed,\nand outside a list."
+        },
+        "stats": {
+          "$ref": "#/definitions/v1FoundryAutomationRunCounts",
+          "description": "Its runs of the days a list asked for (stats_days); unset otherwise."
+        },
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationOntology"
+          },
+          "description": "The ontologies its runs use, by name, and how much each helped them:\nFoundry records those runs in a workflow of each, made at the first run\nthat uses it, or once its owner approves steps that name it. Gaps only\nwhen got alone."
+        }
+      },
+      "description": "FoundryAutomation is an automation: its spec, whether it runs, and what the\ncaller may do with it."
+    },
+    "v1FoundryAutomationOntology": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "ontologyName": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string",
+          "description": "The workflow its runs are recorded in; empty when untracked."
+        },
+        "runs": {
+          "type": "string",
+          "format": "int64",
+          "description": "That workflow's runs kept, how many finished, and when the newest\nstarted (absent before any)."
+        },
+        "finishedRuns": {
+          "type": "string",
+          "format": "int64"
+        },
+        "lastRunAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
+          },
+          "description": "Their done assessments by verdict, in the verdicts' order."
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What the ontology lacked, as the newest assessed run named it, at most\n5: when the automation is got alone."
+        },
+        "untracked": {
+          "type": "string",
+          "description": "Why its runs go unrecorded: workflows_full (the ontology holds 100\nworkflows, so Foundry couldn't make the automation's). Empty when\ntracked."
+        },
+        "untrackedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the latest run went on untracked."
+        },
+        "neverCalledRuns": {
+          "type": "string",
+          "format": "int64",
+          "description": "Of finished_runs, those that recorded no read or question of it (a run\nmay use it otherwise, by loading it or publishing its dashboard): they\naren't assessed."
+        }
+      },
+      "description": "FoundryAutomationOntology is an ontology an automation's runs use: its\nworkflow of the automation's, with its runs and their verdicts, or why\nFoundry records none of them."
+    },
+    "v1FoundryAutomationResponse": {
+      "type": "object",
+      "properties": {
+        "automation": {
+          "$ref": "#/definitions/v1FoundryAutomation"
+        }
+      }
+    },
+    "v1FoundryAutomationRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "automationId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "queued, running, succeeded, failed, cancelled or skipped (never\nstarted: error says why)."
+        },
+        "error": {
+          "type": "string",
+          "description": "Why it failed, was cancelled or skipped, or why its last attempt failed\nwhile it is queued to try again. Only its automation's owner, and owners\nand admins, see it; another member, how far it went and what it cost."
+        },
+        "triggerEventJson": {
+          "type": "string",
+          "description": "What fired it: {\"kind\": the trigger's kind or \"manual\", \"at\", and the\nids of the work it found (sync_id, load_id, generation_id,\ndocument_ids), \"outcome\", \"count\", \"rows\", \"by_user_id\"}."
+        },
+        "specRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "The spec revision it runs, and that spec; spec_json only when got alone,\nand never for a skipped run, which ran nothing."
+        },
+        "specJson": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string",
+          "description": "The owner's Assistant thread its Assistant steps ran in, which its owner\nopens in the Assistant to see them, and act on the actions they left;\nset for its owner alone."
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64",
+          "description": "What its Assistant steps spent, in millionths of a US dollar."
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationRunNode"
+          },
+          "description": "Its steps that started, in the order they did; only when got alone."
+        },
+        "canCancel": {
+          "type": "boolean",
+          "description": "Whether the caller may cancel it: live, and theirs or the caller an\nowner or admin."
+        },
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationRunOntology"
+          },
+          "description": "The ontologies it used, by name, each with the workflow run that\nrecords it and that run's verdict; only when got alone."
+        }
+      },
+      "description": "FoundryAutomationRun is one run of an automation."
+    },
+    "v1FoundryAutomationRunCounts": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "succeeded": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64"
+        },
+        "waiting": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryAutomationRunCounts counts runs started within some days: every\none (queued, running, cancelled and skipped too), those that succeeded and\nfailed, what their Assistant steps spent, and the actions those steps\nprepared that still wait for the automation's owner (counted for its\nowner, and owners and admins, only; 0 for another member)."
+    },
+    "v1FoundryAutomationRunDay": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "succeeded": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "other": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "FoundryAutomationRunDay is one day's runs, by the list's time zone: date\nis YYYY-MM-DD; other counts every run that neither succeeded nor failed."
+    },
+    "v1FoundryAutomationRunNode": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "running, succeeded, failed, skipped (no edge into it was taken) or\nblocked (a step before it failed); an action whose call is in flight\nreads running."
+        },
+        "outputJson": {
+          "type": "string",
+          "description": "{\"summary\", \"answer\" (true for yes), \"count\", \"branch\" (the branch a\ncondition took), \"result\" (an action's result, untrusted), \"pending\"\n(actions an Assistant step left for the owner)}: what it gave. It and\nerror are its automation's owner's, and owners' and admins', alone."
+        },
+        "error": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string",
+          "description": "An Assistant step's turn, in the run's thread; set for its owner alone."
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAutomationRunNode is one step of a run, the spec's node node_id."
+    },
+    "v1FoundryAutomationRunOntology": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "ontologyName": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "workflowRunId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "The workflow run: open while the automation's run is live, then\nfinished."
+        },
+        "assessmentStatus": {
+          "type": "string",
+          "description": "Its assessment: queued, running, done, failed or skipped; empty before\nit is queued, and for a run finished unassessed (cancelled)."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "Once done: essential, helpful, marginal, unused or misleading."
+        },
+        "neverCalled": {
+          "type": "boolean",
+          "description": "The workflow run finished without a read or question of the ontology:\nit isn't assessed, and has no assessment status or verdict."
+        }
+      },
+      "description": "FoundryAutomationRunOntology is an ontology one run of an automation used,\nand how much it helped: the run of the automation's workflow of it."
+    },
+    "v1FoundryAutomationRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1FoundryAutomationRun"
+        }
+      }
+    },
+    "v1FoundryAutomationRunSummary": {
+      "type": "object",
+      "properties": {
+        "days": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "totals": {
+          "$ref": "#/definitions/v1FoundryAutomationRunCounts"
+        },
+        "byDay": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationRunDay"
+          }
+        }
+      },
+      "description": "FoundryAutomationRunSummary is a workspace's runs of the last days: their\ncounts, and each day's, oldest first, every day of them listed."
+    },
+    "v1FoundryAutomationSuggestion": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "An outcome, 1 to 32 characters: \"Renewal radar\"."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "What to ask Founder, in plain words: 1 to 400 characters. A workflow's\nsays when it starts and what it does."
+        },
+        "icon": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionIcon",
+          "description": "A workflow's icon; UNSPECIFIED for the other kinds."
+        },
+        "kind": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionKind"
+        },
+        "topic": {
+          "type": "string",
+          "description": "What it is about, 1 to 24 characters, for a card's label: \"Revenue\",\n\"Data quality\", or the kind's own name."
+        },
+        "source": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionSource",
+          "description": "Where it came from."
+        }
+      },
+      "description": "FoundryAutomationSuggestion is a prompt for Founder, of one kind: a\nquestion for the data, a dashboard, a change to the ontology, or a\nworkflow. The new workflow page shows the workflows' titles; Founder's\nnew chat shows each kind's prompts as cards. Clicking one fills the\ncomposer with its prompt for the person to edit and send, never run. A\nmodel may have written it: it is data, never instructions."
+    },
+    "v1FoundryAutomationSuggestionIcon": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH",
+        "FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT"
+      ],
+      "default": "FOUNDRY_AUTOMATION_SUGGESTION_ICON_UNSPECIFIED",
+      "description": "FoundryAutomationSuggestionIcon is the kind of thing a suggestion does,\nfor its icon.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_BRIEFING: A regular summary.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_WATCH: Keeping an eye on something coming up.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_CHECK: Checking new data against a standard.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_ALERT: Telling someone when something goes wrong.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_REFRESH: Keeping data fresh: syncs and loads.\n - FOUNDRY_AUTOMATION_SUGGESTION_ICON_REPORT: Answering a question and sending the answer."
+    },
+    "v1FoundryAutomationSuggestionKind": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY",
+        "FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW"
+      ],
+      "default": "FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED",
+      "description": "FoundryAutomationSuggestionKind is what a suggestion asks Founder for.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_UNSPECIFIED: A WFE before kinds: a workflow.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_QUESTION: A question about the data, which Founder asks the Analyst.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_DASHBOARD: A dashboard, which Founder makes.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_ONTOLOGY: A change to the ontology, which Founder drafts as a new version.\n - FOUNDRY_AUTOMATION_SUGGESTION_KIND_WORKFLOW: A workflow, which Founder prepares for the person to approve."
+    },
+    "v1FoundryAutomationSuggestionSource": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP",
+        "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED"
+      ],
+      "default": "FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED",
+      "description": "FoundryAutomationSuggestionSource is where suggestions came from.\n\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_UNSPECIFIED: None: a WFE before sources, or nothing to suggest.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_MODEL: Founder wrote them for the version.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_QUESTIONS: Made from the version's competency questions, without a model.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_SETUP: Made from the ontology's setup, without a model: its open audit\nfindings, and the connections and document sets it doesn't read yet.\n - FOUNDRY_AUTOMATION_SUGGESTION_SOURCE_FIXED: Fixed examples, named for the ontology."
+    },
     "v1FoundryCatalogPlan": {
       "type": "object",
       "properties": {
@@ -6373,6 +9364,191 @@
       },
       "description": "FoundryCatalogPlan is one plan the deployment's catalog offers."
     },
+    "v1FoundryDashboard": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "specJson": {
+          "type": "string",
+          "description": "The spec, as package dashboard writes it; empty in a list."
+        },
+        "revision": {
+          "type": "string",
+          "format": "int64",
+          "description": "Counts its edits, from 1: an edit or a publish names the revision it was\nmade from."
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "updatedByUserId": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "Pinned: in every member's sidebar."
+        },
+        "pinnedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pinnedByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "share": {
+          "$ref": "#/definitions/v1FoundryDashboardShare",
+          "description": "Its public snapshot; unset unless published."
+        },
+        "canEdit": {
+          "type": "boolean",
+          "description": "What the caller may do: change its name, description and tiles; pin or\nunpin it; publish and republish it (publish_block says why not); delete\nit (an owner or admin only while it is published); and unpublish it (an\nowner or admin while it is published, public links on or off, so a link\nturned off is never revived)."
+        },
+        "canPin": {
+          "type": "boolean"
+        },
+        "canPublish": {
+          "type": "boolean"
+        },
+        "canDelete": {
+          "type": "boolean"
+        },
+        "canUnpublish": {
+          "type": "boolean"
+        },
+        "publishBlock": {
+          "$ref": "#/definitions/v1FoundryDashboardPublishBlock",
+          "description": "Why the caller may not publish it; UNSPECIFIED when they may\n(can_publish)."
+        }
+      },
+      "description": "FoundryDashboard is a dashboard of a workspace."
+    },
+    "v1FoundryDashboardLinkExpiry": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30",
+        "FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90"
+      ],
+      "default": "FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED",
+      "description": "FoundryDashboardLinkExpiry is when a publish has its public link end.\n\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED: Keep the link's own: a live link keeps its expires_at, a first one never\nends, and one that expired is refused (FOUNDRY_DASHBOARD_LINK_EXPIRED):\nthe new link's end is the publisher's choice.\n - FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7: 7, 30 or 90 days from the publish."
+    },
+    "v1FoundryDashboardPublishBlock": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY",
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF",
+        "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE"
+      ],
+      "default": "FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED",
+      "description": "FoundryDashboardPublishBlock is why a caller may not publish a dashboard at\na public link. Sharing it inside the workspace needs none of this: its page\nin Foundry opens for every member, each reading it as themselves.\n\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED: Nothing: the caller may publish it.\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY: Only an owner or admin makes, refreshes or ends a public link.\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF: An owner turned public links off for the workspace\n(FoundryDashboardSettings.public_links).\n - FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE: The host offers no public links (foundry.dashboards.public_enabled off,\nor a standalone install)."
+    },
+    "v1FoundryDashboardResponse": {
+      "type": "object",
+      "properties": {
+        "dashboard": {
+          "$ref": "#/definitions/v1FoundryDashboard"
+        }
+      }
+    },
+    "v1FoundryDashboardSettings": {
+      "type": "object",
+      "properties": {
+        "publicLinks": {
+          "type": "boolean",
+          "description": "Whether the workspace's dashboards may be published at public links: on\nuntil an owner turns them off. Off, publishing is refused\n(FOUNDRY_DASHBOARD_PUBLIC_OFF) and every link of the workspace shows\nnothing until they are turned on again."
+        },
+        "available": {
+          "type": "boolean",
+          "description": "Whether the host offers public links at all (foundry.dashboards.public_enabled,\nnever a standalone install): without them public_links changes nothing."
+        },
+        "canChange": {
+          "type": "boolean",
+          "description": "Whether the caller may change public_links: owners only."
+        },
+        "updatedByUserId": {
+          "type": "string",
+          "description": "The owner who last changed it, and when; unset until one did."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryDashboardSettings is a workspace's dashboard settings."
+    },
+    "v1FoundryDashboardSettingsResponse": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/definitions/v1FoundryDashboardSettings"
+        }
+      }
+    },
+    "v1FoundryDashboardShare": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "The link's token, for owners and admins only: the site's page for it is\n/share/\u003ctoken\u003e. Empty for anyone else, and once the link has expired."
+        },
+        "specRevision": {
+          "type": "string",
+          "format": "int64",
+          "description": "The dashboard's revision it shows: older than the dashboard's after an\nedit, until it is published again."
+        },
+        "publishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "firstPublishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "publishedByUserId": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the link stops showing its snapshot; unset: never."
+        },
+        "status": {
+          "$ref": "#/definitions/v1FoundryDashboardShareStatus",
+          "description": "Whether the link shows its snapshot now."
+        }
+      },
+      "description": "FoundryDashboardShare is a dashboard's public snapshot."
+    },
+    "v1FoundryDashboardShareStatus": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_UNSPECIFIED",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF",
+        "FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE"
+      ],
+      "default": "FOUNDRY_DASHBOARD_SHARE_STATUS_UNSPECIFIED",
+      "description": "FoundryDashboardShareStatus is whether a public link shows its snapshot\nnow. Only LIVE does: every other link answers 404, as an unpublished one.\n\n - FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED: Its expires_at has passed: publishing again makes a new link.\n - FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF: An owner turned public links off for the workspace: it shows again if\nthey are turned back on, unless it is unpublished meanwhile.\n - FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE: The host has public links off."
+    },
     "v1FoundryDataLayoutResponse": {
       "type": "object",
       "properties": {
@@ -6393,19 +9569,23 @@
       "properties": {
         "status": {
           "type": "string",
-          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it.\nOf a withdraw (an approval taken back, contract 4.16.0): pending while\nits job has yet to run, withdrawn (what the approval wrote no longer\nacts: the claim is held again, or, held for a conflict with a document\nsince removed, stays written as its document's statement with no\napproval to rank it), not_written (the load held nothing the approval\nwrote), refused (what it wrote stays: differs, quotes an engine before\n4.16.0 wrote of several claims of the link keep nothing to tell them\napart; too_large; or the backend's document_gone, document_unread,\ndocument_failed, not_replayed, unanswered), or unconfirmed (its job\nfailed; the end of the ontology's next job sends it again)."
+          "description": "pending (a job has yet to apply it), written (the claim is a fact; on a\nlink that holds one value, a statement dated after the approval takes\neffect, or a later approval, may hold the link instead, with the claim\nkept as its evidence),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key, nor one at its place stating what was\napproved, so it has nothing to release),\napplied (a prop decision: the load was sent it, and the job that sent it\nsucceeded; the engine reports nothing more of a value, so this doesn't\nsay the property holds it: a document dated after the decision still\nbeats it, and an entity the load doesn't hold takes none),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, or the value sent, and no job is coming. Approving it again\nfinishes it while the load still holds the claim's review; choosing a\nvalue again finishes a value, and so does the end of the ontology's next\njob, which sends the load its values again. If the engine wrote the\nclaim before the job failed, that review is gone and there is nothing\nto approve: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it.\nOf a withdraw (an approval taken back, contract 4.16.0): pending while\nits job has yet to run, withdrawn (what the approval wrote no longer\nacts: the claim is held again, or, held for a conflict with a document\nsince removed, stays written as its document's statement with no\napproval to rank it), not_written (the load held nothing the approval\nwrote), refused (what it wrote stays: differs, quotes an engine before\n4.16.0 wrote of several claims of the link keep nothing to tell them\napart; too_large; or the backend's document_gone, document_unread,\nunanswered), or unconfirmed: no word came, so whether it was taken back\nis not known. With job_failed its job failed, and the end of the\nontology's next job sends it again; with document_failed the engine\nfailed its document, and the next approval or take-back in that\ndocument sends it again; with not_replayed its document's saved reading\ncan't be reused, so no word can come while this load is current, and\nthe next load won't write the approval.\nOf a resolve of a name the load links to no one (contract 4.22.0), its\nword on its own document: pending, written (the load holds what the name\nheld back, as a load read with the decision holds it; with reason\nnot_asked, no review asks about the name now: settled already, by this\nchoice in a run whose word was lost, or by another since), refused\n(nothing was written in place: reason says why, and the next load\napplies the choice), unconfirmed (job_failed: choosing again sends it\nagain), or empty for a resolve the load read when it was created. A\nresolve of a name the load links already (adjudicated, legal_form,\npart_name, own_name) is unset: the next load applies it. What an alias\nof the name did in other documents is theirs\n(FoundryDocumentExtraction.names)."
         },
         "reason": {
           "type": "string",
-          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), part_name and own_name (a name is linked only by part of a\nrecord's name, or only by an identifier that is the name the text calls\nit by, whatever the link holds: settle that name), changed (the claim\nreads differently now from what was approved), differs (its sentence is\nread more than one way), conflict (a property of the fact differs from\nthe one the load holds; or the link holds one value and the claim gives\na date still to come, which a load or resend after it writes; or a load\nbuilt before statements were kept wrote its edge, or an engine before\ncontract 4.14.0 refused it: load again), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
+          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), part_name and own_name (a name is linked only by part of a\nrecord's name, or only by an identifier that is the name the text calls\nit by, whatever the link holds: settle that name), changed (the claim\nreads differently now from what was approved), differs (its sentence is\nread more than one way), conflict (a property of the fact differs from\nthe one the load holds; or the link holds one value and the claim gives\na date still to come, which a load or resend after it writes; or a load\nbuilt before statements were kept wrote its edge, or an engine before\ncontract 4.14.0 refused it: load again), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument doesn't say its quote at its place, the load keeps no record of\nthe model work that stated it, or its set no longer reads its link or an\nend's type; through contract 4.16.0 also the document,\nread again, no longer stating it there), document_changed (contract\n4.17.0: the load holds the document with other text than it read the\nclaim in, so only a new load, which reads the new text, can write it),\ntoo_large, not_allowed. The backend's: not_replayed (the engine said\nnothing of the document, which would have cost a model call: a new load\napplies it; through contract 4.16.0, a document whose saved extraction\ndidn't replay), document_gone, document_unread (the load holds the\ndocument but recorded no extraction of it), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed, or, of\na withdraw, document_failed or not_replayed. Of a refused resolve: the\nengine's refusal of the name (not_replayed: the load was read before\nnames could be settled in place, under an earlier prompt, so its saved\nmodel work can't settle it; bound, collides, differs, too_large,\ntwo_rows, role_term, shared, identifier, other_identity, absent),\nor not_named (the document names no entity so); and the backend's\nno_word (the job ended with no event of the document), document_gone,\ndocument_unread, document_failed, too_large. The same\nword means different things of different kinds: read it by the\ndecision's kind. A reader shows a reason it doesn't know as it is."
         },
         "at": {
           "type": "string",
           "format": "date-time",
           "description": "When a job said so; unset while pending."
+        },
+        "takesBack": {
+          "type": "boolean",
+          "description": "Of a release: the load may have written it, so removing the decision\ntakes it back from the load (a withdraw, contract 4.16.0) rather than\nonly dropping it. The backend's one rule: written, unconfirmed, copied\nwith the load and its document read with no word of it, or any copy\nwhile a job of the load is in flight."
         }
       },
-      "description": "What became of a release or a prop decision in the ontology's current load."
+      "description": "What became of a release, resolve or prop decision in the ontology's\ncurrent load."
     },
     "v1FoundryDocument": {
       "type": "object",
@@ -6554,9 +9734,52 @@
         "resolvedCreated": {
           "type": "integer",
           "format": "int32"
+        },
+        "resolvedCarried": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Entities linked by a name a person linked to that record in another\ndocument, which the load carries to every document."
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryDocumentName"
+          },
+          "description": "What the load did with each decision on a name that met the document:\nits own name decisions, and the names carried from other documents\nwhere the load would otherwise have asked a person."
         }
       },
       "description": "FoundryDocumentExtraction is how a document ended in its ontology's database."
+    },
+    "v1FoundryDocumentName": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "description": "resolve (the document's own decision) or alias (a name a person linked\nto a record in another document, carried to this one)."
+        },
+        "type": {
+          "type": "string",
+          "description": "The entity type the name is of."
+        },
+        "normName": {
+          "type": "string",
+          "description": "The name, normalized."
+        },
+        "decisionId": {
+          "type": "string",
+          "description": "The decision's id: of a resolve, the review decision's; of an alias, the\ndecision that linked the name. Absent when the engine named none."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "written, not_asked (nothing in this load waited on it; it applies when\nthe document is read again), not_named (the document doesn't name it)\nor refused."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why it was refused, as the engine said it: absent, bound, collides,\ndiffers, too_large, two_rows, role_term, shared, identifier,\nother_identity, not_replayed, or a reason a later engine gives."
+        }
+      },
+      "description": "FoundryDocumentName is what a load did with one decision on a name of a\ndocument."
     },
     "v1FoundryDocumentOntology": {
       "type": "object",
@@ -7968,6 +11191,84 @@
         }
       }
     },
+    "v1FoundryReview": {
+      "type": "object",
+      "properties": {
+        "reviewKey": {
+          "type": "string",
+          "description": "The review's id, which SettleFoundryReview takes as review_id."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why it is held: unresolved, ambiguous, collision, identifier_conflict,\nadjudicated, legal_form, part_name or own_name (a name to resolve);\nprop_conflict (documents state a property differently); low_confidence,\nunverified or conflict (a statement held back); or another of the\nengine's."
+        },
+        "settle": {
+          "$ref": "#/definitions/v1FoundryReviewSettle"
+        },
+        "type": {
+          "type": "string",
+          "description": "The type its name or property is of; empty for a held statement."
+        },
+        "docId": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string",
+          "description": "The quote it was read from, and where in its document."
+        },
+        "span": {
+          "$ref": "#/definitions/v1FoundryReviewSpan"
+        },
+        "normName": {
+          "type": "string",
+          "description": "A name to resolve, normalized, and the stored identities (entity keys)\nit may be."
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "entityKey": {
+          "type": "string",
+          "description": "The entity and property of a prop_conflict, and the values its\ndocuments state."
+        },
+        "prop": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewValue"
+          }
+        },
+        "link": {
+          "type": "string",
+          "description": "A held statement: its link, the statement as the load stores it (JSON\nwith subject, object and props), and the hash a release or reject\nbinds."
+        },
+        "statementJson": {
+          "type": "string"
+        },
+        "statementHash": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "format": "double",
+          "description": "The verifier's score, when it scored it."
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewEntity"
+          },
+          "description": "The entities it concerns as the load holds them (FOUNDRY_CONCERNS): a\nname's candidates, a property's entity. Their names are untrusted."
+        }
+      },
+      "description": "A review a load holds: something its documents state that it didn't write\nas it stands. Its text and values come from documents: untrusted."
+    },
     "v1FoundryReviewChoice": {
       "type": "object",
       "properties": {
@@ -8047,14 +11348,14 @@
         },
         "applied": {
           "$ref": "#/definitions/v1FoundryDecisionApplied",
-          "description": "A release or prop decision's state in the ontology's current load; unset\nfor a resolve, and when that load's decisions don't hold it yet (one\nsaved while another load was current joins them when a job of the\nontology next ends)."
+          "description": "A release, resolve or prop decision's state in the ontology's current\nload; unset when that load's decisions don't hold it yet (one saved while\nanother load was current joins them when a job of the ontology next\nends; a resolve, when the next load is made)."
         },
         "drawn": {
           "type": "string",
           "description": "\"ranked\" or \"random\": the review queue's card it was made on, in the\nqueue's order or drawn at random; empty for a decision made elsewhere."
         }
       },
-      "description": "A durable ontology-wide override. A resolve decision applies from the next\nload; a release or a prop decision applies to the current load at once,\nand later loads read it as they are made. Removing a prop decision\nwithdraws it from the current load at once too, and so does removing a\nrelease the load may have written (contract 4.16.0): the load's copy\nbecomes a withdraw, listed here, kind withdraw, with what became of it,\nwhile that load is current; it is no saved decision, and can't be removed.\nA reject changes no load: it tells readers which held claims a person said\nare wrong."
+      "description": "A durable ontology-wide override. A resolve, a release or a prop decision\napplies to the current load at once, and later loads read it as they are\nmade: a resolve by its document's saved model work, which a load read\nbefore names could be settled in place lacks (applied refused,\nnot_replayed), so the next load applies it. Removing a prop decision\nwithdraws it from the current load at once too, and so does removing a\nrelease the load may have written (contract 4.16.0): the load's copy\nbecomes a withdraw, listed here, kind withdraw, with what became of it,\nwhile that load is current; it is no saved decision, and can't be removed.\nA reject changes no load: it tells readers which held claims a person said\nare wrong."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",
@@ -8063,6 +11364,25 @@
           "$ref": "#/definitions/v1FoundryReviewDecision"
         }
       }
+    },
+    "v1FoundryReviewEntity": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "entityKey": {
+          "type": "string"
+        },
+        "normName": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Its stored name; empty when the load stored none."
+        }
+      },
+      "description": "An entity a review concerns, by the stored identity its candidates and\nentity_key name it by: its entity_key, or a type without a key's\nnorm_name; exactly one is set."
     },
     "v1FoundryReviewLabel": {
       "type": "object",
@@ -8140,6 +11460,51 @@
           "$ref": "#/definitions/v1FoundryReviewLabel"
         }
       }
+    },
+    "v1FoundryReviewSettle": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_REVIEW_SETTLE_UNSPECIFIED",
+        "FOUNDRY_REVIEW_SETTLE_RESOLVE",
+        "FOUNDRY_REVIEW_SETTLE_PROP",
+        "FOUNDRY_REVIEW_SETTLE_RELEASE",
+        "FOUNDRY_REVIEW_SETTLE_STALE"
+      ],
+      "default": "FOUNDRY_REVIEW_SETTLE_UNSPECIFIED",
+      "description": "What settles a review (SettleFoundryReview's decision).\n\n - FOUNDRY_REVIEW_SETTLE_UNSPECIFIED: No decision settles it: a conflict on a link that holds many values, or\na reason the backend doesn't settle.\n - FOUNDRY_REVIEW_SETTLE_RESOLVE: resolve: link its name to one of its candidates, or say it is not in\nthe data.\n - FOUNDRY_REVIEW_SETTLE_PROP: prop: choose the property's value, or remove it.\n - FOUNDRY_REVIEW_SETTLE_RELEASE: release or reject the statement it holds back, by its statement_hash.\n - FOUNDRY_REVIEW_SETTLE_STALE: A reason a decision settles, on a review missing what the backend reads\nof it (a load from before decisions): a new load writes it again."
+    },
+    "v1FoundryReviewSpan": {
+      "type": "object",
+      "properties": {
+        "section": {
+          "type": "string",
+          "format": "int64"
+        },
+        "start": {
+          "type": "string",
+          "format": "int64"
+        },
+        "end": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1FoundryReviewValue": {
+      "type": "object",
+      "properties": {
+        "valueJson": {
+          "type": "string",
+          "description": "The value as JSON, as a prop decision takes it."
+        },
+        "docId": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        }
+      },
+      "description": "One value documents state for a prop_conflict's property."
     },
     "v1FoundrySyncRules": {
       "type": "object",
@@ -8361,6 +11726,10 @@
             "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
           },
           "description": "Its runs' assessments that are done, by verdict, in the verdicts'\norder; a verdict no run has is absent."
+        },
+        "automation": {
+          "$ref": "#/definitions/v1FoundryWorkflowAutomation",
+          "description": "The automation whose runs it records, for a workflow Foundry made: one\nof each ontology an automation uses, which only Foundry starts and\nfinishes runs of, and no one deletes while its automation exists.\nAbsent for a workflow a person made."
         }
       },
       "description": "FoundryWorkflow is an agent's task over one ontology. Each of its runs\nrecords the agent's request, what the agent read of the ontology's loads\nand wrote to Foundry while answering it, and its answer, so the runs show\nwhat the ontology gave the agent."
@@ -8435,6 +11804,23 @@
       },
       "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.15.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
     },
+    "v1FoundryWorkflowAutomation": {
+      "type": "object",
+      "properties": {
+        "automationId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "Its name, as the workflow keeps it: the automation's, kept in step."
+        },
+        "deleted": {
+          "type": "boolean",
+          "description": "The automation was deleted: the workflow keeps its runs as history."
+        }
+      },
+      "description": "FoundryWorkflowAutomation is the automation a workflow Foundry made\nrecords the runs of."
+    },
     "v1FoundryWorkflowGapCount": {
       "type": "object",
       "properties": {
@@ -8484,7 +11870,7 @@
           "format": "int32"
         }
       },
-      "description": "FoundryWorkflowInsightFunnel follows a window's runs: each step counts\nthose of the step before that went on. Started; finished; assessed (a done\nassessment); used the ontology (at least one call); helped (essential or\nhelpful)."
+      "description": "FoundryWorkflowInsightFunnel follows a window's runs: each step counts\nthose of the step before that went on. Started; finished; used the\nontology (at least one call); assessed (a done assessment); helped\n(essential or helpful)."
     },
     "v1FoundryWorkflowInsightIssue": {
       "type": "object",
@@ -8543,6 +11929,10 @@
         },
         "topGap": {
           "type": "string"
+        },
+        "automation": {
+          "$ref": "#/definitions/v1FoundryWorkflowAutomation",
+          "description": "Of who started runs: the automation Foundry started them for, which\nthey are counted by apart from what its owner (principal) started\nthemselves; workflow_id is then its workflow, which filters them."
         }
       },
       "description": "FoundryWorkflowInsightSegment is the window's totals for one who started\nruns (principal) or one workflow (workflow_id), with its runs by day and\nthe gap its runs named most (the newest of those named as often)."
@@ -8622,9 +12012,14 @@
             "$ref": "#/definitions/v1FoundryWorkflowGapCount"
           },
           "description": "How many runs named a gap of each kind."
+        },
+        "neverCalled": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Finished runs that made no call to the ontology: the agent didn't use\nit for the request, or didn't pass the run's id on its calls."
         }
       },
-      "description": "FoundryWorkflowInsightTotals counts runs and what their assessments said.\nhelped is the runs whose verdict is essential or helpful; claims are those\nof done assessments."
+      "description": "FoundryWorkflowInsightTotals counts runs and what their assessments said.\nA finished run that made no call to the ontology counts in never_called\nalone of assessed, helped, verdicts, claims and gap_kinds: it says\nnothing of the ontology, so it isn't assessed (one assessed before is\nleft out). helped is the runs whose verdict is essential or helpful;\nclaims are those of done assessments."
     },
     "v1FoundryWorkflowInsights": {
       "type": "object",
@@ -8775,6 +12170,10 @@
         "assessment": {
           "$ref": "#/definitions/v1FoundryWorkflowAssessment",
           "description": "Its assessment, once it finished: absent where assessments are off, or\nfor a run finished before."
+        },
+        "automationRunId": {
+          "type": "string",
+          "description": "The automation's run it records, for a run Foundry started (its\nworkflow's automation names the automation; started_by_user_id is its\nowner); empty for an agent's run."
         }
       },
       "description": "FoundryWorkflowRun is one run of a workflow: open while it records the\ncalls made with its id, finished once its answer is in, after which it\nrecords nothing more."
@@ -9074,6 +12473,121 @@
         }
       }
     },
+    "v1ListFoundryAgentThreadsResponse": {
+      "type": "object",
+      "properties": {
+        "threads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentThread"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryAgentTurnEventsResponse": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAgentEvent"
+          }
+        },
+        "status": {
+          "type": "string",
+          "description": "The turn's status when read: once it is not queued or running and the\nevents reach last_seq, none follows."
+        },
+        "lastSeq": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1ListFoundryAutomationRunsResponse": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationRun"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListFoundryAutomationSuggestionsResponse": {
+      "type": "object",
+      "properties": {
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomationSuggestion"
+          },
+          "description": "Each kind's, kinds in their enum's order: at most 10."
+        },
+        "source": {
+          "$ref": "#/definitions/v1FoundryAutomationSuggestionSource",
+          "description": "Where the first workflow came from (each suggestion says its own)."
+        },
+        "generating": {
+          "type": "boolean",
+          "description": "Founder is writing them: these are the fallback; read again in a\nfew seconds."
+        },
+        "versionId": {
+          "type": "string",
+          "description": "The version they were written for; empty without a current version."
+        }
+      }
+    },
+    "v1ListFoundryAutomationsResponse": {
+      "type": "object",
+      "properties": {
+        "automations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAutomation"
+          }
+        },
+        "canCreate": {
+          "type": "boolean",
+          "description": "Whether the caller may create one."
+        },
+        "email": {
+          "type": "boolean",
+          "description": "Whether a notify step emails here: false on a standalone install, which\nsends no email and records the step as skipped."
+        },
+        "summary": {
+          "$ref": "#/definitions/v1FoundryAutomationRunSummary",
+          "description": "The workspace's runs of the days asked for; unset without stats_days."
+        }
+      }
+    },
+    "v1ListFoundryDashboardsResponse": {
+      "type": "object",
+      "properties": {
+        "dashboards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryDashboard"
+          }
+        },
+        "canCreate": {
+          "type": "boolean",
+          "description": "Whether the caller may create one."
+        }
+      }
+    },
     "v1ListFoundryDocumentSetsResponse": {
       "type": "object",
       "properties": {
@@ -9276,6 +12790,26 @@
         }
       }
     },
+    "v1ListFoundryReviewsResponse": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string",
+          "description": "The current load the reviews are of."
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReview"
+          }
+        },
+        "nextPageToken": {
+          "type": "string",
+          "description": "Set while more reviews follow, up to the 10,000th."
+        }
+      }
+    },
     "v1ListFoundryWorkflowRunAccessesResponse": {
       "type": "object",
       "properties": {
@@ -9474,6 +13008,29 @@
         "loadWhenReady": {
           "type": "boolean",
           "description": "Whether its draft is made current and loaded once stored, and its\nrequester emailed when that load ends\n(GenerateOntologyRequest.load_when_ready)."
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1OntologyGenerationQuestion"
+          },
+          "description": "The questions the agent's last turn asked, in its order: the ones status\nneeds_input waits on, then, once answered, with their answers. Empty for\na generation the agent asked nothing of. A draft's own non-blocking\nquestions are in its version's definition."
+        },
+        "askedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the questions were asked; unset without questions."
+        },
+        "answersDueAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "While status is needs_input: when Helix answers every question with the\nagent's default and carries on (foundry.ontology.answer_days after\nasked_at)."
+        },
+        "questionRound": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Which round of questions questions are, from 1 (0 without questions):\neach answer lets the agent ask again. AnswerOntologyGeneration names it."
         }
       },
       "description": "OntologyGeneration is one request to draft a version of an ontology."
@@ -9490,6 +13047,54 @@
       },
       "description": "OntologyGenerationDocument is a table file a generation drafts from, and\nthe set it was in then."
     },
+    "v1OntologyGenerationQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AgentQuestionOption"
+          }
+        },
+        "multiple": {
+          "type": "boolean"
+        },
+        "recommended": {
+          "type": "string",
+          "description": "As AgentQuestion's: the ontology agent's default, which it takes for a\nquestion left to it (use_defaults), or decides without one."
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "The generation can't carry on until a blocking question is answered;\nanother may be left for the agent to decide."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The draft items it is about, such as type.Customer; may be empty."
+        },
+        "answer": {
+          "$ref": "#/definitions/v1AgentQuestionAnswer",
+          "description": "The answer it was given, once answered; unset while it waits, or when\nit was left to the agent."
+        },
+        "leftToAgent": {
+          "type": "boolean",
+          "description": "The person (or the automatic answers once due) left it to the agent,\nwhich took its recommended answer, or decided, as its own choice, never\nas the person's words. Never set beside answer."
+        }
+      },
+      "description": "A question the ontology agent asked about its draft (AgentQuestion's\nfields), the draft items it is about, and its answer once given."
+    },
     "v1OntologyGenerationResponse": {
       "type": "object",
       "properties": {
@@ -9505,9 +13110,12 @@
         "ONTOLOGY_GENERATION_STATUS_QUEUED",
         "ONTOLOGY_GENERATION_STATUS_RUNNING",
         "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
-        "ONTOLOGY_GENERATION_STATUS_FAILED"
+        "ONTOLOGY_GENERATION_STATUS_FAILED",
+        "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT",
+        "ONTOLOGY_GENERATION_STATUS_CANCELLED"
       ],
-      "default": "ONTOLOGY_GENERATION_STATUS_UNSPECIFIED"
+      "default": "ONTOLOGY_GENERATION_STATUS_UNSPECIFIED",
+      "description": " - ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT: The ontology agent asked questions only the user can answer: the\ngeneration waits, still the ontology's live one, until they are answered\n(AnswerOntologyGeneration), it is cancelled (CancelOntologyGeneration),\nor answers_due_at passes and Helix answers each with the agent's\ndefault. questions lists them.\n - ONTOLOGY_GENERATION_STATUS_CANCELLED: Cancelled (CancelOntologyGeneration) before it stored a draft."
     },
     "v1OntologyGenerationTable": {
       "type": "object",
@@ -9683,6 +13291,26 @@
             "$ref": "#/definitions/v1FoundryAccessLoss"
           },
           "description": "Each principal that reads an ontology through grants now and wouldn't\nafter the change."
+        }
+      }
+    },
+    "v1PreviewFoundryDashboardTileResponse": {
+      "type": "object",
+      "properties": {
+        "tileJson": {
+          "type": "string",
+          "description": "The tile as a spec would keep it."
+        },
+        "loadId": {
+          "type": "string",
+          "description": "The load it read: the ontology's current one, or the one it pins."
+        },
+        "outcomeJson": {
+          "type": "string",
+          "description": "Its read's outcome as ReadFoundryGraph gives it: {\"ok\": \u003cthe query's\nanswer\u003e} or {\"error\": \u003cwhy it has none\u003e}."
+        },
+        "asOf": {
+          "type": "string"
         }
       }
     },

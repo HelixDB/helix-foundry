@@ -186,31 +186,63 @@
           ]
         },
         {
-          "description": "Answers an open question.",
+          "description": "Answers an open question: the labels of the options chosen, the user's own words, or\nboth where the question takes several options (`Question::check_answer`).",
           "type": "object",
           "properties": {
             "answer": {
               "type": "object",
               "properties": {
+                "options": {
+                  "description": "The labels of the options chosen, each once: one at most for a question that takes\none, none for a question without options.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "question_id": {
                   "description": "The question.",
                   "type": "string"
                 },
                 "text": {
-                  "description": "The answer.",
-                  "type": "string"
+                  "description": "The user's own words: not blank, at most 2,000 characters; required without options.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "additionalProperties": false,
               "required": [
-                "question_id",
-                "text"
+                "question_id"
               ]
             }
           },
           "additionalProperties": false,
           "required": [
             "answer"
+          ]
+        },
+        {
+          "description": "Leaves an open question to the agent: the user chose nothing and wrote nothing, so the\nagent takes its own default (the option it recommended, or the answer it would take)\nor, with none, decides from the data and the goals. Nothing of it is the user's words.",
+          "type": "object",
+          "properties": {
+            "leave": {
+              "type": "object",
+              "properties": {
+                "question_id": {
+                  "description": "The question.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "question_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "leave"
           ]
         }
       ]
@@ -1222,7 +1254,7 @@
           "type": "string"
         },
         "observed": {
-          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows; a turn reads nothing of it.",
+          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows, whose statements hold from then; a turn's dry runs read their\nrows so too, so a preview weighs a document against them as a load would.",
           "anyOf": [
             {
               "$ref": "#/$defs/Observed"

@@ -20,6 +20,7 @@ import (
 	"go.uber.org/dig"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -128,12 +129,18 @@ func New(d Deps) (*Task, error) {
 	}
 	workerID := id.NewWorkerID()
 	probe := d.Cfg.Foundry.AI.Probe
+	var checkTools func(context.Context, ai.Resolved) (ai.AssistantCheck, error)
+	if d.Cfg.Foundry.Agent.Enabled {
+		checkTools = func(ctx context.Context, r ai.Resolved) (ai.AssistantCheck, error) {
+			return llm.CheckTools(ctx, r, resolver.Deployment.Catalog)
+		}
+	}
 	return &Task{
 		deps: d, cfg: cfg, queue: d.DB, boosts: d.Boosts, workerID: workerID, now: time.Now, slots: make(chan struct{}, cfg.Concurrency),
 		closeFn: func() error { return errors.Join(proxy.Close(), agent.Close()) },
 		runner:  &runner{db: d.DB, dbs: d.Databases, boosts: d.Boosts, agent: agent, ai: resolver, proxy: proxy, cfg: d.Cfg, workerID: workerID, flushEvery: flushEvery},
 		prober: &prober{
-			queue: d.DB, agent: agent, keys: resolver.Keyring, deployment: resolver.Deployment, cfg: probe, owner: workerID,
+			queue: d.DB, agent: agent, keys: resolver.Keyring, deployment: resolver.Deployment, cfg: probe, owner: workerID, checkTools: checkTools,
 		},
 		probeEvery: probe.PollInterval,
 		assessor: &assessor{

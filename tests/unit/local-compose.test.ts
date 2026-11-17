@@ -294,6 +294,26 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
     ).toMatchObject({ ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" });
   });
 
+  // The star prompt's (src/server/github-star.ts), to the site alone.
+  it("passes the shell's GitHub token to the site, and no other service", () => {
+    const { services } = composed({}, undefined, {
+      GH_TOKEN: "gho_shell",
+      GITHUB_TOKEN: "ghp_shell",
+    });
+    expect(services.site.environment).toMatchObject({
+      GH_TOKEN: "gho_shell",
+      GITHUB_TOKEN: "ghp_shell",
+    });
+    for (const [name, service] of Object.entries(services))
+      if (name !== "site")
+        expect(
+          Object.keys(service.environment ?? {}).filter((k) =>
+            /^(GH|GITHUB)_TOKEN$/.test(k),
+          ),
+          name,
+        ).toEqual([]);
+  });
+
   // An .env written by hand from .env.example, as its comments say: no
   // task keeps another provider's model.
   it("runs every task on FOUNDRY_AI_MODEL in an .env filled in from .env.example", () => {
@@ -422,13 +442,16 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
         name,
       ).toBe(false);
     // No secret from the .env: an old one's values reach the volume alone.
-    // The .env may turn usage analytics off (local/README.md).
+    // The .env may turn usage analytics off (local/README.md), and the
+    // shell's GitHub token stars the repository when asked.
     expect(services.site.environment).toEqual({
       HELIX_WFE_ORIGIN: "http://pod:8081",
       FOUNDRY_ORIGIN: "http://localhost:3000",
       FOUNDRY_LOCAL_TOKEN_FILE: "/secrets/site-token",
       FOUNDRY_TELEMETRY: "",
       DO_NOT_TRACK: "",
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "",
     });
     expect(services.helix.environment).toEqual({
       HELIX_DATA_DIR: "/var/lib/helix",
@@ -478,6 +501,7 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     ).toEqual([
       "ANTHROPIC_API_KEY",
       "HELIX_DB_DSN",
+      "HELIX_LOCAL__MCP_PORT",
       "HELIX_LOCAL__SECRETS_DIR",
       "HELIX_LOCAL__SITE_ORIGIN",
       "OPENAI_API_KEY",
@@ -503,28 +527,32 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     expect(services.site.environment.HELIX_WFE_ORIGIN).toBe("http://pod:8081");
   });
 
-  // Publishing them is asked for, so a port taken here never stops the app,
-  // and an image from before the MCP never shows its probes on the host.
-  it("publishes MCP and HTTP Ask on loopback only with compose.mcp.yaml", () => {
+  // The MCP, HTTP Ask and Founder's helper reach foundry on this
+  // machine's loopback alone, where FOUNDRY_MCP_PORT puts it.
+  it("publishes MCP, HTTP Ask and the helper's routes on loopback only", () => {
     type Port = { host_ip: string; target: number; published: string };
-    const published = (vars: Record<string, string>, files?: string[]) =>
-      (composed(vars, files).services.pod.ports as Port[]).find(
+    const published = (vars: Record<string, string>) =>
+      (composed(vars).services.pod.ports as Port[]).find(
         (port) => port.target === 8081,
       );
-    const withMcp = ["local/compose.yaml", "local/compose.mcp.yaml"];
-    expect(published({})).toBeUndefined();
-    expect(published({ FOUNDRY_MCP_PORT: "9081" })).toBeUndefined();
-    expect(published({}, withMcp)).toMatchObject({
+    expect(published({})).toMatchObject({
       host_ip: "127.0.0.1",
       published: "8081",
     });
-    expect(published({ FOUNDRY_MCP_PORT: "9081" }, withMcp)).toMatchObject({
+    expect(published({ FOUNDRY_MCP_PORT: "9081" })).toMatchObject({
       host_ip: "127.0.0.1",
       published: "9081",
     });
-    // The store stays published with it, as uploads need.
-    const ports = composed({}, withMcp).services.pod.ports as Port[];
+    // foundry is told the port, which the helper's pair command names.
+    const told = (vars: Record<string, string>) =>
+      (composed(vars).services.foundry.environment as Record<string, string>)
+        .HELIX_LOCAL__MCP_PORT;
+    expect(told({})).toBe("8081");
+    expect(told({ FOUNDRY_MCP_PORT: "9081" })).toBe("9081");
+    // The store stays published beside it, as uploads need, and nothing else.
+    const ports = composed({}).services.pod.ports as Port[];
     expect(ports.map((port) => port.target).sort()).toEqual([8081, 8333]);
+    expect(ports.every((port) => port.host_ip === "127.0.0.1")).toBe(true);
   });
 });
 

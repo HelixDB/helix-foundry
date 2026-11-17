@@ -642,7 +642,7 @@ test("comes back to an ontology's setup with what it chose", async ({
   await connectors.getByRole("checkbox", { name: /Shop database/ }).uncheck();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Goal").fill("Billing health");
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("button", { name: "Add data" }).first().click();
   await dialog(page)
     .getByRole("button", { name: "GitHub", exact: true })

@@ -1254,7 +1254,10 @@ describe("mock document sets", () => {
           documentSetIds: all,
         }),
       ),
-    ).toEqual([409, "an ontology generation is already queued or running"]);
+    ).toEqual([
+      409,
+      "an ontology generation is already queued, running or waiting for answers: answer or cancel it first",
+    ]);
   });
 
   it("keeps in a version's scope only the sets that are live when it is stored", async () => {
@@ -1744,6 +1747,31 @@ describe("mock documents and loads", () => {
       progress: { chunksDone: 2 },
     });
     expect(config).toMatchObject({ startingQueries: { contracts: 0 } });
+  });
+
+  it("retries a load's attempt while its database builds its indexes", async () => {
+    Object.assign(config, { loadStepMs: 100, indexesPending: 1 });
+    const id = (
+      await call("POST", `${O}/loads`, {
+        versionId: "ver_seed_3",
+        clientToken: "go",
+      })
+    ).body.load.id;
+    const at = async (ms: number) => {
+      vi.setSystemTime(Date.now() + ms);
+      return (await call("GET", `${O}/loads/${id}`)).body.load.jobs[0];
+    };
+    expect(await at(350)).toMatchObject({
+      status: "queued",
+      phase: "ingest",
+      error: "the database is still indexing its data; Helix will retry",
+    });
+    expect(await at(10_000)).toMatchObject({
+      status: "succeeded",
+      error: "",
+      progress: { chunksDone: 2 },
+    });
+    expect(config).toMatchObject({ indexesPending: 0 });
   });
 
   it("writes foundry_load on every node and edge, and a marker per load", async () => {
@@ -2547,6 +2575,18 @@ describe("review decisions", () => {
       normName: "globexx corporation",
       entityKey: "cus_GLOBEX01",
     });
+    // A name the load links to no one applies at once (contract 4.22.0): it
+    // waits, and this load, read before names could be settled in place,
+    // leaves it to the next load; its review stays.
+    expect(saved.applied).toEqual({ status: "pending" });
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(
+      (await call("GET", `${O}/review-decisions`)).body.decisions[0].applied,
+    ).toEqual({
+      status: "refused",
+      reason: "not_replayed",
+      at: expect.any(String),
+    });
     expect(reviews(old)).toHaveLength(1);
     expect(
       [...old.nodes()].filter((n) => n.props.resolved_by === "user"),
@@ -3276,6 +3316,7 @@ describe("review decisions", () => {
         (d: { name: string }) => d.name === "variant.md",
       ).extraction;
     expect(await document()).toMatchObject({ facts: 0, reviews: 1 });
+    const cost = (await document()).usdMicros;
 
     // It joins the load's decisions, and waits for its job.
     const saved = (await approve()).body.decision;
@@ -3291,6 +3332,17 @@ describe("review decisions", () => {
 
     // Approved again: a job's step later the claim is a fact of the same
     // load, its review gone, and the document counts it.
+    const section = [...g.nodes()].find(
+      (n) =>
+        n.label === FOUNDRY_NODES.Section &&
+        n.props.doc_id === rv.props.doc_id &&
+        n.props.ordinal === rv.props.section,
+    )!;
+    Object.assign(section.props, {
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
     const again = (await approve()).body.decision;
     vi.setSystemTime(Date.now() + 10_000);
     const [written] = await listed();
@@ -3298,6 +3350,7 @@ describe("review decisions", () => {
     expect(written.applied).toEqual({
       status: "written",
       at: expect.any(String),
+      takesBack: true,
     });
     expect(held()).toHaveLength(0);
     expect(facts()).toHaveLength(1);
@@ -3306,7 +3359,19 @@ describe("review decisions", () => {
       quote: "Globex Corporation may have signed.",
       confidence: 0.72,
     });
-    expect(await document()).toMatchObject({ facts: 1, reviews: 0 });
+    // Contract 4.17.0: written from what the load keeps, its quote names the
+    // model work the commit recorded for its section (set apart here from
+    // the workspace's models), and costs nothing.
+    expect(facts()[0]!.props).toMatchObject({
+      model: "commit-extractor",
+      verifier: "commit-verifier",
+      prompt_version: "6",
+    });
+    expect(await document()).toMatchObject({
+      facts: 1,
+      reviews: 0,
+      usdMicros: cost,
+    });
     // Its review is gone, so it can't be approved twice.
     expect(refusal(await approve())).toEqual([
       404,
@@ -3316,6 +3381,47 @@ describe("review decisions", () => {
     // A later load copies the decision, and its commit says what became of it.
     const next = await loaded("next");
     expect(reviews(next).filter((n) => n.props.claim_key)).toHaveLength(0);
+    expect((await listed())[0].applied).toMatchObject({ status: "written" });
+  });
+
+  // Contract 4.17.0: the load holds the claim's document with other text
+  // than a resend sends, so the engine refuses the approval in place, writes
+  // nothing and spends nothing; a new load reads the text afresh and writes it.
+  it("refuses an approval in place as document_changed, and a new load writes it", async () => {
+    Object.assign(config, { documentChanged: true });
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const held = () =>
+      reviews(g).filter((n) => n.props.reason === "low_confidence");
+    const rv = held()[0]!;
+    const document = async () =>
+      (await call("GET", `${O}/documents`)).body.documents.find(
+        (d: { name: string }) => d.name === "variant.md",
+      ).extraction;
+    const before = await document();
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+      decision: { release: { statementHash } },
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    const listed = async () =>
+      (await call("GET", `${O}/review-decisions`)).body.decisions;
+    expect((await listed())[0].applied).toEqual({
+      status: "refused",
+      reason: "document_changed",
+      at: expect.any(String),
+    });
+    expect(held()).toHaveLength(1);
+    expect(await document()).toEqual(before);
+    const next = await loaded("next");
+    expect(
+      reviews(next).filter((n) => n.props.reason === "low_confidence"),
+    ).toHaveLength(0);
     expect((await listed())[0].applied).toMatchObject({ status: "written" });
   });
 
@@ -3381,7 +3487,11 @@ describe("review decisions", () => {
     expect((await approve()).status).toBe(200);
     vi.setSystemTime(Date.now() + 10_000);
     const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
-    expect(d.applied).toEqual({ status: "written", at: expect.any(String) });
+    expect(d.applied).toEqual({
+      status: "written",
+      at: expect.any(String),
+      takesBack: true,
+    });
     expect(reviews(g).filter((n) => n.props.reason === "conflict")).toEqual([]);
     expect(signedWith(g)).toEqual(["cus_GLOBEX01"]);
     expect(quotes(g)).toEqual([
@@ -3517,7 +3627,12 @@ describe("review decisions", () => {
         d.kind,
         d.applied,
       ]),
-    ).toEqual([["release", { status: "written", at: expect.any(String) }]]);
+    ).toEqual([
+      [
+        "release",
+        { status: "written", at: expect.any(String), takesBack: true },
+      ],
+    ]);
   });
 
   it("writes an approval saved under the key the claim had, by its place and statement", async () => {
@@ -3641,7 +3756,8 @@ describe("review decisions", () => {
     expect(
       reviews(g).filter((n) => n.props.reason === "low_confidence"),
     ).toHaveLength(1);
-    // A decision of another kind says nothing of a load.
+    // A name the load links already (here by its legal form) is the next
+    // load's: the engine keeps that link in place, so nothing is applied.
     const name = reviews(g).find((n) => n.props.reason === "legal_form")!;
     const resolved = (
       await call("POST", `${O}/reviews/${name.props.review_key}:settle`, {

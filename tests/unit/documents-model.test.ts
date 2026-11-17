@@ -15,7 +15,6 @@ import {
   defaultSetId,
   delimitedPreview,
   documentBadge,
-  documentDot,
   documentNameProblem,
   documentViewer,
   extractionBadge,
@@ -38,7 +37,6 @@ import {
   renderedLabel,
   sectionPages,
   ontologyReadText,
-  ontologySetFolders,
   readersText,
   readOutcome,
   readsText,
@@ -46,8 +44,12 @@ import {
   MAX_SET_NAME,
   setLabel,
   setNameProblem,
+  evidenceShapeText,
   failureText,
   fileProblem,
+  heldUnnamed,
+  nameDecisionText,
+  nameOutcomeText,
   formatBytes,
   formatUsd,
   hex,
@@ -468,111 +470,6 @@ describe("document states", () => {
     });
   });
 
-  it("dots each document in an ontology's explorer, in four colours", () => {
-    const dot = (d: Partial<FoundryDocument>) => documentDot(doc(d));
-    // Orange, red and green: what the current load found.
-    expect(dot({ extraction: { status: "extracted", reviews: 2 } })).toEqual({
-      status: "review",
-      label: "Needs review · 2",
-    });
-    expect(
-      dot({ extraction: { status: "failed", error: { code: "model" } } }),
-    ).toEqual({ status: "failed", label: "Couldn’t be read" });
-    expect(dot({ extraction: { status: "extracted", reviews: 0 } })).toEqual({
-      status: "succeeded",
-      label: "Read",
-    });
-    expect(dot({ extraction: { status: "extracted" } })).toEqual({
-      status: "succeeded",
-      label: "Read",
-    });
-    // Grey: waiting.
-    expect(dot({})).toEqual({ status: "queued", label: "Waiting" });
-    expect(dot({ status: "pending_upload" })).toEqual({
-      status: "queued",
-      label: "Uploading",
-    });
-    // Grey: not read, whatever the reason.
-    expect(dot({ status: "deleted" })).toEqual({
-      status: "canceled",
-      label: "Deleted",
-    });
-    expect(dot({ extraction: { status: "duplicate" } })).toEqual({
-      status: "canceled",
-      label: "Duplicate",
-    });
-    expect(dot({ extraction: { status: "out_of_scope" } })).toEqual({
-      status: "canceled",
-      label: "Not read by its version",
-    });
-    expect(dot({ extraction: { status: "weird" as "failed" } })).toEqual({
-      status: "canceled",
-      label: "Unknown",
-    });
-    // A table file loads through mappings, never as text.
-    expect(dot({ mediaType: "text/csv" })).toEqual({
-      status: "canceled",
-      label: "A table file: loads read its rows through mappings",
-    });
-    // A PDF: grey while its text is read, red with why it couldn't be,
-    // before a load and after one; once read, as any text.
-    const pdf = (
-      state: FoundryFileReadState,
-      d: Partial<FoundryDocument> = {},
-    ) =>
-      dot({
-        mediaType: "application/pdf",
-        read: {
-          state,
-          error: {
-            code: "unsupported",
-            message: "Scanned PDF: no text to read.",
-          },
-        },
-        ...d,
-      });
-    expect(pdf("FOUNDRY_FILE_READ_STATE_READING")).toEqual({
-      status: "queued",
-      label: "Reading its text",
-    });
-    expect(pdf("FOUNDRY_FILE_READ_STATE_FAILED")).toEqual({
-      status: "failed",
-      label: "Scanned PDF: no text to read.",
-    });
-    expect(
-      pdf("FOUNDRY_FILE_READ_STATE_FAILED", {
-        extraction: { status: "failed", error: { code: "unsupported" } },
-      }),
-    ).toEqual({ status: "failed", label: "Scanned PDF: no text to read." });
-    expect(pdf("FOUNDRY_FILE_READ_STATE_READY")).toEqual({
-      status: "queued",
-      label: "Waiting",
-    });
-    expect(
-      pdf("FOUNDRY_FILE_READ_STATE_READY", {
-        extraction: { status: "extracted", reviews: 1 },
-      }),
-    ).toEqual({ status: "review", label: "Needs review · 1" });
-    // A model failure is as any document's.
-    expect(
-      pdf("FOUNDRY_FILE_READ_STATE_READY", {
-        extraction: { status: "failed", error: { code: "model" } },
-      }),
-    ).toEqual({ status: "failed", label: "Couldn’t be read" });
-    // The WFE says so of a type this page doesn't know.
-    expect(
-      dot({
-        mediaType: "image/png",
-        extraction: { status: "failed", error: { code: "unsupported" } },
-      }),
-    ).toEqual({
-      status: "canceled",
-      label: "Ontologies don’t read its format yet",
-    });
-    // A document ontologies read waits, even with no media type.
-    expect(dot({ mediaType: "text/markdown" }).label).toBe("Waiting");
-  });
-
   it("says what a load made of it, for each ontology", () => {
     expect(extractionBadge({ status: "extracted", reviews: 2 })).toEqual({
       status: "review",
@@ -827,49 +724,6 @@ describe("document sets", () => {
       "A connection / set_n",
     );
     expect(setLabel({ id: "set_g", name: "General" })).toBe("General");
-  });
-
-  it("shows an ontology the sets it reads or holds documents of", () => {
-    const all = [
-      { id: "s1", name: "Contracts", readBy: [{ ontologyId: "o1" }] },
-      { id: "s2", name: "Board", readBy: [{ ontologyId: "o2" }] },
-      { id: "s3", name: "Moved", readBy: [] },
-      { id: "s4", name: "Empty", readBy: [{ ontologyId: "o1" }] },
-    ];
-    const read = (id: string, setId: string, reviews = 0) => ({
-      id,
-      name: `${id}.md`,
-      setId,
-      createdAt: `2026-10-0${id.slice(1)}`,
-      extraction: { status: "extracted" as const, reviews },
-    });
-    const documents = [
-      read("d2", "s1", 3),
-      read("d1", "s1"),
-      read("d3", "s3", 1),
-      // A set the sets list doesn't name yet waits for the next read.
-      read("d4", "gone"),
-    ];
-    const shown = (term?: string) =>
-      ontologySetFolders("o1", all, documents, term).map((f) => [
-        f.set.id,
-        f.documents.map((d) => d.id),
-        f.review,
-      ]);
-    // Its sets in the workspace's order, documents oldest first; Board is
-    // another ontology's, and Moved holds a document its current load
-    // read before it moved.
-    expect(shown()).toEqual([
-      ["s1", ["d1", "d2"], 1],
-      ["s3", ["d3"], 1],
-      ["s4", [], 0],
-    ]);
-    // A search keeps a set by its name, else the documents it finds, and
-    // counts what it shows.
-    expect(shown("contr")).toEqual([["s1", ["d1", "d2"], 1]]);
-    expect(shown("D1")).toEqual([["s1", ["d1"], 0]]);
-    expect(shown("nothing")).toEqual([]);
-    expect(ontologySetFolders("o1", [], documents)).toEqual([]);
   });
 });
 
@@ -1411,40 +1265,6 @@ describe("the documents model's examples", () => {
       status: "review",
       label: "Needs review · 2",
     });
-    expect(
-      documentDot({ id: "d", extraction: { status: "extracted", reviews: 2 } }),
-    ).toEqual({ status: "review", label: "Needs review · 2" });
-    expect(
-      documentDot({
-        id: "d",
-        status: "uploaded",
-        mediaType: "application/pdf",
-        read: {
-          state: "FOUNDRY_FILE_READ_STATE_FAILED",
-          error: { message: "Scanned PDF: no text to read." },
-        },
-      }),
-    ).toEqual({ status: "failed", label: "Scanned PDF: no text to read." });
-    expect(documentDot({ id: "d", mediaType: "text/csv" })).toEqual({
-      status: "canceled",
-      label: "A table file: loads read its rows through mappings",
-    });
-    expect(
-      ontologySetFolders(
-        "o1",
-        [
-          { id: "g", name: "General", readBy: [{ ontologyId: "o1" }] },
-          { id: "b", name: "Board" },
-        ],
-        [
-          {
-            id: "d",
-            setId: "g",
-            extraction: { status: "extracted", reviews: 1 },
-          },
-        ],
-      ).map((f) => [f.set.id, f.documents.length, f.review]),
-    ).toEqual([["g", 1, 1]]);
     expect(readersText("Board", [{ ontologyId: "o1" }], () => "Renewals")).toBe(
       "Renewals reads Board.",
     );
@@ -1831,5 +1651,115 @@ describe("file reads", () => {
         read: { kind: "FOUNDRY_READ_KIND_PDF" },
       }),
     ).toBe("pdf");
+  });
+});
+
+// Contract 4.18.0: a held claim's shape, and one held for an end its part of
+// the document doesn't name.
+describe("held claims", () => {
+  it("words each evidence shape, and none it doesn't know", () => {
+    expect(
+      [
+        "prose_sentence",
+        "list_item",
+        "table_row_or_cell",
+        "header_title_or_form_field",
+        "spread_across_sentences",
+        "spread_across_sections",
+        "implied",
+      ].map(evidenceShapeText),
+    ).toEqual([
+      "A sentence",
+      "A list item",
+      "A table row",
+      "A heading or form field",
+      "Across several sentences",
+      "Across sections",
+      "Implied, not stated",
+    ]);
+    expect(evidenceShapeText("sung")).toBeUndefined();
+    expect(evidenceShapeText("")).toBeUndefined();
+    expect(evidenceShapeText(undefined)).toBeUndefined();
+  });
+
+  it("tells a claim held for an unnamed end from an unsure one by its score", () => {
+    expect(heldUnnamed("low_confidence", 0.9)).toBe(true);
+    expect(heldUnnamed("attribute_low_confidence", 0.97)).toBe(true);
+    expect(heldUnnamed("low_confidence", 0.89)).toBe(false);
+    expect(heldUnnamed("low_confidence", undefined)).toBe(false);
+    expect(heldUnnamed("unverified", 0.95)).toBe(false);
+    expect(heldUnnamed(undefined, 0.95)).toBe(false);
+    expect(reviewCopy("low_confidence", 0, 0.95)).toEqual({
+      title: "Not sure who it’s about",
+      text: "The checker scored it high, but this part of the document doesn’t name who or what it’s about, so it was held for a person. Check the quote names the right one.",
+    });
+    expect(reviewCopy("attribute_low_confidence", 0, 0.93).title).toBe(
+      "Not sure whose value it is",
+    );
+    // Under the bar, or unscored, it is the unsure one it always was.
+    expect(reviewCopy("low_confidence", 0, 0.72)).toEqual(
+      reviewCopy("low_confidence"),
+    );
+    expect(reviewCopy("attribute_low_confidence", 0, 0.5).title).toBe(
+      "The model wasn’t sure of a value",
+    );
+    expect(reviewCopy("unverified", 0, 0.95)).toEqual(reviewCopy("unverified"));
+  });
+});
+
+// Contract 4.22.0: what a load made of each name choice it met.
+describe("name outcomes", () => {
+  it("words each outcome and refusal, and only that it wasn't applied for one it doesn't know", () => {
+    const refused = (reason?: string) =>
+      nameOutcomeText({ outcome: "refused", reason });
+    expect(nameOutcomeText({ outcome: "written" })).toBe(
+      "Written to this load",
+    );
+    expect(nameOutcomeText({ outcome: "not_asked" })).toBe(
+      "Nothing in this load waited on it",
+    );
+    expect(nameOutcomeText({ outcome: "not_named" })).toBe(
+      "This document doesn’t name it",
+    );
+    expect(
+      [
+        "absent",
+        "bound",
+        "collides",
+        "differs",
+        "too_large",
+        "two_rows",
+        "role_term",
+        "shared",
+        "identifier",
+        "other_identity",
+        "not_replayed",
+      ].map(refused),
+    ).toEqual([
+      "The record chosen isn’t in this load",
+      "This document already links the name another way; that changes when the document is read again",
+      "Another name in this document is already that record",
+      "The load no longer matches what the document gave; it applies when the document is read again",
+      "Too large to write in place; it applies when the document is read again",
+      "Another record goes by this name too, or people chose different records for it",
+      "A role, like “the Customer”, not a name",
+      "Another party in this document goes by it too",
+      "The document gives an ID that doesn’t match the record chosen",
+      "The names show a different legal company",
+      "Built before names could be applied at once; the next load applies it",
+    ]);
+    expect(refused("a_new_reason")).toBe("Not applied in this load");
+    expect(refused(undefined)).toBe("Not applied in this load");
+    expect(nameOutcomeText({ outcome: "queued" })).toBe(
+      "Not applied in this load",
+    );
+    expect(nameOutcomeText({})).toBe("Not applied in this load");
+  });
+
+  it("says whose choice it is, and nothing for a kind it doesn't know", () => {
+    expect(nameDecisionText("resolve")).toBe("Your choice for this document");
+    expect(nameDecisionText("alias")).toBe("A choice made in another document");
+    expect(nameDecisionText("override")).toBeUndefined();
+    expect(nameDecisionText(undefined)).toBeUndefined();
   });
 });

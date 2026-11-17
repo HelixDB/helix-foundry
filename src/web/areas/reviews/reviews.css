@@ -113,3 +113,8 @@
   padding: 4px 12px 4px 0;
   text-align: left;
 }
+
+/* The Review page's tabs: the header's tab bar already spaces them. */
+.rv-tab.hf-tab-panel {
+  padding-top: 0;
+}

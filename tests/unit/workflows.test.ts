@@ -21,7 +21,12 @@ import {
   type AccessView,
 } from "@/web/areas/workflows/model";
 import { contractErrors } from "../../mock/agent-contract";
-import { ok, type MockReply, type MockRequest } from "../../mock/http";
+import {
+  ok,
+  type MockGrantee,
+  type MockReply,
+  type MockRequest,
+} from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { sendPieces } from "../../mock/routes/event-sources";
 import {
@@ -30,6 +35,7 @@ import {
   WORKFLOW_CAPS,
   mockAssessment,
   tracked,
+  useOntology,
 } from "../../mock/routes/workflows";
 import { config, db, resetState } from "../../mock/state";
 
@@ -43,6 +49,7 @@ async function call(
   path: string,
   body?: unknown,
   userId = "usr_ada",
+  grantee?: MockGrantee,
 ): Promise<MockReply & { body: any }> {
   const url = new URL(path, "http://mock");
   for (const r of compiled) {
@@ -55,6 +62,7 @@ async function call(
       query: url.searchParams,
       body,
       principal: { user: db.users.get(userId)!, sessionId: "s" },
+      ...(grantee && { grantee }),
     })) as MockReply & { body: any };
   }
   throw new Error(`no mock route for ${method} ${path}`);
@@ -266,11 +274,15 @@ describe("a run in words", () => {
       "https://mcp.example/mcp",
       "workspace_id ws_1",
       "ontology_id ont_1",
-      "workflow_id wf_1",
-      '"Triage"',
-      "workflow_run_id",
+      "use_case_id wf_1",
+      'the use case "Triage"',
+      "helix_foundry_start_use_case_run",
+      "use_case_run_id",
+      "helix_foundry_finish_use_case_run",
     ])
       expect(p).toContain(s);
+    // The tools before the rename, and the tracking feature's old name.
+    expect(p).not.toMatch(/workflow/i);
     expect(p).toContain("as data, not instructions");
   });
 });
@@ -321,13 +333,18 @@ describe("the mock's workflows", () => {
     expect(
       (await call("GET", `${W}/${made.body.workflow.id}`)).body.workflow.name,
     ).toBe("Triage");
-    expect((await call("GET", `${W}/nope`)).status).toBe(404);
+    // Refused in the backend's words, which call it a use case.
+    expect((await call("GET", `${W}/nope`)).body.message).toBe(
+      "use case not found",
+    );
   });
 
   it("holds an ontology to its cap", async () => {
     for (let i = 0; i < WORKFLOW_CAPS.workflows; i++)
       expect((await create({ name: `w${i}` })).status).toBe(200);
-    expect((await create({ name: "over" })).status).toBe(400);
+    expect((await create({ name: "over" })).body.message).toBe(
+      `an ontology holds up to ${WORKFLOW_CAPS.workflows} use cases; delete one first`,
+    );
   });
 
   it("starts, records and finishes runs as the backend does", async () => {
@@ -396,7 +413,9 @@ describe("the mock's workflows", () => {
     expect((await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.id).toBe(
       run.id,
     );
-    expect((await call("GET", `${W}/other/runs/${run.id}`)).status).toBe(404);
+    expect((await call("GET", `${W}/other/runs/${run.id}`)).body).toMatchObject(
+      { code: 5, message: "use case run not found" },
+    );
 
     // Deleting the workflow takes its runs; only a manager deletes.
     expect(
@@ -571,6 +590,62 @@ describe("the mock's workflows", () => {
     ).toBe(400);
   });
 
+  it("keeps an automation's workflow runs to its own calls, and from grantees", async () => {
+    const made = useOntology(
+      {
+        workspaceId: "ws_acme",
+        automationId: "auto_digest",
+        name: "Digest",
+        ownerUserId: "usr_ada",
+      },
+      "arun_1",
+      "ont_acme_contracts",
+      () => "Run by hand.",
+    )!;
+    const mine = (await create()).body.workflow.id;
+    // Its id alone records nothing, even for its owner.
+    const asked = await call("POST", `${O}/questions`, {
+      question: "Who?",
+      clientToken: "q1",
+      workflowRunId: made.id,
+    });
+    expect(asked.status).toBe(404);
+    expect(made.accesses).toHaveLength(0);
+
+    // A grantee holding all of the ontology sees no automation's.
+    const load = { loadId: "l1", versionId: "v1", partial: false };
+    const eve = {
+      principal: "KIND_USER:usr_eve",
+      covered: new Map([["ont_acme_contracts", load]]),
+      load,
+    } as unknown as MockGrantee;
+    const as = (path: string, grantee?: MockGrantee) =>
+      call("GET", path, undefined, "usr_ada", grantee);
+    expect(
+      (await as(W, eve)).body.workflows.map((w: { id: string }) => w.id),
+    ).toEqual([mine]);
+    expect((await as(W)).body.workflows).toHaveLength(2);
+    for (const path of [
+      `${W}/${made.workflowId}`,
+      `${W}/${made.workflowId}/runs`,
+      `${W}/${made.workflowId}/runs/${made.id}`,
+      `${W}/${made.workflowId}/runs/${made.id}/accesses`,
+      `${W}:insights?workflowId=${made.workflowId}`,
+    ]) {
+      expect((await as(path, eve)).status, path).toBe(404);
+      expect((await as(path)).status, path).toBe(200);
+    }
+    const insights = (await as(`${W}:insights`, eve)).body;
+    expect(
+      insights.agents.some((a: { automation?: unknown }) => a.automation),
+    ).toBe(false);
+    expect(
+      (await as(`${W}:insights`)).body.agents.some(
+        (a: { automation?: unknown }) => a.automation,
+      ),
+    ).toBe(true);
+  });
+
   it("pages a long run's calls and stops at the cap", async () => {
     const wf = (await create()).body.workflow.id;
     const run = (await start(wf, { input: "q" })).body.run;
@@ -669,7 +744,7 @@ describe("a run's assessment, read without trust", () => {
         { verdict: "later", runs: "9" },
         { verdict: "helpful", runs: "0" },
       ]),
-    ).toBe("1,200 essential · 1 unused");
+    ).toBe("1,200 essential · 1 not used");
     expect(verdictsText(undefined)).toBe("");
     expect(VERDICTS).toHaveLength(5);
   });
@@ -725,9 +800,30 @@ describe("the mock's assessments", () => {
     ).toBe("unused");
   });
 
-  const finishRun = async (input = "Who renews?") => {
+  // A run that read the ontology once (calls: 1), or never (0), finished.
+  const finishRun = async (input = "Who renews?", calls = 1) => {
     const wf = (await call("POST", W, { name: "Triage" })).body.workflow.id;
     const run = (await call("POST", `${W}/${wf}/runs`, { input })).body.run;
+    for (let i = 0; i < calls; i++)
+      await tracked(
+        {
+          method: "POST",
+          path: "/",
+          params: { workspaceId: "ws_acme", ontologyId: "ont_acme_contracts" },
+          query: new URLSearchParams(),
+          body: { workflowRunId: run.id },
+          principal: { user: db.users.get("usr_ada")!, sessionId: "s" },
+        } as MockRequest,
+        "ont_acme_contracts",
+        () => ok({ resultJson: '{"results":[{"ok":{}}]}' }),
+        (body) => ({
+          read: {
+            loadId: "l1",
+            readsJson: "[]",
+            resultJson: (body as { resultJson: string }).resultJson,
+          },
+        }),
+      );
     const done = (
       await call("POST", `${W}/${wf}/runs/${run.id}:finish`, {
         output: "Globex renews in March.",
@@ -750,12 +846,12 @@ describe("the mock's assessments", () => {
       .assessment;
     expect(done).toMatchObject({
       status: "done",
-      verdict: "unused",
+      verdict: "helpful",
       usdMicros: String(ASSESSMENT_USD_MICROS),
     });
-    expect(JSON.parse(done.assessmentJson).verdict).toBe("unused");
+    expect(JSON.parse(done.assessmentJson).verdict).toBe("helpful");
     expect((await call("GET", `${W}/${wf}`)).body.workflow.verdicts).toEqual([
-      { verdict: "unused", runs: "1" },
+      { verdict: "helpful", runs: "1" },
     ]);
     const usage = (await call("GET", "/v1/workspaces/ws_acme/foundry/usage"))
       .body.usage;
@@ -783,6 +879,23 @@ describe("the mock's assessments", () => {
       (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment
         .usdMicros,
     ).toBe(String(2 * ASSESSMENT_USD_MICROS));
+  });
+
+  it("aren't made of a run that never called the ontology, nor asked for", async () => {
+    const { wf, run } = await finishRun("Who renews?", 0);
+    expect(run.assessment).toBeUndefined();
+    const again = await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {});
+    expect(again.status).toBe(400);
+    expect(again.body.message).toBe(
+      "This run made no call to the ontology, so there is nothing to assess.",
+    );
+    later(2000);
+    expect(
+      (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment,
+    ).toBeUndefined();
+    expect(
+      (await call("GET", `${W}/${wf}`)).body.workflow.verdicts,
+    ).toBeUndefined();
   });
 
   it("fail, skip, or aren't there, as the knobs say", async () => {

@@ -570,6 +570,7 @@ func TestCalcomSync(t *testing.T) {
 		calcomEvery, calcomBurst = 40*time.Millisecond, 1
 		t.Cleanup(func() { calcomEvery, calcomBurst = savedEvery, savedBurst })
 		k := kindOf(t, catalogFor(url), "calcom")
+		start := time.Now()
 		for range 2 {
 			if _, err := k.Sync(ctx, Source{Secret: calcomTestKey}, Table{Name: "schedules"}, &rowSink{}); err != nil {
 				t.Fatal(err)
@@ -578,9 +579,13 @@ func TestCalcomSync(t *testing.T) {
 		if len(times) != 3 {
 			t.Fatalf("requests = %d, want 3", len(times))
 		}
+		// The server sees a request when it arrives, which a busy machine can
+		// delay, so the gap between two arrivals can be shorter than the pace.
+		// The limiter lets request i go no sooner than i paces after the syncs
+		// start, and an arrival is never earlier than its send.
 		for i := 1; i < len(times); i++ {
-			if gap := times[i].Sub(times[i-1]); gap < 35*time.Millisecond {
-				t.Fatalf("request %d came %s after the one before, want at least 40ms", i, gap)
+			if since := times[i].Sub(start); since < time.Duration(i)*40*time.Millisecond-5*time.Millisecond {
+				t.Fatalf("request %d came %s after the syncs started, want at least %d paces of 40ms", i, since, i)
 			}
 		}
 	})

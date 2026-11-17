@@ -83,6 +83,8 @@ var methods = map[string]check{
 	foundry("GenerateOntology"):                      checkWorkspace,
 	foundry("ListOntologyGenerations"):               checkWorkspace,
 	foundry("GetOntologyGeneration"):                 checkWorkspace,
+	foundry("AnswerOntologyGeneration"):              checkWorkspace,
+	foundry("CancelOntologyGeneration"):              checkWorkspace,
 
 	foundry("ListFoundryDocuments"):          checkWorkspace,
 	foundry("CreateFoundryDocument"):         checkWorkspace,
@@ -129,12 +131,59 @@ var methods = map[string]check{
 
 	foundry("SettleFoundryReview"):         checkWorkspace,
 	foundry("ListFoundryReviewDecisions"):  checkOntology,
+	foundry("ListFoundryReviews"):          checkOntology,
 	foundry("DeleteFoundryReviewDecision"): checkWorkspace,
 	foundry("SettleFoundryReviewLabel"):    checkWorkspace,
 	foundry("ListFoundryReviewLabels"):     checkOntology,
 
 	foundry("ListFoundryHealFindings"):   checkOntology,
 	foundry("DismissFoundryHealFinding"): checkWorkspace,
+
+	// The Assistant: each handler reads the owner's own thread, turn or action.
+	foundry("SendFoundryAgentMessage"):    checkWorkspace,
+	foundry("ListFoundryAgentThreads"):    checkWorkspace,
+	foundry("GetFoundryAgentThread"):      checkWorkspace,
+	foundry("DeleteFoundryAgentThread"):   checkWorkspace,
+	foundry("ListFoundryAgentTurnEvents"): checkWorkspace,
+	foundry("CancelFoundryAgentTurn"):     checkWorkspace,
+	foundry("ExecuteFoundryAgentAction"):  checkWorkspace,
+	foundry("RefreshFoundryAgentAction"):  checkWorkspace,
+	foundry("DismissFoundryAgentAction"):  checkWorkspace,
+	// Where the Assistant runs, and the helpers that run it on the owner's
+	// subscription (agent_host.go).
+	foundry("GetFoundryAgentRuntime"):        checkWorkspace,
+	foundry("UpdateFoundryAgentRuntime"):     checkWorkspace,
+	foundry("CreateFoundryAgentHostPairing"): checkWorkspace,
+	foundry("RevokeFoundryAgentHost"):        checkWorkspace,
+	// The caller's source grants, which every Founder attempt reads for its
+	// Reach (agent.reachOf): the owner is never a grantee, so it answers so.
+	foundry("GetMyFoundryAccess"): checkWorkspace,
+
+	// Dashboards: each handler reads the workspace's own. An install
+	// publishes no public link (no door serves one).
+	foundry("ListFoundryDashboards"):             checkWorkspace,
+	foundry("GetFoundryDashboard"):               checkWorkspace,
+	foundry("CreateFoundryDashboard"):            checkWorkspace,
+	foundry("UpdateFoundryDashboard"):            checkWorkspace,
+	foundry("DeleteFoundryDashboard"):            checkWorkspace,
+	foundry("PinFoundryDashboard"):               checkWorkspace,
+	foundry("AddFoundryDashboardQuestionVisual"): checkWorkspace,
+	foundry("PreviewFoundryDashboardTile"):       checkWorkspace,
+	// Automations: each handler reads the workspace's own, and runs and
+	// changes only the owner's.
+	foundry("ListFoundryAutomations"):           checkWorkspace,
+	foundry("GetFoundryAutomation"):             checkWorkspace,
+	foundry("CreateFoundryAutomation"):          checkWorkspace,
+	foundry("UpdateFoundryAutomation"):          checkWorkspace,
+	foundry("DeleteFoundryAutomation"):          checkWorkspace,
+	foundry("ApproveFoundryAutomation"):         checkWorkspace,
+	foundry("PauseFoundryAutomation"):           checkWorkspace,
+	foundry("ResumeFoundryAutomation"):          checkWorkspace,
+	foundry("RunFoundryAutomation"):             checkWorkspace,
+	foundry("ListFoundryAutomationRuns"):        checkWorkspace,
+	foundry("GetFoundryAutomationRun"):          checkWorkspace,
+	foundry("CancelFoundryAutomationRun"):       checkWorkspace,
+	foundry("ListFoundryAutomationSuggestions"): checkWorkspace,
 
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,

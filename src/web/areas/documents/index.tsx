@@ -1,15 +1,13 @@
-// Documents area: an ontology's documents, lazy-loaded by the Ontology
-// area's route table under /ontology/:ontologyId/documents.
+// Documents area: a document's page, lazy-loaded by the Ontology area's
+// route table under /ontology/:ontologyId/documents. An ontology's list of
+// them is its Connections page's (./documents.tsx).
 import "./documents.css";
 import { useParams } from "react-router-dom";
 import { Page, PageHeader } from "../../kit";
 import { useReadAccess } from "../explore/graph-reader";
 import { NotShared } from "../ontology/load-selection";
 import { DocumentPage } from "./document";
-import { DocumentsPage } from "./documents";
 import { SharedDocumentPage } from "./shared-document";
-
-export { DocumentsPage };
 
 // /ontology/:ontologyId/documents/:documentId: the document as the
 // ontology read it, or, read through source grants, as uploaded.

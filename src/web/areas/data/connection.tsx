@@ -167,6 +167,19 @@ function details(
       label: "Message history",
       value: plural(config.slack.historyDays || 90, "day"),
     });
+  if (config && "databuddy" in config)
+    items.push(
+      {
+        label: "Websites",
+        value:
+          (config.databuddy.websiteIds || []).join(", ") || "Every website",
+        mono: !!config.databuddy.websiteIds?.length,
+      },
+      {
+        label: "History",
+        value: plural(config.databuddy.historyDays || 90, "day"),
+      },
+    );
   if (config && "google" in config)
     items.push(
       // Signed in, it reads as the person who signed in (Access).

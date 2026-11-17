@@ -68,7 +68,9 @@ export const keyInstead = (kind: SignInKind) => SIGN_IN_KINDS[kind][1];
  * The wizard keeps its own choices in this tab.
  */
 export type ReturnPicks = {
-  goal: string;
+  // null: the page hadn't read the goal it starts from (Generate's, from
+  // the generation that drafted the current version), so it reads it again.
+  goal: string | null;
   connectorIds: string[] | null;
   eventSources: [string, FoundryEventSourceMode][] | null;
   setIds: string[] | null;
@@ -85,7 +87,7 @@ const MODES = new Set<unknown>([
 export function readPicks(v: unknown): ReturnPicks | undefined {
   if (!v || typeof v !== "object") return undefined;
   const p = v as Record<string, unknown>;
-  if (typeof p.goal !== "string") return undefined;
+  if (typeof p.goal !== "string" && p.goal !== null) return undefined;
   const events = Array.isArray(p.eventSources)
     ? (p.eventSources as unknown[]).filter(
         (e): e is [string, FoundryEventSourceMode] =>

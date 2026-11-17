@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -36,6 +37,21 @@ func (u Unimplemented) ListFoundryLoadDecisions(context.Context, string, string,
 	u.unimplemented("ListFoundryLoadDecisions")
 	return nil, nil
 }
+
+func (u Unimplemented) ListFoundryLoadAliasesNamed(context.Context, string, []int64) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryLoadAliasesNamed")
+	return nil, nil
+}
+
+func (u Unimplemented) FillFoundryLoadNameKeys(context.Context, string) (int, error) {
+	u.unimplemented("FillFoundryLoadNameKeys")
+	return 0, nil
+}
+
+func (u Unimplemented) FoundryLoadHasAliases(context.Context, string) (bool, error) {
+	u.unimplemented("FoundryLoadHasAliases")
+	return false, nil
+}
 func (u Unimplemented) ListFoundryShownDecisions(context.Context, string, string, int) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryShownDecisions")
 	return nil, nil
@@ -52,6 +68,15 @@ func (u Unimplemented) SettleFoundryReleases(context.Context, string, string, []
 	u.unimplemented("SettleFoundryReleases")
 	return false, nil
 }
+func (u Unimplemented) SettleFoundryResolve(context.Context, string, string, *model.FoundryReviewDecision, []string, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("SettleFoundryResolve")
+	return false, nil
+}
+func (u Unimplemented) SettleFoundryBoundResolve(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("SettleFoundryBoundResolve")
+	return false, nil
+}
+
 func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
 	u.unimplemented("SettleFoundryValue")
 	return false, nil
@@ -68,12 +93,24 @@ func (u Unimplemented) ListFoundryLoadResends(context.Context, string) ([]*model
 	u.unimplemented("ListFoundryLoadResends")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryCarriedAliases(context.Context, string, int) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryCarriedAliases")
+	return nil, nil
+}
+func (u Unimplemented) OweFoundryAskingResends(context.Context, *model.FoundryGraphJob, string, []string, []string) (bool, error) {
+	u.unimplemented("OweFoundryAskingResends")
+	return false, nil
+}
 func (u Unimplemented) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
 	u.unimplemented("FoundryLoadDecisionsOwed")
 	return nil, nil
 }
 func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
 	u.unimplemented("EndFoundryLoadResend")
+	return nil
+}
+func (u Unimplemented) RecordFoundryReleaseOutcomes(context.Context, string, string, string, []model.FoundryReleaseOutcome, []model.FoundryDocumentName) error {
+	u.unimplemented("RecordFoundryReleaseOutcomes")
 	return nil
 }
 func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, string, string, *model.FoundryGraphJob) error {
@@ -465,6 +502,18 @@ func (u Unimplemented) FinishOntologyGeneration(context.Context, string, string,
 	u.unimplemented("FinishOntologyGeneration")
 	return nil
 }
+func (u Unimplemented) AnswerOntologyGeneration(context.Context, string, string, uint64, []agentquestion.Answer) error {
+	u.unimplemented("AnswerOntologyGeneration")
+	return nil
+}
+func (u Unimplemented) CancelOntologyGeneration(context.Context, string, string) error {
+	u.unimplemented("CancelOntologyGeneration")
+	return nil
+}
+func (u Unimplemented) ListOntologyGenerationsAskedBefore(context.Context, time.Time, int) ([]*model.OntologyGeneration, error) {
+	u.unimplemented("ListOntologyGenerationsAskedBefore")
+	return nil, nil
+}
 func (u Unimplemented) GetFoundryOntology(context.Context, string, string) (*model.FoundryOntology, error) {
 	u.unimplemented("GetFoundryOntology")
 	return nil, nil
@@ -519,6 +568,10 @@ func (u Unimplemented) GetFoundryDataLayout(context.Context, string) (*model.Fou
 }
 func (u Unimplemented) GetOntologyVersionScope(context.Context, string, string) ([]string, error) {
 	u.unimplemented("GetOntologyVersionScope")
+	return nil, nil
+}
+func (u Unimplemented) GetOntologyVersionSources(context.Context, string, string) (*model.OntologyVersionSources, error) {
+	u.unimplemented("GetOntologyVersionSources")
 	return nil, nil
 }
 func (u Unimplemented) GetOntologyVersionMappings(context.Context, string, string) (string, error) {
@@ -747,7 +800,7 @@ func (u Unimplemented) QueueFoundryRefresh(context.Context, string, string, *mod
 	u.unimplemented("QueueFoundryRefresh")
 	return false, nil
 }
-func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, []string, time.Duration) error {
+func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, string, []string, time.Duration) error {
 	u.unimplemented("OweFoundryRefreshes")
 	return nil
 }
@@ -925,6 +978,10 @@ func (u Unimplemented) ActivateFoundryAIDefault(context.Context, string, string)
 }
 func (u Unimplemented) DiscoverFoundryOntologyReady(context.Context, time.Time, int, func() string) (int, error) {
 	u.unimplemented("DiscoverFoundryOntologyReady")
+	return 0, nil
+}
+func (u Unimplemented) DiscoverFoundryOntologyQuestions(context.Context, time.Time, int, func() string) (int, error) {
+	u.unimplemented("DiscoverFoundryOntologyQuestions")
 	return 0, nil
 }
 func (u Unimplemented) DiscoverFoundrySampleFollowUps(context.Context, time.Time, time.Time, int, func() string) (int, error) {
@@ -1124,7 +1181,7 @@ func (u Unimplemented) GetFoundryWorkflowByClientToken(context.Context, string, 
 	u.unimplemented("GetFoundryWorkflowByClientToken")
 	return nil, nil
 }
-func (u Unimplemented) ListFoundryWorkflows(context.Context, string, string, int) ([]*model.FoundryWorkflow, string, error) {
+func (u Unimplemented) ListFoundryWorkflows(context.Context, string, bool, string, int) ([]*model.FoundryWorkflow, string, error) {
 	u.unimplemented("ListFoundryWorkflows")
 	return nil, "", nil
 }
@@ -1150,7 +1207,7 @@ func (u Unimplemented) TallyFoundryWorkflowRuns(context.Context, []string, acces
 	return nil, nil
 }
 
-func (u Unimplemented) ListFoundryWorkflowInsightRuns(context.Context, string, string, *access.Principal, time.Time, time.Time,
+func (u Unimplemented) ListFoundryWorkflowInsightRuns(context.Context, string, string, *access.Principal, bool, time.Time, time.Time,
 	int) ([]model.FoundryWorkflowInsightRun, error) {
 	u.unimplemented("ListFoundryWorkflowInsightRuns")
 	return nil, nil
@@ -1209,5 +1266,437 @@ func (u Unimplemented) RenewFoundryWorkflowRunAssessment(context.Context, string
 }
 func (u Unimplemented) FinishFoundryWorkflowRunAssessment(context.Context, string, string, model.FoundryWorkflowAssessmentOutcome) error {
 	u.unimplemented("FinishFoundryWorkflowRunAssessment")
+	return nil
+}
+
+func (u Unimplemented) GetFoundryAgentThread(context.Context, string, string) (*model.FoundryAgentThread, error) {
+	u.unimplemented("GetFoundryAgentThread")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, string, func(*model.FoundryAgentThread) bool, string, int) ([]*model.FoundryAgentThread, string, error) {
+	u.unimplemented("ListFoundryAgentThreads")
+	return nil, "", nil
+}
+
+func (u Unimplemented) RecordFoundryAgentThreadGrants(context.Context, string, string, *model.FoundryAgentThreadGrants) error {
+	u.unimplemented("RecordFoundryAgentThreadGrants")
+	return nil
+}
+
+func (u Unimplemented) GetFoundryAgentTurn(context.Context, string, string) (*model.FoundryAgentTurn, error) {
+	u.unimplemented("GetFoundryAgentTurn")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAgentTurnByClientToken(context.Context, string, string, string) (*model.FoundryAgentTurn, error) {
+	u.unimplemented("GetFoundryAgentTurnByClientToken")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAgentTurns(context.Context, string, int) ([]*model.FoundryAgentTurn, error) {
+	u.unimplemented("ListFoundryAgentTurns")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAgentEvents(context.Context, string, int, int) ([]model.FoundryAgentEvent, error) {
+	u.unimplemented("ListFoundryAgentEvents")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAgentMessages(context.Context, string) ([]model.FoundryAgentMessage, error) {
+	u.unimplemented("ListFoundryAgentMessages")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAgentAction(context.Context, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("GetFoundryAgentAction")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAgentActionByPayload(context.Context, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("GetFoundryAgentActionByPayload")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAgentActions(context.Context, string) ([]*model.FoundryAgentAction, error) {
+	u.unimplemented("ListFoundryAgentActions")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundryAgentTurn(context.Context, *model.FoundryAgentTurn, *model.FoundryAgentThread, model.FoundryAgentLimits, json.RawMessage) error {
+	u.unimplemented("CreateFoundryAgentTurn")
+	return nil
+}
+
+func (u Unimplemented) AskFoundryAgentQuestions(context.Context, string, string, *model.FoundryAgentAsked, json.RawMessage) error {
+	u.unimplemented("AskFoundryAgentQuestions")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryAgentThread(context.Context, string, string, string) error {
+	u.unimplemented("DeleteFoundryAgentThread")
+	return nil
+}
+
+func (u Unimplemented) CancelFoundryAgentTurn(context.Context, string, string, string) (*model.FoundryAgentTurn, error) {
+	u.unimplemented("CancelFoundryAgentTurn")
+	return nil, nil
+}
+
+func (u Unimplemented) ClaimFoundryAgentTurn(context.Context, string, model.FoundryAgentClaim) (*model.FoundryAgentTurn, error) {
+	u.unimplemented("ClaimFoundryAgentTurn")
+	return nil, nil
+}
+
+func (u Unimplemented) RenewFoundryAgentTurnLease(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryAgentTurnLease")
+	return nil
+}
+
+func (u Unimplemented) AppendFoundryAgentEvents(context.Context, string, string, []json.RawMessage) error {
+	u.unimplemented("AppendFoundryAgentEvents")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundryAgentText(context.Context, string, string, int, []json.RawMessage) error {
+	u.unimplemented("FinishFoundryAgentText")
+	return nil
+}
+
+func (u Unimplemented) AppendFoundryAgentMessages(context.Context, string, string, []model.FoundryAgentMessage, int) error {
+	u.unimplemented("AppendFoundryAgentMessages")
+	return nil
+}
+
+func (u Unimplemented) SettleFoundryAgentTurn(context.Context, string, string, model.FoundryAgentTurnOutcome) error {
+	u.unimplemented("SettleFoundryAgentTurn")
+	return nil
+}
+
+func (u Unimplemented) SetFoundryAgentThreadSession(context.Context, string, string, string) error {
+	u.unimplemented("SetFoundryAgentThreadSession")
+	return nil
+}
+
+func (u Unimplemented) EndUnclaimedFoundryAgentTurns(context.Context, model.FoundryAgentRuntime, time.Time, string) (int64, error) {
+	u.unimplemented("EndUnclaimedFoundryAgentTurns")
+	return 0, nil
+}
+
+func (u Unimplemented) RecordFoundryAgentAction(context.Context, string, *model.FoundryAgentAction, int, func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error) {
+	u.unimplemented("RecordFoundryAgentAction")
+	return nil, nil
+}
+
+func (u Unimplemented) ClaimFoundryAgentAction(context.Context, string, string, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("ClaimFoundryAgentAction")
+	return nil, nil
+}
+
+func (u Unimplemented) FinishFoundryAgentAction(context.Context, string, model.FoundryAgentActionEnd, *model.FoundryAgentTurn, json.RawMessage) error {
+	u.unimplemented("FinishFoundryAgentAction")
+	return nil
+}
+
+func (u Unimplemented) DismissFoundryAgentAction(context.Context, string, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("DismissFoundryAgentAction")
+	return nil, nil
+}
+
+func (u Unimplemented) RefreshFoundryAgentAction(context.Context, string, string, string, string, json.RawMessage, string, []byte, string, time.Time) (*model.FoundryAgentAction, error) {
+	u.unimplemented("RefreshFoundryAgentAction")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryDashboard(context.Context, string, string) (*model.FoundryDashboard, error) {
+	u.unimplemented("GetFoundryDashboard")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryDashboardByClientToken(context.Context, string, string, string) (*model.FoundryDashboard, error) {
+	u.unimplemented("GetFoundryDashboardByClientToken")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryDashboards(context.Context, string, bool) ([]*model.FoundryDashboard, error) {
+	u.unimplemented("ListFoundryDashboards")
+	return nil, nil
+}
+
+func (u Unimplemented) GetSharedFoundryDashboard(context.Context, string) (*model.FoundryDashboardShare, error) {
+	u.unimplemented("GetSharedFoundryDashboard")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundryDashboard(context.Context, *model.FoundryDashboard, int) error {
+	u.unimplemented("CreateFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) UpdateFoundryDashboard(context.Context, string, string, model.FoundryDashboardEditor, int64, model.FoundryDashboardUpdate) error {
+	u.unimplemented("UpdateFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) SetFoundryDashboardPinned(context.Context, string, string, string, int64, bool, int) error {
+	u.unimplemented("SetFoundryDashboardPinned")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryDashboard(context.Context, string, string, model.FoundryDashboardEditor) error {
+	u.unimplemented("DeleteFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) PublishFoundryDashboard(context.Context, *model.FoundryDashboardShare, model.FoundryDashboardLinkExpiry) (
+	*model.FoundryDashboardShare, error) {
+	u.unimplemented("PublishFoundryDashboard")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryDashboardSettings(context.Context, string) (model.FoundryDashboardSettings, error) {
+	u.unimplemented("GetFoundryDashboardSettings")
+	return model.FoundryDashboardSettings{}, nil
+}
+
+func (u Unimplemented) SetFoundryDashboardSettings(context.Context, string, string, bool) error {
+	u.unimplemented("SetFoundryDashboardSettings")
+	return nil
+}
+
+func (u Unimplemented) UnpublishFoundryDashboard(context.Context, string, string) error {
+	u.unimplemented("UnpublishFoundryDashboard")
+	return nil
+}
+
+func (u Unimplemented) GetFoundryAutomation(context.Context, string, string) (*model.FoundryAutomation, error) {
+	u.unimplemented("GetFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationByClientToken(context.Context, string, string, string) (*model.FoundryAutomation, error) {
+	u.unimplemented("GetFoundryAutomationByClientToken")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomations(context.Context, string) ([]*model.FoundryAutomation, error) {
+	u.unimplemented("ListFoundryAutomations")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundryAutomationRunStats(context.Context, string, time.Time) (*model.FoundryAutomationRunStats, error) {
+	u.unimplemented("FoundryAutomationRunStats")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationRun(context.Context, string, string) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("GetFoundryAutomationRun")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomationRuns(context.Context, string, string, int) ([]*model.FoundryAutomationRun, string, error) {
+	u.unimplemented("ListFoundryAutomationRuns")
+	return nil, "", nil
+}
+
+func (u Unimplemented) ListFoundryAutomationRunNodes(context.Context, string) ([]*model.FoundryAutomationRunNode, error) {
+	u.unimplemented("ListFoundryAutomationRunNodes")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationNotice(context.Context, *model.FoundryNotification) (*model.FoundryAutomationNotice, error) {
+	u.unimplemented("GetFoundryAutomationNotice")
+	return nil, nil
+}
+
+func (u Unimplemented) DueFoundryAutomationSchedules(context.Context, int) ([]*model.FoundryAutomation, error) {
+	u.unimplemented("DueFoundryAutomationSchedules")
+	return nil, nil
+}
+
+func (u Unimplemented) WatchedFoundryAutomations(context.Context, time.Duration, int) ([]*model.FoundryAutomation, error) {
+	u.unimplemented("WatchedFoundryAutomations")
+	return nil, nil
+}
+
+func (u Unimplemented) FindFoundryAutomationEnded(context.Context, *model.FoundryAutomation, time.Duration, int) ([]model.FoundryAutomationEnded, error) {
+	u.unimplemented("FindFoundryAutomationEnded")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundryAutomation(context.Context, *model.FoundryAutomation, int) error {
+	u.unimplemented("CreateFoundryAutomation")
+	return nil
+}
+
+func (u Unimplemented) UpdateFoundryAutomation(context.Context, string, string, string, int64, model.FoundryAutomationUpdate) (*model.FoundryAutomation, error) {
+	u.unimplemented("UpdateFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) ApproveFoundryAutomation(context.Context, string, string, string, int64, *time.Time) (*model.FoundryAutomation, error) {
+	u.unimplemented("ApproveFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) PauseFoundryAutomation(context.Context, string, string, model.FoundryAutomationActor) (*model.FoundryAutomation, error) {
+	u.unimplemented("PauseFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) ResumeFoundryAutomation(context.Context, string, string, string, *time.Time) (*model.FoundryAutomation, error) {
+	u.unimplemented("ResumeFoundryAutomation")
+	return nil, nil
+}
+
+func (u Unimplemented) DeleteFoundryAutomation(context.Context, string, string, model.FoundryAutomationActor) error {
+	u.unimplemented("DeleteFoundryAutomation")
+	return nil
+}
+
+func (u Unimplemented) RunFoundryAutomationNow(context.Context, *model.FoundryAutomationRun, string, json.RawMessage, model.FoundryAutomationLimits) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("RunFoundryAutomationNow")
+	return nil, nil
+}
+
+func (u Unimplemented) CancelFoundryAutomationRun(context.Context, string, string, model.FoundryAutomationActor) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("CancelFoundryAutomationRun")
+	return nil, nil
+}
+
+func (u Unimplemented) PauseFoundryAutomationsOf(context.Context, string, string) error {
+	u.unimplemented("PauseFoundryAutomationsOf")
+	return nil
+}
+
+func (u Unimplemented) TouchFoundryAutomation(context.Context, string) error {
+	u.unimplemented("TouchFoundryAutomation")
+	return nil
+}
+
+func (u Unimplemented) FireFoundryAutomation(context.Context, model.FoundryAutomationFire, model.FoundryAutomationLimits) (model.FoundryAutomationFired, error) {
+	u.unimplemented("FireFoundryAutomation")
+	return "", nil
+}
+
+func (u Unimplemented) ClaimFoundryAutomationRun(context.Context, string, time.Duration) (*model.FoundryAutomationRun, error) {
+	u.unimplemented("ClaimFoundryAutomationRun")
+	return nil, nil
+}
+
+func (u Unimplemented) RenewFoundryAutomationRunLease(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryAutomationRunLease")
+	return nil
+}
+
+func (u Unimplemented) StartFoundryAutomationNode(context.Context, string, string, string, model.FoundryAutomationNodeStatus) error {
+	u.unimplemented("StartFoundryAutomationNode")
+	return nil
+}
+
+func (u Unimplemented) StartFoundryAutomationAssistant(context.Context, string, string, string, *model.FoundryAgentThread, *model.FoundryAgentTurn) error {
+	u.unimplemented("StartFoundryAutomationAssistant")
+	return nil
+}
+
+func (u Unimplemented) EndFoundryAutomationNode(context.Context, string, string, string, model.FoundryAutomationNodeEnd) error {
+	u.unimplemented("EndFoundryAutomationNode")
+	return nil
+}
+
+func (u Unimplemented) AwaitFoundryAutomationJob(context.Context, string, string, string, model.FoundryAutomationJob, json.RawMessage) error {
+	u.unimplemented("AwaitFoundryAutomationJob")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundryAutomationCause(context.Context, string, model.FoundryAutomationJob) error {
+	u.unimplemented("MarkFoundryAutomationCause")
+	return nil
+}
+
+func (u Unimplemented) YieldFoundryAutomationRun(context.Context, string, string, time.Time) error {
+	u.unimplemented("YieldFoundryAutomationRun")
+	return nil
+}
+
+func (u Unimplemented) RetryFoundryAutomationRun(context.Context, string, string, time.Time, string) error {
+	u.unimplemented("RetryFoundryAutomationRun")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundryAutomationRun(context.Context, string, string, model.FoundryAutomationRunEnd) error {
+	u.unimplemented("FinishFoundryAutomationRun")
+	return nil
+}
+
+func (u Unimplemented) PruneFoundryAutomationRuns(context.Context, time.Time) (int, error) {
+	u.unimplemented("PruneFoundryAutomationRuns")
+	return 0, nil
+}
+
+func (u Unimplemented) LatestFoundryWorkflowAssessments(context.Context, []string) (map[string]*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("LatestFoundryWorkflowAssessments")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationWorkflowRun(context.Context, string, string) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("GetFoundryAutomationWorkflowRun")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomationOntologies(context.Context, string, []string) (map[string][]model.FoundryAutomationOntology, error) {
+	u.unimplemented("ListFoundryAutomationOntologies")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryAutomationRunOntologies(context.Context, string) ([]model.FoundryAutomationRunOntology, error) {
+	u.unimplemented("ListFoundryAutomationRunOntologies")
+	return nil, nil
+}
+
+func (u Unimplemented) EnsureFoundryAutomationWorkflow(context.Context, string, string, string) (*model.FoundryWorkflow, error) {
+	u.unimplemented("EnsureFoundryAutomationWorkflow")
+	return nil, nil
+}
+
+func (u Unimplemented) StartFoundryAutomationWorkflowRun(context.Context, model.FoundryAutomationWorkflowStart) (*model.FoundryWorkflowRun, error) {
+	u.unimplemented("StartFoundryAutomationWorkflowRun")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryAutomationSuggestions(context.Context, string, string) (*model.FoundryAutomationSuggestions, error) {
+	u.unimplemented("GetFoundryAutomationSuggestions")
+	return nil, nil
+}
+
+func (u Unimplemented) SumFoundryAssistantSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryAssistantSpend")
+	return 0, nil
+}
+
+func (u Unimplemented) QueueFoundryAutomationSuggestions(context.Context, string, string, string, []string, int, time.Duration) (
+	*model.FoundryAutomationSuggestions, error) {
+	u.unimplemented("QueueFoundryAutomationSuggestions")
+	return nil, nil
+}
+
+func (u Unimplemented) ClaimFoundryAutomationSuggestions(context.Context, string, time.Duration) (*model.FoundryAutomationSuggestions, error) {
+	u.unimplemented("ClaimFoundryAutomationSuggestions")
+	return nil, nil
+}
+
+func (u Unimplemented) RenewFoundryAutomationSuggestionsLease(context.Context, string, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryAutomationSuggestionsLease")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundryAutomationSuggestions(context.Context, string, string, string, model.FoundryAutomationSuggestionsEnd) error {
+	u.unimplemented("FinishFoundryAutomationSuggestions")
+	return nil
+}
+
+func (u Unimplemented) ChargeFoundryAutomationSuggestions(context.Context, string, int64) error {
+	u.unimplemented("ChargeFoundryAutomationSuggestions")
 	return nil
 }

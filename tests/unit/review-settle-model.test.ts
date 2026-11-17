@@ -862,16 +862,46 @@ describe("an approval taken back from the current load (contract 4.16.0)", () =>
     expect(model.takenBack({ status: "unconfirmed" }).text).toContain(
       "the ontology’s next job sends it again",
     );
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "job_failed" }).text,
+    ).toContain("the ontology’s next job sends it again");
+    // No event said what became of it: nothing claims it was taken back, or
+    // that a resend that can't say will say.
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "not_replayed" }),
+    ).toEqual({
+      label: "Approval maybe taken back",
+      text: "This load can’t say whether it was taken back: its document’s saved reading couldn’t be reused, as the models or the reading changed since. The next load won’t write it.",
+    });
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "document_failed" }),
+    ).toEqual({
+      label: "Approval maybe taken back",
+      text: "The engine said nothing of it: the load couldn’t read its document again. The next approval or take-back in its document sends it again.",
+    });
+    expect(
+      model.takenBack({ status: "unconfirmed", reason: "a_later_word" }).text,
+    ).toContain("can’t say whether it was taken back: “a_later_word”.");
     expect(model.takenBack({ status: "refused", reason: "differs" })).toEqual({
       label: "Approval not taken back",
       text: "This load keeps what it wrote: an earlier version wrote this sentence’s claims of one link without telling them apart, so it can’t say which to take back. The next load won’t write it.",
     });
     expect(
       model.takenBack({ status: "refused", reason: "too_large" }).text,
-    ).toContain("more than one take-back can be matched among.");
+    ).toContain("more than one take-back can be matched among");
     expect(
       model.takenBack({ status: "refused", reason: "document_gone" }).text,
     ).toContain("its document was deleted");
+    // Every reason the backend gives a document it couldn't send is words.
+    for (const reason of [
+      "document_unread",
+      "document_failed",
+      "not_replayed",
+      "unanswered",
+    ])
+      expect(model.takenBack({ status: "refused", reason }).text).not.toContain(
+        reason,
+      );
     expect(
       model.takenBack({ status: "refused", reason: "a_later_word" }).text,
     ).toContain("it says why as “a_later_word”.");
@@ -999,7 +1029,14 @@ describe("why a load kept an approved claim held", () => {
     );
     expect(said("blocked")).toContain("break a rule");
     expect(said("no_statement")).toContain("keeps nothing to write");
-    expect(said("not_stated")).toContain("no longer states it");
+    expect(said("not_stated")).toContain("no longer finds it stated");
+    // Contract 4.17.0: the load holds the document with other text.
+    expect(said("document_changed")).toContain(
+      "text changed after this load read it",
+    );
+    expect(said("document_changed")).toContain(
+      "find the claim in that load’s review and approve it there",
+    );
     expect(said("too_large")).toContain("more held claims");
   });
   const end = (name: string, by: model.WeakLink) => ({ name, by });
@@ -1107,6 +1144,59 @@ describe("why a load kept an approved claim held", () => {
     expect(model.waitingText("load")).toBe(
       "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.",
     );
+  });
+  it("says what became of a name chosen in this load at once", () => {
+    expect(model.resolvedText({ status: "pending" })).toBe(
+      "Decision saved. Linking this name in this load…",
+    );
+    expect(model.resolvedText({ status: "pending" }, "extract")).toBe(
+      "Decision saved. Another job is running, so this waits: it’s linked in this load when that ends.",
+    );
+    expect(model.waitingText("load", "resolve")).toContain(
+      "otherwise the next load applies it",
+    );
+    expect(model.resolvedText({ status: "written" })).toBe(
+      "Linked in this load. Later loads read the choice too.",
+    );
+    // A load read before names could be settled in place, said plainly.
+    expect(
+      model.resolvedText({ status: "refused", reason: "not_replayed" }),
+    ).toBe(
+      "This load was built before names could be applied at once; the next load applies it.",
+    );
+    // No review asks about it now: settled in this load, by this choice in
+    // a run whose word was lost, or by another since.
+    expect(
+      model.resolvedText({ status: "written", reason: "not_asked" }),
+    ).toContain("already settled this name");
+    for (const reason of [
+      "no_word",
+      "not_named",
+      "bound",
+      "collides",
+      "differs",
+      "absent",
+    ])
+      expect(model.resolvedText({ status: "refused", reason })).toMatch(
+        /The next load applies your choice\.$/,
+      );
+    expect(
+      model.resolvedText({ status: "refused", reason: "document_gone" }),
+    ).toBe("The document left this load, so nothing was linked here.");
+    expect(
+      model.resolvedText({ status: "refused", reason: "a_later_reason" }),
+    ).toBe(
+      "Not linked in this load (a_later_reason). The next load applies your choice.",
+    );
+    expect(model.resolvedText({ status: "refused", reason: "" })).toContain(
+      "no reason given",
+    );
+    expect(
+      model.resolvedText({ status: "unconfirmed", reason: "job_failed" }),
+    ).toContain("Choose it again to finish.");
+    // Read when the load was made, or not in its list: the card's own words.
+    expect(model.resolvedText({ status: "" })).toBeUndefined();
+    expect(model.resolvedText(undefined)).toBeUndefined();
   });
   it("reads the decisions less often the longer an approval has waited", () => {
     expect(model.applyPollMs(0)).toBe(2000);

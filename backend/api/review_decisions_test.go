@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
@@ -33,7 +35,8 @@ type decisionStore struct {
 	saveErr  error
 	deleted  string
 	// releasedTo is the load SettleFoundryReleases or SettleFoundryValue
-	// applied its decisions to, and resends the resend jobs they and
+	// applied its decisions to, or SettleFoundryBoundResolve read its review
+	// from, and resends the resend jobs they and
 	// DeleteFoundryReviewDecision were handed; rejectedOn is the load
 	// SettleFoundryReject read its review from; applied is what
 	// ListFoundryDecisionsApplied answers.
@@ -48,6 +51,10 @@ type decisionStore struct {
 	// firstApprover, when set, is who SettleFoundryReleases says approved
 	// the statement first, as the store keeps them.
 	firstApprover string
+	// asking is the documents SettleFoundryResolve was handed besides its
+	// own, and askingReviews what the read of a name's reviews answers.
+	asking        []string
+	askingReviews string
 }
 
 func (s *decisionStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
@@ -68,16 +75,33 @@ func (s *decisionStore) GetOntologyVersion(_ context.Context, o, id string) (*fo
 	}
 	return s.version, nil
 }
-func (s *decisionStore) SettleFoundryReviewDecision(_ context.Context, ws string, d *foundrymodel.FoundryReviewDecision) error {
+
+// SettleFoundryBoundResolve saves d for the next load: the load it was read
+// from is current here.
+func (s *decisionStore) SettleFoundryBoundResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision,
+	_ *foundrymodel.FoundryGraphJob) (bool, error) {
 	if ws != s.ontology.WorkspaceID {
-		return foundrystore.ErrNotFound
+		return false, foundrystore.ErrNotFound
 	}
 	if s.saveErr != nil {
-		return s.saveErr
+		return false, s.saveErr
 	}
 	d.DecidedAt = time.Now()
-	s.saved = append(s.saved, d)
-	return nil
+	s.saved, s.releasedTo = append(s.saved, d), load
+	return false, nil
+}
+func (s *decisionStore) SettleFoundryResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision, docs []string,
+	resend *foundrymodel.FoundryGraphJob) (bool, error) {
+	if ws != s.ontology.WorkspaceID {
+		return false, foundrystore.ErrNotFound
+	}
+	if s.saveErr != nil {
+		return false, s.saveErr
+	}
+	d.DecidedAt = time.Now()
+	d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+	s.saved, s.releasedTo, s.resends, s.asking = append(s.saved, d), load, append(s.resends, resend), docs
+	return true, nil
 }
 func (s *decisionStore) SettleFoundryReleases(_ context.Context, ws, load string, ds []*foundrymodel.FoundryReviewDecision,
 	resend *foundrymodel.FoundryGraphJob) (bool, error) {
@@ -133,6 +157,20 @@ func (s *decisionStore) ListFoundryShownDecisions(_ context.Context, o, after st
 	}
 	return s.rows, nil
 }
+
+// ListFoundryReviewDecisions lists the saved decisions alone: no withdraw.
+func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after string, docs []string, limit int) ([]*foundrymodel.FoundryReviewDecision, error) {
+	if o != s.ontology.ID {
+		panic("wrong ontology")
+	}
+	var saved []*foundrymodel.FoundryReviewDecision
+	for _, d := range s.rows {
+		if d.Kind != foundrymodel.FoundryReviewWithdraw {
+			saved = append(saved, d)
+		}
+	}
+	return saved, nil
+}
 func (s *decisionStore) DeleteFoundryReviewDecision(_ context.Context, ws, o, id string, resend *foundrymodel.FoundryGraphJob) error {
 	if ws != s.ontology.WorkspaceID || o != s.ontology.ID {
 		panic("wrong ontology")
@@ -173,7 +211,10 @@ func reviewService(t *testing.T, review string) (*Service, *decisionStore, *[]st
 			t.Errorf("read as %+v, not the reviewer", a)
 		}
 		response := review
-		if len(queries) > 1 {
+		switch {
+		case strings.Contains(string(query), `"properties":["doc_id","reason","entity_key"]`):
+			response = cmp.Or(db.askingReviews, `{"items":[]}`)
+		case len(queries) > 1:
 			response = `{"items":[{"entity_key":"customer-1"}]}`
 		}
 		return 200, []byte(response), nil
@@ -259,9 +300,52 @@ func TestSettleFoundryReview(t *testing.T) {
 						t.Fatalf("unscoped read %s", q)
 					}
 				}
+				// A name the load links to no one applies at once (contract
+				// 4.22.0): to the load its review was read from, by a resend job
+				// the person asked for. One it links already is the next load's:
+				// the engine would say bound.
+				asks := reason == "unresolved" || reason == "ambiguous" || reason == "collision" || reason == "identifier_conflict"
+				if asks && (db.releasedTo != "load-1" || len(db.resends) != 1 || db.resends[0].RequestedByUserID == nil ||
+					out.Decision.GetApplied().GetStatus() != "pending") {
+					t.Fatalf("applied to %q by %+v: %+v", db.releasedTo, db.resends, out.Decision.GetApplied())
+				}
+				if !asks && (db.releasedTo != "load-1" || len(db.resends) != 0 || out.Decision.Applied != nil) {
+					t.Fatalf("%s applied at once: %+v %+v", reason, db.resends, out.Decision.GetApplied())
+				}
 			})
 		}
 	}
+	// A chosen entity is an alias of every document: the documents whose
+	// reviews still ask about the name go again with it, each once; a linked
+	// review, another reason and a review with no document don't. "Not in
+	// data" carries nothing, and reads no other review.
+	t.Run("an alias's documents", func(t *testing.T) {
+		review := `{"items":[{"reason":"unresolved","type":"Customer","doc_id":"doc-a","norm_name":"variant"}]}`
+		s, db, queries := reviewService(t, review)
+		db.askingReviews = `{"items":[{"doc_id":"doc-b","reason":"unresolved"},{"doc_id":"doc-b","reason":"ambiguous"},` +
+			`{"doc_id":"doc-c","reason":"collision","entity_key":null},{"doc_id":"doc-d","reason":"unresolved","entity_key":"x"},` +
+			`{"doc_id":"doc-e","reason":"adjudicated"},{"reason":"unresolved"},{"doc_id":"doc-f","reason":"identifier_conflict"}]}`
+		if _, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(resolveChoice("customer-1"))); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(db.asking, []string{"doc-b", "doc-c", "doc-f"}) {
+			t.Fatalf("asking %v", db.asking)
+		}
+		last := (*queries)[len(*queries)-1]
+		for _, want := range []string{`"norm_name"`, `"variant"`, `"FoundryReview"`, `"load-1"`, `"Customer"`} {
+			if !strings.Contains(last, want) {
+				t.Fatalf("the read of the name's reviews lacks %s: %s", want, last)
+			}
+		}
+		s, db, queries = reviewService(t, review)
+		db.askingReviews = `{"items":[{"doc_id":"doc-b","reason":"unresolved"}]}`
+		if _, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(noneChoice())); err != nil {
+			t.Fatal(err)
+		}
+		if len(db.asking) != 0 || len(*queries) != 1 {
+			t.Fatalf("not in data: asking %v after %d reads", db.asking, len(*queries))
+		}
+	})
 	for _, value := range []*foundryv1.FoundryPropValue{propText("Chosen"), propNull()} {
 		s, db, _ := reviewService(t, `{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`)
 		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(propChoice(value)))
@@ -416,6 +500,43 @@ func TestSettleValueRefused(t *testing.T) {
 	}
 }
 
+// What a load did with a document's names comes back as the store keeps
+// it, each refusal's reason only on a refusal, with the entities a carried
+// name linked.
+func TestFoundryExtractionNames(t *testing.T) {
+	id := "dec-1"
+	out := foundryExtractionProto(&foundrymodel.FoundryDocumentExtraction{
+		Status: foundrymodel.FoundryExtractionExtracted, Counts: foundrymodel.FoundryExtractionCounts{ResolvedCarried: 2},
+		Names: []foundrymodel.FoundryDocumentName{
+			{Decision: foundrymodel.FoundryNameResolve, Type: "Customer", NormName: "acme", DecisionID: &id, Outcome: foundrymodel.FoundryNameWritten},
+			{Decision: foundrymodel.FoundryNameAlias, Type: "Customer", NormName: "helio", Outcome: foundrymodel.FoundryNameRefused, Reason: "a_later_reason"},
+		},
+	})
+	reason := "a_later_reason"
+	want := []*foundryv1.FoundryDocumentName{
+		{Decision: "resolve", Type: "Customer", NormName: "acme", DecisionId: &id, Outcome: "written"},
+		{Decision: "alias", Type: "Customer", NormName: "helio", Outcome: "refused", Reason: &reason},
+	}
+	if out.GetResolvedCarried() != 2 || len(out.GetNames()) != len(want) {
+		t.Fatalf("%+v", out)
+	}
+	for i := range want {
+		if !proto.Equal(out.GetNames()[i], want[i]) {
+			t.Fatalf("name %d = %+v, want %+v", i, out.GetNames()[i], want[i])
+		}
+	}
+	// The site reads these JSON names.
+	raw, err := protojson.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"resolvedCarried":2`, `"normName":"acme"`, `"decisionId":"dec-1"`, `"outcome":"refused"`, `"reason":"a_later_reason"`} {
+		if !strings.Contains(strings.ReplaceAll(string(raw), " ", ""), field) {
+			t.Fatalf("%s lacks %s", raw, field)
+		}
+	}
+}
+
 // A decision lists what became of it in the current load: nothing for one
 // the load's list doesn't hold, pending for one a resend owes (carried over
 // or settled there), the engine's reason for one it refused, and applied for
@@ -471,19 +592,37 @@ func TestListFoundryReviewDecisionsTakenBack(t *testing.T) {
 			DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &hash,
 			DecidedByUserID: "user-a"})
 	}
+	db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: "r1", OntologyID: "o", Kind: foundrymodel.FoundryReviewRelease,
+		DocID: &doc, ClaimKey: &key, ClaimSpan: &foundrymodel.FoundryClaimSpan{Section: 2, Start: 2, End: 9}, StatementHash: &hash,
+		DecidedByUserID: "user-a"})
 	db.applied = map[string]foundrymodel.FoundryDecisionApplied{
+		"r1": {Status: foundrymodel.FoundryReleaseWritten, TakesBack: true},
 		"w1": {Status: foundrymodel.FoundryReleasePending},
 		"w2": {Status: foundrymodel.FoundryWithdrawn},
 		"w3": {Status: foundrymodel.FoundryNotWritten},
 		"w4": {Status: foundrymodel.FoundryReleaseRefused, Reason: "differs"},
 		"w5": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
 	}
-	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
+	// A client that doesn't ask, as a site before 4.16.0, gets none.
+	if out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"}); err != nil ||
+		len(out.GetDecisions()) != 1 || out.GetDecisions()[0].GetId() != "r1" {
+		t.Fatalf("listed %v, %v without asking", out.GetDecisions(), err)
+	}
+	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o",
+		IncludeWithdraws: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
 	for _, d := range out.GetDecisions() {
+		if d.GetId() == "r1" {
+			// Removing a release the load may have written takes it back, as
+			// the backend's one rule says.
+			if d.GetKind() != "release" || !d.GetApplied().GetTakesBack() {
+				t.Fatalf("release listed %v", d)
+			}
+			continue
+		}
 		if d.GetKind() != "withdraw" || d.GetClaimKey() != key || d.GetStatementHash() != hash || d.GetClaimEnd() != 9 {
 			t.Fatalf("listed %v", d)
 		}

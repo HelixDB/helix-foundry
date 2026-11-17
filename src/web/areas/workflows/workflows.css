@@ -1,4 +1,4 @@
-/* Workflows area: built from the kit and the ontology area's stack and code
+/* Workflows area (shown as Usage): built from the kit and the ontology area's stack and code
    blocks (on-stack, on-code). */
 .wf-id {
   display: inline-flex;
@@ -224,7 +224,7 @@ button.wf-card:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* A workflow's numbers: equal cells in one box, where its runs went under
+/* A use case's numbers: equal cells in one box, where its runs went under
    them. */
 .wf-strip {
   border: 1px solid var(--hf-border);
@@ -447,7 +447,7 @@ button.wf-card:hover {
   background: var(--hf-border);
 }
 
-/* The ontology's workflows, a row each, inside their panel: the panel draws
+/* The ontology's use cases, a row each, inside their panel: the panel draws
    the border, and headers are their names alone. */
 .wf-grid.hf-grid-wrap {
   border: 0;
@@ -481,7 +481,7 @@ button.wf-card:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* A workflow's runs: a row each on one grid of columns, the head's too. */
+/* A use case's runs: a row each on one grid of columns, the head's too. */
 .wf-runs-bar {
   display: flex;
   flex-wrap: wrap;
@@ -599,6 +599,13 @@ button.wf-card:hover {
   border-radius: var(--hf-radius);
   background: var(--hf-sunken);
 }
+.wf-runs-hint {
+  margin: 0;
+  padding: var(--hf-space-15) var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
 .wf-runs-none {
   margin: 0;
   padding: var(--hf-space-3) var(--hf-space-2);
@@ -618,6 +625,15 @@ button.wf-card:hover {
   .wf-runs-head {
     display: none;
   }
+  /* Its filters scroll rather than widen the page. */
+  .wf-runs-bar .hf-segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .wf-runs-bar .hf-segmented button {
+    flex: none;
+    white-space: nowrap;
+  }
   .wf-run {
     grid-template-columns: auto minmax(0, 1fr) auto 32px;
     gap: var(--hf-space-05) var(--hf-space-1);
@@ -628,4 +644,30 @@ button.wf-card:hover {
   .wf-run-claims {
     justify-content: flex-start;
   }
+}
+
+/* A use case Foundry made for a workflow: where it comes from, linking
+   back (MadeBy). */
+.wf-origin {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.wf-origin svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-muted);
+}
+.wf-origin a {
+  color: var(--hf-accent-text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

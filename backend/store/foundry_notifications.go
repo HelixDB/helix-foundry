@@ -35,7 +35,7 @@ const sampleRun = ` COALESCE(JSON_UNQUOTE(JSON_EXTRACT(g.input, '$.sample')), ''
 // foundry.ontology.per_hour bounds per workspace; each one's load is read by
 // its keys.
 func (s *mysqlDB) DiscoverFoundryOntologyReady(ctx context.Context, since time.Time, limit int, newID func() string) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return s.discoverOntologyEmails(ctx, model.FoundryNotifyOntologyReady, `
 SELECT g.id, g.workspace_id, g.ontology_id, g.requested_by_user_id FROM foundry_ontology_generations g
 LEFT JOIN foundry_load_jobs j ON j.ontology_id=g.ontology_id AND j.client_token=CONCAT(?, g.id)
 LEFT JOIN foundry_loads l ON l.id=j.load_id
@@ -43,13 +43,39 @@ WHERE g.finished_at >= ? AND g.status IN ('succeeded', 'failed') AND g.requested
   AND JSON_EXTRACT(g.input, '$.load_when_ready') = true
   AND (g.status='failed' OR j.id IS NULL OR l.status IN ('ready', 'partial', 'failed'))
   AND NOT EXISTS (SELECT 1 FROM foundry_notifications n WHERE n.kind='ontology_ready' AND n.subject_id=g.id)
-ORDER BY g.finished_at, g.id LIMIT ?`, model.FirstDraftLoadTokenPrefix, since.UTC(), limit)
+ORDER BY g.finished_at, g.id LIMIT ?`, newID, model.FirstDraftLoadTokenPrefix, since.UTC(), limit)
+}
+
+// DiscoverFoundryOntologyQuestions queues the ontology_questions email of
+// each first draft (OntologyGenerationInput.LoadWhenReady) with a requester
+// that waits for answers to the agent's questions (needs_input), asked at or
+// after since: whoever asked for it to be drafted and loaded has left the
+// page, and it waits for them. A generation gets one at most, at its first
+// round of questions. It reads at most limit of them, oldest first, among
+// those with no email yet, and returns how many it queued.
+//
+// The worker calls it every tick. The generations' claim index reads only
+// those waiting, which each ontology's one live generation bounds.
+func (s *mysqlDB) DiscoverFoundryOntologyQuestions(ctx context.Context, since time.Time, limit int, newID func() string) (int, error) {
+	return s.discoverOntologyEmails(ctx, model.FoundryNotifyOntologyQuestions, `
+SELECT g.id, g.workspace_id, g.ontology_id, g.requested_by_user_id FROM foundry_ontology_generations g
+WHERE g.status='needs_input' AND g.asked_at >= ? AND g.requested_by_user_id IS NOT NULL
+  AND JSON_EXTRACT(g.input, '$.load_when_ready') = true
+  AND NOT EXISTS (SELECT 1 FROM foundry_notifications n WHERE n.kind='ontology_questions' AND n.subject_id=g.id)
+ORDER BY g.asked_at, g.id LIMIT ?`, newID, since.UTC(), limit)
+}
+
+// discoverOntologyEmails queues a pending email of kind for each generation
+// query finds, as (id, workspace_id, ontology_id, requested_by_user_id), and
+// returns how many it queued: one already queued inserts nothing.
+func (s *mysqlDB) discoverOntologyEmails(ctx context.Context, kind model.FoundryNotificationKind, query string, newID func() string, args ...any) (int, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return 0, fmt.Errorf("find first drafts that ended: %w", err)
+		return 0, fmt.Errorf("find first drafts for %s: %w", kind, err)
 	}
 	var found []*model.FoundryNotification
 	for rows.Next() {
-		n := &model.FoundryNotification{Kind: model.FoundryNotifyOntologyReady, Status: model.FoundryNotificationPending}
+		n := &model.FoundryNotification{Kind: kind, Status: model.FoundryNotificationPending}
 		var ontologyID string
 		if err := rows.Scan(&n.SubjectID, &n.WorkspaceID, &ontologyID, &n.UserID); err != nil {
 			_ = rows.Close()

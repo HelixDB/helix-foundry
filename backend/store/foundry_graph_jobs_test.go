@@ -858,6 +858,36 @@ func TestFoundryGraphJobQueue(t *testing.T) {
 		assert.Equal(t, 1, again.Attempts, "the next attempt is the job's first again")
 	})
 
+	// When an attempt first found an index still building is kept for the
+	// next attempt's claim, and an outcome without it clears it.
+	t.Run("keeps when an index was first found building until an outcome clears it", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "Q12")
+		jobID := f.load(t, "L1")
+		_, err := f.db.ClaimFoundryGraphJob(ctx, "w1", time.Minute)
+		require.NoError(t, err)
+		since := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+		retryAt := time.Now().Add(-time.Second)
+		_, err = f.db.FinishFoundryGraphJob(ctx, jobID, "w1", model.FoundryGraphJobOutcome{
+			RetryAt: &retryAt, Uncounted: true, Error: "the database is still indexing its data; Helix will retry",
+			IndexesPendingSince: &since,
+		})
+		require.NoError(t, err)
+		again, err := f.db.ClaimFoundryGraphJob(ctx, "w2", time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, jobID, again.ID)
+		require.NotNil(t, again.IndexesPendingSince)
+		assert.True(t, again.IndexesPendingSince.Equal(since), "since = %v, want %v", again.IndexesPendingSince, since)
+		_, err = f.db.FinishFoundryGraphJob(ctx, jobID, "w2", model.FoundryGraphJobOutcome{
+			RetryAt: &retryAt, Error: "the agent is unavailable",
+		})
+		require.NoError(t, err)
+		cleared, err := f.db.ClaimFoundryGraphJob(ctx, "w3", time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, jobID, cleared.ID)
+		assert.Nil(t, cleared.IndexesPendingSince)
+	})
+
 	// An outcome the provider can't act on is refused before anything is written.
 	t.Run("refuses an outcome it can't act on", func(t *testing.T) {
 		ctx := context.Background()

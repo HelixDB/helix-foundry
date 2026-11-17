@@ -64,7 +64,15 @@ import {
 } from "../graph/rules";
 import { isRouted, scopeFor } from "../graph/scope";
 import { viewOf, type View } from "../graph/view";
-import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
+import {
+  fail,
+  id,
+  now,
+  ok,
+  type MockReply,
+  type MockRequest,
+  type MockRoute,
+} from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
 import { tracked } from "./workflows";
 import { aiModel } from "./ai";
@@ -152,7 +160,8 @@ import { sourceId } from "./ontology-agent";
 // `deleteOutcome` "fail" (a delete fails for good: delete_failed). A
 // database still starting (`startingQueries` in ./databases.ts) refuses an
 // ingest's first write: the attempt fails, and the load waits, queued with
-// the worker's words, to try again three steps later.
+// the worker's words, to try again three steps later. `indexesPending` n
+// has the next n ingests find an index still building, which waits so too.
 //
 // A load of a version with an [enrichments] item looks people up at its
 // first step: it plans from the people the mappings
@@ -198,9 +207,22 @@ type Knobs = {
   // and nothing changes), or a refusal (`differs`, `too_large`: what it
   // wrote stays).
   withdrawOutcome?: "not_written" | "differs" | "too_large";
+  // The load holds each approved claim's document with other text than the
+  // one a resend sends (contract 4.17.0): the engine refuses an approval in
+  // place as `document_changed`. A new load reads the text afresh.
+  documentChanged?: boolean;
+  // What the engine says, in place, of a person's resolve of a name of a
+  // document the load holds (contract 4.22.0): `not_replayed`, the default,
+  // as for every load read before names could be settled in place (prompt
+  // 9), so the next load applies it; `written`, which takes away the
+  // document's reviews asking about the name, and, for a chosen record, the
+  // other documents' too; or another refusal.
+  nameInPlace?: "written" | "not_replayed" | "bound" | "collides" | "not_asked";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
+  // The next n ingests find an index still building.
+  indexesPending?: number;
   // Reads are refused as a database whose queries are paused, in these words.
   readsPaused?: string;
   // ./ontologies.ts: the caller can't read the ontology's database.
@@ -375,10 +397,13 @@ onReset(() => {
   delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
   delete knobs.withdrawOutcome;
+  delete knobs.documentChanged;
   delete knobs.readErrors;
   delete knobs.readsBusy;
+  delete knobs.indexesPending;
   delete knobs.readsPaused;
   delete knobs.invoiceOnlyCustomers;
+  delete knobs.nameInPlace;
 });
 
 const live = (j: StoredJob) => j.status === "queued" || j.status === "running";
@@ -413,6 +438,22 @@ export const ontologyLoad = (ontologyId: string, loadId: string) => {
     : undefined;
 };
 
+/**
+ * An ontology's loads that ended, oldest first, with their status: what a
+ * workflow's load_ready trigger looks for (./automations.ts).
+ */
+export function loadsEnded(ontologyId: string) {
+  advanceLoads(ontologyId);
+  return state.loads
+    .filter((l) => l.ontologyId === ontologyId && l.finishedAt)
+    .map((l) => ({
+      id: l.id,
+      at: Date.parse(l.finishedAt!),
+      outcome: l.status,
+    }))
+    .sort((a, b) => a.at - b.at);
+}
+
 /** An ontology's current load's id, if it has one. */
 export const currentLoadId = (ontologyId: string) =>
   state.current.get(ontologyId);
@@ -430,6 +471,88 @@ export const currentLoadId = (ontologyId: string) =>
 // says otherwise.
 
 type Release = Extract<FoundryReviewDecision, { kind: "release" }>;
+type Resolve = Extract<FoundryReviewDecision, { kind: "resolve" }>;
+
+/**
+ * Joins a resolve decision just settled to the ontology's current load, in
+ * place of any the load holds of its name in its document, to be settled in
+ * place a job's step from now (contract 4.22.0).
+ */
+export function owePendingResolve(ontologyId: string, d: Resolve) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (!l) return;
+  l.decisions = [
+    ...l.decisions.filter(
+      (x) =>
+        !(
+          x.kind === "resolve" &&
+          x.type === d.type &&
+          x.docId === d.docId &&
+          x.normName === d.normName
+        ),
+    ),
+    d,
+  ];
+  state.applied.set(appliedKey(l.id, d.id), { status: "pending" });
+  state.resends.push({
+    loadId: l.id,
+    decisionId: d.id,
+    due: Date.now() + (knobs.loadStepMs ?? STEP_MS),
+  });
+}
+
+/**
+ * Drops a removed resolve's copy from the current load while it waits, as
+ * the backend does: it is never settled.
+ */
+export function forgetResolve(ontologyId: string, decisionId: string) {
+  const l = loadById(currentLoadId(ontologyId) || "");
+  if (
+    !l ||
+    !l.decisions.some((x) => x.kind === "resolve" && x.id === decisionId) ||
+    state.applied.get(appliedKey(l.id, decisionId))?.status !== "pending"
+  )
+    return;
+  l.decisions = l.decisions.filter(
+    (x) => !(x.kind === "resolve" && x.id === decisionId),
+  );
+  state.applied.delete(appliedKey(l.id, decisionId));
+}
+
+/**
+ * Settles a resolve in place, as the engine does by replaying the document's
+ * saved model work (`nameInPlace`): written takes away the reviews asking
+ * about the name, in its document and, for a chosen record (an alias), in
+ * every other document of the load. The facts the name held back are the
+ * next load's here: the mock reads no document again in place.
+ */
+function settleName(l: StoredLoad, d: Resolve, at: number) {
+  const said = knobs.nameInPlace ?? "not_replayed";
+  if (said !== "written") {
+    state.applied.set(appliedKey(l.id, d.id), {
+      status: "refused",
+      reason: said,
+      at: iso(at),
+    });
+    return;
+  }
+  const g = tenantGraph(l.tenantId).view(l.id);
+  for (const n of [...g.nodes()].filter(
+    (n) =>
+      n.label === N.Review &&
+      n.props.type === d.type &&
+      n.props.norm_name === d.normName &&
+      ["unresolved", "ambiguous", "collision", "identifier_conflict"].includes(
+        String(n.props.reason),
+      ) &&
+      (n.props.doc_id === d.docId || d.entityKey !== undefined),
+  ))
+    g.graph.removeNode(n.id);
+  state.applied.set(appliedKey(l.id, d.id), {
+    status: "written",
+    at: iso(at),
+  });
+}
 type Withdraw = Extract<FoundryReviewDecision, { kind: "withdraw" }>;
 /** A release decision's review in a load's graph, if the load holds it. */
 function heldReview(l: StoredLoad, d: Release) {
@@ -460,9 +583,12 @@ function heldReview(l: StoredLoad, d: Release) {
 
 /**
  * Why the engine would keep an approved claim held, from what the mock was
- * told to make of hedged claims (`documentHeld`): none when it writes it.
+ * told to make of hedged claims (`documentHeld`), or, applied in place
+ * (`inPlace`), of the text a resend sends (`documentChanged`): none when it
+ * writes it. A new load reads the text afresh.
  */
-const refusal = () => {
+const refusal = (inPlace = false) => {
+  if (inPlace && knobs.documentChanged) return "document_changed";
   switch (knobs.documentHeld) {
     case "refused":
       return "conflict";
@@ -484,10 +610,10 @@ const appliedKey = (loadId: string, decisionId: string) =>
  * Says what a load made of a release decision of a document it just read:
  * written when no review of it is left, refused when one is.
  */
-function recordRelease(l: StoredLoad, d: Release, at: number) {
+function recordRelease(l: StoredLoad, d: Release, at: number, inPlace = false) {
   state.applied.set(appliedKey(l.id, d.id), {
     ...(heldReview(l, d)
-      ? { status: "refused", reason: refusal() ?? "changed" }
+      ? { status: "refused", reason: refusal(inPlace) ?? "changed" }
       : { status: "written" }),
     at: iso(at),
   });
@@ -522,33 +648,33 @@ function applyReleases(ontologyId: string, now = Date.now()) {
   for (const r of due) {
     const l = loadById(r.loadId);
     const d = l?.decisions.find(
-      (x): x is Release | Withdraw =>
+      (x): x is Release | Withdraw | Resolve =>
         x.id === r.decisionId &&
-        (x.kind === "release" || x.kind === "withdraw"),
+        (x.kind === "release" || x.kind === "withdraw" || x.kind === "resolve"),
     );
     // Taken back, or its load deleted, before it was applied.
     if (!l || !d) continue;
+    if (d.kind === "resolve") {
+      settleName(l, d, r.due);
+      continue;
+    }
     if (d.kind === "withdraw") {
       takeBack(l, d, r.due);
       continue;
     }
     const review = heldReview(l, d);
-    if (review && !refusal()) {
+    if (review && !refusal(true)) {
       const def = ontologyVersion(l.ontologyId, l.versionId)?.definition;
       const w = releaseReview(
         tenantGraph(l.tenantId).view(l.id),
         review.id,
-        {
-          ontologyVersion: versionName(l),
-          model: aiModel(l.workspaceId, "extract") || MODEL,
-          verifier: aiModel(l.workspaceId, "verify") || VERIFIER,
-        },
+        versionName(l),
         holdsOne(def, String(review.props.suggested_link)) ? d : undefined,
       );
       if (w) state.written.set(appliedKey(l.id, d.id), w);
       countRelease(l.id, d.docId);
     }
-    recordRelease(l, d, r.due);
+    recordRelease(l, d, r.due, true);
   }
 }
 
@@ -577,17 +703,21 @@ function takeBack(l: StoredLoad, d: Withdraw, at: number) {
 
 /**
  * What became of a decision in the ontology's current load: unset for one
- * that load's list doesn't hold, and for a resolve or a reject.
+ * that load's list doesn't hold, and for a reject; a resolve the load read
+ * when it was made has the empty status.
  */
 export function appliedOf(ontologyId: string, d: FoundryReviewDecision) {
   const l = loadById(currentLoadId(ontologyId) || "");
-  if (
-    d.kind === "resolve" ||
-    d.kind === "reject" ||
-    !l?.decisions.some((x) => x.id === d.id)
-  )
+  if (d.kind === "reject" || !l?.decisions.some((x) => x.id === d.id))
     return undefined;
-  return state.applied.get(appliedKey(l.id, d.id)) ?? { status: "" as const };
+  const applied = state.applied.get(appliedKey(l.id, d.id)) ?? {
+    status: "" as const,
+  };
+  // The mock writes an approval only in a job's step it records, so it may
+  // have written one exactly when it says so (the backend's takes_back).
+  return d.kind === "release" && applied.status === "written"
+    ? { ...applied, takesBack: true }
+    : applied;
 }
 
 /**
@@ -1544,6 +1674,14 @@ function read(j: StoredJob, documentId: string, at: string) {
     {
       status: "extracted",
       ...counts,
+      // What it made of the name decisions it met (contract 4.22.0), as
+      // the backend keeps them on the document's row: none, left out.
+      ...(outcome.kind === "ingested" && outcome.carried
+        ? { resolvedCarried: outcome.carried }
+        : {}),
+      ...(outcome.kind === "ingested" && outcome.names.length
+        ? { names: outcome.names }
+        : {}),
       usdMicros: String(DOCUMENT_USD_MICROS),
       finishedAt: at,
     },
@@ -1748,6 +1886,15 @@ function advance(j: StoredJob) {
           Object.assign(j, {
             status: "queued",
             error: "the database refused a write; Helix will retry",
+            at: due + 2 * step,
+          });
+          break;
+        }
+        if (knobs.indexesPending) {
+          knobs.indexesPending -= 1;
+          Object.assign(j, {
+            status: "queued",
+            error: "the database is still indexing its data; Helix will retry",
             at: due + 2 * step,
           });
           break;
@@ -2148,6 +2295,60 @@ export function queueLoad(
   return l;
 }
 
+/**
+ * The :read route's answer, for req's caller (a grantee through its grants),
+ * of readsJson over the load req.params names (workspaceId, ontologyId,
+ * loadId): what the dashboards' preview and publish read too.
+ */
+export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
+  const s = ontologyOf(req);
+  if (!isScope(s)) return s;
+  // A grantee reads its granted load whatever the database's project.
+  if (knobs.ontologyDatabaseHidden && !req.grantee)
+    return fail("PERMISSION_DENIED", "permission denied");
+  if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
+    return fail("NOT_FOUND", "load not found");
+  const reads = readsOf(readsJson);
+  if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
+  advanceLoads(s.o.id);
+  const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
+  if (!l) return fail("NOT_FOUND", "load not found");
+  if (l.status === "deleting" || l.status === "delete_failed")
+    return fail("FAILED_PRECONDITION", "the load is being deleted");
+  if (knobs.readsBusy) {
+    knobs.readsBusy -= 1;
+    return fail(
+      "RESOURCE_EXHAUSTED",
+      "the workspace already runs 4 graph reads; try again when one ends",
+    );
+  }
+  if (knobs.readsPaused) return fail("FAILED_PRECONDITION", knobs.readsPaused);
+  // A database still starting reaches the WFE only as a failed read.
+  if (startingRefuses(l.tenantId))
+    return fail("UNAVAILABLE", "the graph reader failed; try again");
+  // Of a load it holds only some of, a grantee reads what its sources
+  // fill (../graph/view.ts).
+  const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
+    {}) as Definition;
+  const view = req.grantee?.load?.partial
+    ? viewOf(
+        req.grantee.visibility(s.o.id),
+        String(def.ontology_toml || ""),
+        String(def.mappings_toml || ""),
+      )
+    : undefined;
+  const model = rulesOf(l, view);
+  return ok({
+    resultJson: JSON.stringify({
+      as_of: now().slice(0, 10),
+      results: reads.map((r) =>
+        answer(model, r, { errors: knobs.readErrors, view }),
+      ),
+      stats: { instances: model.facts.size, wall_ms: 1 },
+    }),
+  } satisfies ReadFoundryGraphResponse);
+}
+
 export const loadRoutes: MockRoute[] = [
   {
     method: "POST",
@@ -2241,58 +2442,12 @@ export const loadRoutes: MockRoute[] = [
       tracked(
         req,
         req.params.ontologyId,
-        (): MockReply => {
-          const s = ontologyOf(req);
-          if (!isScope(s)) return s;
-          // A grantee reads its granted load whatever the database's project.
-          if (knobs.ontologyDatabaseHidden && !req.grantee)
-            return fail("PERMISSION_DENIED", "permission denied");
-          if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
-            return fail("NOT_FOUND", "load not found");
-          const reads = readsOf(
+        (): MockReply =>
+          readLoad(
+            req,
             (req.body as Partial<ReadFoundryGraphRequest> | undefined)
               ?.readsJson,
-          );
-          if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
-          advanceLoads(s.o.id);
-          const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
-          if (!l) return fail("NOT_FOUND", "load not found");
-          if (l.status === "deleting" || l.status === "delete_failed")
-            return fail("FAILED_PRECONDITION", "the load is being deleted");
-          if (knobs.readsBusy) {
-            knobs.readsBusy -= 1;
-            return fail(
-              "RESOURCE_EXHAUSTED",
-              "the workspace already runs 4 graph reads; try again when one ends",
-            );
-          }
-          if (knobs.readsPaused)
-            return fail("FAILED_PRECONDITION", knobs.readsPaused);
-          // A database still starting reaches the WFE only as a failed read.
-          if (startingRefuses(l.tenantId))
-            return fail("UNAVAILABLE", "the graph reader failed; try again");
-          // Of a load it holds only some of, a grantee reads what its sources
-          // fill (../graph/view.ts).
-          const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
-            {}) as Definition;
-          const view = req.grantee?.load?.partial
-            ? viewOf(
-                req.grantee.visibility(s.o.id),
-                String(def.ontology_toml || ""),
-                String(def.mappings_toml || ""),
-              )
-            : undefined;
-          const model = rulesOf(l, view);
-          return ok({
-            resultJson: JSON.stringify({
-              as_of: now().slice(0, 10),
-              results: reads.map((r) =>
-                answer(model, r, { errors: knobs.readErrors, view }),
-              ),
-              stats: { instances: model.facts.size, wall_ms: 1 },
-            }),
-          } satisfies ReadFoundryGraphResponse);
-        },
+          ),
         (body) => ({
           read: {
             loadId: req.params.loadId!,

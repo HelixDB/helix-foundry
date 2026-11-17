@@ -1,0 +1,1622 @@
+import type { Page } from "@playwright/test";
+import {
+  csrfToken,
+  expect,
+  mock,
+  postToWfe,
+  signIn,
+  test,
+} from "./support/mock";
+
+// Workflows (the automations area, at /workflows): a person's steps Foundry
+// runs as them, on a schedule or when a sync, a load or documents arrive.
+// The overview counts the runs of the last days and lists the workflows; a
+// new one starts as a conversation with Founder, from a template, or from
+// scratch; a workflow opens
+// on a full-page canvas, where its owner edits its steps (or in the
+// outline), saves them through the review of what runs unattended, and
+// goes Live; nothing runs until its owner approves exactly what runs; the
+// Runs tab colours the canvas by how a run went; three failures in a row
+// pause it; another member sees how far a run went, never what it found.
+
+const A = "/v1/workspaces/ws_acme/foundry/automations";
+const HOUR = 3_600_000,
+  DAY = 24 * HOUR;
+const at = (y: number) => ({ x: 0, y });
+const manual = {
+  id: "start",
+  kind: "trigger",
+  config: { kind: "manual" },
+  position: at(0),
+};
+const step = (id: string, kind: string, config: object, y: number) => ({
+  id,
+  kind,
+  config,
+  position: at(y),
+});
+
+/**
+ * Makes an automation of Ada's through the WFE, its nodes in a chain (or
+ * `edges`), and approves it.
+ */
+async function make(
+  page: Page,
+  name: string,
+  nodes: object[],
+  edges?: object[],
+) {
+  const ids = nodes.map((n) => (n as { id: string }).id);
+  const made = (
+    await postToWfe(page, A, {
+      name,
+      clientToken: `e2e-${name}`,
+      specJson: JSON.stringify({
+        v: 1,
+        nodes,
+        edges: edges ?? ids.slice(1).map((to, i) => ({ from: ids[i], to })),
+      }),
+    })
+  ).automation;
+  await postToWfe(page, `${A}/${made.id}:approve`, {
+    expectedRevision: made.revision,
+  });
+  return made.id as string;
+}
+
+/** An automation of the workspace, as the WFE has it now. */
+async function readAutomation(page: Page, id: string) {
+  const res = await page.request.get(`/papi${A}/${id}`);
+  expect(res.status(), await res.text()).toBe(200);
+  return (await res.json()).automation;
+}
+
+const inspector = (page: Page) =>
+  page.getByRole("complementary", { name: "Inspector" });
+const live = (page: Page) => page.getByRole("switch", { name: "Live" });
+const steps = (page: Page) =>
+  page.getByRole("list", { name: "What each step did" });
+const canvas = (page: Page) =>
+  page.getByRole("region", { name: "Steps on a canvas" });
+/** The name in the page's bar. */
+const title = (page: Page, name: string) =>
+  page
+    .getByRole("navigation", { name: "Breadcrumbs" })
+    .getByRole("heading", { name });
+/** The run open has ended as `outcome`, said in the inspector's head. */
+const ended = (page: Page, outcome: string) =>
+  expect(
+    inspector(page)
+      .locator(".au-summary-head")
+      .getByText(outcome, { exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+
+test("the overview counts the runs of the last days and lists the workflows, which the sidebar lists only on one", async ({
+  page,
+}) => {
+  await signIn(page);
+  const tell = step("tell", "notify", { message: "Hi" }, 150);
+  const morning = await make(page, "Morning check", [manual, tell]);
+  const evening = await make(page, "Evening check", [manual, tell]);
+  await mock.pastRuns(morning, [
+    { status: "succeeded", ago: HOUR, usdMicros: 30_000 },
+    { status: "failed", ago: 2 * DAY },
+  ]);
+  await mock.pastRuns(evening, [
+    { status: "succeeded", ago: 10 * DAY },
+    { status: "cancelled", ago: 3 * HOUR },
+  ]);
+  await page.goto("/workflows");
+  const stat = (label: string) =>
+    page.locator(".au-stat").filter({ hasText: label }).locator("dd").first();
+  await expect(stat("Runs")).toHaveText("3");
+  await expect(stat("Succeeded")).toHaveText("1");
+  await expect(stat("Failed")).toHaveText("1");
+  await expect(stat("Waiting for someone")).toHaveText("0");
+  await expect(stat("Spend")).toHaveText("$0.03");
+  // The chart has its legend, and says the same in words.
+  await expect(page.locator(".au-chart-legend")).toContainText(
+    "SucceededFailedOther (live, cancelled or skipped)",
+  );
+  await expect(
+    page.getByRole("img", {
+      name: /^Runs by day, .+: 3 runs, 1 succeeded, 1 failed, 1 other\. The busiest day was .+, with 2\.$/,
+    }),
+  ).toBeVisible();
+  await page.getByRole("radio", { name: "30 days" }).click();
+  await expect(stat("Runs")).toHaveText("4");
+  await expect(stat("Succeeded")).toHaveText("2");
+
+  const grid = page.getByRole("grid", { name: "Workflows" });
+  const row = grid.getByRole("row", { name: /Morning check/ });
+  await expect(row).toContainText("Live");
+  await expect(row).toContainText("2d ago");
+  await expect(row).toContainText("You");
+  await expect(grid.getByRole("row", { name: /Evening check/ })).toContainText(
+    "Cancelled",
+  );
+
+  // The list in the sidebar is for going between automations: it shows on
+  // one, never on the overview or a new one's page.
+  const list = page.getByRole("navigation", { name: "Workflows" });
+  await expect(list).toHaveCount(0);
+  // Its name's link opens it once: Back is the overview again.
+  await grid.getByRole("link", { name: "Morning check" }).click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${morning}$`));
+  await page.goBack();
+  await expect(page).toHaveURL(/\/workflows$/);
+  await grid.getByRole("link", { name: "Morning check" }).click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${morning}$`));
+  await expect(list).toContainText("Evening check");
+  await list.getByRole("link", { name: /Evening check/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/workflows/${evening}$`));
+  await expect(title(page, "Evening check")).toBeVisible();
+  await page
+    .getByRole("region", { name: "Workflows" })
+    .getByRole("link", { name: "New workflow" })
+    .click();
+  await expect(page).toHaveURL(/\/workflows\/new$/);
+  await expect(list).toHaveCount(0);
+});
+
+test("a new workflow starts as a conversation with Founder, whose card opens it on its canvas", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 60, automationSuggestionsMs: 0 });
+  await signIn(page);
+  await page.goto("/workflows");
+  await expect(page.getByText("No workflows yet")).toBeVisible();
+  await page.getByRole("link", { name: "New workflow" }).first().click();
+  await expect(page).toHaveURL(/\/workflows\/new$/);
+  await expect(
+    page.getByRole("heading", { name: "What should happen?" }),
+  ).toBeVisible();
+  // Four suggestions written for the workspace's newest ontology, each a
+  // prompt for Founder: hovered, it is the empty composer's
+  // placeholder; clicked, its text, which nothing sends.
+  const suggestions = page.getByRole("list", { name: "Suggestions" });
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Renewal radar",
+    "Contract check",
+    "Invoice watch",
+    "Monday contracts brief",
+  ]);
+  const prompt =
+    "When new documents arrive in a document set that Customer contracts reads, check each new contract's term and signing date against the customer it names, and email me any that don't match.";
+  const check = suggestions.getByRole("button", { name: "Contract check" }),
+    message = page.getByRole("textbox", { name: "Message" });
+  await expect(check).toHaveAccessibleDescription(prompt);
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  await check.hover();
+  await expect(message).toHaveAttribute("placeholder", prompt);
+  await page.getByRole("heading", { name: "What should happen?" }).hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  // Focused from the keyboard too: the first suggestion follows the
+  // composer.
+  await message.focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    suggestions.getByRole("button", { name: "Renewal radar" }),
+  ).toBeFocused();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every morning at 8am, find contracts in Customer contracts/,
+  );
+  await page.keyboard.press("Shift+Tab");
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  await check.click();
+  await expect(message).toHaveValue(prompt);
+  await expect(message).toBeFocused();
+  expect(
+    await message.evaluate(
+      (el: HTMLTextAreaElement) =>
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length,
+    ),
+  ).toBe(true);
+  // What they type follows the prompt.
+  await page.keyboard.type(" Only the ones over $10k.");
+  await expect(message).toHaveValue(`${prompt} Only the ones over $10k.`);
+  await expect(page).toHaveURL(/\/workflows\/new$/);
+  // The person's words are theirs to change before they send them; the
+  // page tells Founder they're making an automation.
+  await expect(page.getByText("Making a new workflow")).toBeVisible();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page).toHaveURL(/\/workflows\/new\?thread=/);
+  const card = page.getByRole("region", {
+    name: /^Action: Set up the workflow/,
+  });
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await expect(
+    card.getByText(/documents arrive in “General”/).first(),
+  ).toBeVisible();
+  // Nothing is made until the person's click, which opens it.
+  await expect(page.getByRole("navigation", { name: "Workflows" })).toHaveCount(
+    0,
+  );
+  await card.getByRole("button", { name: "Create and turn on" }).click();
+  await expect(page).toHaveURL(/\/workflows\/aut_[^/?]+$/);
+  await expect(live(page)).toBeChecked();
+  // When a document arrives in General, Founder's step, an email.
+  await expect(canvas(page).locator(".react-flow__node")).toHaveCount(3);
+
+  // The conversation is Founder's: the dock lists it.
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary", { name: "Founder" });
+  await dock.getByRole("button", { name: /^Threads:/ }).click();
+  await expect(
+    page.getByRole("menuitemradio", {
+      name: /^When new documents arrive/,
+    }),
+  ).toBeVisible();
+});
+
+test("on a phone a tap on a suggestion fills the composer, one under another", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  await mock.configure({ automationSuggestionsMs: 0 });
+  await signIn(page);
+  await page.goto("/workflows/new");
+  const chips = page
+    .getByRole("list", { name: "Suggestions" })
+    .getByRole("button");
+  await expect(chips).toHaveCount(4);
+  const [first, second] = await Promise.all([
+    chips.nth(0).boundingBox(),
+    chips.nth(1).boundingBox(),
+  ]);
+  expect(second!.y).toBeGreaterThan(first!.y + first!.height - 1);
+  await chips.filter({ hasText: "Invoice watch" }).tap();
+  const message = page.getByRole("textbox", { name: "Message" });
+  await expect(message).toHaveValue(
+    /^Every day, look in Customer contracts for invoices.*belong to\.$/,
+  );
+  // Focused, the caret at its end and that end in view.
+  await expect(message).toBeFocused();
+  expect(
+    await message.evaluate(
+      (el: HTMLTextAreaElement) =>
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length &&
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
+    ),
+  ).toBe(true);
+  await page.keyboard.type(" Weekdays only.");
+  await expect(message).toHaveValue(/belong to\. Weekdays only\.$/);
+  await expect(page).toHaveURL(/\/workflows\/new$/);
+  await context.close();
+});
+
+test("its composer wraps and never scrolls sideways, before and after sending", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 400, automationSuggestionsMs: 0 });
+  await signIn(page);
+  await page.goto("/workflows/new");
+  const message = page.getByRole("textbox", { name: "Message" });
+  // Wider than it is: text wraps, the field grows down, never sideways.
+  const fits = () =>
+    message.evaluate(
+      (el: HTMLTextAreaElement) =>
+        el.scrollWidth <= el.clientWidth &&
+        getComputedStyle(el).overflowX === "hidden",
+    );
+  await expect(message).toBeVisible();
+  expect(await fits()).toBe(true);
+  const tall = await message.evaluate((el) => el.clientHeight);
+  // A suggestion's prompt previewed as the placeholder moves nothing.
+  await page
+    .getByRole("list", { name: "Suggestions" })
+    .getByRole("button", { name: "Contract check" })
+    .hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^When new documents arrive/,
+  );
+  expect(await fits()).toBe(true);
+  expect(await message.evaluate((el) => el.clientHeight)).toBe(tall);
+  // An unbroken word wraps too.
+  await message.fill(`Every day ${"x".repeat(400)}`);
+  expect(await fits()).toBe(true);
+  await message.fill("Every Monday, email me what changed last week.");
+  await message.press("Enter");
+  await expect(page).toHaveURL(/\/workflows\/new\?thread=/);
+  // While Founder works, Stop holds Send's place.
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  expect(await fits()).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Send", exact: true }),
+  ).toBeVisible({ timeout: 20_000 });
+  expect(await fits()).toBe(true);
+  await expect(page.getByText(/Enter to send/)).toHaveCount(0);
+});
+
+test("suggestions are written for the ontology last opened, and the picker changes them", async ({
+  page,
+}) => {
+  await mock.configure({ automationSuggestionsMs: 0 });
+  await signIn(page);
+  await page.goto("/ask/ont_acme_sales");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("foundry.ontology.last.v1:ws_acme"),
+      ),
+    )
+    .toBe("ont_acme_sales");
+  await page.goto("/workflows/new");
+  const suggestions = page.getByRole("list", { name: "Suggestions" }),
+    message = page.getByRole("textbox", { name: "Message" }),
+    picker = page.getByRole("combobox", { name: "Suggestions for" });
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "New contacts brief",
+    "Job change alert",
+    "Account map refresh",
+    "Weekly people report",
+  ]);
+  await expect(picker).toHaveText("Sales graph");
+  // Hovered, a written one is the placeholder; clicked, the composer's text.
+  const alert = suggestions.getByRole("button", { name: "Job change alert" });
+  await alert.hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every day, look in Sales graph for people whose title or company changed/,
+  );
+  await alert.click();
+  await expect(message).toHaveValue(/^Every day, look in Sales graph/);
+  await expect(message).toBeFocused();
+  // Another ontology's, without leaving the page; remembered here.
+  await picker.click();
+  await page.getByRole("option", { name: "Customer contracts" }).click();
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Renewal radar",
+    "Contract check",
+    "Invoice watch",
+    "Monday contracts brief",
+  ]);
+  await expect(page).toHaveURL(/\/workflows\/new$/);
+  await page.reload();
+  await expect(picker).toHaveText("Customer contracts");
+  await expect(suggestions.getByRole("button").first()).toHaveText(
+    "Renewal radar",
+  );
+  // The picker follows the chips: Tab goes from the composer to them.
+  await message.focus();
+  await page.keyboard.press("Tab");
+  await expect(suggestions.getByRole("button").first()).toBeFocused();
+});
+
+test("while Founder writes suggestions, the competency questions' or placeholders show, then its own", async ({
+  page,
+}) => {
+  await mock.configure({ automationSuggestionsMs: 4000 });
+  await signIn(page);
+  await page.goto("/workflows/new");
+  // Customer contracts' current version has no competency questions:
+  // placeholders while it writes.
+  const suggestions = page.getByRole("list", { name: "Suggestions" });
+  await expect(
+    page.getByRole("status").filter({ hasText: "Writing suggestions…" }),
+  ).toBeAttached();
+  await expect(suggestions).toHaveCount(0);
+  await expect(suggestions.getByRole("button").first()).toHaveText(
+    "Renewal radar",
+    { timeout: 15_000 },
+  );
+  // Renewals' are made from its questions meanwhile, then replaced.
+  await page.getByRole("combobox", { name: "Suggestions for" }).click();
+  await page.getByRole("option", { name: "Renewals" }).click();
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Customers are under contract",
+    "Each customer under contract",
+  ]);
+  await suggestions
+    .getByRole("button", { name: "Customers are under contract" })
+    .click();
+  await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
+    'Every Monday, answer: "Which customers are under contract, and which contracts are they signed with?" from Renewals, and email me the answer.',
+  );
+  // A chip replaced under the pointer leaves no stale preview, and a
+  // screen reader hears the chips changed.
+  const message = page.getByRole("textbox", { name: "Message" });
+  await suggestions
+    .getByRole("button", { name: "Each customer under contract" })
+    .hover();
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    /^Every Monday, answer: "What /,
+  );
+  await expect(suggestions.getByRole("button")).toHaveText(
+    [
+      "Renewal radar",
+      "Contract check",
+      "Invoice watch",
+      "Monday contracts brief",
+    ],
+    { timeout: 15_000 },
+  );
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Describe what should happen…",
+  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Suggestions updated" }),
+  ).toBeAttached();
+});
+
+test("without an AI provider, suggestions come from the competency questions, else the fixed four", async ({
+  page,
+}) => {
+  await mock.configure({ automationSuggestionsAi: false });
+  await signIn(page);
+  await page.goto("/workflows/new");
+  const suggestions = page.getByRole("list", { name: "Suggestions" });
+  // Customer contracts has no questions to make them from.
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Monday briefing",
+    "Renewal radar",
+    "Contract check",
+    "Churn alert",
+  ]);
+  await page.getByRole("combobox", { name: "Suggestions for" }).click();
+  await page.getByRole("option", { name: "Renewals" }).click();
+  await expect(suggestions.getByRole("button")).toHaveText([
+    "Customers are under contract",
+    "Each customer under contract",
+  ]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Writing" }),
+  ).toHaveCount(0);
+});
+
+test("someone who reads no ontology gets the fixed suggestions, with no picker", async ({
+  page,
+}) => {
+  await mock.configure({ memberQueryRead: false });
+  await signIn(page, "alan@example.com");
+  await page.goto("/workflows/new");
+  await expect(
+    page.getByRole("list", { name: "Suggestions" }).getByRole("button"),
+  ).toHaveText([
+    "Monday briefing",
+    "Renewal radar",
+    "Contract check",
+    "Churn alert",
+  ]);
+  await expect(
+    page.getByRole("combobox", { name: "Suggestions for" }),
+  ).toHaveCount(0);
+});
+
+test("starts from scratch on the full canvas: adds, joins, tidies and inspects its steps", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/workflows/new");
+  await page.getByRole("link", { name: "Start from scratch" }).click();
+  await expect(page).toHaveURL(/\/workflows\/new\?template=blank$/);
+  const nodes = canvas(page).locator(".react-flow__node"),
+    edges = canvas(page).locator(".react-flow__edge");
+  // Only its trigger, which it can't be saved with.
+  await expect(nodes).toHaveCount(1);
+  await expect(
+    inspector(page).getByRole("list", { name: "Before you save" }),
+  ).toContainText("Add a step after what starts it.");
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toBeDisabled();
+
+  // Add step, from the toolbar: after the trigger, joined, selected.
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
+  await expect(nodes).toHaveCount(2);
+  await expect(edges).toHaveCount(1);
+  await page
+    .getByLabel("What should it do?")
+    .fill("How many ontologies are there?");
+  // A, outside a field, opens Add step: after the last step.
+  await canvas(page)
+    .locator(".react-flow__pane")
+    .click({ position: { x: 24, y: 24 } });
+  await expect(inspector(page).locator(".au-summary-text")).toBeVisible();
+  await page.keyboard.press("a");
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  await expect(nodes).toHaveCount(3);
+  await expect(edges).toHaveCount(2);
+  await expect(page.getByLabel("Subject (optional)")).toBeVisible();
+
+  // Cut a join in the outline, and join them again on the canvas.
+  await page.getByRole("button", { name: "Outline" }).click();
+  await page
+    .getByRole("button", { name: /^Change the step: Ask Founder/ })
+    .click();
+  await page.getByRole("menuitem", { name: /^Email you/ }).click();
+  await page.getByRole("button", { name: "Outline" }).click();
+  await expect(edges).toHaveCount(1);
+  const asks = nodes.filter({ hasText: "How many ontologies" }),
+    email = nodes.filter({ hasText: "Email you" });
+  await asks
+    .locator(".react-flow__handle-bottom")
+    .dragTo(email.locator(".react-flow__handle-top"));
+  await expect(edges).toHaveCount(2);
+
+  // Moved off its row, Tidy puts it back under the step before it.
+  const box = (await email.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 260, box.y + 140, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect(email).not.toHaveCSS(
+    "transform",
+    /matrix\(1, 0, 0, 1, 0, 300\)/,
+  );
+  await page.getByRole("button", { name: "Tidy the layout" }).click();
+  await expect(email).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 300)");
+
+  // Selecting a step shows its settings; Back, the summary.
+  await nodes.filter({ hasText: "Only when you run it" }).click();
+  await expect(
+    inspector(page).getByText("Starts", { exact: true }),
+  ).toBeVisible();
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(inspector(page).locator(".au-summary-text")).toHaveText(
+    "When you run it, ask Founder: “How many ontologies are there?”, then email you what it found.",
+  );
+
+  await page
+    .getByRole("textbox", { name: "Name" })
+    .fill("Count the ontologies");
+  await page.getByRole("button", { name: "Review and save" }).click();
+  const review = page.getByRole("dialog", {
+    name: "Review what runs unattended",
+  });
+  await expect(
+    review
+      .getByRole("list", { name: "Steps that run unattended" })
+      .getByRole("listitem"),
+  ).toHaveCount(3);
+  await review.getByRole("button", { name: "Save and turn on" }).click();
+  await expect(page).toHaveURL(/\/workflows\/aut_[^/?]+$/);
+  await expect(live(page)).toBeChecked();
+  await expect(title(page, "Count the ontologies")).toBeVisible();
+});
+
+test("a step added after one that leads on slots in between, and a blank Founder step reads without quotes", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Insert between", [
+    manual,
+    step("ask", "assistant", { instruction: "Summarise." }, 150),
+    step("tell", "notify", { message: "Done" }, 300),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  const nodes = canvas(page).locator(".react-flow__node");
+  await expect(nodes).toHaveCount(3);
+  await nodes.filter({ hasText: "Summarise." }).click();
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
+  await expect(nodes).toHaveCount(4);
+  // Joined from the step chosen and on to the one it led to: no new branch.
+  await expect(canvas(page).locator(".react-flow__edge")).toHaveCount(3);
+  const blank = nodes.filter({ hasText: "Write what Founder should do" });
+  await expect(blank).toHaveCount(1);
+  await expect(blank).not.toContainText("“");
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(inspector(page).locator(".au-summary-text")).toContainText(
+    "ask Founder: “Summarise.”, then ask Founder, then email you “Done”",
+  );
+});
+
+test("starts from a template, runs only once approved, runs now, and colours the run on the canvas", async ({
+  page,
+}) => {
+  await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
+  await signIn(page);
+  await page.getByRole("link", { name: "Workflows", exact: true }).click();
+  await expect(page).toHaveURL(/\/workflows$/);
+  await page.getByRole("link", { name: /^Sync, then summarise/ }).click();
+  // The template's description leads; its steps, its connection the
+  // workspace's first, are listed in words and drawn on the canvas.
+  await expect(inspector(page).locator(".au-summary-text")).toHaveText(
+    "A fresh sync and a short summary, every morning.",
+  );
+  const preview = inspector(page).getByRole("list", { name: "Steps" });
+  await expect(preview.getByRole("listitem")).toHaveCount(4);
+  await expect(preview).toContainText(/every day at 08:00 (UTC|.+ time)/);
+  await expect(preview).toContainText("Sync “Stripe”");
+  await expect(preview).toContainText("Ask Founder:");
+  await expect(canvas(page).locator(".au-node")).toHaveCount(4);
+  await expect(live(page)).toBeDisabled();
+  await page
+    .getByRole("textbox", { name: "Name" })
+    .fill("Morning Stripe summary");
+  await page.getByRole("button", { name: "Review and save" }).click();
+  const review = page.getByRole("dialog", {
+    name: "Review what runs unattended",
+  });
+  const unattended = review.getByRole("list", {
+    name: "Steps that run unattended",
+  });
+  await expect(unattended.getByRole("listitem")).toHaveCount(4);
+  await expect(unattended).toContainText("Sync “Stripe”");
+  await expect(unattended).toContainText("Runs without asking you, as you.");
+  await expect(unattended).toContainText("Changes nothing without asking you");
+  await review.getByRole("button", { name: "Save and turn on" }).click();
+
+  await expect(page).toHaveURL(/\/workflows\/aut_[^/?]+$/);
+  await expect(live(page)).toBeChecked();
+  await page.getByRole("button", { name: "Run now" }).click();
+  await expect(page).toHaveURL(/\/workflows\/aut_[^/]+\/runs\/arun_/);
+  await ended(page, "Succeeded");
+  const coloured = page.getByRole("region", {
+    name: "Its steps on a canvas, coloured by how each went",
+  });
+  await expect(coloured.locator(".au-node--succeeded")).toHaveCount(4);
+  await expect(page.getByRole("tab", { name: /Runs/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("list", { name: "Runs" }).getByRole("listitem"),
+  ).toHaveCount(1);
+  await expect(steps(page).getByRole("listitem")).toHaveCount(4);
+  await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+    /Synced its connector: it wrote \d+ rows\./,
+  );
+  await expect(steps(page).getByRole("listitem").nth(2)).toContainText(
+    "What Founder reported",
+  );
+  await expect(steps(page).getByRole("listitem").nth(3)).toContainText(
+    "Emailed its owner.",
+  );
+  // A step selected on the run's canvas: what it did, alone.
+  await coloured
+    .locator(".react-flow__node")
+    .filter({ hasText: "Sync" })
+    .click();
+  await expect(inspector(page)).toContainText("What happened");
+  await expect(inspector(page)).toContainText(
+    /Synced its connector: it wrote \d+ rows\./,
+  );
+  await expect(steps(page)).toHaveCount(0);
+
+  // The Editor tab is its steps again, as they stand.
+  await page.getByRole("tab", { name: "Editor" }).click();
+  await expect(canvas(page)).toBeVisible();
+  await expect(canvas(page).locator(".au-node--succeeded")).toHaveCount(0);
+
+  // A step added but not saved doesn't run unattended yet, and the Runs
+  // tab draws the steps as saved, which only the Editor changes.
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  await expect(canvas(page).locator(".au-node")).toHaveCount(5);
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(
+    inspector(page).getByRole("list", { name: "Steps" }).getByRole("listitem"),
+  ).toHaveCount(4);
+  await expect(
+    inspector(page).getByText("As saved: your changes run once you save them."),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: /Runs/ }).click();
+  await expect(canvas(page).locator(".au-node")).toHaveCount(4);
+  await canvas(page)
+    .locator(".react-flow__node")
+    .filter({ hasText: "Sync" })
+    .click();
+  await expect(
+    inspector(page).getByText("Edit its steps in the Editor tab."),
+  ).toBeVisible();
+  await expect(inspector(page).getByText(/^Only its owner/)).toHaveCount(0);
+
+  // The overview says how it last ran.
+  await page.goto("/workflows");
+  const row = page.getByRole("grid", { name: "Workflows" }).getByRole("row", {
+    name: /Morning Stripe summary/,
+  });
+  await expect(row).toContainText("Succeeded");
+  await expect(row).toContainText("On a schedule");
+  await expect(row).toContainText("Live");
+});
+
+test("edits its steps in the outline, and waits for approval until approved", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/workflows/new?template=load-after-sync");
+  await page.getByRole("button", { name: "Outline" }).click();
+  const outline = page.getByRole("list", { name: "Steps" });
+  // The load waits for nothing it can be told to: take it out, and email
+  // instead.
+  await page.getByRole("button", { name: /^Change the step: Load/ }).click();
+  await page.getByRole("menuitem", { name: "Remove this step" }).click();
+  await page
+    .getByRole("button", { name: /^Change the step: When a sync/ })
+    .click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  await expect(outline.getByRole("listitem")).toHaveCount(2);
+  await page.getByLabel("Subject (optional)").fill("Stripe synced");
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  // The template's description still leads; the steps, as edited, are listed.
+  await expect(inspector(page).locator(".au-summary-text")).toHaveText(
+    "A new load after every successful sync.",
+  );
+  const edited = inspector(page).getByRole("list", { name: "Steps" });
+  await expect(edited.getByRole("listitem")).toHaveText([
+    "When a sync of “Stripe” succeeds",
+    "Email you “Stripe synced”",
+  ]);
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await page.getByRole("button", { name: "Save, turn on later" }).click();
+
+  // Saved, it waits: what its owner approves is what it shows.
+  await expect(page).toHaveURL(/\/workflows\/aut_[^/?]+$/);
+  await expect(
+    inspector(page).getByText("It waits for your approval"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(0);
+  await expect(live(page)).not.toBeChecked();
+  await inspector(page)
+    .getByRole("button", { name: "Review and approve" })
+    .click();
+  const approve = page.getByRole("dialog", {
+    name: "Approve what runs unattended",
+  });
+  await expect(
+    approve.getByRole("list", { name: "Steps to approve" }),
+  ).toContainText("Email you “Stripe synced”");
+  await approve.getByRole("button", { name: "Approve and go live" }).click();
+  await expect(live(page)).toBeChecked();
+  await expect(
+    inspector(page).getByText("It waits for your approval"),
+  ).toHaveCount(0);
+
+  // An edit of its steps waits for approval again.
+  await page.getByRole("button", { name: "Outline" }).click();
+  await page
+    .getByRole("button", { name: /^Change the step: Email you/ })
+    .click();
+  await page.getByRole("menuitem", { name: "Ask Founder" }).click();
+  await page
+    .getByLabel("What should it do?")
+    .fill("Say how many invoices changed.");
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(live(page)).toBeDisabled();
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await page.getByRole("button", { name: "Save, turn on later" }).click();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(
+    inspector(page).getByText("It waits for your approval"),
+  ).toBeVisible();
+  await expect(live(page)).not.toBeChecked();
+});
+
+test("the Live switch approves a waiting workflow and pauses it; spaces are no change; a step deleted on the canvas keeps the chain joined; Settings renames and deletes it", async ({
+  page,
+}) => {
+  await signIn(page);
+  const made = (
+    await postToWfe(page, A, {
+      name: "Waiting chain",
+      clientToken: "e2e-waiting-chain",
+      specJson: JSON.stringify({
+        v: 1,
+        nodes: [
+          manual,
+          step("ask", "assistant", { instruction: "Count the invoices." }, 150),
+          step("tell", "notify", { message: "Counted" }, 300),
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "tell" },
+        ],
+      }),
+    })
+  ).automation;
+  await page.goto(`/workflows/${made.id}`);
+  await expect(inspector(page).locator(".hf-status")).toHaveText(
+    "Needs approval",
+  );
+  await live(page).click();
+  await page
+    .getByRole("dialog", { name: "Approve what runs unattended" })
+    .getByRole("button", { name: "Approve and go live" })
+    .click();
+  await expect(live(page)).toBeChecked();
+  await live(page).click();
+  await expect(live(page)).not.toBeChecked();
+  await expect(
+    inspector(page).getByText("Paused: it runs only when you run it by hand."),
+  ).toBeVisible();
+  await live(page).click();
+  await expect(live(page)).toBeChecked();
+
+  // A space at the end of an instruction is no change to save.
+  const nodes = canvas(page).locator(".react-flow__node");
+  await nodes.filter({ hasText: "Count the invoices." }).click();
+  await page.getByLabel("What should it do?").fill("Count the invoices. ");
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toHaveCount(0);
+
+  // Deleted on the canvas, the step's neighbours join: nothing is cut off.
+  await nodes.filter({ hasText: "Count the invoices." }).click();
+  await page.keyboard.press("Delete");
+  await expect(nodes).toHaveCount(2);
+  await expect(canvas(page).locator(".react-flow__edge")).toHaveCount(1);
+  await expect(
+    inspector(page).getByRole("list", { name: "Before you save" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(nodes).toHaveCount(3);
+
+  // Renamed in place, it keeps its approval.
+  await page.getByRole("button", { name: "Rename Waiting chain" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Invoice count");
+  await page.keyboard.press("Enter");
+  await expect(title(page, "Invoice count")).toBeVisible();
+  await expect(live(page)).toBeChecked();
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Approval" })).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Approved steps" }).getByRole("listitem"),
+  ).toHaveCount(3);
+  await page.getByRole("button", { name: "Delete workflow" }).click();
+  await page
+    .getByRole("dialog", { name: "Delete “Invoice count”?" })
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await expect(page).toHaveURL(/\/workflows$/);
+  await expect(page.getByText("No workflows yet")).toBeVisible();
+});
+
+test("a rename in the bar that ends after a change keeps the change, which then saves", async ({
+  page,
+}) => {
+  await signIn(page);
+  const tell = step("tell", "notify", { message: "Hi" }, 150);
+  const id = await make(page, "Slow name", [manual, tell]);
+  // The renames wait until the test lets them through.
+  let gate: { held: Promise<void>; open: () => void } | undefined;
+  const hold = () => {
+    let open!: () => void;
+    const held = new Promise<void>((r) => (open = r));
+    gate = { held, open };
+    return gate;
+  };
+  await page.route(`**/papi${A}/${id}`, async (route) => {
+    if (route.request().method() === "PATCH" && gate) await gate.held;
+    await route.fallback();
+  });
+  await page.goto(`/workflows/${id}`);
+  const nodes = canvas(page).locator(".react-flow__node");
+  const addEmail = async () => {
+    await page.getByRole("button", { name: "Add step" }).click();
+    await page.getByRole("menuitem", { name: "Email me" }).click();
+  };
+
+  // Renamed with nothing changed, then a step added while it saves.
+  let rename = hold();
+  await page.getByRole("button", { name: "Rename Slow name" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Quick name");
+  await page.keyboard.press("Enter");
+  await addEmail();
+  await expect(nodes).toHaveCount(3);
+  rename.open();
+  await expect(title(page, "Quick name")).toBeVisible();
+  await expect(nodes).toHaveCount(3);
+
+  // Renamed with a change made, then another added while it saves.
+  rename = hold();
+  await page.getByRole("button", { name: "Rename Quick name" }).click();
+  await page.getByRole("textbox", { name: "Name" }).fill("Quicker name");
+  await page.keyboard.press("Enter");
+  await addEmail();
+  await expect(nodes).toHaveCount(4);
+  rename.open();
+  await expect(title(page, "Quicker name")).toBeVisible();
+  await expect(nodes).toHaveCount(4);
+  gate = undefined;
+
+  // The draft goes on from the renamed automation: its save isn't refused.
+  await page.getByRole("button", { name: "Review and save" }).click();
+  const review = page.getByRole("dialog", {
+    name: "Review what runs unattended",
+  });
+  await expect(
+    review
+      .getByRole("list", { name: "Steps that run unattended" })
+      .getByRole("listitem"),
+  ).toHaveCount(4);
+  await review.getByRole("button", { name: "Save and turn on" }).click();
+  await expect(review).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toHaveCount(0);
+  await expect(title(page, "Quicker name")).toBeVisible();
+  await expect(nodes).toHaveCount(4);
+});
+
+test("its Runs tab counts the runs read so far, and says when there are more", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Busy check", [
+    manual,
+    step("tell", "notify", { message: "Hi" }, 150),
+  ]);
+  await mock.pastRuns(
+    id,
+    Array.from({ length: 51 }, (_, i) => ({
+      status: "succeeded" as const,
+      ago: (i + 1) * 60_000,
+    })),
+  );
+  await page.goto(`/workflows/${id}`);
+  await expect(page.getByRole("tab", { name: /^Runs\s*50\+$/ })).toBeVisible();
+  await page.getByRole("tab", { name: /^Runs/ }).click();
+  await page.getByRole("button", { name: "Show older runs" }).click();
+  await expect(page.getByRole("tab", { name: /^Runs\s*51$/ })).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Runs" }).getByRole("listitem"),
+  ).toHaveCount(51);
+});
+
+test("an old /automations link opens the workflow, keeping its query", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Old link", [
+    manual,
+    step("tell", "notify", { message: "Hi" }, 150),
+  ]);
+  await page.goto(`/automations/${id}?tab=runs`);
+  await expect(page).toHaveURL(new RegExp(`/workflows/${id}\\?tab=runs$`));
+  await expect(page.getByRole("tab", { name: /^Runs/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.goto("/automations");
+  await expect(page).toHaveURL(/\/workflows$/);
+});
+
+test("fires on its schedule when the time comes", async ({ page }) => {
+  await mock.configure({ automationStepMs: 100 });
+  await signIn(page);
+  const id = await make(page, "Weekly note", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: {
+        kind: "schedule",
+        every: "week",
+        weekday: "monday",
+        at: "09:00",
+        time_zone: "UTC",
+      },
+      position: at(0),
+    },
+    step("tell", "notify", { message: "Monday" }, 150),
+  ]);
+  await page.goto(`/workflows/${id}?tab=runs`);
+  await expect(page.getByText("No runs yet")).toBeVisible();
+  // A week on, by the mock's clock: the page sees the run its schedule fired.
+  await mock.configure({ automationClockMs: 8 * 24 * 3_600_000 });
+  const runs = page.getByRole("list", { name: "Runs" });
+  await expect(runs.getByRole("link", { name: /On its schedule/ })).toHaveCount(
+    1,
+    { timeout: 20_000 },
+  );
+  await runs.getByRole("link", { name: /On its schedule/ }).click();
+  await ended(page, "Succeeded");
+});
+
+test("starts after a sync of its connection", async ({ page }) => {
+  await mock.configure({ automationStepMs: 100 });
+  await signIn(page);
+  const id = await make(
+    page,
+    "After Stripe syncs",
+    [
+      {
+        id: "start",
+        kind: "trigger",
+        config: {
+          kind: "sync_finished",
+          connector_id: "conn_acme_stripe",
+          outcome: "succeeded",
+        },
+        position: at(0),
+      },
+      step(
+        "enough",
+        "condition",
+        { check: "count", op: "at_least", value: 1 },
+        150,
+      ),
+      step("tell", "notify", { message: "Rows synced" }, 300),
+    ],
+    [
+      { from: "start", to: "enough" },
+      { from: "enough", to: "tell", branch: "true" },
+    ],
+  );
+  // What ended before it was on starts nothing.
+  await page.goto(`/workflows/${id}?tab=runs`);
+  await expect(page.getByText("No runs yet")).toBeVisible();
+  await page.goto("/data/connections/conn_acme_stripe");
+  await page.getByRole("button", { name: "Sync now" }).click();
+  await page.goto(`/workflows/${id}?tab=runs`);
+  const runs = page.getByRole("list", { name: "Runs" });
+  await expect(
+    runs.getByRole("link", { name: /A sync of “Stripe” succeeded/ }),
+  ).toHaveCount(1, { timeout: 20_000 });
+  await runs
+    .getByRole("link", { name: /A sync of “Stripe” succeeded/ })
+    .click();
+  await ended(page, "Succeeded");
+  await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+    "It was met: it went the “When met” way.",
+  );
+});
+
+test("waits for the load its step started, and skips the sync another automation it set off started, saying why", async ({
+  page,
+}) => {
+  await mock.configure({ automationStepMs: 100, loadStepMs: 100 });
+  await signIn(page);
+  // One loads Renewals after Stripe syncs; the other syncs Stripe after
+  // Renewals loads: each would set the other off for ever.
+  const loader = await make(page, "Load after Stripe", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: {
+        kind: "sync_finished",
+        connector_id: "conn_acme_stripe",
+        outcome: "succeeded",
+      },
+      position: at(0),
+    },
+    step(
+      "load",
+      "action",
+      { operation: "create_load", ontology_id: "ont_acme_renewals" },
+      150,
+    ),
+  ]);
+  await make(page, "Sync after Renewals", [
+    {
+      id: "start",
+      kind: "trigger",
+      config: { kind: "load_ready", ontology_id: "ont_acme_renewals" },
+      position: at(0),
+    },
+    step(
+      "sync",
+      "action",
+      { operation: "sync_connector", connector_id: "conn_acme_stripe" },
+      150,
+    ),
+  ]);
+  await page.goto("/data/connections/conn_acme_stripe");
+  await page.getByRole("button", { name: "Sync now" }).click();
+
+  // The person's sync runs the loader, whose step waits for its load.
+  await page.goto(`/automations/${loader}?tab=runs`);
+  const runs = page.getByRole("list", { name: "Runs" });
+  await expect(runs.getByRole("link")).toHaveCount(1, { timeout: 20_000 });
+  await runs.getByRole("link").first().click();
+  await ended(page, "Succeeded");
+  await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+    "Loaded its ontology's current version: the load is ready.",
+  );
+
+  // The load ran the other, whose sync would run the loader again: skipped.
+  await page.goto(`/automations/${loader}?tab=runs`);
+  await expect(runs.getByRole("link")).toHaveCount(2, { timeout: 30_000 });
+  await runs.getByRole("link").first().click();
+  await expect(
+    inspector(page).getByText(
+      "Skipped: the sync was started by a workflow this one set off; running on it would loop.",
+    ),
+  ).toBeVisible();
+});
+
+test("pauses after three failed runs in a row, and says why", async ({
+  page,
+}) => {
+  await mock.configure({
+    automationStepMs: 100,
+    agentStepMs: 60,
+    agentOutcome: "fail",
+  });
+  await signIn(page);
+  const id = await make(page, "Summaries", [
+    manual,
+    step(
+      "ask",
+      "assistant",
+      { instruction: "Summarise overdue invoices." },
+      150,
+    ),
+    step("tell", "notify", { message: "" }, 300),
+  ]);
+  for (let i = 0; i < 3; i++) {
+    await page.goto(`/workflows/${id}`);
+    await page.getByRole("button", { name: "Run now" }).click();
+    await ended(page, "Failed");
+    await expect(
+      inspector(page).getByText(/^It failed\. The assistant step "ask" failed/),
+    ).toBeVisible();
+    await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+      "The model failed: overloaded.",
+    );
+    await expect(steps(page).getByRole("listitem").nth(2)).toContainText(
+      "Not run",
+    );
+    await expect(
+      page
+        .getByRole("region", {
+          name: "Its steps on a canvas, coloured by how each went",
+        })
+        .locator(".au-node--failed"),
+    ).toHaveCount(1);
+  }
+  await page.goto(`/workflows/${id}`);
+  await expect(
+    inspector(page).getByText(
+      "Paused after 3 failed runs in a row. Fix what failed, then resume it.",
+    ),
+  ).toBeVisible();
+  await expect(
+    inspector(page).getByText(/^The last one failed because:/),
+  ).toBeVisible();
+  await expect(inspector(page).locator(".hf-status").first()).toHaveText(
+    "Paused after failures",
+  );
+  await mock.configure({ agentOutcome: "" as never });
+  await live(page).click();
+  await expect(live(page)).toBeChecked();
+});
+
+test("leaves an action the owner didn't approve on the run, for them to run", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({
+    automationStepMs: 100,
+    agentStepMs: 60,
+    loadStepMs: 100,
+  });
+  await signIn(page);
+  const id = await make(page, "Load contracts", [
+    manual,
+    step(
+      "ask",
+      "assistant",
+      { instruction: "Load Customer contracts and report what it holds." },
+      150,
+    ),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  await page.getByRole("button", { name: "Run now" }).click();
+  await ended(page, "Succeeded");
+  await expect(
+    inspector(page).getByText("One action it prepared waits for you:"),
+  ).toBeVisible();
+  // The overview counts it for its owner; another member counts the run
+  // only, as they don't see what it prepared.
+  const waiting = (p: Page) =>
+    p
+      .locator(".au-stat")
+      .filter({ hasText: "Waiting for someone" })
+      .locator("dd")
+      .first();
+  await page.goto("/workflows");
+  await expect(waiting(page)).toHaveText("1");
+  const context = await browser.newContext();
+  const alan = await context.newPage();
+  await signIn(alan, "alan@example.com");
+  await alan.goto("/workflows");
+  await expect(
+    alan.locator(".au-stat").filter({ hasText: "Runs" }).locator("dd").first(),
+  ).toHaveText("1");
+  await expect(waiting(alan)).toHaveText("0");
+  await context.close();
+  await page.goto(`/workflows/${id}?tab=runs`);
+  await page.getByRole("list", { name: "Runs" }).getByRole("link").click();
+  await ended(page, "Succeeded");
+  const card = inspector(page).getByRole("region", {
+    name: /^Action: Load v3 of “Customer contracts”/,
+  });
+  await card.getByRole("button", { name: "Load", exact: true }).click();
+  await expect(card.getByText("Ran", { exact: true })).toBeVisible();
+});
+
+test("shows another member its steps and how far a run went, never what it found, and lets them change nothing", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ automationStepMs: 100, agentStepMs: 60 });
+  await signIn(page);
+  const id = await make(page, "Ada's summary", [
+    manual,
+    step(
+      "ask",
+      "assistant",
+      { instruction: "Summarise overdue invoices." },
+      150,
+    ),
+  ]);
+  const run = (
+    await postToWfe(page, `${A}/${id}:run`, { clientToken: "member" })
+  ).run.id as string;
+  await page.goto(`/workflows/${id}/runs/${run}`);
+  await ended(page, "Succeeded");
+
+  const context = await browser.newContext();
+  const alan = await context.newPage();
+  await signIn(alan, "alan@example.com");
+  await alan.goto(`/workflows/${id}`);
+  await expect(title(alan, "Ada's summary")).toBeVisible();
+  for (const name of ["Run now", "Rename Ada's summary", "Add step"])
+    await expect(alan.getByRole("button", { name })).toHaveCount(0);
+  await expect(live(alan)).toBeDisabled();
+  // Off, it still says why, to a screen reader and on a tap.
+  await expect(live(alan)).toHaveAccessibleDescription(
+    "Only its owner, or an owner or admin, pauses it",
+  );
+  // Playwright waits for an enabled element; a person's tap doesn't.
+  await live(alan).click({ force: true });
+  await expect(live(alan)).toBeChecked();
+  await expect(
+    alan.getByRole("status").filter({
+      hasText: "Only its owner, or an owner or admin, pauses it.",
+    }),
+  ).toBeVisible();
+  // The tap asked nothing of the WFE: nothing was refused.
+  await expect(alan.locator(".au-strip.is-danger")).toHaveCount(0);
+  await expect(inspector(alan).getByText("Another member")).toBeVisible();
+  await canvas(alan)
+    .locator(".react-flow__node")
+    .filter({ hasText: "Summarise overdue invoices." })
+    .click();
+  await expect(alan.getByLabel("What should it do?")).toBeDisabled();
+  await expect(
+    inspector(alan).getByText("Only its owner changes its steps"),
+  ).toBeVisible();
+  await alan.getByRole("tab", { name: "Settings" }).click();
+  await expect(alan.getByRole("textbox", { name: "Name" })).toHaveAttribute(
+    "readonly",
+    "",
+  );
+  await expect(
+    alan.getByRole("button", { name: "Delete workflow" }),
+  ).toHaveCount(0);
+  await alan.goto(`/workflows/${id}/runs/${run}`);
+  await ended(alan, "Succeeded");
+  await expect(inspector(alan).getByText("What Founder reported")).toHaveCount(
+    0,
+  );
+  // Their own, they may make.
+  await alan.goto("/workflows");
+  await expect(alan.getByRole("link", { name: "New workflow" })).toBeVisible();
+  await context.close();
+});
+
+test("on a phone the canvas only shows the steps: the inspector is a sheet, and the outline edits them", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  await signIn(page);
+  const id = await make(page, "Phone check", [
+    manual,
+    step("ask", "assistant", { instruction: "Count the invoices." }, 150),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  const nodes = canvas(page).locator(".react-flow__node");
+  await expect(nodes).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Add step" })).toHaveCount(0);
+  await expect(inspector(page)).toHaveCount(0);
+  await nodes.filter({ hasText: "Count the invoices." }).tap();
+  const sheet = page.getByRole("dialog", { name: "Step" });
+  await expect(sheet.getByLabel("What should it do?")).toHaveValue(
+    "Count the invoices.",
+  );
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Outline" }).click();
+  await page
+    .getByRole("button", { name: /^Change the step: Ask Founder/ })
+    .click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  // The step it added opens in the sheet.
+  await expect(
+    page.getByRole("dialog", { name: "Step" }).getByLabel("Subject (optional)"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("list", { name: "Steps" }).getByRole("listitem"),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole("button", { name: "Review and save" }),
+  ).toBeVisible();
+  await context.close();
+});
+
+test("Founder sets one up from a card its person runs, in the dock", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 60 });
+  await signIn(page);
+  await page.goto("/workflows");
+  // ⌘J, once the shell (whose Founder button it presses) is on screen.
+  await expect(
+    page
+      .getByRole("button", { name: "Founder", exact: true })
+      .filter({ visible: true })
+      .first(),
+  ).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary", { name: "Founder" });
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill(
+      "Every Monday at 9, sync Stripe and email me a summary of overdue invoices.",
+    );
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  const card = dock.getByRole("region", {
+    name: /^Action: Set up the workflow/,
+  });
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  const unattended = card.getByRole("list", { name: "Steps it approves" });
+  await expect(unattended.getByRole("listitem")).toHaveCount(4);
+  await expect(unattended).toContainText("Sync “Stripe”");
+  await expect(unattended).toContainText("When every Monday at 09:00");
+  await card.getByRole("button", { name: "Create and turn on" }).click();
+  await expect(card.getByText("Ran", { exact: true })).toBeVisible();
+  // The overview reads it again.
+  await expect(
+    page.getByRole("grid", { name: "Workflows" }).getByRole("row", {
+      name: /Weekly summary/,
+    }),
+  ).toBeVisible();
+  await dock.getByRole("link", { name: /\/workflows\/aut_/ }).click();
+  await expect(live(page)).toBeChecked();
+  await expect(
+    page.getByRole("navigation", { name: "Workflows" }),
+  ).toContainText("Weekly summary");
+});
+
+test.describe("in the browser's time zone", () => {
+  test.use({ timezoneId: "America/New_York" });
+
+  test("the Assistant schedules a weekly one without asking for a zone, said in words", async ({
+    page,
+  }) => {
+    await mock.configure({ agentStepMs: 60 });
+    await signIn(page);
+    await page.goto("/workflows/new");
+    await page
+      .getByRole("textbox", { name: "Message" })
+      .fill(
+        "Every Monday at 8am, give me a summary of overdue invoices from Customer contracts.",
+      );
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    const card = page.getByRole("region", {
+      name: /^Action: Set up the workflow/,
+    });
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    // No question about the zone: the browser's went with the message.
+    await expect(page.getByRole("radiogroup")).toHaveCount(0);
+    const steps = card.getByRole("list", { name: "Steps it approves" });
+    await expect(steps).toContainText(
+      "When every Monday at 08:00 New York time",
+    );
+    await expect(steps).not.toContainText("America/New_York");
+    // Its instruction names the ontology, never its id.
+    await expect(steps).toContainText("the Customer contracts ontology");
+    await expect(steps).not.toContainText(
+      /\bont_\w+|\b[0-9A-HJKMNP-TV-Z]{26}\b/,
+    );
+    await card.getByRole("button", { name: "Create and turn on" }).click();
+    await expect(page).toHaveURL(/\/workflows\/aut_[^/?]+$/);
+    await expect(inspector(page).locator(".au-summary-text")).toContainText(
+      "Every Monday at 08:00 New York time",
+    );
+    // The Assistant step's inspector shows its instruction once: in its box.
+    await canvas(page)
+      .locator(".react-flow__node")
+      .filter({ hasText: /Ask Founder/ })
+      .click();
+    const instruction = inspector(page).getByLabel("What should it do?");
+    await expect(instruction).toHaveValue(
+      /^Read the current load of the Customer contracts ontology\./,
+    );
+    await expect(inspector(page).getByText(/^Ask Founder: “/)).toHaveCount(0);
+    // Its trigger's zone picker says the zone in words.
+    await canvas(page)
+      .locator(".react-flow__node")
+      .filter({ hasText: "every Monday at 08:00" })
+      .click();
+    await expect(
+      inspector(page).getByRole("combobox", { name: "Time zone" }),
+    ).toContainText(/New York · GMT−[45]/);
+  });
+});
+
+test("a long Founder instruction reads in a line in its summary, whole only where it is opened", async ({
+  page,
+}) => {
+  const instruction = `Every Monday, review what changed in the ontology over the last week. ${"Then list each new customer, each changed invoice and anything unusual, with why it matters. ".repeat(6)}`;
+  await signIn(page);
+  const id = await make(page, "Weekly changes email", [
+    manual,
+    step("ask", "assistant", { instruction }, 150),
+    step("tell", "notify", { message: "Weekly changes" }, 300),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  const summary = inspector(page).locator(".au-summary-text");
+  // Its first sentence, never the whole instruction.
+  await expect(summary).toHaveText(
+    "When you run it, ask Founder: “Every Monday, review what changed in the ontology over the last week.”, then email you “Weekly changes”.",
+  );
+  const unattended = inspector(page).getByRole("list", { name: "Steps" });
+  await expect(unattended.getByRole("listitem")).toHaveCount(3);
+  await expect(
+    unattended.getByRole("button", {
+      name: "Ask Founder: “Every Monday, review what changed in the ontology over the last week.”",
+    }),
+  ).toBeVisible();
+  // The whole of it opens in place, and is nowhere else on the panel.
+  const whole = unattended.getByText("Its whole instruction");
+  await expect(whole).toBeVisible();
+  await expect(
+    inspector(page).getByText(/Then list each new customer/),
+  ).toBeHidden();
+  await whole.click();
+  await expect(
+    inspector(page).getByText(/Then list each new customer/),
+  ).toBeVisible();
+  // A step's line opens it, its instruction whole in its box.
+  await unattended
+    .getByRole("button", { name: /^Ask Founder: “Every Monday/ })
+    .click();
+  await expect(inspector(page).getByLabel("What should it do?")).toHaveValue(
+    instruction.trim(),
+  );
+
+  // With a description, the summary is that alone.
+  const described = await make(page, "Described", [
+    manual,
+    step("ask", "assistant", { instruction }, 150),
+  ]);
+  const read = await readAutomation(page, described);
+  const patched = await page.request.patch(`/papi${A}/${described}`, {
+    data: {
+      expectedRevision: read.revision,
+      description: "What the team reads every Monday.",
+    },
+    headers: {
+      origin: new URL(page.url()).origin,
+      "x-helix-csrf": await csrfToken(page),
+    },
+  });
+  expect(patched.status(), await patched.text()).toBe(200);
+  await page.goto(`/workflows/${described}`);
+  await expect(inspector(page).locator(".au-summary-text")).toHaveText(
+    "What the team reads every Monday.",
+  );
+
+  // Approving shows every step whole, each in a block of its own.
+  await page.goto(`/workflows/${id}`);
+  await page.getByRole("button", { name: "Outline" }).click();
+  await page
+    .getByRole("button", { name: /^Change the step: Email you/ })
+    .click();
+  await page.getByRole("menuitem", { name: "Email me" }).click();
+  await page.getByRole("button", { name: "Review and save" }).click();
+  const review = page.getByRole("dialog", {
+    name: "Review what runs unattended",
+  });
+  await expect(review.locator(".au-sentence")).not.toContainText(
+    "Then list each new customer",
+  );
+  await expect(
+    review
+      .getByRole("list", { name: "Steps that run unattended" })
+      .getByText(/Then list each new customer/),
+  ).toBeVisible();
+});
+
+test("steps moved on the canvas save on their own, keep its approval, and stay where they were put", async ({
+  page,
+}) => {
+  await signIn(page);
+  const id = await make(page, "Moved steps", [
+    manual,
+    step("tell", "notify", { message: "Done" }, 150),
+  ]);
+  await page.goto(`/workflows/${id}`);
+  await expect(live(page)).toBeChecked();
+  const tell = canvas(page)
+    .locator(".react-flow__node")
+    .filter({ hasText: "Email you" });
+  await expect(tell).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 150)");
+  // Dragged up beside what starts it: a row, joined straight across.
+  const box = (await tell.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 320, box.y + 12 - 150, {
+    steps: 10,
+  });
+  await page.mouse.up();
+  await expect(
+    page.getByRole("status").getByText("Layout saved"),
+  ).toBeVisible();
+  // No draft: nothing to review, and still live.
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(live(page)).toBeChecked();
+  const moved = await tell.evaluate((n) => getComputedStyle(n).transform);
+  expect(moved).not.toBe("matrix(1, 0, 0, 1, 0, 150)");
+
+  // Away and back: where it was put.
+  await page.goto("/workflows");
+  await page.goto(`/workflows/${id}`);
+  await expect(tell).toHaveCSS("transform", moved);
+  await expect(live(page)).toBeChecked();
+  const saved = await readAutomation(page, id);
+  expect(saved.status).toBe("active");
+  expect(saved.approvedSpecRevision).toBe(saved.specRevision);
+
+  // A step change stays a draft while a move still saves on its own.
+  await tell.click();
+  await page.getByLabel("Subject (optional)").fill("Changed");
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Tidy the layout" }).click();
+  await expect(
+    page.getByRole("status").getByText("Layout saved"),
+  ).toBeVisible();
+  await page.goto("/workflows");
+  await page.goto(`/workflows/${id}`);
+  await expect(tell).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 150)");
+  await expect(tell).toContainText("Email you “Done”");
+  await expect(live(page)).toBeChecked();
+});

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { STAR_ASK } from "@/shared/github-star";
 import type { OntologyGeneration } from "@/shared/wfe";
 import { GOAL_APPROACH, GOAL_FORMAT } from "@/web/areas/ontology/goal-prompt";
 import {
@@ -90,8 +91,8 @@ describe("onboardingPrompt without an ontology", () => {
 
   it("gives the rules for acting through the MCP", () => {
     for (const rule of [
-      "`helix_prepare_foundry_operation`",
-      "`helix_execute_foundry_operation` with the same three",
+      "`helix_foundry_prepare_operation`",
+      "`helix_foundry_execute_operation` with the same three",
       "within 5 minutes",
       "Never retry an execute",
       "Never ask me for credentials",
@@ -139,7 +140,7 @@ describe("onboardingPrompt without an ontology", () => {
       "whether to connect sources, upload documents or both: either is enough on its own.",
     );
     expect(text).not.toContain("drafts from synced tables, at least one");
-    expect(text).toContain("`helix_foundry_connector_link`");
+    expect(text).toContain("`helix_foundry_connect`");
     expect(text).toContain(
       '`create_document_set`, target `ontology:ws1/<ontology id>`, payload `{"name": "<name>", "description": "<what its documents hold>"}`',
     );
@@ -227,7 +228,10 @@ describe("onboardingPrompt without a workspace", () => {
     );
     expect(text).toContain("`claude --continue`, `codex resume --last`");
     expect(text).toContain(
-      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. Its `id` is the `<workspace id>` below.",
+      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. If I want a new one, or it lists none, make it with `helix_create_workspace`",
+    );
+    expect(text).toContain(
+      '`{"name": "<its name>", "client_token": "<a new UUID>"}`), which comes with Foundry’s free Helix plan. Its `id` is the `<workspace id>` below.',
     );
     expect(text).toContain("`identity_not_found`");
   });
@@ -310,7 +314,7 @@ describe("onboardingPrompt without a workspace", () => {
     expect(text).toContain("target `workspace:<workspace id>`");
     expect(text).toContain("target `ontology:<workspace id>/<ontology id>`");
     expect(text).toContain(
-      '`{"workspace_id": "<workspace id>", "kind": "<kind>"}`',
+      '`{"workspace_id": "<workspace id>", "kind": "<kind>"}`. If its `sign_in` is true, add `"client_token": "<a new UUID>"`',
     );
     expect(text).toContain(
       "Give me https://foundry.example.com/settings/billing?workspace=<workspace id> to upgrade",
@@ -355,33 +359,34 @@ describe("onboardingPrompt's connectors that sign in", () => {
     );
 
   // The prompt can't know whether the stamp offers signing in, or to whom:
-  // the agent reads it per kind, and every other kind keeps its form.
+  // the agent reads it per kind, and one tool connects either way.
   it("decides per kind from list_connector_kinds' sign_in", () => {
     expect(text).toContain(
-      "Read the kinds with `helix_foundry_list_connector_kinds`, and decide how to connect each one from its own `sign_in`, every time",
+      "Read the kinds with `helix_foundry_list_connector_kinds`. Each kind’s `sign_in` says whether I connect it by signing in at its provider",
+    );
+    expect(text).toContain("read it every time and never assume it.");
+    expect(text).toContain(
+      "2. If its result has no `sign_in_id`, its `url` opens the kind’s form: give it to me, and I enter the credentials there, in my browser.",
     );
     expect(text).toContain(
-      "If its `sign_in` is true, I sign in at its provider, and no key passes through you:",
+      "3. If it has a `sign_in_id`, I sign in at the provider.",
     );
-    expect(text).toContain(
-      'Every other kind connects through its form, where I enter its credentials:\n\n1. Call `helix_foundry_connector_link` with `{"workspace_id": "ws1", "kind": "<kind>"}`',
-    );
-    expect(text).toContain(
-      "If you don’t have that tool, or it says signing in isn’t available to me, connect the kind through its form, below.",
-    );
+    expect(text).not.toContain("helix_foundry_connector_link");
+    expect(text).not.toContain("helix_foundry_start_sign_in");
   });
 
-  it("starts a sign-in, opens its link and waits for it", () => {
-    expect(payloads(text, "helix_foundry_start_sign_in")).toContainEqual({
+  it("connects, opens a sign-in's link and waits for it", () => {
+    // A token and a name are a sign-in's: where the kind doesn't sign in,
+    // the tool's schema takes neither.
+    expect(payloads(text, "helix_foundry_connect")).toContainEqual({
       workspace_id: "ws1",
       kind: "<kind>",
-      client_token: "<a new UUID>",
     });
     expect(text).toContain(
-      'adding `"name": "<name>"` for a name other than the kind’s.',
+      'If its `sign_in` is true, add `"client_token": "<a new UUID>"`, and `"name": "<name>"` for a name other than the kind’s.',
     );
     expect(text).toContain(
-      "2. Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
+      "Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
     );
     expect(text).toContain(
       "I click its Connect button, then authorize Helix Foundry at the provider. Only I can, until its `expires_at`.",
@@ -422,7 +427,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       "`helix_foundry_list_connectors` shows its `account.state` as `needs_sign_in`, with why in `account.broken`, and `sync_connector` fails with `account_needs_sign_in`.",
     );
     expect(text).toContain("offer to sign it in again");
-    const again = payloads(text, "helix_foundry_start_sign_in").find(
+    const again = payloads(text, "helix_foundry_connect").find(
       (p) => p.connector_id,
     );
     expect(again).toEqual({
@@ -448,7 +453,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
     expect(text).not.toContain("Linear");
     expect(text).not.toContain("Connect with GitHub");
     expect(text).toContain(
-      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds, whose settings you ask me for first:",
+      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds whose settings you ask me for first when their `sign_in` is true:",
     );
   });
 
@@ -475,7 +480,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       "PostHog: signing in reads PostHog US Cloud only, so ask me which PostHog I use.",
     );
     expect(text).toContain(
-      "PostHog EU Cloud or a self-hosted PostHog connects through its form, with its key.",
+      'For PostHog EU Cloud or a self-hosted PostHog, `{"workspace_id": "ws1", "kind": "posthog", "with_key": true}`: it connects through its form, with its key.',
     );
   });
 
@@ -517,7 +522,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       input({ ontology: ontology({ step: "load", state: "todo" }) }),
     );
     expect(later).not.toContain("#### Connect a source");
-    expect(payloads(later, "helix_foundry_start_sign_in")).toEqual([
+    expect(payloads(later, "helix_foundry_connect")).toEqual([
       {
         workspace_id: "ws1",
         kind: "<its kind>",
@@ -533,12 +538,11 @@ describe("onboardingPrompt's connectors that sign in", () => {
       mcpUrl: "https://mcp.example.com/mcp",
       workspace: null,
     });
-    const starts = payloads(landing, "helix_foundry_start_sign_in");
+    const starts = payloads(landing, "helix_foundry_connect");
     expect(starts).toHaveLength(2);
     expect(starts).toContainEqual({
       workspace_id: "<workspace id>",
       kind: "<kind>",
-      client_token: "<a new UUID>",
     });
     expect(starts).toContainEqual({
       workspace_id: "<workspace id>",
@@ -601,7 +605,10 @@ describe("onboardingPrompt's review, load and failures", () => {
       "the document sets it was given but doesn’t read, `document_reads.unread_set_ids`",
       "write the new goal with me, my answers in it in plain words, and generate again",
       "how many it read of how many (`read` of `total`), how many its version doesn’t read (`not_read_by_version`",
-      "one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id;",
+      "one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id.",
+      'An entry’s `because`, when set, is the kind of reason: `"not_assessed"` (not checked yet',
+      "`user_asked` (I asked to leave it out: `said` quotes my words) or `documents_state`",
+      "Say which in plain words, never the code;",
       "its fact writes (`facts_written`: a fact counts once for each document that states it, so it is not the number of facts in the graph)",
       "its values written (`values_written`: property values the documents stated, counted the same way)",
       "the reviews the documents left (`left_for_review`: counted as the load wrote each document, so it is not the number still open)",
@@ -955,6 +962,28 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(text).not.toContain("`generate_ontology`, target");
   });
 
+  it("has the agent ask me the questions a draft waits on, never answering them", () => {
+    const text = onboardingPrompt(
+      input({
+        ontology: ontology({
+          step: "draft",
+          state: "waiting",
+          generation: generation(),
+        }),
+      }),
+    );
+    expect(text).toContain(
+      "asked questions about its first draft, generation `g1`, and waits for my answers.",
+    );
+    expect(steps(text)[0]).toBe("Generate a draft");
+    expect(text).toContain("Never answer for me.");
+    expect(text).toContain("`answer_generation_questions`, target");
+    expect(text).toContain(
+      '"round": <its question_round>, "answers": [{"question_id": "<id>", "options": ["<each label I chose>"]',
+    );
+    expect(text).not.toContain("`generate_ontology`, target");
+  });
+
   it("says why the last draft failed, and starts over at the data", () => {
     const failed = (error?: string) =>
       onboardingPrompt(
@@ -1046,6 +1075,12 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(steps(text)).toEqual(["Hand it back"]);
     expect(text).toContain("`explore_url`");
     expect(text).toContain("`ask_url`");
+    // Last, a star on GitHub, only if the user says yes.
+    expect(text.trimEnd().endsWith(STAR_ASK)).toBe(true);
+    expect(STAR_ASK).toContain(
+      "Only if I say yes, run `gh api -X PUT user/starred/helixdb/helix-foundry`",
+    );
+    expect(STAR_ASK).toContain("https://github.com/helixdb/helix-foundry");
   });
 });
 
@@ -1060,8 +1095,8 @@ describe("local onboarding through MCP", () => {
     expect(text).toContain("http://localhost:8081/mcp");
     expect(text).toContain("FOUNDRY_LOCAL_TOKEN");
     expect(text).toContain("helix_list_workspaces");
-    expect(text).toContain("helix_prepare_foundry_operation");
-    expect(text).toContain("helix_execute_foundry_operation");
+    expect(text).toContain("helix_foundry_prepare_operation");
+    expect(text).toContain("helix_foundry_execute_operation");
     expect(text).toContain("helix_foundry_complete_document_upload");
     expect(text).toContain("generate_ontology");
     expect(text).toContain("create_load");
@@ -1073,12 +1108,12 @@ describe("local onboarding through MCP", () => {
     expect(text).not.toContain("Helix subscription");
     expect(text).not.toContain("helix_get_started");
     expect(text).not.toContain("sign in as me");
+    expect(text.endsWith(STAR_ASK)).toBe(true);
   });
   it("says what the local tools answer and where a moved MCP is", () => {
     expect(text).toContain("FOUNDRY_MCP_PORT");
-    expect(text).toContain(
-      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
-    );
+    expect(text).toContain("git pull and then docker compose up -d --wait");
+    expect(text).not.toContain("compose.mcp.yaml");
     expect(text).toContain("helix_foundry_list_connectors");
     expect(text).toContain(
       "fails with failed_precondition: prepare it again with the same operation, target and payload",
@@ -1100,15 +1135,21 @@ describe("the landing prompt's Run it on my computer", () => {
     expect(section).toContain(
       "docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp",
     );
-    expect(section).toContain("If it does: publish it");
     expect(section).toContain(
-      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
+      "If it does: it is published on this computer at `http://localhost:8081/mcp`",
     );
-    expect(section).toContain("connect to it");
+    expect(section).not.toContain("compose.mcp.yaml");
+    expect(section).toContain("Connect to it");
     expect(section).toContain("If not: I do the setup in Foundry’s pages");
   });
   it("says what to do when the MCP's port is taken, which only it needs", () => {
     expect(section).toContain("FOUNDRY_MCP_PORT");
-    expect(section).toContain("ports 3000 and 8333 are free");
+    expect(section).toContain("ports 3000, 8333 and 8081 are free");
+  });
+  it("asks for a star once, when the ontology is handed back", () => {
+    expect(text.split(STAR_ASK)).toHaveLength(2);
+    expect(text.indexOf(STAR_ASK)).toBeLessThan(
+      text.indexOf("## Run it on my computer"),
+    );
   });
 });

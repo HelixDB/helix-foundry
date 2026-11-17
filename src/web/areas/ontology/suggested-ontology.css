@@ -804,6 +804,14 @@
 .so-notes li svg.is-merged {
   color: var(--hf-accent-text);
 }
+/* A left-out entry's kind of reason, under its own words. */
+.so-notes li .on-left-out-why {
+  display: block;
+  margin-top: 2px;
+}
+.so-notes .hf-segmented {
+  margin-bottom: 12px;
+}
 /* The question floats over the schema so it stays in reach while scrolling. */
 .so-confirm {
   position: sticky;

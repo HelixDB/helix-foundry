@@ -14,6 +14,7 @@ import {
 import { fail, now, ok, type MockRoute } from "../http";
 import { config, isReply, membership, onReset } from "../state";
 import { isFoundryPro, proRequired } from "./billing";
+import { endEnrichedShares } from "./dashboards";
 import {
   cancelEnrichment,
   ontologyHasProfiles,
@@ -701,6 +702,8 @@ export const enrichmentRoutes: MockRoute[] = [
         // that applied profiles, current or not, writing or not, is purged
         // of them (one purge per ontology).
         cancelEnrichment(m.workspaceId);
+        // Public snapshots of those ontologies go at once, their links with them.
+        endEnrichedShares(m.workspaceId);
         for (const o of workspaceOntologies(m.workspaceId))
           if (ontologyHasProfiles(o.id)) {
             state.purges = [

@@ -92,6 +92,7 @@ function SharedOntologyHome() {
   return (
     <Page width="wide">
       <PageHeader
+        className="on-overview-head"
         breadcrumbs={[{ label: "Ontologies", to: paths.ontologies() }]}
         title={ontologyName(ontology)}
         subtitle="Shared with you: the types and links its current load holds."
@@ -212,6 +213,7 @@ function OntologyOverview() {
   return (
     <Page width={currentId ? "wide" : "narrow"}>
       <PageHeader
+        className="on-overview-head"
         breadcrumbs={[{ label: "Ontologies", to: paths.ontologies() }]}
         title={ontologyName(ontology)}
         subtitle={`The types, links and rules drawn from your data, loaded into ${ontology.databaseName || "its database"}.`}
@@ -241,7 +243,7 @@ function OntologyOverview() {
         }
         actions={
           <>
-            <ButtonLink icon={FileText} to={paths.documents(o)}>
+            <ButtonLink icon={FileText} to={paths.ontologyConnections(o)}>
               {plural(ontology.counts?.documents || 0, "document")}
             </ButtonLink>
             {v && (

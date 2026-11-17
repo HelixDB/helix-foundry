@@ -41,8 +41,10 @@ import {
   NotFound,
   RouteErrorBoundary,
 } from "./shell/ErrorBoundary";
+import { StarPrompt } from "./shell/star-prompt";
 import { applyTheme, readTheme } from "./shell/theme";
-import { SignInPage, SignedInAs } from "./sign-in";
+import { SignInPage, SignedInAs, VerifyEmailPage } from "./sign-in";
+import { ForgotPasswordPage, ResetPasswordPage, SignUpPage } from "./password";
 import { WorkspacePicker } from "./areas/workspace/picker";
 import { myAccessQuery } from "./areas/workspace/access-api";
 import { granteeRedirect } from "./areas/workspace/access-model";
@@ -87,15 +89,20 @@ function area<M>(load: () => Promise<M>, name: keyof M) {
 }
 const data = () => import("./areas/data"),
   ontology = () => import("./areas/ontology"),
+  dashboards = () => import("./areas/dashboards"),
+  automations = () => import("./areas/automations"),
   workspace = () => import("./areas/workspace");
 const SettingsRoutes = area(workspace, "SettingsRoutes");
-// Data and Ontology own their whole URL prefix, and the Ontology area also
-// the Explorer's and Ask's: each *Routes component holds its nested route
-// table.
+// Data, Ontology, Dashboards and Automations (Workflows, at /workflows) own
+// their whole URL prefix, and the
+// Ontology area also the Explorer's and Ask's: each *Routes component holds
+// its nested route table.
 const DataRoutes = area(data, "DataRoutes"),
   OntologyRoutes = area(ontology, "OntologyRoutes"),
   ExploreRoutes = area(ontology, "ExploreRoutes"),
-  AskRoutes = area(ontology, "AskRoutes");
+  AskRoutes = area(ontology, "AskRoutes"),
+  DashboardsRoutes = area(dashboards, "DashboardsRoutes"),
+  AutomationsRoutes = area(automations, "AutomationsRoutes");
 // Where a provider returns from connecting a source by signing in, where
 // GitHub returns once Helix Foundry's GitHub App is installed, and the
 // shell's notice of connectors that need signing in again: the Data area's.
@@ -133,6 +140,22 @@ function ToOnboarding() {
     <Navigate to={paths.newOntology() + (q.size ? "?" + q : "")} replace />
   );
 }
+// /automations/*, before automations became workflows: old links (notify
+// emails, agents', the backend's before the rename) keep their query and
+// hash.
+function ToWorkflows() {
+  const { pathname, search, hash } = useLocation();
+  return (
+    <Navigate
+      to={{
+        pathname: pathname.replace(/^\/automations(?=\/|$)/, "/workflows"),
+        search,
+        hash,
+      }}
+      replace
+    />
+  );
+}
 // / is Ask, on the ontology last opened (else the newest); a link's query
 // goes with it. While the workspace has no ontology (`onboarding`), it
 // offers only the new-ontology wizard, which connects data and uploads
@@ -168,6 +191,9 @@ function WorkspaceRoutes({
       <Route path="/ontology/*" element={<OntologyRoutes />} />
       <Route path="/explore/*" element={offered(<ExploreRoutes />)} />
       <Route path="/ask/*" element={offered(<AskRoutes />)} />
+      <Route path="/dashboards/*" element={offered(<DashboardsRoutes />)} />
+      <Route path="/workflows/*" element={offered(<AutomationsRoutes />)} />
+      <Route path="/automations/*" element={<ToWorkflows />} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
       <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="/connect/github" element={<ConnectGitHub />} />
@@ -229,7 +255,7 @@ function WorkspaceApp({
   const list = useQuery(ontologyQueries.list(current.id)),
     access = useQuery({ ...myAccessQuery(current.id), enabled: !LOCAL });
   const grantee = !LOCAL && !!access.data?.grantee,
-    // A grantee uses workflows only with its Workflows permission.
+    // A grantee reads use cases only with its Usage permission.
     workflows = !grantee || !!access.data?.workflows,
     onboarding = !grantee && !!list.data && !list.data.ontologies?.length;
   useEffect(
@@ -408,11 +434,13 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
           </button>
         </div>
       )}
+      <StarPrompt />
     </div>
   );
 }
 
-// Everything but /login needs a session: GET /v1/whoami decides.
+// Everything but /login and /login/verify needs a session: GET /v1/whoami
+// decides.
 function Authenticated() {
   const location = useLocation();
   const me = useQuery(whoamiQuery);
@@ -476,6 +504,28 @@ export default function FoundryApp() {
             <Route
               path="/login"
               element={LOCAL ? <Navigate to="/" replace /> : <SignInPage />}
+            />
+            <Route
+              path="/login/verify"
+              element={
+                LOCAL ? <Navigate to="/" replace /> : <VerifyEmailPage />
+              }
+            />
+            <Route
+              path="/login/sign-up"
+              element={LOCAL ? <Navigate to="/" replace /> : <SignUpPage />}
+            />
+            <Route
+              path="/login/forgot"
+              element={
+                LOCAL ? <Navigate to="/" replace /> : <ForgotPasswordPage />
+              }
+            />
+            <Route
+              path="/login/reset"
+              element={
+                LOCAL ? <Navigate to="/" replace /> : <ResetPasswordPage />
+              }
             />
             <Route path="*" element={<Authenticated />} />
           </Routes>

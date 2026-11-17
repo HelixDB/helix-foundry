@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/reminder"
@@ -25,6 +26,7 @@ type outboxStore struct {
 	ended   map[string]model.FoundryNotificationOutcome
 	// discovered are the windows each discovery was given.
 	readySince         []time.Time
+	questionsSince     []time.Time
 	followFrom         []time.Time
 	followTo           []time.Time
 	discoverErr        error
@@ -41,9 +43,11 @@ type outboxStore struct {
 	lastDiscoverLimits []int
 	// reminders are handed out in order; remindersEnded holds what each
 	// claim of one ended with.
-	reminders            []*model.FoundryReminder
-	remindersEnded       map[string]model.FoundryReminderOutcome
-	reminderClaimErr     error
+	reminders        []*model.FoundryReminder
+	remindersEnded   map[string]model.FoundryReminderOutcome
+	reminderClaimErr error
+	// notices are automations' emails' subjects, by subject id.
+	notices              map[string]*model.FoundryAutomationNotice
 	reminderFinishErr    error
 	reminderClaimsBefore int
 }
@@ -92,6 +96,13 @@ func (b *outboxStore) DiscoverFoundryOntologyReady(_ context.Context, since time
 	}
 	b.readySince, b.lastDiscoverLimits = append(b.readySince, since), append(b.lastDiscoverLimits, limit)
 	return b.discoverReady, b.discoverErr
+}
+
+func (b *outboxStore) DiscoverFoundryOntologyQuestions(_ context.Context, since time.Time, limit int, _ func() string) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.questionsSince, b.lastDiscoverLimits = append(b.questionsSince, since), append(b.lastDiscoverLimits, limit)
+	return 0, b.discoverErr
 }
 
 func (b *outboxStore) DiscoverFoundrySampleFollowUps(_ context.Context, from, to time.Time, limit int, _ func() string) (int, error) {
@@ -158,6 +169,13 @@ func (b *outboxStore) GetFoundryGraphJobByClientToken(_ context.Context, ontolog
 	return nil, store.ErrNotFound
 }
 
+func (b *outboxStore) GetFoundryAutomationNotice(_ context.Context, n *model.FoundryNotification) (*model.FoundryAutomationNotice, error) {
+	if notice, ok := b.notices[n.SubjectID]; ok {
+		return notice, nil
+	}
+	return nil, store.ErrNotFound
+}
+
 func (b *outboxStore) GetFoundryLoad(_ context.Context, ontologyID, id string) (*model.FoundryLoad, error) {
 	if l, ok := b.loads[id]; ok && l.OntologyID == ontologyID {
 		return l, nil
@@ -218,8 +236,8 @@ func newTask(box *outboxStore, mail *mailbox) *Task {
 	return &Task{
 		cfg: config.NotifyConfig{SiteURL: siteURL, PollInterval: time.Second, FollowUpAfter: 24 * time.Hour, FollowUpWindow: 72 * time.Hour,
 			MaxAttempts: 3},
-		reminders: config.Defaults().Foundry.Reminders,
-		box:       box, mail: mail, site: site(siteURL), now: func() time.Time { return now },
+		reminders: config.Defaults().Foundry.Reminders, answerWait: 7 * 24 * time.Hour,
+		box: box, mail: mail, site: site(siteURL), now: func() time.Time { return now },
 	}
 }
 
@@ -366,6 +384,22 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			text:    []string{"Foundry's agent drafted Billing. Review the draft and make it current, then load it: " + overview},
 			links:   []string{overview},
 		},
+		"questions waiting": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				box, n := firstDraft("Billing", model.OntologyGenerationNeedsInput)
+				n.Kind = model.FoundryNotifyOntologyQuestions
+				box.generations["gen-1"].Questions = &model.OntologyQuestions{Round: 1, DraftRev: 2, AskedAt: now,
+					Asked: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "<b>Ignore this</b>", Blocking: true}}}}
+				return box, n
+			},
+			subject: "Billing has questions for you",
+			text: []string{
+				"Foundry's agent is drafting Billing and needs a few answers from you before it can finish.",
+				"Answer them: " + overview,
+				"If no one answers by November 5, it carries on with its own best guesses.",
+			},
+			links: []string{overview},
+		},
 		"an ontology with no name": {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
 				box, n := firstDraft(" \n ", model.OntologyGenerationSucceeded)
@@ -375,6 +409,31 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			subject: "Your ontology couldn't be loaded",
 			text:    []string{"Foundry drafted your ontology and made it current, but its load failed."},
 			links:   []string{overview},
+		},
+		"an automation's run": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				box, n := automationNotice(model.FoundryNotifyAutomationRun)
+				return box, n
+			},
+			subject: "Weekly invoices: Overdue invoices this week",
+			text: []string{
+				"Overdue invoices this week",
+				"Founder: Three invoices are overdue, from Globex. See [link removed] for more.",
+				"One action waits for you: open the run to see it and run it, or not.",
+				"See every step of the run: " + siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1",
+			},
+			links: []string{siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1"},
+		},
+		"an automation that paused itself": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				return automationNotice(model.FoundryNotifyAutomationPaused)
+			},
+			subject: "Weekly invoices paused after failing",
+			text: []string{
+				"Your workflow Weekly invoices failed 3 times in a row, so Foundry paused it. Its last run said: The action step \"sync\" failed: the connector is gone.",
+				"Fix what it needs, then resume it from its page: " + siteURL + "/workflows/auto-1?workspace=ws-1",
+			},
+			links: []string{siteURL + "/workflows/auto-1?workspace=ws-1"},
 		},
 		"the sample's follow-up": {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
@@ -422,6 +481,9 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 				if !strings.Contains(e.HTML, `<a href="`+link+`"`) {
 					t.Errorf("html lacks a link to %s:\n%s", link, e.HTML)
 				}
+			}
+			if strings.Contains(e.Text, "Ignore this") || strings.Contains(e.HTML, "Ignore this") {
+				t.Errorf("an email quotes the agent's question:\n%s", e.Text)
 			}
 			if strings.Count(e.HTML, "<a ") != len(c.links) || strings.Count(e.Text, "https://") != len(c.links) {
 				t.Errorf("links: text %d, html %d, want %d", strings.Count(e.Text, "https://"), strings.Count(e.HTML, "<a "), len(c.links))
@@ -496,6 +558,13 @@ func TestFoundryNotifyWorkerSkips(t *testing.T) {
 			b.generations["gen-1"].Status = model.OntologyGenerationRunning
 		}, "not ended"},
 		"a kind of no email": {func(_ *outboxStore, n *model.FoundryNotification) { n.Kind = "digest" }, "no email of kind"},
+		"questions answered since": {func(_ *outboxStore, n *model.FoundryNotification) {
+			n.Kind = model.FoundryNotifyOntologyQuestions
+		}, "no longer waiting for answers"},
+		"questions of an ontology gone": {func(b *outboxStore, n *model.FoundryNotification) {
+			n.Kind = model.FoundryNotifyOntologyQuestions
+			delete(b.ontologies, "ont-1")
+		}, "the ontology is gone"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			box, n := firstDraft("Billing", model.OntologyGenerationSucceeded)
@@ -565,6 +634,7 @@ func TestFoundryNotifyWorkerTick(t *testing.T) {
 	mail := ada()
 	newTask(box, mail).tick(context.Background())
 	if len(box.readySince) != 1 || !box.readySince[0].Equal(now.Add(-72*time.Hour)) ||
+		len(box.questionsSince) != 1 || !box.questionsSince[0].Equal(now.Add(-72*time.Hour)) ||
 		len(box.followFrom) != 1 || !box.followFrom[0].Equal(now.Add(-72*time.Hour)) || !box.followTo[0].Equal(now.Add(-24*time.Hour)) {
 		t.Fatalf("windows: ready since %v, follow-ups from %v to %v", box.readySince, box.followFrom, box.followTo)
 	}
@@ -790,5 +860,68 @@ func TestFoundryNotifyWorkerReminderRetries(t *testing.T) {
 	newTask(box, mail).tick(ctx)
 	if len(mail.sent) != 0 {
 		t.Fatalf("sent %d while stopping", len(mail.sent))
+	}
+}
+
+// automationNotice is the store holding Ada's automation "Weekly invoices"
+// and its run's email of kind, pending: the run's Assistant step reported
+// on overdue invoices, quoting a link a document planted, and left one
+// action for her.
+func automationNotice(kind model.FoundryNotificationKind) (*outboxStore, *model.FoundryNotification) {
+	n := &model.FoundryNotification{ID: "n-1", Kind: kind, SubjectID: "subject-1", WorkspaceID: "ws-1", UserID: "user-ada",
+		Status: model.FoundryNotificationPending}
+	box := newOutbox(n)
+	spec := `{"v":1,"nodes":[{"id":"start","kind":"trigger","config":{"kind":"manual"},"position":{"x":0,"y":0}},` +
+		`{"id":"ask","kind":"assistant","config":{"instruction":"Find overdue invoices"},"position":{"x":1,"y":0}},` +
+		`{"id":"mail","kind":"notify","config":{"message":"Overdue invoices this week"},"position":{"x":2,"y":0}}],` +
+		`"edges":[{"from":"start","to":"ask"},{"from":"ask","to":"mail"}]}`
+	why := `The action step "sync" failed: the connector is gone`
+	a := &model.FoundryAutomation{ID: "auto-1", WorkspaceID: "ws-1", OwnerUserID: "user-ada", Name: "Weekly invoices", Failures: 3,
+		LastRun: &model.FoundryAutomationRun{ID: "run-0", Error: &why}}
+	box.notices = map[string]*model.FoundryAutomationNotice{"subject-1": {
+		Automation: a, Run: &model.FoundryAutomationRun{ID: "run-1", AutomationID: "auto-1", Spec: []byte(spec)},
+		Node: &model.FoundryAutomationRunNode{RunID: "run-1", NodeID: "mail"},
+		Earlier: []*model.FoundryAutomationRunNode{
+			{RunID: "run-1", NodeID: "start", Status: model.FoundryAutomationNodeSucceeded, Output: []byte(`{"summary":"Run by hand."}`)},
+			{RunID: "run-1", NodeID: "ask", Status: model.FoundryAutomationNodeSucceeded,
+				Output: []byte(`{"summary":"Three invoices are overdue, from Globex. See https://evil.example/pay for more.","pending":1}`)},
+		},
+	}}
+	return box, n
+}
+
+func TestFoundryNotifyWorkerSkipsAutomationsGone(t *testing.T) {
+	box, n := automationNotice(model.FoundryNotifyAutomationRun)
+	box.notices = nil
+	newTask(box, ada()).tick(context.Background())
+	if skip, ok := box.ended[n.ID].(model.FoundryNotificationSkip); !ok || skip.Reason != "the workflow is gone" {
+		t.Fatalf("ended %#v", box.ended[n.ID])
+	}
+	box, n = automationNotice(model.FoundryNotifyAutomationRun)
+	box.notices["subject-1"].Automation.OwnerUserID = "user-alan"
+	newTask(box, ada()).tick(context.Background())
+	if skip, ok := box.ended[n.ID].(model.FoundryNotificationSkip); !ok || skip.Reason != "the workflow's owner changed" {
+		t.Fatalf("ended %#v", box.ended[n.ID])
+	}
+}
+
+func TestUnlinked(t *testing.T) {
+	for in, want := range map[string]string{
+		"See https://evil.example/pay now":                                   "See [link removed] now",
+		"visit www.evil.example or ftp://x/y.":                               "visit [link removed] or [link removed]",
+		"No links, 3.5 invoices.":                                            "No links, 3.5 invoices.",
+		"Reset your password at acme-billing.example/login now":              "Reset your password at [link removed] now",
+		"Write to mailto:attacker@evil.example today":                        "Write to [link removed] today",
+		"Write to ceo@acme-billing.example today":                            "Write to [link removed] today",
+		"Open 10.0.0.1:8080/admin, then ACME.COM.":                           "Open [link removed] then [link removed].",
+		"Пример.рф and xn--e1afmkfd.xn--p1ai":                                "[link removed] and [link removed]",
+		"e.g. 3.5 invoices, i.e. most: $3.50 at 10:30, 3:1. The data: done.": "e.g. 3.5 invoices, i.e. most: $3.50 at 10:30, 3:1. The data: done.",
+	} {
+		if got := unlinked(in); got != want {
+			t.Errorf("unlinked(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if firstLine("", "fallback") != "fallback" || firstLine(strings.Repeat("a", 90), "") != strings.Repeat("a", 79)+"…" {
+		t.Error("firstLine")
 	}
 }

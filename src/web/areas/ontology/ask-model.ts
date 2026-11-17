@@ -13,6 +13,8 @@ import type {
   OntologyVersion,
   QuestionBudget,
   QuestionStatus,
+  QueryExpr,
+  QueryMeasure,
   QueryOutput,
   QueryWhere,
   VersionOf,
@@ -288,29 +290,64 @@ export function parseQuery(x: unknown): OntologyQuery | undefined {
   };
 }
 
+/**
+ * A computed measure's expression: one of its three forms, of two prop
+ * names; undefined for anything else.
+ *
+ * @example
+ * parseExpr({ days_between: ["opened_at", "closed_at"] }); // { days_between: ["opened_at", "closed_at"] }
+ * parseExpr({ ratio: ["won"] }); // undefined
+ * parseExpr({ diff: ["a", "b"], ratio: ["a", "b"] }); // undefined
+ */
+export function parseExpr(x: unknown): QueryExpr | undefined {
+  if (!isRecord(x) || Object.keys(x).length !== 1) return undefined;
+  const [op, operands] = Object.entries(x)[0]!;
+  if (
+    !["days_between", "diff", "ratio"].includes(op) ||
+    !Array.isArray(operands) ||
+    operands.length !== 2 ||
+    !operands.every((p) => str(p))
+  )
+    return undefined;
+  return { [op]: [operands[0], operands[1]] } as QueryExpr;
+}
+
+/**
+ * What an order or an aggregate reads: its `prop` or its `expr`, exactly
+ * one of them; undefined for neither, both, or a malformed one.
+ */
+function parseMeasure(x: Record<string, unknown>): QueryMeasure | undefined {
+  if (x.expr !== undefined && x.expr !== null) {
+    const expr = parseExpr(x.expr);
+    return expr && !str(x.prop) ? { expr } : undefined;
+  }
+  return str(x.prop) ? { prop: x.prop as string } : undefined;
+}
+
 function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
   if (!isRecord(x)) return undefined;
   if (isRecord(x.rows) && Array.isArray(x.rows.columns)) {
-    const columns = x.rows.columns.map((c) =>
-      isRecord(c) && position(c.at) !== undefined
-        ? {
-            at: c.at as number,
-            ...(str(c.prop) ? { prop: c.prop as string } : {}),
-          }
-        : undefined,
-    );
+    // A column is its entity, a prop, or a computed number: an `expr` it
+    // can't read, or one beside a prop, is no column.
+    const columns = x.rows.columns.map((c) => {
+      if (!isRecord(c) || position(c.at) === undefined) return undefined;
+      if (c.expr === undefined || c.expr === null)
+        return {
+          at: c.at as number,
+          ...(str(c.prop) ? { prop: c.prop as string } : {}),
+        };
+      const measure = parseMeasure(c);
+      return measure ? { at: c.at as number, ...measure } : undefined;
+    });
     if (!columns.every((c) => c)) return undefined;
     const o = x.rows.order_by;
+    const by = isRecord(o) ? parseMeasure(o) : undefined;
     return {
       rows: {
-        columns: columns as { at: number; prop?: string }[],
+        columns: columns as { at: number; prop?: string; expr?: QueryExpr }[],
         order_by:
-          isRecord(o) && position(o.at) !== undefined && str(o.prop)
-            ? {
-                at: o.at as number,
-                prop: o.prop as string,
-                desc: o.desc === true,
-              }
+          isRecord(o) && position(o.at) !== undefined && by
+            ? { at: o.at as number, ...by, desc: o.desc === true }
             : null,
         ...(num(x.rows.limit) !== undefined
           ? { limit: x.rows.limit as number }
@@ -340,18 +377,19 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
       },
     };
   const a = x.aggregate;
+  const measure = isRecord(a) ? parseMeasure(a) : undefined;
   if (
     isRecord(a) &&
     ["sum", "avg", "min", "max"].includes(a.fn as string) &&
     position(a.at) !== undefined &&
-    str(a.prop)
+    measure
   ) {
     const g = a.group_by;
     return {
       aggregate: {
         fn: a.fn as "sum" | "avg" | "min" | "max",
         at: a.at as number,
-        prop: a.prop as string,
+        ...measure,
         group_by:
           isRecord(g) && position(g.at) !== undefined && str(g.prop)
             ? { at: g.at as number, prop: g.prop as string }
@@ -404,6 +442,16 @@ export function parseAskEvent(eventJson: string): AskEvent | undefined {
 const numberOrNull = (x: unknown) => (x === null ? null : num(x));
 
 /**
+ * An aggregate's `skipped` (contract 4.26.0) as it is kept: left out when
+ * absent or 0, as the engine writes it; undefined when it isn't a count.
+ */
+const skippedOf = (x: Record<string, unknown>) => {
+  if (x.skipped === undefined || x.skipped === null) return { of: {} };
+  const n = position(x.skipped);
+  return n === undefined ? undefined : { of: n > 0 ? { skipped: n } : {} };
+};
+
+/**
  * A query's recorded output (contract 3.11.0), or undefined when it isn't
  * one: the page then has no visual of it. Values stay as they came, since
  * the page shows each only as text; a row lacking its edges has none.
@@ -444,10 +492,11 @@ export function parseOutput(x: unknown): QueryOutput | undefined {
     }
     case "aggregate": {
       const value = numberOrNull(x.value),
-        values = position(x.values);
-      return value === undefined || values === undefined
+        values = position(x.values),
+        skipped = skippedOf(x);
+      return value === undefined || values === undefined || !skipped
         ? undefined
-        : { kind: "aggregate", value, values, ...cut };
+        : { kind: "aggregate", value, values, ...skipped.of, ...cut };
     }
     case "group_count":
     case "grouped_aggregate": {
@@ -466,9 +515,13 @@ export function parseOutput(x: unknown): QueryOutput | undefined {
       }
       const groups = list(x.groups, (g) => {
         const aggregate = numberOrNull(g.aggregate),
-          values = position(g.values);
-        return "value" in g && aggregate !== undefined && values !== undefined
-          ? { value: g.value, aggregate, values }
+          values = position(g.values),
+          skipped = skippedOf(g);
+        return "value" in g &&
+          aggregate !== undefined &&
+          values !== undefined &&
+          skipped
+          ? { value: g.value, aggregate, values, ...skipped.of }
           : undefined;
       });
       return (
@@ -693,10 +746,8 @@ export const PART_UNCOVERED_LABEL = "Only current values are shared with you";
 const UNREACHED = "The model couldn’t be reached, after retries.";
 
 /**
- * Why a question failed, for a person. A model failure past unavailable and
- * refused reads as unavailable, as on Helix's Claude, wherever the WFE has
- * no words of a workspace's own provider for it (questionView prefers
- * those).
+ * Why a question failed, for a person, where the WFE gave no words of its
+ * own for it (questionView prefers those, which say what failed).
  */
 export const FAILURE_TEXT: Record<AskFailure, string> = {
   model_failed: UNREACHED,
@@ -892,6 +943,8 @@ export const TOOL_LABELS: Record<string, string> = {
   violations: "Read rule breaks",
   history_of: "Read the history",
   changes: "Read the changes",
+  search_sections: "Searched documents",
+  read_section: "Read a document section",
   // The call, not its outcome: a refused answer is answered again.
   answer: "Answer",
   cannot_answer: "Can’t answer",
@@ -1165,6 +1218,8 @@ const targetText = (i: Record<string, unknown>, known: Known) => {
  * stepInput({ callId: "b", tool: "evidence", input: { target: { fact: { link: "placed_by", subject: "n1", object: "n2" } } } }, NOTHING_KNOWN); // "For a placed_by fact"
  * stepInput({ callId: "d", tool: "history_of", input: { target: { entity: "n1" }, prop: "status", before: "01JB2", limit: 20 } }, NOTHING_KNOWN); // "History of the status of an entity, further back"
  * stepInput({ callId: "e", tool: "changes", input: { since: "2026-10-01T00:00:00Z", limit: 10 } }, NOTHING_KNOWN); // "Changes since “2026-10-01T00:00:00Z”"
+ * stepInput({ callId: "f", tool: "search_sections", input: { text: "Acme", or: ["Globex"], scope: { sets: "all" } } }, NOTHING_KNOWN); // "“Acme” or “Globex”, in every document set"
+ * stepInput({ callId: "g", tool: "read_section", input: { doc_id: "doc_1", section: 2 } }, NOTHING_KNOWN); // "Section 3 of a document"
  */
 export function stepInput(step: AskStep, known: Known): string | undefined {
   const i = isRecord(step.input) ? step.input : {};
@@ -1172,6 +1227,38 @@ export function stepInput(step: AskStep, known: Known): string | undefined {
   switch (step.tool) {
     case "describe_type":
       return type && `The ${type} type`;
+    case "search_sections": {
+      // Its texts, then where it looked: a scope this site doesn't know
+      // says nothing of where.
+      const texts = [i.text, ...(Array.isArray(i.or) ? i.or : [])].flatMap(
+        (t) => (str(t)?.trim() ? [quoted(str(t)!)] : []),
+      );
+      const scope = isRecord(i.scope) ? i.scope : {};
+      const handles = Array.isArray(scope.entities) ? scope.entities : [];
+      const where =
+        scope.sets === "all"
+          ? "in every document set"
+          : str(scope.set)
+            ? `in the ${str(scope.set)} documents`
+            : handles.length
+              ? `in documents naming ${handles
+                  .map((h) => {
+                    const e = known.entity(h);
+                    return e ? refText(e, known) : "an entity";
+                  })
+                  .join(", ")}`
+              : Array.isArray(scope.documents)
+                ? `in ${plural(scope.documents.length, "document")}`
+                : undefined;
+      const said = [texts.join(" or "), where].filter(Boolean).join(", ");
+      return said ? said.charAt(0).toUpperCase() + said.slice(1) : undefined;
+    }
+    case "read_section": {
+      const section = position(i.section);
+      return section === undefined
+        ? undefined
+        : `Section ${section + 1} of a document`;
+    }
     case "find_entities": {
       // Without a type it searched every type, as its heading says.
       const value = str(i.value);
@@ -1361,9 +1448,32 @@ export function queryNames(q: OntologyQuery) {
     if (t === undefined) return `position ${i}`;
     return types.filter((x) => x === t).length > 1 ? `${t}@${i}` : t;
   };
-  const col = (c: { at: number; prop?: string | null }) =>
-    c.prop ? `${at(c.at)}.${c.prop}` : at(c.at);
+  const col = (c: {
+    at: number;
+    prop?: string | null;
+    expr?: QueryExpr | null;
+  }) =>
+    c.expr
+      ? `${at(c.at)}: ${exprText(c.expr)}`
+      : c.prop
+        ? `${at(c.at)}.${c.prop}`
+        : at(c.at);
   return { at, col, last: types.length - 1 };
+}
+
+/**
+ * A computed measure in words.
+ *
+ * @example
+ * exprText({ days_between: ["opened_at", "closed_at"] }); // "days from opened_at to closed_at"
+ * exprText({ diff: ["revenue", "cost"] }); // "revenue − cost"
+ * exprText({ ratio: ["won", "quoted"] }); // "won ÷ quoted"
+ */
+export function exprText(e: QueryExpr): string {
+  if ("days_between" in e)
+    return `days from ${e.days_between[0]} to ${e.days_between[1]}`;
+  if ("diff" in e) return `${e.diff[0]} − ${e.diff[1]}`;
+  return `${e.ratio[0]} ÷ ${e.ratio[1]}`;
 }
 
 /** What an aggregate's function computes, at the start of a phrase. */
@@ -1426,7 +1536,7 @@ export function queryText(q: OntologyQuery): QueryText {
             (r.group_count.limit !== undefined
               ? ` · top ${r.group_count.limit}`
               : "")
-          : `${AGGREGATE_FN[r.aggregate.fn]} of ${at(r.aggregate.at)}.${r.aggregate.prop}` +
+          : `${AGGREGATE_FN[r.aggregate.fn]} of ${col(r.aggregate)}` +
             (r.aggregate.group_by ? ` by ${col(r.aggregate.group_by)}` : "");
   return { path, filters, returns };
 }
@@ -1704,9 +1814,10 @@ export function budgetFull(b?: QuestionBudget | null): boolean {
  * for another attempt after one failed), running, or how it ended. The
  * engine's result decides an ended one's kind, so a budget stop the backend
  * records as failed shows as one, and a failure says the engine's reason:
- * a model failure past unavailable and refused in the WFE's words when they
- * are a workspace provider's full sentence, which names it and what an
- * owner can do (Helix's Claude's lowercase words say it is unavailable).
+ * a model failure but a refusal in the WFE's words, which say what failed
+ * (a provider still busy after retries, a request Helix's Claude rejected,
+ * Helix's model account) or, for a workspace's own provider, name it and
+ * what an owner can do.
  */
 export function questionView(
   q: FoundryQuestion,
@@ -1737,8 +1848,10 @@ export function questionView(
     return {
       kind: "failed",
       error:
-        MODEL_FAILURES.has(result.reason) && /[.!?]$/.test(q.error || "")
-          ? q.error!
+        (MODEL_FAILURES.has(result.reason) ||
+          result.reason === "model_failed") &&
+        q.error
+          ? sentence(q.error)
           : FAILURE_TEXT[result.reason],
       result,
     };
@@ -1802,16 +1915,17 @@ export function threadsOf(questions: readonly FoundryQuestion[]): Thread[] {
 }
 
 /** A heading of the thread list: when its threads were last asked in. */
-export type ThreadGroup = {
+export type ThreadGroup<T = Thread> = {
   label: "Today" | "Previous 7 days" | "Older";
-  threads: Thread[];
+  threads: T[];
 };
 
 /**
  * Threads, newest first as threadsOf sorts them, grouped by when their
- * newest question was asked, in local time: today (or later, for a clock
- * behind the server's), the 7 days before today, then older or undated.
- * Each group keeps its threads' order; empty groups are left out.
+ * newest question was asked (`last`; Founder's threads too, founder-model.ts),
+ * in local time: today (or later, for a clock behind the server's), the 7
+ * days before today, then older or undated. Each group keeps its threads'
+ * order; empty groups are left out.
  *
  * @example
  * const at = (id: string, last: Date) => ({ id, questions: [], last: last.toISOString(), live: false });
@@ -1821,16 +1935,16 @@ export type ThreadGroup = {
  * ).map((g) => [g.label, g.threads.map((t) => t.id)]);
  * // [["Today", ["a"]], ["Previous 7 days", ["b"]], ["Older", ["c"]]]
  */
-export function threadGroups(
-  threads: readonly Thread[],
+export function threadGroups<T extends { last: string }>(
+  threads: readonly T[],
   now: Date,
-): ThreadGroup[] {
+): ThreadGroup<T>[] {
   const day = (back: number) =>
     new Date(now.getFullYear(), now.getMonth(), now.getDate() - back).getTime();
   const today = day(0),
     week = day(7);
   // An unreadable date is NaN, which no comparison holds: Older.
-  const labelOf = (t: Thread): ThreadGroup["label"] => {
+  const labelOf = (t: T): ThreadGroup["label"] => {
     const at = Date.parse(t.last);
     return at >= today ? "Today" : at >= week ? "Previous 7 days" : "Older";
   };

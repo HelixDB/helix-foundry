@@ -14,7 +14,8 @@ import (
 
 const foundryGraphJobColumns = `id, workspace_id, ontology_id, version_id, load_id, kind, status, phase, client_token, lease_owner,
        lease_until, attempts, next_attempt_at, error, report, chunks_done, documents_done, documents_total, usd_micros,
-       input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, sources`
+       input_tokens, output_tokens, requested_by_user_id, created_at, started_at, finished_at, sources,
+       indexes_pending_since`
 
 // insertFoundryGraphJob inserts job as queued. The caller holds the
 // ontology's lock and has checked no job of it is live. ErrConflict means
@@ -44,11 +45,44 @@ FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontolog
 
 // cancelLiveFoundryGraphJob ends the ontology's live job, if it has one, as
 // cancelled, saying why. A worker running it loses its lease: its next
-// renewal stops the attempt, which then records nothing. The caller holds
-// the ontology's lock.
+// renewal stops the attempt, which then records nothing. Until then the
+// attempt, and the engine until its next commit, may still write: a running
+// job keeps its lease end, and counts as in flight until it passes
+// (foundryInFlight). lease_until is assigned first, as MySQL assigns left to
+// right. An attempt of it (running, or queued again after one started)
+// sends the load's documents still waiting (waitingFoundryDocumentWhere)
+// with each one's release copies, and its words are lost for good: any of
+// those copies may have been written with no word recorded, a copy made
+// with the load that no job reported on included. Each not recorded written
+// is marked unconfirmed (job_failed, carried unless it was pending), as
+// after a resend that failed (failFoundryResends), so removing one takes it
+// back (foundryMayHaveWritten) and the next job that reads its document
+// says what became of it. A cancelled resend (only ever with its ontology)
+// leaves its load with nothing to answer to. The job's row is locked before
+// any decision's, as a worker recording a decision's outcome locks them.
+// The caller holds the ontology's lock.
 func (s *mysqlDB) cancelLiveFoundryGraphJob(ctx context.Context, ontologyID, why string) error {
+	var loadID string
+	var sent bool
+	switch err := s.db.QueryRowContext(ctx, `SELECT load_id, kind<>'delete' AND (status='running' OR started_at IS NOT NULL)
+FROM foundry_load_jobs WHERE ontology_id=? AND active_key=1 FOR UPDATE`, ontologyID).Scan(&loadID, &sent); {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+	if sent {
+		// applied_status first: MySQL assigns left to right.
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions
+SET applied_status=IF(applied_status <=> 'pending', 'pending', 'carried'), applied_reason=?, applied_at=NULL
+WHERE load_id=? AND kind='release' AND NOT (applied_status <=> 'written')
+  AND doc_id IN (SELECT d.id`+foundryLoadDocuments+waitingFoundryDocumentWhere+`)`,
+			model.FoundryReleaseJobFailed, loadID, loadID); err != nil {
+			return err
+		}
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_jobs
-SET status='cancelled', active_key=NULL, lease_owner=NULL, lease_until=NULL, error=?, finished_at=NOW(6)
+SET lease_until=IF(status='running', lease_until, NULL), status='cancelled', active_key=NULL, lease_owner=NULL, error=?, finished_at=NOW(6)
 WHERE ontology_id=? AND active_key=1`, why, ontologyID)
 	return err
 }
@@ -159,7 +193,7 @@ WHERE j.id=? AND j.status='running' AND j.lease_owner=?`,
 var (
 	extractionCounts = []string{"sections", "entities", "mentions", "facts", "reviews", "unresolved", "rejected", "attributes",
 		"attribute_reviews", "prop_conflicts", "created", "identifiers_unverified", "attributes_over_entries", "resolved_user",
-		"resolved_adjudicated", "resolved_identifier", "resolved_name", "resolved_alias", "resolved_created"}
+		"resolved_adjudicated", "resolved_identifier", "resolved_name", "resolved_alias", "resolved_created", "resolved_carried"}
 	extractionSpend = []string{"usd_micros", "input_tokens", "output_tokens"}
 )
 
@@ -178,8 +212,54 @@ var extractionUpsert = func() string {
 	}
 	return " ON DUPLICATE KEY UPDATE " + strings.Join(set, ", ") + `, job_id=VALUES(job_id), status=VALUES(status),
   duplicate_of=VALUES(duplicate_of), error_code=VALUES(error_code), error_retryable=VALUES(error_retryable),
-  artifact_key=COALESCE(VALUES(artifact_key), artifact_key), finished_at=VALUES(finished_at)`
+  artifact_key=COALESCE(VALUES(artifact_key), artifact_key), names=VALUES(names), finished_at=VALUES(finished_at)`
 }()
+
+// mergeFoundryDocumentNames adds names, a later event's of a document load
+// loadID holds already, to its row's (model.MergeFoundryDocumentNames). No
+// row, nothing to add.
+func (s *mysqlDB) mergeFoundryDocumentNames(ctx context.Context, loadID, docID string, names []model.FoundryDocumentName) error {
+	if len(names) == 0 {
+		return nil
+	}
+	var held []byte
+	switch err := s.db.QueryRowContext(ctx, `SELECT names FROM foundry_load_extractions WHERE load_id=? AND document_id=? FOR UPDATE`,
+		loadID, docID).Scan(&held); {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+	raw, err := foundryDocumentNamesJSON(model.MergeFoundryDocumentNames(scanFoundryDocumentNames(held), names))
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE foundry_load_extractions SET names=CAST(? AS JSON) WHERE load_id=? AND document_id=?`, raw, loadID, docID)
+	return err
+}
+
+// foundryDocumentNamesJSON is names as the names column keeps them: NULL for none.
+func foundryDocumentNamesJSON(names []model.FoundryDocumentName) (any, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(names)
+	if err != nil {
+		return nil, err
+	}
+	return string(raw), nil
+}
+
+// scanFoundryDocumentNames reads the names column. One it can't read, which
+// only a later binary could write, reads as none rather than fail the
+// document's every read.
+func scanFoundryDocumentNames(raw []byte) []model.FoundryDocumentName {
+	var names []model.FoundryDocumentName
+	if len(raw) > 0 && json.Unmarshal(raw, &names) != nil {
+		return nil
+	}
+	return names
+}
 
 // RecordFoundryDocumentExtraction stores how a document ended in the job's
 // load and adds what it spent to the job, in one transaction, while workerID
@@ -190,7 +270,10 @@ var extractionUpsert = func() string {
 // one ends its failure and keeps its counts; what this run released of the
 // document moves from its reviews to its facts. Either way what it spent counts, and what the engine said of the
 // release decisions sent with it (e.Releases) is recorded on the load's
-// decisions (recordFoundryReleaseOutcomes). A job no person requested
+// decisions (recordFoundryReleaseOutcomes). Its names (e.Names) replace the
+// row's, but those of an event of a document the load held, or a failure
+// over a failed row, join them (model.MergeFoundryDocumentNames): what an
+// earlier run wrote of a name stays said. A job no person requested
 // adds the spend, in the same transaction, to the month's row of the set
 // the document joined the load with (foundry_document_set_spend): the UTC
 // month the spend is recorded in, the first day of which is
@@ -231,7 +314,25 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			code, retryable = string(e.Error.Code), e.Error.Retryable
 		}
 		c := e.Counts
+		names, err := foundryDocumentNamesJSON(e.Names)
+		if err != nil {
+			return err
+		}
 		verb, onDuplicate := "INSERT", extractionUpsert
+		if !keepExisting && e.Status == model.FoundryExtractionFailed {
+			var status string
+			var held []byte
+			switch err := tx.db.QueryRowContext(ctx, `SELECT status, names FROM foundry_load_extractions WHERE load_id=? AND document_id=? FOR UPDATE`,
+				loadID, e.DocumentID).Scan(&status, &held); {
+			case err == sql.ErrNoRows:
+			case err != nil:
+				return err
+			case status == string(model.FoundryExtractionFailed):
+				if names, err = foundryDocumentNamesJSON(model.MergeFoundryDocumentNames(scanFoundryDocumentNames(held), e.Names)); err != nil {
+					return err
+				}
+			}
+		}
 		if keepExisting {
 			// A failed row of a document the load holds after all ends the failure
 			// and keeps what it counted: a run that stopped before a release left
@@ -241,11 +342,11 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			// the facts, as several reviews can hold one claim. A commit that
 			// landed and failed to say so counted nothing.
 			ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
- SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=GREATEST(facts+?-?, 0),
-  reviews=GREATEST(reviews-?, 0)+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?,
-  artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
+ SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=facts+?,
+  reviews=GREATEST(reviews-?, 0), resolved_carried=resolved_carried+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?,
+  output_tokens=output_tokens+?, artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
  WHERE load_id=? AND document_id=? AND status='failed'`,
-				jobID, string(e.Status), c.Sections, c.Facts, e.Withdrawn, e.Released, e.Withdrawn, e.USDMicros, e.InputTokens, e.OutputTokens,
+				jobID, string(e.Status), c.Sections, c.Facts, e.Released, c.ResolvedCarried, e.USDMicros, e.InputTokens, e.OutputTokens,
 				e.ArtifactKey, loadID, e.DocumentID)
 			if err != nil {
 				return err
@@ -256,31 +357,43 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			}
 			// A row that isn't failed stays, and counts what this run released
 			// of the document: an approval settled after its commit moves a
-			// review to the facts (a resend's, mostly), and one taken back
-			// moves it back. A release or a withdraw sent again writes and
-			// counts nothing, so a retry adds nothing twice.
-			if wasFailed == 0 && (c.Facts > 0 || e.Released > 0 || e.Withdrawn > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
+			// review to the facts (a resend's, mostly); one taken back moves
+			// it back as its outcome is recorded (recordFoundryReleaseOutcomes).
+			// A release sent again writes and counts nothing, so a retry adds
+			// nothing twice; nor does an alias that linked a name before.
+			if wasFailed == 0 && (c.Facts > 0 || e.Released > 0 || c.ResolvedCarried > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
 				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
- SET facts=GREATEST(facts+?-?, 0), reviews=GREATEST(reviews-?, 0)+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?
+ SET facts=facts+?, reviews=GREATEST(reviews-?, 0), resolved_carried=resolved_carried+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?,
+  output_tokens=output_tokens+?
  WHERE load_id=? AND document_id=?`,
-					c.Facts, e.Withdrawn, e.Released, e.Withdrawn, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
+					c.Facts, e.Released, c.ResolvedCarried, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
 					return err
 				}
+			}
+			// What its settling wrote of the document's names joins what the
+			// row says of them.
+			if err := tx.mergeFoundryDocumentNames(ctx, loadID, e.DocumentID, e.Names); err != nil {
+				return err
 			}
 			verb, onDuplicate = "INSERT IGNORE", ""
 		}
 		if _, err := tx.db.ExecContext(ctx, verb+` INTO foundry_load_extractions
   (load_id, document_id, ontology_id, workspace_id, job_id, status, duplicate_of, error_code, error_retryable, sections, entities,
-   mentions, facts, reviews, unresolved, rejected, usd_micros, input_tokens, output_tokens, artifact_key, attributes, attribute_reviews, prop_conflicts, created, identifiers_unverified, attributes_over_entries, resolved_user, resolved_adjudicated, resolved_identifier, resolved_name, resolved_alias, resolved_created, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6))`+onDuplicate,
+   mentions, facts, reviews, unresolved, rejected, usd_micros, input_tokens, output_tokens, artifact_key, attributes, attribute_reviews, prop_conflicts, created, identifiers_unverified, attributes_over_entries, resolved_user, resolved_adjudicated, resolved_identifier, resolved_name, resolved_alias, resolved_created, resolved_carried, names, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), NOW(6))`+onDuplicate,
 			loadID, e.DocumentID, ontologyID, workspaceID, jobID, string(e.Status), e.DuplicateOf, code, retryable, c.Sections,
 			c.Entities, c.Mentions, c.Facts, c.Reviews, c.Unresolved, c.Rejected, e.USDMicros, e.InputTokens, e.OutputTokens,
-			e.ArtifactKey, c.Attributes, c.AttributeReviews, c.PropConflicts, c.Created, c.IdentifiersUnverified, c.AttributesOverEntries, c.ResolvedUser, c.ResolvedAdjudicated, c.ResolvedIdentifier, c.ResolvedName, c.ResolvedAlias, c.ResolvedCreated,
+			e.ArtifactKey, c.Attributes, c.AttributeReviews, c.PropConflicts, c.Created, c.IdentifiersUnverified, c.AttributesOverEntries, c.ResolvedUser, c.ResolvedAdjudicated, c.ResolvedIdentifier, c.ResolvedName, c.ResolvedAlias, c.ResolvedCreated, c.ResolvedCarried, names,
 		); err != nil {
 			return fmt.Errorf("record foundry document extraction: %w", err)
 		}
-		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.Releases); err != nil {
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases, keepExisting); err != nil {
 			return err
+		}
+		if e.SettlesNames {
+			if err := tx.recordFoundryNameOutcomes(ctx, loadID, e.DocumentID, e.Names); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs
 SET usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+? WHERE id=?`,
@@ -309,7 +422,9 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     when it refreshes the current load and holds what that load held:
 //     of the sets with an allowance its budget stop left unfinished,
 //     outcome.HeldSets, every document that load recorded, deleted since
-//     or not, else it is deleted) or failed; a delete job's load becomes
+//     or not, else it is deleted) or failed; a load that becomes current
+//     gets the resolves saved since it was created (makeFoundryLoadCurrent);
+//     a delete job's load becomes
 //     deleted, its extraction rows removed, or delete_failed, never
 //     requeued by itself. Then:
 //   - a succeeded load or extract whose load is current, with uploads it has
@@ -326,7 +441,8 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     failing that, a resend into the current load of the documents it owes
 //     one (queueFoundryResend), the approvals it hasn't read carried over
 //     first; a resend job that ended without succeeding ends what its load
-//     owed, so none follows it; the value decisions and withdrawals a
+//     owed but the carried aliases it never read, and none follows it for
+//     those alone; the value decisions and withdrawals a
 //     resend that failed earlier left unsent are owed again by any job's
 //     end after it, as nothing else would send a withdrawal;
 //     failing that, a delete of the oldest load being deleted. A deleted
@@ -374,8 +490,13 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 		}
 		p := outcome.Progress
 		attempt := `error=NULLIF(?, ''), report=COALESCE(CAST(? AS JSON), report), chunks_done=?, documents_done=?,
-  documents_total=?, lease_owner=NULL, lease_until=NULL`
-		attemptArgs := []any{outcome.Error, nullJSON(outcome.Report), p.ChunksDone, p.DocumentsDone, p.DocumentsTotal}
+  documents_total=?, indexes_pending_since=?, lease_owner=NULL, lease_until=NULL`
+		var indexesPendingSince any
+		if outcome.IndexesPendingSince != nil {
+			indexesPendingSince = outcome.IndexesPendingSince.UTC()
+		}
+		attemptArgs := []any{outcome.Error, nullJSON(outcome.Report), p.ChunksDone, p.DocumentsDone, p.DocumentsTotal,
+			indexesPendingSince}
 		if outcome.RetryAt != nil {
 			finish = model.FoundryGraphJobRetried
 			// A retry resumes where the tables are.
@@ -448,7 +569,12 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 				return err
 			}
 		}
-		return tx.queueAfterFoundryGraphJob(ctx, o, outcome.Next)
+		// A resend that failed leaves its load owing only the aliases it
+		// never read (failFoundryResends): queued for them alone, a failure
+		// would follow itself.
+		unread := job.Kind != model.FoundryGraphJobResend || outcome.Status == model.FoundryGraphJobSucceeded ||
+			o.CurrentLoadID == nil || *o.CurrentLoadID != job.LoadID
+		return tx.queueAfterFoundryGraphJob(ctx, o, outcome.Next, unread)
 	})
 	return finish, err
 }
@@ -558,10 +684,9 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 			_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting' WHERE id=?`, job.LoadID)
 			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_load_id=? WHERE id=?`, job.LoadID, o.ID); err != nil {
+		if err := s.makeFoundryLoadCurrent(ctx, o, job.LoadID); err != nil {
 			return err
 		}
-		o.CurrentLoadID = &job.LoadID
 		// A refresh that replaced a refresh deletes it now, so refreshes never crowd out a customer's loads.
 		if refresh && replaced != nil {
 			if _, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting'
@@ -605,9 +730,9 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 }
 
 // queueAfterFoundryGraphJob queues what follows a job that ended, as
-// FinishFoundryGraphJob says. The caller holds the ontology's lock and no job
-// of it is live.
-func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.FoundryOntology, next model.FoundryGraphNext) error {
+// FinishFoundryGraphJob says; unread is queueFoundryResend's. The caller
+// holds the ontology's lock and no job of it is live.
+func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.FoundryOntology, next model.FoundryGraphNext, unread bool) error {
 	if o.DeletedAt != nil {
 		return s.queueNextFoundryDelete(ctx, o, next.DeleteID)
 	}
@@ -634,7 +759,7 @@ func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.Foundr
 	}
 	// What the current load owes the engine again: approvals saved since it
 	// copied its decisions, those a job that just ended kept waiting included.
-	if queued, err := s.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: next.ResendID}, 0); err != nil || queued {
+	if queued, err := s.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: next.ResendID}, 0, unread); err != nil || queued {
 		return err
 	}
 	return s.queueNextFoundryDelete(ctx, o, next.DeleteID)
@@ -644,12 +769,12 @@ func scanFoundryGraphJob(scanner rowScanner) (*model.FoundryGraphJob, error) {
 	var job model.FoundryGraphJob
 	var kind, status, phase string
 	var clientToken, leaseOwner, errText, report, requestedBy, sources sql.NullString
-	var leaseUntil, startedAt, finishedAt sql.NullTime
+	var leaseUntil, startedAt, finishedAt, indexesPendingSince sql.NullTime
 	p, spend := &job.Progress, &job.Spend
 	if err := scanner.Scan(&job.ID, &job.WorkspaceID, &job.OntologyID, &job.VersionID, &job.LoadID, &kind, &status, &phase, &clientToken,
 		&leaseOwner, &leaseUntil, &job.Attempts, &job.NextAttemptAt, &errText, &report, &p.ChunksDone, &p.DocumentsDone,
 		&p.DocumentsTotal, &spend.USDMicros, &spend.InputTokens, &spend.OutputTokens, &requestedBy, &job.CreatedAt, &startedAt,
-		&finishedAt, &sources,
+		&finishedAt, &sources, &indexesPendingSince,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
@@ -676,7 +801,8 @@ func scanFoundryGraphJob(scanner rowScanner) (*model.FoundryGraphJob, error) {
 	for _, f := range []struct {
 		src sql.NullTime
 		dst **time.Time
-	}{{leaseUntil, &job.LeaseUntil}, {startedAt, &job.StartedAt}, {finishedAt, &job.FinishedAt}} {
+	}{{leaseUntil, &job.LeaseUntil}, {startedAt, &job.StartedAt}, {finishedAt, &job.FinishedAt},
+		{indexesPendingSince, &job.IndexesPendingSince}} {
 		if f.src.Valid {
 			*f.dst = &f.src.Time
 		}

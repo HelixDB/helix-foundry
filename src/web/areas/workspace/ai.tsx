@@ -1,5 +1,5 @@
 import "./workspace.css";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -18,20 +18,15 @@ import type {
   FoundryAiRole,
   FoundryOllamaServer,
 } from "../../../shared/wfe";
-import {
-  Button,
-  ConfirmDialog,
-  Panel,
-  Select,
-  SkeletonText,
-  cx,
-} from "../../kit";
+import { Button, ConfirmDialog, Panel, Select, SkeletonText } from "../../kit";
 import { trackEvent } from "../../analytics";
 import { sentence } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { AssistantRuntimePanel } from "../agent/runtime-settings";
 import * as AI from "./ai-api";
 import { OwnKeyGate } from "./ai-gate";
+import { ChoiceCard } from "./choice-card";
 import { isProRequired } from "./pro-gate";
 
 // Settings › AI models: where the workspace's drafts,
@@ -44,7 +39,8 @@ import { isProRequired } from "./pro-gate";
 // key typed stays in the field, as the form starts from the new setting too,
 // until another page. A workspace still onboarding goes back to its wizard
 // once its AI runs. Owners see what runs as the form's choice; everyone
-// else reads one line.
+// else reads one line. A local install's owner also chooses where the
+// Founder runs, below it (../agent/runtime-settings.tsx).
 
 // The kinds this site has a form for, and the provider message each sends
 // given the Azure endpoint typed (normalized, or empty until it is one) and
@@ -72,11 +68,13 @@ const FORMS: Partial<
   FOUNDRY_AI_KIND_BEDROCK: (_, { bedrock: { region, fips } }) => ({
     bedrock: AI.bedrockProvider(region, fips),
   }),
+  FOUNDRY_AI_KIND_COHERE: () => ({ cohere: {} }),
 };
 const AZURE = "FOUNDRY_AI_KIND_AZURE_OPENAI",
   COMPAT = "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
   OLLAMA = "FOUNDRY_AI_KIND_OLLAMA",
-  BEDROCK = "FOUNDRY_AI_KIND_BEDROCK";
+  BEDROCK = "FOUNDRY_AI_KIND_BEDROCK",
+  COHERE = "FOUNDRY_AI_KIND_COHERE";
 // A custom server's fields before any are typed.
 const NO_SERVER = AI.compatFields();
 // An Ollama server as its card edits it: one it names, or the address typed
@@ -172,15 +170,20 @@ export function AiTab() {
       </Panel>
     );
   return role === "owner" ? (
-    // Keyed by the setting and the default's kind: once a save becomes the
-    // setting, or the install finds another default, the form starts
-    // afresh from it.
-    <OwnerForm
-      key={`${ai.active?.id ?? "default"} ${ai.default?.kind ?? "none"}`}
-      ai={ai}
-      typed={saved && saved.id === ai.active?.id ? saved.key : ""}
-      onSaved={setSaved}
-    />
+    <>
+      {/* Keyed by the setting and the default's kind: once a save becomes
+          the setting, or the install finds another default, the form
+          starts afresh from it. */}
+      <OwnerForm
+        key={`${ai.active?.id ?? "default"} ${ai.default?.kind ?? "none"}`}
+        ai={ai}
+        typed={saved && saved.id === ai.active?.id ? saved.key : ""}
+        onSaved={setSaved}
+      />
+      {/* Where Founder runs: a local install's owner may run it on
+          their own subscription. */}
+      {LOCAL && <AssistantRuntimePanel />}
+    </>
   ) : (
     <Status ai={ai} />
   );
@@ -205,7 +208,8 @@ function Status({ ai }: { ai: FoundryAi }) {
 
 /**
  * For owners, above their choice: no provider yet, a pause, a save under
- * test, the last save's failed test.
+ * test, the last save's failed test, and Founder's failed tool check
+ * of the setting in force.
  */
 function Notices({ ai }: { ai: FoundryAi }) {
   return (
@@ -229,6 +233,11 @@ function Notices({ ai }: { ai: FoundryAi }) {
       {ai.lastFailed && (
         <p role="alert" className="hf-form-error">
           {AI.testFailureText(ai.lastFailed)} Your current settings stay active.
+        </p>
+      )}
+      {ai.active && AI.assistantCheckText(ai.active) && (
+        <p role="note" className="hf-form-error">
+          {AI.assistantCheckText(ai.active)}
         </p>
       )}
     </>
@@ -273,10 +282,11 @@ function OwnerForm({
       : undefined;
   // What a kind starts from when the WFE suggests models: those, else its
   // first priced model for every task; nothing for Azure or a custom server,
-  // whose owner names each deployment or model, or Ollama, whose owner names
-  // a model the server has.
+  // whose owner names each deployment or model, Ollama, whose owner names a
+  // model the server has, or Cohere, which Helix's table doesn't price.
   const suggestedFor = (kind: FoundryAiProviderKind): Picks | undefined => {
-    if (kind === AZURE || kind === COMPAT || kind === OLLAMA) return undefined;
+    if (kind === AZURE || kind === COMPAT || kind === OLLAMA || kind === COHERE)
+      return undefined;
     const s = AI.rolePicks(offers.find((o) => o.kind === kind)?.suggested),
       first = AI.pricedModels(kind)[0]?.model || "";
     return Object.fromEntries(
@@ -288,9 +298,9 @@ function OwnerForm({
   };
   // A kind starts from the setting's models when it is the setting's kind,
   // else from what the WFE suggests; an Azure deployment from the first model
-  // Helix prices for it, a custom server's model with no cost counted, and
+  // Helix prices for it, a custom server's model with no cost counted,
   // Ollama from the WFE's draft model, else the one a local install pulls,
-  // at no cost.
+  // at no cost, and Cohere from its Command model, at prices to enter.
   const startFor = (kind: FoundryAiProviderKind): Picks =>
     kind === activeKind && now.source === "workspace"
       ? AI.rolePicks(now.config.models)
@@ -298,16 +308,18 @@ function OwnerForm({
         all(
           kind === COMPAT
             ? { name: "", free: {} }
-            : kind === OLLAMA
-              ? {
-                  name:
-                    offers.find((o) => o.kind === OLLAMA)?.suggested?.draft
-                      ?.name || AI.OLLAMA_MODEL,
-                  free: {},
-                }
-              : AI.pricedModels(kind)[0]
-                ? { name: "", tableAs: AI.pricedModels(kind)[0]!.model }
-                : { name: "", rates: {} },
+            : kind === COHERE
+              ? { name: AI.COHERE_MODEL, rates: {} }
+              : kind === OLLAMA
+                ? {
+                    name:
+                      offers.find((o) => o.kind === OLLAMA)?.suggested?.draft
+                        ?.name || AI.OLLAMA_MODEL,
+                    free: {},
+                  }
+                : AI.pricedModels(kind)[0]
+                  ? { name: "", tableAs: AI.pricedModels(kind)[0]!.model }
+                  : { name: "", rates: {} },
         ));
   // The setting's card, else the default's, else the first kind offered.
   const first: Card =
@@ -601,6 +613,7 @@ function OwnerForm({
           <div className="choice-options provider-options">
             {ai.default && (
               <ChoiceCard
+                name="provider"
                 title={LOCAL ? AI.INSTALL_DEFAULT : AI.HOUSE.title}
                 description={
                   LOCAL
@@ -621,6 +634,7 @@ function OwnerForm({
             {offers.map((o) => (
               <ChoiceCard
                 key={o.kind}
+                name="provider"
                 title={AI.PROVIDERS[o.kind].title}
                 description={AI.disclosure(
                   o.kind,
@@ -750,6 +764,8 @@ function OwnerForm({
                     onChange={(e) => setApiKey(e.target.value)}
                   />
                   <small>
+                    {kind === COHERE &&
+                      "Use a production key: a trial key allows 1,000 calls a month. "}
                     {kind === COMPAT &&
                       (keptElsewhere
                         ? `The saved key is sent only to ${keptElsewhere}; enter it again if this server needs one. `
@@ -904,7 +920,8 @@ function Region({
 /**
  * A kind's models: one for every task (or, where the WFE suggests them, the
  * recommended one per task), or one chosen per task. Azure OpenAI's are
- * deployments; Amazon Bedrock's are model or inference profile IDs.
+ * deployments; Amazon Bedrock's are model or inference profile IDs;
+ * Cohere's are its model names at the owner's prices.
  */
 function Models({
   kind,
@@ -937,7 +954,9 @@ function Models({
           ? OllamaModel
           : kind === BEDROCK
             ? BedrockModel
-            : CatalogModel;
+            : kind === COHERE
+              ? CohereModel
+              : CatalogModel;
   return (
     <>
       {/* Ollama's fields start afresh for another server. */}
@@ -1679,23 +1698,74 @@ function BedrockModel({
   );
 }
 
-/** A model's own prices, in dollars per million tokens. */
+/**
+ * A Cohere model: its name and what Cohere bills for it, since Helix's
+ * price table has no Cohere models (Cohere quotes its prices per account).
+ */
+function CohereModel({
+  kind,
+  title,
+  pick,
+  every,
+  disabled,
+  onPick,
+}: FieldProps) {
+  const p =
+    pick && "rates" in pick ? pick : { name: pick?.name ?? "", rates: {} };
+  const named = p.name.trim() ? AI.nameProblem(kind, p.name) : undefined;
+  return (
+    <div role="group" aria-label={title} className="wk-ai-model">
+      <label className="hf-field">
+        <span>{every ? "Model" : `${title} model`}</span>
+        <input
+          autoComplete="off"
+          spellCheck={false}
+          disabled={disabled}
+          placeholder={AI.COHERE_MODEL}
+          value={p.name}
+          aria-invalid={!!named}
+          onChange={(e) => onPick({ ...p, name: e.target.value })}
+        />
+        <small>
+          {named ?? "A Command model that calls tools and answers in JSON."}
+        </small>
+      </label>
+      {/* Cohere reports all input as cached, and bills it as input. */}
+      <Rates
+        pick={p}
+        problem={AI.ratesProblem(p.rates)}
+        cached={false}
+        disabled={disabled}
+        onPick={onPick}
+      />
+    </div>
+  );
+}
+
+/**
+ * A model's own prices, in dollars per million tokens: input, output and,
+ * where the provider bills it apart, cached input.
+ */
 function Rates({
   pick,
   problem,
+  cached = true,
   disabled,
   onPick,
 }: {
   pick: AI.ModelPick & { rates: FoundryAiRates };
   problem?: string;
+  cached?: boolean;
   disabled: boolean;
   onPick: (p: AI.ModelPick) => void;
 }) {
-  const fields: [keyof FoundryAiRates, string][] = [
-    ["inputUsdPerMtok", "Input"],
-    ["outputUsdPerMtok", "Output"],
-    ["cachedInputUsdPerMtok", "Cached input"],
-  ];
+  const fields = (
+    [
+      ["inputUsdPerMtok", "Input"],
+      ["outputUsdPerMtok", "Output"],
+      ["cachedInputUsdPerMtok", "Cached input"],
+    ] as const
+  ).filter(([f]) => cached || f !== "cachedInputUsdPerMtok");
   const typed = fields.some(([f]) => (pick.rates[f] || "").trim());
   return (
     <div className="wk-ai-rates">
@@ -1733,41 +1803,3 @@ const pick = (m: Record<FoundryAiRole, string>) => ({
   extract: m.extract,
   verify: m.verify,
 });
-
-/** helix-foundry's ChoiceCard (apps/web/src/choice-card.tsx): one radio. */
-function ChoiceCard({
-  title,
-  description,
-  icon,
-  checked,
-  onChange,
-}: {
-  title: string;
-  description: string;
-  icon: ReactNode;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  const descriptionId = useId();
-  return (
-    <label className={cx("choice-card", checked && "selected")}>
-      <span className="choice-card-icon" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="choice-card-heading">
-        <input
-          type="radio"
-          name="provider"
-          checked={checked}
-          onChange={onChange}
-          aria-label={title}
-          aria-describedby={descriptionId}
-        />
-        <strong>{title}</strong>
-      </span>
-      <span id={descriptionId} className="choice-card-description">
-        {description}
-      </span>
-    </label>
-  );
-}

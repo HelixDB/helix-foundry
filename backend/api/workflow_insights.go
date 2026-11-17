@@ -21,9 +21,10 @@ import (
 // What runs of an ontology's workflows came to over a window of whole UTC
 // days (GetFoundryWorkflowInsights): the site's Workflows pages lead with it.
 // Runs count by the day they started; a done assessment's claims, gaps and
-// suggestions count; a gap or suggestion recurs when runs name the same text,
-// case, spacing and end punctuation aside. The mock serves the same
-// (mock/routes/workflow-insights.ts).
+// suggestions count, but for a run that finished without a call to the
+// ontology, which counts as never called alone; a gap or suggestion recurs
+// when runs name the same text, case, spacing and end punctuation aside. The
+// mock serves the same (mock/routes/workflow-insights.ts).
 const (
 	// insightRuns is the most runs of a window insights read: the newest.
 	insightRuns = 5000
@@ -53,13 +54,17 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 	case days == 0:
 		days = insightDays
 	}
+	// A principal the request names counts the runs it started itself:
+	// those Foundry started for its automations are the automations' own
+	// (their workflow_id names them). A grantee sees no automation's.
 	var startedBy *access.Principal
+	withAutomations := seesAutomations(ctx)
 	if p := req.GetStartedBy(); p.GetKind() != foundryv1.FoundryPrincipal_KIND_UNSPECIFIED || p.GetId() != "" {
 		principal, err := principalFromProto(p)
 		if err != nil || principal.Kind == access.PrincipalTeam {
 			return nil, status.Error(codes.InvalidArgument, "started_by names a user or a service credential, and its id")
 		}
-		startedBy = &principal
+		startedBy, withAutomations = &principal, false
 	}
 	if by, own := ownRunsOnly(ctx); own {
 		startedBy = &by
@@ -75,13 +80,15 @@ func (s *Service) GetFoundryWorkflowInsights(ctx context.Context, req *foundryv1
 	}
 	now := time.Now().UTC()
 	from := time.Date(now.Year(), now.Month(), now.Day()+1-days, 0, 0, 0, 0, time.UTC)
-	runs, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, from, from.AddDate(0, 0, days), insightRuns+1)
+	runs, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, withAutomations, from, from.AddDate(0, 0, days),
+		insightRuns+1)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use case runs: %v", err)
 	}
-	previous, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, from.AddDate(0, 0, -days), from, insightRuns)
+	previous, err := s.deps.DB.ListFoundryWorkflowInsightRuns(ctx, o.ID, req.GetWorkflowId(), startedBy, withAutomations, from.AddDate(0, 0, -days), from,
+		insightRuns)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
+		return nil, status.Errorf(codes.Internal, "list use case runs: %v", err)
 	}
 	return workflowInsights(runs, previous, from, days, req.GetWorkflowId() == ""), nil
 }
@@ -98,13 +105,24 @@ type insightAssessed struct {
 type insightIssue struct{ kind, text string }
 
 // assessedOf reads r's assessment once it is done; nothing for any other,
-// or one that isn't the engine's JSON.
+// one that isn't the engine's JSON, or a run that never called the ontology.
 func assessedOf(r *foundrymodel.FoundryWorkflowInsightRun) insightAssessed {
-	var out insightAssessed
 	a := r.Assessment
-	if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || len(a.Assessment) == 0 {
-		return out
+	if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || len(a.Assessment) == 0 || insightNeverCalled(r) {
+		return insightAssessed{}
 	}
+	return readAssessment(a.Assessment)
+}
+
+// assessmentGaps are the gaps a done assessment (the engine's JSON) named.
+func assessmentGaps(assessment json.RawMessage) []insightIssue {
+	return readAssessment(assessment).gaps
+}
+
+// readAssessment reads the engine's assessment without trust: what isn't
+// its JSON reads as nothing.
+func readAssessment(assessment json.RawMessage) insightAssessed {
+	var out insightAssessed
 	var body struct {
 		Claims []struct {
 			Support any `json:"support"`
@@ -115,7 +133,7 @@ func assessedOf(r *foundrymodel.FoundryWorkflowInsightRun) insightAssessed {
 		} `json:"gaps"`
 		Suggestions []any `json:"suggestions"`
 	}
-	if json.Unmarshal(a.Assessment, &body) != nil {
+	if json.Unmarshal(assessment, &body) != nil {
 		return out
 	}
 	for _, c := range body.Claims {
@@ -161,7 +179,15 @@ func insightDone(r *foundrymodel.FoundryWorkflowInsightRun) *foundrymodel.Foundr
 	return nil
 }
 
-// insightTotals is what runs come to.
+// insightNeverCalled is whether r finished without a call to the ontology:
+// its assessment, if one was made before such runs went unassessed, says
+// nothing of the ontology.
+func insightNeverCalled(r *foundrymodel.FoundryWorkflowInsightRun) bool {
+	return r.Status == foundrymodel.FoundryWorkflowRunFinished && r.Counts.Accesses == 0
+}
+
+// insightTotals is what runs come to. A run that never called the ontology
+// counts in NeverCalled, and its spend, alone.
 func insightTotals(runs []*foundrymodel.FoundryWorkflowInsightRun) *foundryv1.FoundryWorkflowInsightTotals {
 	t := &foundryv1.FoundryWorkflowInsightTotals{Runs: int32(len(runs))}
 	verdicts, kinds := map[string]int64{}, map[string]int32{}
@@ -181,6 +207,10 @@ func insightTotals(runs []*foundrymodel.FoundryWorkflowInsightRun) *foundryv1.Fo
 		t.Uploads += c.Uploads
 		if r.Assessment != nil {
 			t.AssessmentUsdMicros += r.Assessment.USDMicros
+		}
+		if insightNeverCalled(r) {
+			t.NeverCalled++
+			continue
 		}
 		a := insightDone(r)
 		if a == nil || a.Verdict == "" {
@@ -346,26 +376,34 @@ func workflowInsights(runs, previous []foundrymodel.FoundryWorkflowInsightRun, f
 			continue
 		}
 		f.Finished++
-		a := insightDone(r)
-		if a == nil {
-			continue
-		}
-		f.Assessed++
-		if r.Counts.Accesses == 0 {
+		if insightNeverCalled(r) {
 			continue
 		}
 		f.Used++
+		a := insightDone(r)
+		if a == nil || a.Verdict == "" {
+			continue
+		}
+		f.Assessed++
 		if insightHelped(a.Verdict) {
 			f.Helped++
 		}
 	}
 	out.Funnel = f
+	// The runs Foundry started for an automation count by the automation,
+	// apart from what its owner started themselves.
 	agents := groups(func(r *foundrymodel.FoundryWorkflowInsightRun) string {
+		if r.Automation != nil {
+			return "automation:" + r.Automation.ID
+		}
 		return r.StartedBy.Kind.String() + ":" + r.StartedBy.ID
 	})
 	for _, rs := range agents[:min(len(agents), insightAgents)] {
 		seg := segment(rs)
 		seg.Principal = principalToProto(rs[0].StartedBy)
+		if a := rs[0].Automation; a != nil {
+			seg.Automation, seg.WorkflowId = workflowAutomationToProto(a), rs[0].WorkflowID
+		}
 		out.Agents = append(out.Agents, seg)
 	}
 	if byWorkflow {

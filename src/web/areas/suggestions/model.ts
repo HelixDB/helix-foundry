@@ -1,4 +1,4 @@
-// What the Suggestions page shows of a self-healing finding: the ontology
+// What the Review page's Ontology tab shows of a self-healing finding: the ontology
 // agent's Finding JSON (contract/ontology_agent/audit_result.json
 // `$defs/Finding`), read without trust, in words. A kind, proposal or
 // field a later contract adds reads as what it is called, never as an

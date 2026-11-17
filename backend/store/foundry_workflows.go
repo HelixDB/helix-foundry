@@ -17,19 +17,31 @@ import (
 // it records nothing more.
 var ErrWorkflowRunFinished = errors.New("store: the workflow run finished")
 
+// ErrAutomationWorkflow is a deletion of the workflow Foundry records an
+// automation's runs in while that automation exists.
+var ErrAutomationWorkflow = errors.New("store: the workflow records a live automation's runs")
+
 // Lock order, so the writers below never wait on each other in a cycle: an
 // ontology, then its workflows, then their runs, then the runs' accesses.
 
 const foundryWorkflowColumns = `w.id, w.workspace_id, w.ontology_id, w.name, w.description, w.client_token, w.created_by_user_id, w.created_at,
   (SELECT COUNT(*) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id),
   (SELECT COUNT(*) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id AND r.status = 'finished'),
-  (SELECT MAX(r.started_at) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id)`
+  (SELECT COUNT(*) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id AND r.status = 'finished' AND r.accesses = 0),
+  (SELECT MAX(r.started_at) FROM foundry_workflow_runs r WHERE r.workflow_id = w.id),
+  w.automation_id, ` + foundryWorkflowAutomationLive
+
+// foundryWorkflowAutomationLive is whether w's automation still exists: a
+// deleted one leaves its workflows as history.
+const foundryWorkflowAutomationLive = `EXISTS (SELECT 1 FROM foundry_automations fa WHERE fa.id = w.automation_id)`
 
 func scanFoundryWorkflow(row rowScanner) (*model.FoundryWorkflow, error) {
 	var w model.FoundryWorkflow
 	var last sql.NullTime
+	var automationID sql.NullString
+	var live bool
 	err := row.Scan(&w.ID, &w.WorkspaceID, &w.OntologyID, &w.Name, &w.Description, &w.ClientToken, &w.CreatedByUserID,
-		&w.CreatedAt, &w.Runs, &w.FinishedRuns, &last)
+		&w.CreatedAt, &w.Runs, &w.FinishedRuns, &w.NeverCalledRuns, &last, &automationID, &live)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -37,7 +49,18 @@ func scanFoundryWorkflow(row rowScanner) (*model.FoundryWorkflow, error) {
 		return nil, err
 	}
 	w.LastRunAt = timePtr(last)
+	w.Automation = workflowAutomation(automationID, w.Name, live)
 	return &w, nil
+}
+
+// workflowAutomation is the automation a workflow named name records the
+// runs of, from its automation_id and whether that automation exists: nil
+// for a person's workflow.
+func workflowAutomation(automationID sql.NullString, name string, live bool) *model.FoundryWorkflowAutomation {
+	if !automationID.Valid {
+		return nil
+	}
+	return &model.FoundryWorkflowAutomation{ID: automationID.String, Name: name, Deleted: !live}
 }
 
 // CreateFoundryWorkflow stores w under its ontology's lock, so a deletion of
@@ -86,9 +109,12 @@ FROM foundry_workflows w WHERE w.ontology_id=? AND w.client_token=?`, ontologyID
 }
 
 // ListFoundryWorkflows lists an ontology's workflows newest first, limit a
-// page.
-func (s *mysqlDB) ListFoundryWorkflows(ctx context.Context, ontologyID, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error) {
+// page: those Foundry made for automations only withAutomations.
+func (s *mysqlDB) ListFoundryWorkflows(ctx context.Context, ontologyID string, withAutomations bool, pageToken string, limit int) ([]*model.FoundryWorkflow, string, error) {
 	conds, args := []string{"w.ontology_id=?"}, []any{ontologyID}
+	if !withAutomations {
+		conds = append(conds, "w.automation_id IS NULL")
+	}
 	if pageToken != "" {
 		cursor, err := decodeTimeIDCursor(pageToken)
 		if err != nil {
@@ -111,8 +137,23 @@ func (s *mysqlDB) ListFoundryWorkflows(ctx context.Context, ontologyID, pageToke
 }
 
 // DeleteFoundryWorkflow deletes one of an ontology's workflows with its runs
-// and their accesses. ErrNotFound when the ontology has no such workflow.
+// and their accesses. ErrNotFound when the ontology has no such workflow,
+// ErrAutomationWorkflow when it records the runs of an automation that
+// still exists.
 func (s *mysqlDB) DeleteFoundryWorkflow(ctx context.Context, ontologyID, id string) error {
+	// An automation's workflow names it for good, and a deleted automation
+	// never comes back: once checked, the refusal can't turn stale.
+	var live bool
+	err := s.db.QueryRowContext(ctx, `SELECT `+foundryWorkflowAutomationLive+` FROM foundry_workflows w WHERE w.id=? AND w.ontology_id=?`,
+		id, ontologyID).Scan(&live)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrNotFound
+	case err != nil:
+		return err
+	case live:
+		return ErrAutomationWorkflow
+	}
 	if err := s.purgeFoundryWorkflowAccesses(ctx, "workflow_id", id, "ontology_id", ontologyID); err != nil {
 		return err
 	}
@@ -190,17 +231,17 @@ func (s *mysqlDB) deleteFoundryWorkflowRows(ctx context.Context, column, id stri
 
 const foundryWorkflowRunColumns = `id, workflow_id, workspace_id, ontology_id, status, input, output, client_token,
   started_by_user_id, started_by_service_credential_id, started_at, finished_at,
-  accesses, reads_count, questions, sends, uploads, pieces, results_omitted, result_bytes`
+  accesses, reads_count, questions, sends, uploads, pieces, results_omitted, result_bytes, automation_run_id, automation_key`
 
 func scanFoundryWorkflowRun(row rowScanner) (*model.FoundryWorkflowRun, error) {
 	var r model.FoundryWorkflowRun
 	var status string
-	var input, output, user, credential sql.NullString
+	var input, output, user, credential, automationRun, automationKey sql.NullString
 	var finished sql.NullTime
 	c := &r.Counts
 	err := row.Scan(&r.ID, &r.WorkflowID, &r.WorkspaceID, &r.OntologyID, &status, &input, &output, &r.ClientToken,
 		&user, &credential, &r.StartedAt, &finished,
-		&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &c.Pieces, &c.ResultsOmitted, &c.ResultBytes)
+		&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &c.Pieces, &c.ResultsOmitted, &c.ResultBytes, &automationRun, &automationKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -209,6 +250,9 @@ func scanFoundryWorkflowRun(row rowScanner) (*model.FoundryWorkflowRun, error) {
 	}
 	if input.Valid {
 		r.Input = &input.String
+	}
+	if automationRun.Valid {
+		r.AutomationRunID, r.AutomationKey = &automationRun.String, automationKey.String
 	}
 	switch {
 	case user.Valid:
@@ -243,6 +287,13 @@ func (s *mysqlDB) StartFoundryWorkflowRun(ctx context.Context, r *model.FoundryW
 	default:
 		return fmt.Errorf("foundry workflow run %s is started by a %s", r.ID, r.StartedBy.Kind)
 	}
+	var key any
+	if r.AutomationRunID != nil {
+		if r.StartedBy.Kind != access.PrincipalUser || r.ClientToken != *r.AutomationRunID || r.AutomationKey == "" {
+			return fmt.Errorf("foundry workflow run %s of an automation is its owner's, under the automation run's id, with a key", r.ID)
+		}
+		key = r.AutomationKey
+	}
 	return s.inTx(ctx, func(tx *mysqlDB) error {
 		var locked string
 		err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_workflows WHERE id=? AND ontology_id=? FOR UPDATE`,
@@ -258,9 +309,10 @@ func (s *mysqlDB) StartFoundryWorkflowRun(ctx context.Context, r *model.FoundryW
 			input = *r.Input
 		}
 		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_runs
-  (id, workflow_id, workspace_id, ontology_id, status, input, client_token, started_by_user_id, started_by_service_credential_id)
-VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
-			r.ID, r.WorkflowID, r.WorkspaceID, r.OntologyID, input, r.ClientToken, user, credential)
+  (id, workflow_id, workspace_id, ontology_id, status, input, client_token, started_by_user_id, started_by_service_credential_id,
+   automation_run_id, automation_key)
+VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+			r.ID, r.WorkflowID, r.WorkspaceID, r.OntologyID, input, r.ClientToken, user, credential, r.AutomationRunID, key)
 		if isDuplicateKey(err) {
 			return ErrConflict
 		}
@@ -356,8 +408,9 @@ func (s *mysqlDB) ListFoundryWorkflowRuns(ctx context.Context, workflowID string
 
 // FinishFoundryWorkflowRun finishes an open run with output, and input when
 // the run has none: one it was started with stays. With assess, its
-// assessment is queued in the same transaction. ErrNotFound when no open
-// run has id: it finished, or is gone.
+// assessment is queued in the same transaction, when it made a call to the
+// ontology: one that made none has nothing to assess. ErrNotFound when no
+// open run has id: it finished, or is gone.
 func (s *mysqlDB) FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string, assess bool) error {
 	var in any
 	if input != nil {
@@ -370,7 +423,7 @@ WHERE id=? AND status='open'`, output, in, id); err != nil || !assess {
 			return err
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status)
-SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id=?`, id)
+SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id=? AND accesses > 0`, id)
 		return err
 	})
 }
@@ -680,14 +733,17 @@ FROM foundry_workflow_run_assessments WHERE run_id IN (`+idPlaceholders(len(runI
 }
 
 // CountFoundryWorkflowVerdicts counts the done assessments of each workflow
-// named, by verdict.
+// named, by verdict: of runs that made a call to the ontology, as one
+// assessed before runs that made none went unassessed says nothing of it.
 func (s *mysqlDB) CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error) {
 	out := map[string]map[string]int64{}
 	if len(workflowIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, verdict, COUNT(*) FROM foundry_workflow_run_assessments
-WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GROUP BY workflow_id, verdict`, toAnySlice(workflowIDs)...)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.workflow_id, a.verdict, COUNT(*) FROM foundry_workflow_run_assessments a
+JOIN foundry_workflow_runs r ON r.id = a.run_id
+WHERE a.status='done' AND r.accesses > 0 AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GROUP BY a.workflow_id, a.verdict`,
+		toAnySlice(workflowIDs)...)
 	if err != nil {
 		return nil, err
 	}
@@ -709,9 +765,11 @@ WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GR
 // ListFoundryWorkflowInsightRuns returns the runs of the ontology's
 // workflows that started in [from, to), newest first, at most limit: of
 // workflowID when it names one, and those startedBy started when it names
-// anyone. Each comes with its assessment, if it has one.
+// anyone, with the runs Foundry started for their automations only
+// withAutomations. Each comes with its assessment, if it has one, and its
+// automation, for a run Foundry started.
 func (s *mysqlDB) ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID, workflowID string, startedBy *access.Principal,
-	from, to time.Time, limit int) ([]model.FoundryWorkflowInsightRun, error) {
+	withAutomations bool, from, to time.Time, limit int) ([]model.FoundryWorkflowInsightRun, error) {
 	conds := []string{"r.ontology_id=?", "r.started_at >= ?", "r.started_at < ?"}
 	args := []any{ontologyID, from.UTC(), to.UTC()}
 	if workflowID != "" {
@@ -724,9 +782,14 @@ func (s *mysqlDB) ListFoundryWorkflowInsightRuns(ctx context.Context, ontologyID
 		}
 		conds, args = append(conds, "r."+column+"=?"), append(args, startedBy.ID)
 	}
+	if !withAutomations {
+		conds = append(conds, "r.automation_run_id IS NULL")
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.workflow_id, r.started_by_user_id, r.started_by_service_credential_id, r.started_at,
-  r.status, r.accesses, r.reads_count, r.questions, r.sends, r.uploads, a.status, a.verdict, a.assessment, a.usd_micros
-FROM foundry_workflow_runs r LEFT JOIN foundry_workflow_run_assessments a ON a.run_id = r.id`+whereClause(conds)+
+  r.status, r.accesses, r.reads_count, r.questions, r.sends, r.uploads, a.status, a.verdict, a.assessment, a.usd_micros,
+  w.automation_id, w.name, `+foundryWorkflowAutomationLive+`
+FROM foundry_workflow_runs r JOIN foundry_workflows w ON w.id = r.workflow_id
+LEFT JOIN foundry_workflow_run_assessments a ON a.run_id = r.id`+whereClause(conds)+
 		fmt.Sprintf(" ORDER BY r.started_at DESC, r.id DESC LIMIT %d", limit), args...)
 	if err != nil {
 		return nil, err
@@ -735,15 +798,17 @@ FROM foundry_workflow_runs r LEFT JOIN foundry_workflow_run_assessments a ON a.r
 	var out []model.FoundryWorkflowInsightRun
 	for rows.Next() {
 		var r model.FoundryWorkflowInsightRun
-		var user, credential, assessed, verdict sql.NullString
-		var status string
+		var user, credential, assessed, verdict, automationID sql.NullString
+		var status, name string
 		var body []byte
 		var usd sql.NullInt64
+		var live bool
 		c := &r.Counts
 		if err := rows.Scan(&r.ID, &r.WorkflowID, &user, &credential, &r.StartedAt, &status,
-			&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &assessed, &verdict, &body, &usd); err != nil {
+			&c.Accesses, &c.Reads, &c.Questions, &c.Sends, &c.Uploads, &assessed, &verdict, &body, &usd, &automationID, &name, &live); err != nil {
 			return nil, err
 		}
+		r.Automation = workflowAutomation(automationID, name, live)
 		r.Status = model.FoundryWorkflowRunStatus(status)
 		if user.Valid {
 			r.StartedBy = access.Principal{Kind: access.PrincipalUser, ID: user.String}
@@ -788,7 +853,7 @@ func (s *mysqlDB) TallyFoundryWorkflowRuns(ctx context.Context, workflowIDs []st
 		return out, nil
 	}
 	args := append(toAnySlice(workflowIDs), by.ID)
-	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, COUNT(*), SUM(status = 'finished'), MAX(started_at) FROM foundry_workflow_runs
+	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, COUNT(*), SUM(status = 'finished'), SUM(status = 'finished' AND accesses = 0), MAX(started_at) FROM foundry_workflow_runs
 WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GROUP BY workflow_id`, args...)
 	if err != nil {
 		return nil, err
@@ -798,7 +863,7 @@ WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GRO
 		var workflow string
 		var last sql.NullTime
 		t := model.FoundryWorkflowRunTally{}
-		if err := rows.Scan(&workflow, &t.Runs, &t.FinishedRuns, &last); err != nil {
+		if err := rows.Scan(&workflow, &t.Runs, &t.FinishedRuns, &t.NeverCalledRuns, &last); err != nil {
 			return nil, err
 		}
 		if last.Valid {
@@ -812,7 +877,8 @@ WHERE workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND `+column+`=? GRO
 	}
 	verdicts, err := s.db.QueryContext(ctx, `SELECT a.workflow_id, a.verdict, COUNT(*) FROM foundry_workflow_run_assessments a
 JOIN foundry_workflow_runs r ON r.id = a.run_id
-WHERE a.status='done' AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND r.`+column+`=? GROUP BY a.workflow_id, a.verdict`, args...)
+WHERE a.status='done' AND r.accesses > 0 AND a.workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) AND r.`+column+`=?
+GROUP BY a.workflow_id, a.verdict`, args...)
 	if err != nil {
 		return nil, err
 	}

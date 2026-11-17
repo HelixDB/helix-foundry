@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -186,6 +187,9 @@ func defaultSettings(c config.AIDefault) (Settings, error) {
 	case KindBedrock:
 		p = Bedrock{Region: c.Region}
 		delete(unused, "region")
+	case KindCohere:
+		// A default's models are priced by table, which has no Cohere rows.
+		return Settings{}, errors.New("foundry.ai.default.provider: cohere can't be a default, as Helix's price table has no Cohere models; an owner saves it with their own rates")
 	case KindOllama:
 		window := c.ContextTokens
 		if window == 0 {

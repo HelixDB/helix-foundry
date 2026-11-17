@@ -23,12 +23,25 @@ export const MASK_PATTERNS = [
   "/ontology/*/generations/*",
   "/ontology/*/loads/*",
   "/ontology/*/documents/*",
+  "/ontology/*/usage/*/runs/*",
+  "/ontology/*/usage/*",
+  // Its old addresses, before use cases moved to Usage, which redirect.
   "/ontology/*/workflows/*/runs/*",
   "/ontology/*/workflows/*",
   "/ontology/*",
   "/explore/*/entities/*",
   "/explore/*",
   "/ask/*",
+  "/dashboards/*",
+  "/workflows/new/**",
+  "/workflows/*/runs/*",
+  "/workflows/*",
+  // The old addresses of workflows, which redirect.
+  "/automations/new/**",
+  "/automations/*/runs/*",
+  "/automations/*",
+  // A dashboard's public link: its token is its only key.
+  "/share/**",
 ];
 
 /** `path` masked by `pattern`, or null when it doesn't match. */

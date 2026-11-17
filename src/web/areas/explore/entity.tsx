@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { FOUNDER } from "../../../shared/deployment";
 import {
   ArrowLeft,
   ArrowRight,
@@ -32,7 +33,7 @@ import {
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
-import { spanAnchor } from "../documents/model";
+import { evidenceShapeText, spanAnchor } from "../documents/model";
 import { reviewQueries } from "../reviews/api";
 import { ReviewGroups } from "../reviews/groups";
 import { isUndoableLink, markDiffering, unrejected } from "../reviews/model";
@@ -41,7 +42,7 @@ import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
 import { profilesDate } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
-import { OntologyPicker, useOntology } from "../ontology/scope";
+import { useOntology } from "../ontology/scope";
 import { useSources } from "../ontology/sources";
 import { DerivedFacts, Why, type RefView } from "./derived";
 import { refKey } from "./rule-breaks";
@@ -283,11 +284,7 @@ export function EntityPage({ entityId }: { entityId: string }) {
   if (!identity)
     return (
       <Page>
-        <PageHeader
-          breadcrumbs={crumbs}
-          title="Entity unavailable"
-          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
-        />
+        <PageHeader breadcrumbs={crumbs} title="Entity unavailable" />
         <EmptyState
           icon={Waypoints}
           title="That isn’t an entity’s address"
@@ -379,32 +376,18 @@ function Entity({
       ? "overview"
       : asked;
   const [asking, setAsking] = useState(false);
-  // An entity is the ontology's own: another ontology opens its Explorer.
-  const pickers = (
-    <>
-      <OntologyPicker ontologyId={o} to={paths.explore} />
-      <LoadPicker selection={selection} />
-    </>
-  );
+  const pickers = <LoadPicker selection={selection} />;
   if (access === "none")
     return (
       <Page>
-        <PageHeader
-          breadcrumbs={crumbs}
-          title="Entity"
-          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
-        />
+        <PageHeader breadcrumbs={crumbs} title="Entity" />
         <NotShared />
       </Page>
     );
   if (!tenant)
     return (
       <Page>
-        <PageHeader
-          breadcrumbs={crumbs}
-          title="Entity"
-          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
-        />
+        <PageHeader breadcrumbs={crumbs} title="Entity" />
         <EmptyState
           icon={Waypoints}
           title="You can’t read the ontology’s database"
@@ -578,6 +561,20 @@ function Entity({
     );
   };
   const name = e.name || ("key" in identity ? identity.key : identity.name);
+  // Where Founder is asked (a grantee's too, read-only), a new chat about it
+  // on its page; else the Analyst's, in a drawer.
+  const askAbout = FOUNDER ? (
+    <ButtonLink
+      icon={MessageSquarePlus}
+      to={link(paths.ask(o, { new: true, about: name }))}
+    >
+      Ask about this
+    </ButtonLink>
+  ) : (
+    <Button icon={MessageSquarePlus} onClick={() => setAsking(true)}>
+      Ask about this
+    </Button>
+  );
   // Entities of the rules' answers, named as this page names them.
   const known = new Map(
     [
@@ -641,11 +638,7 @@ function Entity({
         actions={
           <>
             {pickers}
-            {selection.choice.kind === "load" && (
-              <Button icon={MessageSquarePlus} onClick={() => setAsking(true)}>
-                Ask about this
-              </Button>
-            )}
+            {selection.choice.kind === "load" && askAbout}
             {shared ? (
               <ButtonLink icon={Table2} to={paths.records(o)}>
                 Records
@@ -1032,6 +1025,8 @@ function Entity({
                       >
                         Open in {docName(rv.documentId)}
                       </Link>
+                      {evidenceShapeText(rv.evidenceShape) &&
+                        ` · ${evidenceShapeText(rv.evidenceShape)}`}
                       {rv.suggestedLink &&
                         ` · suggested link: ${rv.suggestedLink}`}
                     </small>

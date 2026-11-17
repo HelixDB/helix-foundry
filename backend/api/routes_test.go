@@ -221,6 +221,11 @@ func (r *routeRecorder) SettleFoundryReview(_ context.Context, req *foundryv1.Se
 	return &foundryv1.FoundryReviewDecisionResponse{}, nil
 }
 
+func (r *routeRecorder) ListFoundryReviews(_ context.Context, req *foundryv1.ListFoundryReviewsRequest) (*foundryv1.ListFoundryReviewsResponse, error) {
+	r.hit("ListFoundryReviews", req, strings.Join(req.GetReviewKeys(), ",")+req.GetPageToken())
+	return &foundryv1.ListFoundryReviewsResponse{}, nil
+}
+
 func (r *routeRecorder) ListFoundryReviewDecisions(_ context.Context, req *foundryv1.ListFoundryReviewDecisionsRequest) (*foundryv1.ListFoundryReviewDecisionsResponse, error) {
 	r.hit("ListFoundryReviewDecisions", req, req.GetPageToken())
 	return &foundryv1.ListFoundryReviewDecisionsResponse{}, nil
@@ -418,6 +423,12 @@ func (r *routeRecorder) GetFoundryUsage(_ context.Context, req *foundryv1.GetFou
 	return &foundryv1.FoundryUsageResponse{}, nil
 }
 
+func (r *routeRecorder) ListFoundryAutomationSuggestions(_ context.Context, req *foundryv1.ListFoundryAutomationSuggestionsRequest) (
+	*foundryv1.ListFoundryAutomationSuggestionsResponse, error) {
+	r.got = "ListFoundryAutomationSuggestions " + req.GetWorkspaceId() + " " + req.GetOntologyId()
+	return &foundryv1.ListFoundryAutomationSuggestionsResponse{}, nil
+}
+
 func (r *routeRecorder) GetFoundryEnrichment(_ context.Context, req *foundryv1.GetFoundryEnrichmentRequest) (*foundryv1.FoundryEnrichmentResponse, error) {
 	r.got = "GetFoundryEnrichment " + req.GetWorkspaceId()
 	return &foundryv1.FoundryEnrichmentResponse{}, nil
@@ -470,6 +481,8 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodGet, o + "/ont-1/generations/g-1", "", "GetOntologyGeneration ws-1 ont-1 g-1"},
 		{http.MethodPost, o + "/ont-1/reviews/r-1:settle", `{"decision":{"resolve":{"notInData":true}}}`, "SettleFoundryReview ws-1 ont-1 r-1"},
 		{http.MethodGet, o + "/ont-1/review-decisions?pageToken=d-1", "", "ListFoundryReviewDecisions ws-1 ont-1 d-1"},
+		{http.MethodGet, o + "/ont-1/reviews?reviewKeys=r-1&reviewKeys=r-2", "", "ListFoundryReviews ws-1 ont-1 r-1,r-2"},
+		{http.MethodGet, o + "/ont-1/reviews?pageToken=50", "", "ListFoundryReviews ws-1 ont-1 50"},
 		{http.MethodDelete, o + "/ont-1/review-decisions/d-1", "", "DeleteFoundryReviewDecision ws-1 ont-1 d-1"},
 		{http.MethodPost, o + "/ont-1/reviews/r-1:settle", `{"decision":{"release":{"statementHash":"h"}},"drawn":"random"}`, "SettleFoundryReview ws-1 ont-1 r-1"},
 		{http.MethodPost, o + "/ont-1/review-labels", `{"fact":{"docId":"d","section":1,"start":2,"end":5,"factKey":"f-1"},"verdict":"right","drawn":"random"}`,
@@ -546,6 +559,7 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodGet, o + "/ont-1/questions/q-1/events?afterSeq=7", "", "ListFoundryQuestionEvents ws-1 ont-1 q-1/7"},
 		{http.MethodPost, o + "/ont-1/questions/q-1:cancel", `{}`, "CancelFoundryQuestion ws-1 ont-1 q-1"},
 		{http.MethodPost, o + "/ont-1/loads/l-1:stop-enrichment", `{}`, "StopFoundryLoadEnrichment ws-1 ont-1 l-1"},
+		{http.MethodGet, "/v1/workspaces/ws-1/foundry/automation-suggestions?ontologyId=ont-1", "", "ListFoundryAutomationSuggestions ws-1 ont-1"},
 		{http.MethodGet, "/v1/workspaces/ws-1/foundry/usage", "", "GetFoundryUsage ws-1"},
 		{http.MethodGet, "/v1/workspaces/ws-1/foundry/enrichment", "", "GetFoundryEnrichment ws-1"},
 		{http.MethodPatch, "/v1/workspaces/ws-1/foundry/enrichment", `{"enabled":true,"monthlyCreditCap":"50000","noticeVersion":"2026-10"}`,

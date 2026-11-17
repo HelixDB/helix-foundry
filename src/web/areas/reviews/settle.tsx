@@ -31,6 +31,7 @@ import {
   matchesReview,
   propValueText,
   refusalText,
+  resolvedText,
   takenBack,
   takenBackOf,
   waitingText,
@@ -185,7 +186,11 @@ function ClaimWritten({
 
 /**
  * Settles a review of the load the page shows (`load`); only the current one
- * settles. A name is saved as an override for the next load. An approval of
+ * settles. A name is saved as an override for the next load: linked to a
+ * record, the next load links that name in its other documents too, where
+ * the names rung would otherwise ask a person (contract 4.22.0, an alias the
+ * backend derives from the resolve), and Not
+ * in data is for this document only. An approval of
  * a held claim is written to the current load at once, by a job of its own:
  * its card says it is being written, or what it waits behind when another
  * job is running, then the claim is a fact and the card goes, or the card
@@ -370,6 +375,8 @@ export function SettleReview({
       setPending(false);
     }
   };
+  // The record a person picked, if any.
+  const chosen = review.candidates.find((c) => `key:${c.key}` === choice);
   // A name two candidates share reads with their keys.
   const label = (c: Candidate) => {
     const name = c.entity?.name ?? c.key;
@@ -426,8 +433,8 @@ export function SettleReview({
       )}
       {rejected && (
         <p role="status">
-          Rejected: nothing is written, and it stays out of Needs review and the
-          review queue until the decision is removed.
+          Rejected: nothing is written, and it stays out of Needs review and
+          Review until the decision is removed.
         </p>
       )}
       {moved && (
@@ -449,7 +456,7 @@ export function SettleReview({
             : isRelease
               ? applied?.status === "pending"
                 ? unsettled.length
-                  ? `Approved. This load keeps it held: the first load after ${unsettled.length > 1 ? "those names are" : "that name is"} settled writes it.`
+                  ? `Approved. This load keeps it held until ${unsettled.length > 1 ? "those names are" : "that name is"} settled, then writes it.`
                   : waitingText(ontology.activeJob?.kind)
                 : applied?.status === "written"
                   ? "Approved, and written to this load."
@@ -473,9 +480,11 @@ export function SettleReview({
                       ? s.kind === "prop" && s.table === undefined
                       : holds,
                   )
-                : loadRead(saved, load?.createdAt)
-                  ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
-                  : "Decision saved. Reload to apply."}
+                : ((editable &&
+                    resolvedText(saved.applied, ontology.activeJob?.kind)) ??
+                  (loadRead(saved, load?.createdAt)
+                    ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
+                    : "Decision saved. The next load applies it."))}
           {held && heldBy.length > 0 && (
             <NameReviews ends={heldBy} docId={held.docId} link={link} />
           )}
@@ -487,7 +496,7 @@ export function SettleReview({
             <p className="on-muted">
               On your word, from this sentence alone.{" "}
               {unsettled.length
-                ? `This load keeps it held: the first load after ${unsettled.length > 1 ? "those names are" : "that name is"} settled writes it.`
+                ? `This load keeps it held until ${unsettled.length > 1 ? "those names are" : "that name is"} settled, then writes it.`
                 : "It’s written to this load at once."}{" "}
               Later loads read the approval too, and each says what it made of
               it.
@@ -576,7 +585,15 @@ export function SettleReview({
                     ? "A chosen value replaces the table’s in this load and every later one, even after the table changes. "
                     : ""
                 }It’s sent to this load at once, and later loads read it too. A document dated after your decision still wins.`
-              : "Applies from the next load. Reload to apply."}
+              : isUndoableLink(review.reason)
+                ? // This load links the name already: the engine keeps that
+                  // link in place, and the next load reads the choice.
+                  "This load keeps its link; a choice here, or Undo link, applies from the next load. A record chosen links this name in other documents too, where nothing else links it."
+                : chosen
+                  ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
+                  : choice === "none"
+                    ? "Not in data is for this document only: in this load at once, and in later loads."
+                    : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">
@@ -610,13 +627,13 @@ export function SettleReview({
 }
 
 /**
- * Whether removing `d` takes an approval back from the current load: one it
- * wrote, or one whose job failed before saying (it may be written). The
- * backend sends that load a withdraw; one never written is only dropped.
+ * Whether removing `d` takes an approval back from the current load, as the
+ * backend says by its one rule (`applied.takesBack`: the load may have
+ * written it, its job in flight included). The backend then sends that load
+ * a withdraw; one never written is only dropped.
  */
 const takesBack = (d: FoundryReviewDecision) =>
-  d.kind === "release" &&
-  (d.applied?.status === "written" || d.applied?.status === "unconfirmed");
+  d.kind === "release" && !!d.applied?.takesBack;
 
 /**
  * A saved value's line: what the current load made of it, where it says
@@ -633,6 +650,32 @@ const chosenLine = (
       return `${line} · sent to this load`;
     case "unconfirmed":
       return `${line} · not confirmed as sent to this load`;
+    default:
+      return line;
+  }
+};
+
+/**
+ * A saved name's line: what the current load made of it on its document,
+ * where it says (FoundryReviewDecision.applied, contract 4.22.0).
+ */
+const linkedLine = (
+  d: Extract<ReviewDecision, { kind: "resolve" }> & FoundryReviewDecision,
+) => {
+  const line = `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`;
+  switch (d.applied?.status) {
+    case "pending":
+      return `${line} · being linked in this load`;
+    case "written":
+      return d.applied.reason === "not_asked"
+        ? `${line} · settled in this load already`
+        : `${line} · linked in this load`;
+    case "refused":
+      return d.applied.reason === "not_replayed"
+        ? `${line} · not linked in this load, read before names could be applied at once`
+        : `${line} · not linked in this load`;
+    case "unconfirmed":
+      return `${line} · not confirmed as linked in this load`;
     default:
       return line;
   }
@@ -736,7 +779,7 @@ export function SavedDecisions({
                   d.kind === "withdraw"
                     ? `${d.kind === "reject" ? "Rejected" : d.kind === "withdraw" ? takenBack(d.applied).label : approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
                     : d.kind === "resolve"
-                      ? `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`
+                      ? linkedLine(d)
                       : chosenLine(d)}
                 </p>
                 {d.kind === "withdraw" && takenBack(d.applied).text && (
@@ -785,7 +828,10 @@ export function SavedDecisions({
                                   ? "Decision removed. If this load wrote it, it’s being taken back now; later loads won’t read it."
                                   : d.kind === "release"
                                     ? "Decision removed. Nothing of it is in this load, and later loads won’t read it."
-                                    : "Decision removed. Reload to apply.",
+                                    : d.kind === "resolve" &&
+                                        d.applied?.status === "written"
+                                      ? "Decision removed. What it linked stays in this load; later loads won’t read it."
+                                      : "Decision removed. Later loads won’t read it.",
                         );
                       } catch (e) {
                         setError((e as Error).message);
@@ -794,20 +840,19 @@ export function SavedDecisions({
                       }
                     }}
                   >
-                    {d.kind === "release" && d.applied?.status === "written"
-                      ? "Take back approval"
-                      : "Remove decision"}
+                    {takesBack(d) ? "Take back approval" : "Remove decision"}
                   </Button>
                 )}
               </li>
             ))}
           </ul>
           <p className="on-muted">
-            An approval or a chosen value applies to the current load at once,
-            and taking either back does too: a claim taken back is held for
-            review again. A linked name applies to future loads, and so does an
-            approval held for a name until that name is settled. A rejected
-            claim stays out of Needs review until its decision is removed.
+            An approval, a chosen value or a linked name applies to the current
+            load at once, and taking an approval or a value back does too: a
+            claim taken back is held for review again. A name a load read before
+            names could be applied at once is linked by the next load. A
+            rejected claim stays out of Needs review until its decision is
+            removed.
           </p>
           <ButtonLink to={paths.loads(o)} size="sm">
             Loads

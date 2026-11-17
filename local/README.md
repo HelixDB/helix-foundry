@@ -42,7 +42,7 @@ Drafting ontologies, reading documents and answering questions run on an AI prov
 3. **Ollama**: the bundled one (below), else Ollama on this computer, with a model that calls tools and loads drafting's 65,536-token window; the most capable such model runs every task. Pull one first (`ollama pull qwen3.5:4b`).
 4. **LM Studio** on this computer serving a model, at `http://host.docker.internal:1234/v1`: the model it has loaded, on every task.
 
-Otherwise none yet: data, connectors and Explore work, and drafting, uploading documents and asking wait for a provider, with a link to Settings › AI models. That page says which default was found and why ("Using qwen3.5:4b from Ollama on this computer"), and shows the power of the rest: Ollama (bundled, on this computer or another server, choosing among the models the server has, with their sizes, or one not pulled yet), Claude, OpenAI, Azure OpenAI or Amazon Bedrock with a key, or an OpenAI-compatible server, each tested before Foundry uses it, or back to the install's default. A key entered there is stored sealed with the connector key, never in `.env`.
+Otherwise none yet: data, connectors and Explore work, and drafting, uploading documents and asking wait for a provider, with a link to Settings › AI models. That page says which default was found and why ("Using qwen3.5:4b from Ollama on this computer"), and shows the power of the rest: Ollama (bundled, on this computer or another server, choosing among the models the server has, with their sizes, or one not pulled yet), Claude, OpenAI, Azure OpenAI, Amazon Bedrock or Cohere with a key, or an OpenAI-compatible server, each tested before Foundry uses it, or back to the install's default. A key entered there is stored sealed with the connector key, never in `.env`.
 
 To name the install's default instead, set `FOUNDRY_AI_PROVIDER` (in the shell or `local/.env`) and the fields its kind takes, then run `docker compose up -d` again; `none` is no provider and no search. An empty `FOUNDRY_AI_PROVIDER` passes none of the other `FOUNDRY_AI_*`. Switching provider, set each task's model (`FOUNDRY_AI_DRAFT_MODEL`, `FOUNDRY_AI_ASK_MODEL`, `FOUNDRY_AI_EXTRACT_MODEL` and `FOUNDRY_AI_VERIFY_MODEL`, each of which wins over `FOUNDRY_AI_MODEL`) to the new provider's, or delete them.
 
@@ -51,6 +51,8 @@ To name the install's default instead, set `FOUNDRY_AI_PROVIDER` (in the shell o
 - **An OpenAI-compatible server** (LM Studio, vLLM, Ollama's `/v1` or a gateway such as LiteLLM): `openai_compatible`, `FOUNDRY_AI_BASE_URL` including `/v1`, `FOUNDRY_AI_API` (`chat_completions`, which most servers speak and the default, or `responses`), `FOUNDRY_AI_MODEL` as the server names it, and `FOUNDRY_AI_API_KEY` if it takes one. Every task runs on that model, with no cost counted. The model must call tools and answer in structured JSON (vLLM needs `--enable-auto-tool-choice` and its model's `--tool-call-parser`); small local models may stop drafts early.
 - **Azure OpenAI:** `azure_openai`, `FOUNDRY_AI_ENDPOINT` (`https://<resource>.openai.azure.com`), `FOUNDRY_AI_API_KEY` and each task's deployment as its model.
 - **Amazon Bedrock:** `bedrock`, `FOUNDRY_AI_REGION`, a long-term Bedrock API key as `FOUNDRY_AI_API_KEY`, and a model or inference-profile ID that supports tool use per task. Claude through Bedrock's global inference profiles (`global.anthropic.claude-sonnet-5-5`) may run requests in any AWS commercial region; a geography's (`eu.anthropic.claude-sonnet-5-5`) stays within it, and GovCloud has none.
+
+Cohere is chosen in Settings › AI models only, never as the install's default: Helix has no prices for its models, so each one's are entered there.
 
 Foundry runs in Docker, so a server on this computer is `host.docker.internal`, not `localhost`, and must answer on that address: turn on LM Studio's "Serve on Local Network". **On Linux, start Ollama with `OLLAMA_HOST=172.17.0.1`**, Docker's bridge address, which `host.docker.internal` is (`ip -4 addr show docker0` shows it if yours differs), so Docker can reach it and your network can't. That address exists once Docker runs, so start Ollama after it, and give the `ollama` command the same `OLLAMA_HOST`. `OLLAMA_HOST=0.0.0.0` works too, but opens Ollama, which takes no key, to every machine that can reach this one: use it only behind a firewall.
 
@@ -148,6 +150,10 @@ The bundled HelixDB tells Helix how its queries run: each query's shape with eve
 
 To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing from the site either way.
 
+## Starring on GitHub
+
+After a few questions, the site asks once whether you'd like to star helixdb/helix-foundry. If the shell that ran `docker compose up` has `GH_TOKEN` or `GITHUB_TOKEN`, Compose passes it to the site, which uses it only to check and add that star when you click Star on GitHub. Without one, the button opens the repository on GitHub.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.
@@ -159,19 +165,15 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 - **The site:** the host side of its port, `FOUNDRY_ORIGIN`, `HELIX_LOCAL__SITE_ORIGIN` under foundry's `environment` (the links agents are given start there), and the store's `-s3.allowedOrigins`, which lets the site's page upload.
 - **The store:** the `pod`'s port, the store's `-s3.port` and its health check's `nc -z 127.0.0.1 <port>`, and `HELIX_LOCAL__S3__ENDPOINT: http://localhost:<port>` under foundry's `environment` (its config is in the image; `HELIX_*` variables override it).
 
+Foundry's MCP, HTTP Ask and the Assistant's helper reach it on `127.0.0.1:8081`, published by default. If `docker compose up` fails because 8081 is taken here (`port is already allocated`, `address already in use`), set `FOUNDRY_MCP_PORT` in `local/.env` to a free port and run it again: the helper's pair command then names that port, and an agent's setup takes it in place of 8081.
+
 ## Connect your agent
 
-These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
+These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't run an image that prints 404 with this compose file, which publishes that port, where such an image serves its probes and metrics without a token.
 
-The MCP and HTTP Ask aren't published until you ask, so a port taken here never stops the app. From `local/`:
+Foundry's MCP and HTTP Ask are published on this computer's loopback, `127.0.0.1:8081`, and nowhere else. If 8081 is taken here, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port before `docker compose up -d --wait`, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
 
-```sh
-docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait
-```
-
-This restarts the containers and keeps the data. To keep it on, set `COMPOSE_FILE=compose.yaml:compose.mcp.yaml` in `local/.env` and run Compose from `local/`. If `127.0.0.1:8081` is taken, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
-
-The local MCP is `http://localhost:8081/mcp`. It and HTTP Ask answer only for `localhost`, `127.0.0.1`, `::1`, `host.docker.internal` and the host of `HELIX_LOCAL__SITE_ORIGIN`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
+The local MCP is `http://localhost:8081/mcp`. It and HTTP Ask answer only for `localhost`, `127.0.0.1`, `::1`, `host.docker.internal` and the host of `HELIX_LOCAL__SITE_ORIGIN`. It supports Foundry end to end: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
 
 Use the install’s existing owner token as a bearer. From the repository root, load it into the environment without printing it:
 
@@ -181,7 +183,28 @@ export FOUNDRY_LOCAL_TOKEN="$(docker compose exec -T foundry cat /secrets/site-t
 
 Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: Bearer <token>`. The token acts as the owner of every local workspace. Keep it in the client’s environment, out of prompts and browser code. No OAuth sign-in is required. The API port is published only on loopback; tools run on this computer.
 
-Changes use `helix_prepare_foundry_operation` followed by `helix_execute_foundry_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+
+## The Assistant on your Claude or ChatGPT subscription
+
+Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, on your Claude or ChatGPT subscription, at no cost to the install: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
+
+1. In Foundry, Settings › AI models, choose your Claude subscription or your ChatGPT subscription (Codex). Codex runs with your own Codex setup (its MCP servers and plugins), so choosing it the first time says what it runs with, and you confirm that once. Then Pair a helper shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
+
+   ```sh
+   npx -y @helixdb/foundry-agent-host@0.1.0 pair hxp_…
+   ```
+
+   Run it here, with Node 24 and Claude Code (`claude`, then `/login`) or Codex 0.169.0 or later (`codex login`, with ChatGPT) installed and signed in. The helper keeps its token in `~/.config/helix-foundry/agent-host.json`, readable by you alone; Foundry keeps only its hash.
+
+2. `npx -y @helixdb/foundry-agent-host@0.1.0 install` keeps it running, now and at every login (a launchd agent on macOS, a systemd user unit on Linux), or `… run` runs it in a terminal. `… doctor` says what stands in the way.
+3. New threads of that workspace run on that CLI from then on; a thread keeps where it started. While no helper has called Foundry for 30 seconds, or its Codex is older than 0.169.0, the Assistant says so instead of sending.
+
+Claude Code can call nothing but Foundry's tools. Codex runs with your own setup, its shell, sub-agents, web search and image viewer off, read-only, and the helper declines every command or file change it asks for, and any tool call of your servers that asks for approval; one that doesn't ask can run. A managed Codex configuration that turns any of that back on stops its turns. [The helper's README](../agent-host/README.md#codex) says exactly what holds, and how it was tested.
+
+The helper reaches Foundry at `http://127.0.0.1:8081`, or the port `FOUNDRY_MCP_PORT` sets, which the pair command Foundry shows names (`--foundry`). Revoke it in Settings › AI models: its token, and those of the turns it runs, stop at once, and it deletes the sessions it kept.
+
+Each CLI keeps a thread's session on this computer (Claude Code under `~/.claude/projects/`, Codex in its `CODEX_HOME`), and it holds what Foundry's tools answered in that thread: graph reads, document text, reviews. The helper deletes a thread's sessions once the thread is deleted in Foundry (it asks as it starts, then hourly), and every one when it is revoked. Your plan's terms decide whether you may use your subscription this way.
 
 ## Ask over HTTP
 

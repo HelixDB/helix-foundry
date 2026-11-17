@@ -36,8 +36,10 @@ import {
   currentLoadId,
   currentLoadVersionId,
   forgetRelease,
+  forgetResolve,
   forgetValue,
   owePendingRelease,
+  owePendingResolve,
   owePendingValue,
 } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
@@ -449,6 +451,18 @@ export const reviewRoutes: MockRoute[] = [
         draw,
       );
       if (stored.kind === "prop") owePendingValue(s.o.id, stored);
+      // A name the load links to no one is settled in place; one it links
+      // already waits for the next load, as the engine would say bound.
+      if (
+        stored.kind === "resolve" &&
+        [
+          "unresolved",
+          "ambiguous",
+          "collision",
+          "identifier_conflict",
+        ].includes(text(r.reason))
+      )
+        owePendingResolve(s.o.id, stored);
       const applied = appliedOf(s.o.id, stored);
       return ok({
         decision: applied ? { ...stored, applied } : stored,
@@ -466,11 +480,14 @@ export const reviewRoutes: MockRoute[] = [
         return fail("INVALID_ARGUMENT", "invalid page_token");
       // Approvals whose job's step has passed are applied by now.
       advanceLoads(s.o.id);
-      // Keyset paging: every decision after the token's id, and the current
-      // load's withdraws, approvals taken back from it.
+      // Keyset paging: every decision after the token's id, and, for a
+      // client that asks, the current load's withdraws, approvals taken back
+      // from it (a client before them gets none, as the backend's does).
       const after = [
         ...(decisions.get(s.o.id) || []),
-        ...currentWithdraws(s.o.id),
+        ...(req.query.get("includeWithdraws") === "true"
+          ? currentWithdraws(s.o.id)
+          : []),
       ]
         .filter((d) => d.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -497,6 +514,7 @@ export const reviewRoutes: MockRoute[] = [
       // a chosen value from every load that holds it.
       forgetRelease(s.o.id, req.params.id!);
       forgetValue(s.o.id, req.params.id!);
+      forgetResolve(s.o.id, req.params.id!);
       decisions.set(
         s.o.id,
         own.filter((d) => d.id !== req.params.id),

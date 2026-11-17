@@ -7,16 +7,17 @@ import {
   LoadPicker,
   type LoadSelection,
 } from "../ontology/load-selection";
-import { OntologyPicker, useOntology } from "../ontology/scope";
+import { useOntology } from "../ontology/scope";
 
 /**
  * The Explorer's slim bar, shared by its two views of the ontology's
  * database so switching between them moves nothing: the title (for screen
  * readers and the route announcer; the rail shows the section), the view
- * (Records or Graph, keeping the page's load), the ontology, the load and,
- * on the graph, a second load to compare with; then the view's own tools.
- * Without a selection (a database the user can't read) only the ontology
- * changes.
+ * (Records or Graph, keeping the page's load), the load and, on the graph,
+ * a second load to compare with; then the view's own tools. The ontology is
+ * the one whose Explorer link opened it (the Ontologies panel), so there is
+ * no picker of it. Without a selection (a database the user can't read)
+ * there are no pickers.
  */
 export function ExplorerTop({
   view,
@@ -52,10 +53,6 @@ export function ExplorerTop({
             }
           />
         )}
-        <OntologyPicker
-          ontologyId={o}
-          to={view === "records" ? paths.records : paths.explore}
-        />
         {selection && <LoadPicker selection={selection} />}
         {selection && view === "graph" && (
           <ComparePicker selection={selection} />

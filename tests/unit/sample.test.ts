@@ -22,6 +22,8 @@ import {
   sampleLoadTiming,
   secondsBetween,
 } from "@/web/areas/ontology/sample";
+import { askSuggestions } from "@/web/areas/ontology/ask-model";
+import acme from "../../backend/sample/acme.json";
 import { readPdfText } from "../../mock/pdf-text";
 
 // The sample company the first ontology's wizard offers is what
@@ -131,6 +133,18 @@ describe("the sample company", () => {
       40, 121, 45, 363, 327, 225,
     ]);
     expect(SAMPLE.id).toBe("acme");
+  });
+
+  // The tour asks the first by itself, and offers the rest: each is answered
+  // whole by a count, a group or a few rows, never a list of every account's
+  // records, which one answer can't hold.
+  it("suggests questions one answer holds whole", () => {
+    expect(askSuggestions({ id: "v1", definition: acme })).toEqual([
+      "Which roles do our contacts play, and how many hold each?",
+      "How much do active subscriptions on each plan bring in each month?",
+      "Which invoices are overdue, which accounts owe them, and how much?",
+      "Which support tickets aren't solved yet, for which accounts, and who raised them?",
+    ]);
   });
 
   it("fits one generation, and its set and goal fit the WFE's limits", () => {

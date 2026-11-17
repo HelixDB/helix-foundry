@@ -211,6 +211,16 @@
   padding-bottom: 0;
   border-bottom: 0;
 }
+/* What the load made of the name choices it met, under the details. */
+.dc-names {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+.dc-names h3 {
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
 .dc-doc-list small {
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);

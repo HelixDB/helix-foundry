@@ -7,10 +7,10 @@ import {
   test,
 } from "./support/mock";
 
-// Suggestions: what audits of the current load found the ontology lacks,
-// opened from the ontology's pages, each with its kind, support, examples
-// and what it proposes; dismissing one takes it off the list. Where
-// foundry.heal.enabled is off there are none, and no page to open.
+// Suggestions, the Review page's Ontology tab: what audits of the current
+// load found the ontology lacks, each with its kind, support, examples and
+// what it proposes; dismissing one takes it off the list. Where
+// foundry.heal.enabled is off there are none, and no tab to open.
 
 const O = "/ontology/ont_acme_contracts";
 const suggestions = (page: Page) =>
@@ -45,11 +45,11 @@ async function load(page: Page, again = false) {
   expect((await made).ok()).toBe(true);
 }
 
-// Opens the Suggestions page again until check passes: a load just made
+// Opens the Ontology tab again until check passes: a load just made
 // becomes current, and is audited, a moment after it is made.
 async function openUntil(page: Page, check: () => Promise<void>) {
   await expect(async () => {
-    await page.goto(`${O}/suggestions`);
+    await page.goto(`${O}/review?tab=ontology`);
     await check();
   }).toPass({ timeout: 45_000 });
 }
@@ -71,7 +71,7 @@ test("lists the current load's suggestions and dismisses one", async ({
   await mock.configure({ loadStepMs: 200 });
   await page.clock.install();
   await signIn(page);
-  await page.goto(`${O}/suggestions`);
+  await page.goto(`${O}/review?tab=ontology`);
   await expect(page.getByText("No suggestions")).toBeVisible();
 
   await load(page);
@@ -81,9 +81,10 @@ test("lists the current load's suggestions and dismisses one", async ({
   await page.goto(O);
   await page
     .getByRole("list", { name: "Pages" })
-    .getByRole("link", { name: "Suggestions" })
+    .getByRole("link", { name: /^Review/ })
     .click();
-  await expect(page).toHaveURL(new RegExp(`${O}/suggestions$`));
+  await page.getByRole("tab", { name: /^Ontology/ }).click();
+  await expect(page).toHaveURL(new RegExp(`${O}/review\\?tab=ontology$`));
   await expect(cards(page)).toHaveCount(4);
   const first = cards(page).first();
   await expect(first).toContainText(
@@ -290,23 +291,24 @@ test("says the rows weren't checked when the audit didn't measure them", async (
   ).toBeVisible();
 });
 
-test("says suggestions aren't on where audits don't run", async ({ page }) => {
+test("has no Ontology tab where audits don't run", async ({ page }) => {
   await mock.configure({ healEnabled: false, loadStepMs: 200 });
   await signIn(page);
   await load(page);
   await page.goto(O);
-  await expect(
-    page.getByRole("list", { name: "Pages" }).getByRole("link", {
-      name: "Overview",
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("list", { name: "Pages" }).getByRole("link", {
-      name: "Suggestions",
-    }),
-  ).toHaveCount(0);
+  const review = page
+    .getByRole("list", { name: "Pages" })
+    .getByRole("link", { name: /^Review/ });
+  await expect(review).toBeVisible();
+  // An old link to Suggestions opens Review on Facts, its only tab.
   await page.goto(`${O}/suggestions`);
-  await expect(page.getByText("Suggestions aren’t turned on")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`${O}/review\\?tab=ontology$`));
+  // Its count follows its name.
+  await expect(page.getByRole("tab")).toHaveText([/^Facts/]);
+  await expect(page.getByRole("tab", { name: "Facts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(cards(page)).toHaveCount(0);
   await expect(page.getByText("No suggestions")).toHaveCount(0);
 });

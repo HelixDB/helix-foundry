@@ -382,7 +382,7 @@ export function goalPrompt(input: GoalPromptInput): string {
     "",
     `I’m building an ontology in Helix Foundry, in my workspace “${input.workspace}”${input.ontology ? `, named “${input.ontology}”` : ""}. Foundry’s agent reads the synced tables and documents below and drafts the ontology from them: the kinds of things in the business, how they link, the rules they follow, and which columns and documents fill them in.`,
     "",
-    "It works from one goal I write, in my own words: what my team does and the questions the ontology must answer. It can’t ask me anything while it drafts, so whatever the goal leaves open, it guesses. Please help me write that goal.",
+    "It works from one goal I write, in my own words: what my team does and the questions the ontology must answer. It may stop to ask me what only I can answer, but whatever else the goal leaves open, it guesses: the clearer the goal, the fewer questions and guesses. Please help me write that goal.",
     "",
     "## What it will read",
     "",

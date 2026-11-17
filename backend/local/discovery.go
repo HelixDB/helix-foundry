@@ -23,7 +23,11 @@ func discoveryPage(input pageInput) (*directoryv1.Page, error) {
 	return &directoryv1.Page{Size: int32(size), Token: input.PageToken}, nil
 }
 
-func addLocalDiscovery(service *integration.Service, server *mcp.Server, identity *integration.Identity, client directoryv1.DirectoryServiceClient) {
+// addLocalDiscovery adds the install's discovery tools. only is the one
+// workspace they may name (the Assistant's turn's), or empty for any of the
+// owner's (the MCP's).
+func addLocalDiscovery(service *integration.Service, server *mcp.Server, identity *integration.Identity, client directoryv1.DirectoryServiceClient,
+	only string) {
 	integration.AddReadTool(service, server, identity, "helix_list_workspaces", "List workspaces", "List the local owner's active Foundry workspaces.",
 		func(ctx context.Context, _ *integration.Identity, _ *integration.Call, input listWorkspacesInput) (listWorkspacesOutput, int, error) {
 			page, err := discoveryPage(input.pageInput)
@@ -42,6 +46,13 @@ func addLocalDiscovery(service *integration.Service, server *mcp.Server, identit
 		})
 	integration.AddReadTool(service, server, identity, "helix_list_projects", "List projects", "List projects in a local Foundry workspace.",
 		func(ctx context.Context, _ *integration.Identity, call *integration.Call, input listProjectsInput) (listProjectsOutput, int, error) {
+			switch {
+			case only == "":
+			case input.WorkspaceID == "":
+				input.WorkspaceID = only
+			case input.WorkspaceID != only:
+				return listProjectsOutput{}, 0, status.Error(codes.NotFound, "workspace not found")
+			}
 			call.ResourceKind, call.ResourceID = "workspace", input.WorkspaceID
 			page, err := discoveryPage(input.pageInput)
 			if err != nil {
@@ -70,6 +81,9 @@ func addLocalDiscovery(service *integration.Service, server *mcp.Server, identit
 			}
 			out := listDatabasesOutput{ContentTrust: integration.ContentTrustUntrusted, NextPage: r.GetNextPageToken(), Databases: []databaseOutput{}}
 			for _, d := range r.GetTenants() {
+				if only != "" && d.GetWorkspaceId() != only {
+					return listDatabasesOutput{}, 0, status.Error(codes.NotFound, "project not found")
+				}
 				out.Databases = append(out.Databases, databaseOutput{Reference: "tenant:" + d.GetId(), Kind: "tenant", ID: d.GetId(), WorkspaceID: d.GetWorkspaceId(), ProjectID: d.GetProjectId(), Name: d.GetName(), Slug: d.GetSlug(), Status: integration.EnumName(d.GetStatus().String(), resourceStatusPrefix)})
 			}
 			return out, len(out.Databases), nil

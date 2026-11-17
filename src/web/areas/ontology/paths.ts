@@ -46,8 +46,9 @@ export const ontologyPaths = {
   // versions' section.
   generation: (ontologyId: string, id: string) =>
     at(ontologyId) + "/generations/" + enc(id),
-  // The generate form, prefilled from an earlier generation's goal,
-  // connectors (none for an empty list; every synced one when left out),
+  // The generate form, prefilled from an earlier generation's goal ("" for
+  // none; the current version's generation's when left out), connectors
+  // (none for an empty list; every synced one when left out),
   // API sources with their modes (none for an empty list; the current
   // version's generation's when left out) and document sets.
   generate: (
@@ -60,7 +61,7 @@ export const ontologyPaths = {
     },
   ) => {
     const q = new URLSearchParams();
-    if (prefill?.goal) q.set("goal", prefill.goal);
+    if (prefill?.goal !== undefined) q.set("goal", prefill.goal);
     if (prefill?.connectorIds)
       q.set("connectors", prefill.connectorIds.join(","));
     if (prefill?.eventSources)
@@ -94,12 +95,14 @@ export const ontologyPaths = {
     "/rule-breaks" +
     (constraint ? "?constraint=" + enc(constraint) : "") +
     (constraint && key ? "&key=" + enc(key) : ""),
-  // What the ontology reads of the workspace's documents, those its current
-  // load holds as `status` says, and one; `tab` is one of its page's tabs,
+  // What the ontology reads: the connections its current version maps, the
+  // document sets it reads and their documents, filtered to those its
+  // current load holds as `status` says; then one document (its page sits
+  // under Connections, at /documents/{id}): `tab` is one of its page's tabs,
   // and `span` a span of one of its sections (UTF-8 byte offsets into the
   // section's text) the page marks and opens on.
-  documents: (ontologyId: string, status?: OntologyDocumentStatus) =>
-    at(ontologyId) + "/documents" + (status ? "?status=" + enc(status) : ""),
+  ontologyConnections: (ontologyId: string, status?: OntologyDocumentStatus) =>
+    at(ontologyId) + "/connections" + (status ? "?status=" + enc(status) : ""),
   document: (
     ontologyId: string,
     id: string,
@@ -111,18 +114,20 @@ export const ontologyPaths = {
     enc(id) +
     (tab ? "?tab=" + enc(tab) : "") +
     (span ? `#s${span.section}-${span.start}-${span.end}` : ""),
-  // What audits of its current load found its ontology and mappings lack.
-  suggestions: (ontologyId: string) => at(ontologyId) + "/suggestions",
-  // Every open review of its current load, the decisions writing the most
-  // facts first, with a random slice that measures precision.
-  reviewQueue: (ontologyId: string) => at(ontologyId) + "/review",
-  // Its workflows (an agent's task), one, and one of its runs: what the
-  // agent read and wrote between its request and its answer.
-  workflows: (ontologyId: string) => at(ontologyId) + "/workflows",
+  // What needs a person: on Facts (the default), every open review of its
+  // current load, the decisions writing the most facts first, with a random
+  // slice that measures precision; on Ontology, what audits of its current
+  // load found its ontology and mappings lack.
+  review: (ontologyId: string, tab?: "ontology") =>
+    at(ontologyId) + "/review" + (tab ? "?tab=" + tab : ""),
+  // Its Usage page (its use cases: an agent's task), one use case, and one
+  // of its runs: what the agent read and wrote between its request and its
+  // answer.
+  workflows: (ontologyId: string) => at(ontologyId) + "/usage",
   workflow: (ontologyId: string, workflowId: string) =>
-    at(ontologyId) + "/workflows/" + enc(workflowId),
+    at(ontologyId) + "/usage/" + enc(workflowId),
   workflowRun: (ontologyId: string, workflowId: string, runId: string) =>
-    at(ontologyId) + "/workflows/" + enc(workflowId) + "/runs/" + enc(runId),
+    at(ontologyId) + "/usage/" + enc(workflowId) + "/runs/" + enc(runId),
   // The database's graph explorer, selecting a node by its database id.
   explore: (ontologyId: string, node?: number) =>
     explorer(ontologyId) + (node === undefined ? "" : "?node=" + node),
@@ -133,13 +138,24 @@ export const ontologyPaths = {
   // Questions about a load: a thread, or a new one, optionally about one
   // entity (its entity id); `new` opens the new thread where a narrow screen
   // would show the threads. The page keeps `?load=` as the other views do.
+  // On Founder's page (founder-page.tsx), `chat` is one of Founder's
+  // threads, `thread` an Analyst thread read only, and `about` a name a new
+  // chat's message starts with.
   ask: (
     ontologyId: string,
-    view?: { thread?: string; focus?: string; new?: boolean },
+    view?: {
+      thread?: string;
+      chat?: string;
+      focus?: string;
+      about?: string;
+      new?: boolean;
+    },
   ) => {
     const q = new URLSearchParams();
     if (view?.thread) q.set("thread", view.thread);
+    if (view?.chat) q.set("chat", view.chat);
     if (view?.focus) q.set("focus", view.focus);
+    if (view?.about) q.set("about", view.about);
     if (view?.new) q.set("new", "1");
     return "/ask/" + enc(ontologyId) + (q.size ? "?" + q : "");
   },

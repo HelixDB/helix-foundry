@@ -113,7 +113,7 @@ test("ontology: the panel, the overview and a new one", async ({ page }) => {
     page.getByRole("heading", { level: 2, name: "Version 1" }),
   ).toBeVisible();
   await expect(
-    ontologiesPanel(page).getByRole("link", { name: /^Documents/ }),
+    ontologiesPanel(page).getByRole("link", { name: "Connections" }),
   ).toBeVisible();
   // The rail and the panel's top: the ontologies, the open one's pages.
   await shot(page, "ontology", "ontologies", {

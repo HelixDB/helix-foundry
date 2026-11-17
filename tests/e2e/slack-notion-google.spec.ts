@@ -141,6 +141,9 @@ test("connects Slack, says which scope its token lacks, and keeps a document per
     dialog(page).getByRole("list", { name: "Warnings" }),
   ).toHaveCount(0);
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
 
   await expect(page).toHaveURL(/\/data\/connections\/conn_/);
   await expect(
@@ -239,6 +242,9 @@ test("connects Notion, shows its databases' first rows, and keeps its pages as d
   await expect(preview.locator("tbody tr")).toHaveCount(5);
   await expect(preview.locator("tbody tr").first()).toContainText("Globex");
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "Notion" }),
@@ -339,6 +345,9 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   await runTest(page);
   await expect(listed(objects)).toHaveCount(5);
   await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
 
   await expect(
     page.getByRole("heading", { level: 1, name: "Google Workspace" }),

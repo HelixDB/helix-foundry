@@ -1,6 +1,7 @@
 import type {
   DocumentExtraction,
   DocumentMediaType,
+  DocumentNameOutcome,
   DocumentRead,
   DocumentReadOutcome,
   DocumentSetReader,
@@ -14,7 +15,6 @@ import type {
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
 import { plural } from "../../kit/util";
-import { setFolders, type SetFolder } from "../data/model";
 import type { Span } from "../explore/model";
 import { isSampleSet } from "../ontology/sample";
 import { isRecord } from "../../../shared/json";
@@ -721,72 +721,6 @@ export function extractionBadge(x: DocumentExtraction): {
   }
 }
 
-/** A document's dot in an ontology's documents explorer: one of four colours. */
-export type DocumentDot = {
-  // Orange, red, green, and grey (waiting, or not read).
-  status: Extract<
-    Status,
-    "review" | "failed" | "succeeded" | "queued" | "canceled"
-  >;
-  label: string;
-};
-
-/**
- * What an ontology's current load made of a document, as its dot in the
- * Ontologies panel's documents explorer, in the words of the documents
- * list's filters and `documentBadge`: orange when it needs review, red when
- * it couldn't be read (a PDF's says why), green when read; grey while it
- * waits (uploading, a PDF's text being read, or not read yet) and when it
- * isn't read as text (deleted, a duplicate, out of its version's scope, a
- * table file, whose rows load through mappings, or a type the WFE doesn't
- * read).
- *
- * @example
- * documentDot({ id: "d", extraction: { status: "extracted", reviews: 2 } }); // { status: "review", label: "Needs review · 2" }
- * documentDot({ id: "d", status: "uploaded", mediaType: "application/pdf", read: { state: "FOUNDRY_FILE_READ_STATE_FAILED", error: { message: "Scanned PDF: no text to read." } } }); // { status: "failed", label: "Scanned PDF: no text to read." }
- * documentDot({ id: "d", mediaType: "text/csv" }); // { status: "canceled", label: "A table file: loads read its rows through mappings" }
- */
-export function documentDot(d: FoundryDocument): DocumentDot {
-  if (d.status === "deleted") return { status: "canceled", label: "Deleted" };
-  if (d.status === "pending_upload")
-    return { status: "queued", label: "Uploading" };
-  if (readKindOf(d) === "table")
-    return {
-      status: "canceled",
-      label: "A table file: loads read its rows through mappings",
-    };
-  const x = d.extraction,
-    read = readKindOf(d) === "pdf" ? fileRead(d) : undefined;
-  if (!x)
-    return read?.state === "reading"
-      ? { status: "queued", label: "Reading its text" }
-      : read?.state === "failed"
-        ? { status: "failed", label: read.message }
-        : { status: "queued", label: "Waiting" };
-  switch (x.status) {
-    case "extracted":
-      return (x.reviews || 0) > 0
-        ? { status: "review", label: `Needs review · ${x.reviews}` }
-        : { status: "succeeded", label: "Read" };
-    case "failed": {
-      const code = x.error?.code;
-      // A PDF's read says why; the WFE doesn't read a type this page
-      // doesn't know.
-      return read && (code === "unsupported" || code === "too_large")
-        ? { status: "failed", label: failureText(x.error, d) }
-        : code === "unsupported"
-          ? { status: "canceled", label: failureText(x.error).slice(0, -1) }
-          : { status: "failed", label: "Couldn’t be read" };
-    }
-    case "duplicate":
-      return { status: "canceled", label: "Duplicate" };
-    case "out_of_scope":
-      return { status: "canceled", label: "Not read by its version" };
-    default:
-      return { status: "canceled", label: "Unknown" };
-  }
-}
-
 /**
  * Which ontologies read a set, in a sentence: those whose reading version
  * has it in scope.
@@ -889,46 +823,6 @@ export const setLabel = (s: FoundryDocumentSet) =>
   [s.connector && (s.connector.connectorName || "A connection"), s.name || s.id]
     .filter(Boolean)
     .join(" / ");
-
-/** A folder of an ontology's documents explorer, and how many of the documents it shows need review. */
-export type OntologySetFolder = SetFolder & { review: number };
-
-/**
- * An ontology's documents explorer (the Ontologies panel on its documents
- * pages): the sets ontology `o` reads (their `readBy` names it) or holds
- * documents of (its current load's, from before they moved), each with
- * what it reads of them (`documents`, its documents list), ordered and
- * filtered by a search `term` as the Data tree's documents/ (`setFolders`),
- * and how many of those shown need review.
- *
- * @example
- * ontologySetFolders(
- *   "o1",
- *   [
- *     { id: "g", name: "General", readBy: [{ ontologyId: "o1" }] },
- *     { id: "b", name: "Board" },
- *   ],
- *   [{ id: "d", setId: "g", extraction: { status: "extracted", reviews: 1 } }],
- * ).map((f) => [f.set.id, f.documents.length, f.review]);
- * // [["g", 1, 1]]
- */
-export function ontologySetFolders(
-  o: string,
-  sets: readonly FoundryDocumentSet[],
-  documents: readonly FoundryDocument[],
-  term = "",
-): OntologySetFolder[] {
-  const read = sets.filter(
-    (s) =>
-      s.readBy?.some((r) => r.ontologyId === o) ||
-      documents.some((d) => d.setId === s.id),
-  );
-  return setFolders(read, documents, term).map((f) => ({
-    ...f,
-    review: f.documents.filter((d) => documentDot(d).status === "review")
-      .length,
-  }));
-}
 
 // ---------------------------------------------------------------- Viewers
 
@@ -1524,6 +1418,36 @@ const oneCandidate = {
   title: "May be this entity",
   text: "The name points at one entity, but not firmly enough to store what the document says of it here: it may be only part of that entity’s name, or match it only loosely, such as by a short name, another legal form or a code the document calls it by. Link the name to that entity if it’s the one meant, and the next load stores it.",
 };
+// A held claim the checker scored high whose end its part of the document
+// doesn't name (contract 4.18.0): the engine holds it under the same
+// reasons as an unsure one, whatever its score.
+const capped = {
+  low_confidence: {
+    title: "Not sure who it’s about",
+    text: "The checker scored it high, but this part of the document doesn’t name who or what it’s about, so it was held for a person. Check the quote names the right one.",
+  },
+  attribute_low_confidence: {
+    title: "Not sure whose value it is",
+    text: "The checker scored the value high, but this part of the document doesn’t name who or what it belongs to, so it was held for a person. Check the quote names the right one.",
+  },
+};
+/**
+ * Whether a review is a claim or value held because its part of the
+ * document doesn't name its end, not for an unsure score: an unsure reason
+ * the checker scored 0.9 or more (contract 4.18.0's cap).
+ *
+ * @example
+ * heldUnnamed("low_confidence", 0.95); // true
+ * heldUnnamed("low_confidence", 0.72); // false
+ * heldUnnamed("unverified", 0.95); // false
+ */
+export const heldUnnamed = (
+  reason?: string,
+  confidence?: number,
+): reason is keyof typeof capped =>
+  (reason === "low_confidence" || reason === "attribute_low_confidence") &&
+  confidence !== undefined &&
+  confidence >= 0.9;
 // A reason a newer engine gives: nothing is known of it but that it waits.
 const newReason = {
   title: "Held for a person to check",
@@ -1532,13 +1456,120 @@ const newReason = {
 
 /**
  * A review's reason as a title and a sentence for people who didn't build the
- * ontology. `candidates` is how many entities it offers.
+ * ontology. `candidates` is how many entities it offers; `confidence` is the
+ * checker's score, which tells an unsure claim from one held because its
+ * part of the document doesn't name its end (heldUnnamed).
  *
  * @example
  * reviewCopy("ambiguous", 2).title; // "Could mean more than one entity"
  * reviewCopy("ambiguous", 1).title; // "May be this entity"
+ * reviewCopy("low_confidence", 0, 0.72).title; // "The model wasn’t sure"
+ * reviewCopy("low_confidence", 0, 0.95).title; // "Not sure who it’s about"
  */
-export const reviewCopy = (reason?: string, candidates?: number) => {
+export const reviewCopy = (
+  reason?: string,
+  candidates?: number,
+  confidence?: number,
+) => {
   if (reason === "ambiguous" && candidates === 1) return oneCandidate;
+  if (heldUnnamed(reason, confidence)) return capped[reason];
   return reviews[(reason || "unverified") as ReviewReason] || newReason;
 };
+
+/**
+ * What a load made of a name decision it met in a document (contract
+ * 4.22.0), in plain words: written, nothing waiting on it, not named here,
+ * or refused for its reason. An outcome or reason this site doesn't know
+ * says only that it wasn't applied, never the code.
+ *
+ * @example
+ * nameOutcomeText({ outcome: "written" }); // "Written to this load"
+ * nameOutcomeText({ outcome: "refused", reason: "role_term" }); // "A role, like “the Customer”, not a name"
+ * nameOutcomeText({ outcome: "refused", reason: "new_rung" }); // "Not applied in this load"
+ */
+export function nameOutcomeText(n: DocumentNameOutcome): string {
+  switch (n.outcome) {
+    case "written":
+      return "Written to this load";
+    case "not_asked":
+      return "Nothing in this load waited on it";
+    case "not_named":
+      return "This document doesn’t name it";
+  }
+  if (n.outcome !== "refused") return "Not applied in this load";
+  switch (n.reason) {
+    case "absent":
+      return "The record chosen isn’t in this load";
+    case "bound":
+      return "This document already links the name another way; that changes when the document is read again";
+    case "collides":
+      return "Another name in this document is already that record";
+    case "differs":
+      return "The load no longer matches what the document gave; it applies when the document is read again";
+    case "too_large":
+      return "Too large to write in place; it applies when the document is read again";
+    case "two_rows":
+      return "Another record goes by this name too, or people chose different records for it";
+    case "role_term":
+      return "A role, like “the Customer”, not a name";
+    case "shared":
+      return "Another party in this document goes by it too";
+    case "identifier":
+      return "The document gives an ID that doesn’t match the record chosen";
+    case "other_identity":
+      return "The names show a different legal company";
+    case "not_replayed":
+      return "Built before names could be applied at once; the next load applies it";
+    default:
+      return "Not applied in this load";
+  }
+}
+
+/**
+ * Whose choice a name decision is: the document's own, or one made in
+ * another document and carried here; undefined for a kind this site
+ * doesn't know.
+ *
+ * @example
+ * nameDecisionText("alias"); // "A choice made in another document"
+ */
+export function nameDecisionText(decision?: string): string | undefined {
+  switch (decision) {
+    case "resolve":
+      return "Your choice for this document";
+    case "alias":
+      return "A choice made in another document";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * How a held claim's quote states it (a review's `evidence_shape`, contract
+ * 4.18.0), in plain words; undefined for none or a shape this site doesn't
+ * know, so no code shows.
+ *
+ * @example
+ * evidenceShapeText("table_row_or_cell"); // "A table row"
+ * evidenceShapeText("sung"); // undefined
+ */
+export function evidenceShapeText(shape?: string): string | undefined {
+  switch (shape) {
+    case "prose_sentence":
+      return "A sentence";
+    case "list_item":
+      return "A list item";
+    case "table_row_or_cell":
+      return "A table row";
+    case "header_title_or_form_field":
+      return "A heading or form field";
+    case "spread_across_sentences":
+      return "Across several sentences";
+    case "spread_across_sections":
+      return "Across sections";
+    case "implied":
+      return "Implied, not stated";
+    default:
+      return undefined;
+  }
+}

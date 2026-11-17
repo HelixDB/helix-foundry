@@ -152,6 +152,15 @@
       },
       "description": "FoundryEventPiece is one piece sent to an event source."
     },
+    "v1GetSharedFoundryDashboardResponse": {
+      "type": "object",
+      "properties": {
+        "snapshotJson": {
+          "type": "string",
+          "description": "The snapshot as package dashboard writes it (dashboard.Snapshot): no\nworkspace's, ontology's, load's or person's id."
+        }
+      }
+    },
     "v1SendFoundryEventsResponse": {
       "type": "object",
       "properties": {

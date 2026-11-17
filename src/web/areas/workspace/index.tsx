@@ -22,6 +22,8 @@ import { AccessTab } from "./access";
 import { AiTab } from "./ai";
 import { BillingTab } from "./billing";
 import { EnrichmentTab } from "./enrichment";
+import { publicLinks } from "../dashboards/public-links";
+import { SharingTab } from "./sharing";
 import { DASHBOARD_URL, MembersTab } from "./members";
 import type { SettingsTab } from "./paths";
 import { roleLabel } from "./people";
@@ -91,6 +93,8 @@ const tabs: { id: Tab; label: string }[] = [
         { id: "billing" as const, label: "Plan & billing" },
         { id: "enrichment" as const, label: "People enrichment" },
       ]),
+  // Public dashboard links, where the build has them (never a local one).
+  ...(publicLinks ? [{ id: "sharing" as const, label: "Sharing" }] : []),
 ];
 
 function SettingsPage({ tab }: { tab: Tab }) {
@@ -138,6 +142,8 @@ function SettingsPage({ tab }: { tab: Tab }) {
           <AccessTab />
         ) : tab === "billing" ? (
           <BillingTab />
+        ) : tab === "sharing" ? (
+          <SharingTab />
         ) : (
           <EnrichmentTab />
         )}
@@ -148,7 +154,8 @@ function SettingsPage({ tab }: { tab: Tab }) {
 
 // /settings, /settings/ai, /settings/members, /settings/access,
 // /settings/billing (where Stripe Checkout returns) and
-// /settings/enrichment; only /settings and /settings/ai in a local build.
+// /settings/enrichment, and /settings/sharing where the build has public
+// dashboard links; only /settings and /settings/ai in a local build.
 export function SettingsRoutes() {
   return (
     <Routes>
@@ -164,6 +171,9 @@ export function SettingsRoutes() {
             element={<SettingsPage tab="enrichment" />}
           />
         </>
+      )}
+      {publicLinks && (
+        <Route path="sharing" element={<SettingsPage tab="sharing" />} />
       )}
       <Route path="*" element={<NotFound />} />
     </Routes>

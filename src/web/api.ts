@@ -138,8 +138,19 @@ async function send(url: string, init: RequestInit, unsafe: boolean) {
   return attempt(await csrfToken());
 }
 
+// Set once signing out starts: the page then leaves for sign-in itself, and
+// a call refused meanwhile (the session already ended) must not race it there
+// with a way back to this page. A page the back button restores from the
+// browser's cache is signed out, and its refused calls go to sign-in again.
+let signingOut = false;
+if (typeof window !== "undefined")
+  window.addEventListener?.("pageshow", (e) => {
+    if (e.persisted) signingOut = false;
+  });
+
 /** Sends the browser to sign-in, coming back to the current page. */
 export function goToSignIn() {
+  if (signingOut) return;
   clearCsrfToken();
   const { pathname, search, hash } = window.location;
   window.location.assign(signInPath(pathname + search + hash));
@@ -220,6 +231,7 @@ export const sentence = (message: string) =>
 
 /** Ends the session here and at WorkOS, then lands on the sign-in page. */
 export async function signOut() {
+  signingOut = true;
   let target = "/login";
   try {
     const res = await send(
@@ -233,6 +245,7 @@ export async function signOut() {
     // Without a session there is nothing to end: go to sign-in anyway.
   }
   clearCsrfToken();
-  await signedOut();
+  // Its analytics never keep the page from leaving.
+  await signedOut().catch(() => undefined);
   window.location.assign(target);
 }

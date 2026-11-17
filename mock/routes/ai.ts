@@ -3,6 +3,7 @@ import type {
   AgentProbeDetail,
   AgentProviderKind,
   FoundryAi,
+  FoundryAiAssistantCheck,
   FoundryAiConfig,
   FoundryAiKey,
   FoundryAiModel,
@@ -63,7 +64,9 @@ import { isFoundryPro, proRequired } from "./billing";
 // hosted, the plan has own keys), every model has a name that isn't a key
 // and a price the kind takes (rates in dollars with at most three decimals,
 // output above 0; another model's row only for an Azure deployment or a
-// Bedrock model; no cost only for Ollama and custom servers), the endpoint
+// Bedrock model; no cost only for Ollama and custom servers; for Cohere,
+// whose models Helix's table doesn't price, rates only, with no cached-input
+// rate, as Cohere reports all input as cached), the endpoint
 // passes the deployment's URL rules (an Azure OpenAI resource's https
 // endpoint, normalized to .../openai/v1; an AWS region for Bedrock, FIPS
 // kept only when on), a key is given or kept (canReuseKey) or not needed,
@@ -91,6 +94,13 @@ import { isFoundryPro, proRequired } from "./billing";
 //   model_changed (it was pulled again during the test);
 // - anything else passes, and becomes the setting if it is still the
 //   workspace's newest save and nothing was chosen since.
+// A test that passed runs the Assistant's tool check of its Questions model
+// too (`assistantCheck`), which never fails the setting: the Assistant
+// refuses its turns in the worker's words (aiAssistantFailure). A Questions
+// model containing "notoolcall" answers without calling the tool
+// (NO_TOOL_CALL), one containing "toolrefused" is refused (REFUSED), and a
+// key containing "agentauth" is refused on the Assistant's calls (AUTH);
+// anything else passes. ("notools" fails the test itself, before.)
 // A config holds its key (the WFE's sealed column) only while it is the
 // setting or the pending save; answers never carry it, and only an owner's
 // carry its hint, which shows at most its kind and last four characters.
@@ -106,8 +116,8 @@ import { isFoundryPro, proRequired } from "./billing";
 // given, or a model pulled, since the install started; unset, it finds
 // what it found), `ollamaBundled: false` (the bundled Ollama isn't
 // running) and `aiKinds`, the kinds offered (Claude, OpenAI, Azure OpenAI,
-// custom OpenAI-compatible servers and Amazon Bedrock, and in a local API
-// Ollama, which is never offered hosted).
+// custom OpenAI-compatible servers, Amazon Bedrock and Cohere, and in a
+// local API Ollama, which is never offered hosted).
 // Ollama servers, by base URL: the bundled one has qwen3.5:4b, which
 // Foundry runs, then embeddinggemma and qwen2.5:0.5b, which it can't; the
 // one on this computer also qwen3.5:9b (first, the most capable), gemma3:4b
@@ -140,6 +150,8 @@ type Config = {
   key: string | null;
   hint: string;
   probe: Probe;
+  // The Assistant's tool check, run as the test passes.
+  check: Check;
   failure?: AgentModelFailure;
   detail?: AgentProbeDetail;
   createdBy: string;
@@ -205,6 +217,7 @@ const KEY: Record<FoundryAiProviderKind, FoundryAiKey> = {
   FOUNDRY_AI_KIND_OPENAI: "FOUNDRY_AI_KEY_REQUIRED",
   FOUNDRY_AI_KIND_AZURE_OPENAI: "FOUNDRY_AI_KEY_REQUIRED",
   FOUNDRY_AI_KIND_BEDROCK: "FOUNDRY_AI_KEY_REQUIRED",
+  FOUNDRY_AI_KIND_COHERE: "FOUNDRY_AI_KEY_REQUIRED",
   FOUNDRY_AI_KIND_OLLAMA: "FOUNDRY_AI_KEY_NONE",
   FOUNDRY_AI_KIND_OPENAI_COMPATIBLE: "FOUNDRY_AI_KEY_OPTIONAL",
 };
@@ -426,6 +439,7 @@ function advance(ws: string) {
     const before = since?.configId && find(since.configId);
     if (before) before.key = null;
     c.probe = "passed";
+    c.check = assistantCheck(c);
     state.activations.push({
       workspaceId: ws,
       configId: c.id,
@@ -468,7 +482,29 @@ function configView(c: Config, owner = true): FoundryAiConfig {
     createdAt: new Date(c.createdAt).toISOString(),
     createdByName: user ? displayName(user) : "",
     label: label(c.kind, c.provider),
+    assistantCheck: CHECK[c.check],
   };
+}
+
+type Check = "unchecked" | "passed" | "auth" | "refused" | "no_tool_call";
+const CHECK: Record<Check, FoundryAiAssistantCheck> = {
+  unchecked: "FOUNDRY_AI_ASSISTANT_CHECK_UNSPECIFIED",
+  passed: "FOUNDRY_AI_ASSISTANT_CHECK_PASSED",
+  auth: "FOUNDRY_AI_ASSISTANT_CHECK_AUTH",
+  refused: "FOUNDRY_AI_ASSISTANT_CHECK_REFUSED",
+  no_tool_call: "FOUNDRY_AI_ASSISTANT_CHECK_NO_TOOL_CALL",
+};
+
+/** The Assistant's tool check of a config whose test passed. */
+function assistantCheck(c: Config): Check {
+  const ask = c.models.ask.name;
+  return c.key?.includes("agentauth")
+    ? "auth"
+    : ask.includes("notoolcall")
+      ? "no_tool_call"
+      : ask.includes("toolrefused")
+        ? "refused"
+        : "passed";
 }
 
 const offered = (): FoundryAiProviderKind[] =>
@@ -481,6 +517,7 @@ const offered = (): FoundryAiProviderKind[] =>
     // would have to be public.
     ...(LOCAL_TOKEN ? ["FOUNDRY_AI_KIND_OLLAMA" as const] : []),
     "FOUNDRY_AI_KIND_BEDROCK",
+    "FOUNDRY_AI_KIND_COHERE",
   ];
 
 function view(ws: string, owner = true): FoundryAi {
@@ -520,7 +557,11 @@ function view(ws: string, owner = true): FoundryAi {
 }
 
 /** FailedPrecondition with the ErrorInfo the WFE's foundryPrecondition adds. */
-function foundryPrecondition(ws: string, reason: string, message: string) {
+export function foundryPrecondition(
+  ws: string,
+  reason: string,
+  message: string,
+) {
   const reply = fail("FAILED_PRECONDITION", message);
   return {
     ...reply,
@@ -557,6 +598,28 @@ export function aiLabel(ws: string): string {
   return c
     ? label(c.kind, c.provider)
     : PROVIDERS[deploymentDefault()?.kind ?? "FOUNDRY_AI_KIND_ANTHROPIC"].label;
+}
+
+/**
+ * Why the Assistant can't run on the setting in force, in the worker's
+ * words (agent.checkFailure): its tool check failed; undefined when it can
+ * (passed, unchecked, or the deployment's default).
+ */
+export function aiAssistantFailure(ws: string): string | undefined {
+  const c = active(ws);
+  if (!c) return undefined;
+  const p = label(c.kind, c.provider),
+    model = c.models.ask.name;
+  switch (c.check) {
+    case "auth":
+      return `${p} refused the workspace's key for Founder. An owner can check it in Settings › AI models.`;
+    case "no_tool_call":
+      return `The workspace's model, ${model}, doesn't call tools, which Founder needs. An owner can choose another in Settings › AI models.`;
+    case "refused":
+      return `${p} refused Founder's calls to ${model}. An owner can choose another model in Settings › AI models.`;
+    default:
+      return undefined;
+  }
 }
 
 /** The agent's name for the kind in force, as Ask's started event says it. */
@@ -712,6 +775,14 @@ function save(
       const rates = parseRates(given.rates);
       if (typeof rates === "string")
         return fail("INVALID_ARGUMENT", `models.${role}.price.rates.${rates}`);
+      if (
+        kind === "FOUNDRY_AI_KIND_COHERE" &&
+        given.rates.cachedInputUsdPerMtok?.trim()
+      )
+        return fail(
+          "INVALID_ARGUMENT",
+          `models.${role}.price.rates.cache_read must be left out for a Cohere model, whose cached input costs what input does`,
+        );
       models[role] = { name, rates };
     } else if (given?.free) {
       if (
@@ -720,7 +791,7 @@ function save(
       )
         return fail(
           "INVALID_ARGUMENT",
-          `models.${role}.price can be free only for Ollama and OpenAI-compatible servers`,
+          `models.${role}.price can be free only for Ollama and custom OpenAI-compatible servers`,
         );
       models[role] = { name, free: {} };
     } else if (given?.tableAs) {
@@ -733,7 +804,12 @@ function save(
           `models.${role}.price can be another model's only for an Azure deployment or a Bedrock inference profile`,
         );
       models[role] = { name, tableAs: given.tableAs.trim() };
-    } else models[role] = { name, table: {} };
+    } else if (kind === "FOUNDRY_AI_KIND_COHERE")
+      return fail(
+        "INVALID_ARGUMENT",
+        `models.${role}.price must be your own rates for a Cohere model`,
+      );
+    else models[role] = { name, table: {} };
   }
   const endpoint =
     body.provider.azureOpenai?.endpoint ??
@@ -834,6 +910,7 @@ function save(
     key,
     hint: kept ? kept.hint : key ? keyHint(key) : "",
     probe: "queued",
+    check: "unchecked",
     createdBy: userId,
     createdAt: Date.now(),
   });

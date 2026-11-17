@@ -1,5 +1,6 @@
 import type {
   FoundryPrincipal,
+  FoundryWorkflowAutomation,
   FoundryWorkflowInsightIssue,
   FoundryWorkflowInsightSegment,
   FoundryWorkflowInsightTotals,
@@ -11,11 +12,18 @@ import type {
 // days, as the backend's GetFoundryWorkflowInsights counts it (api/
 // workflow_insights.go): pure, over runs as the API returns them. Runs count
 // by the day they started; a done assessment's claims, gaps and suggestions
-// count; a gap or suggestion recurs when runs name the same text, case,
-// spacing and end punctuation aside.
+// count, but for a run that finished without a call to the ontology, which
+// counts as never called alone; a gap or suggestion recurs when runs name the
+// same text, case, spacing and end punctuation aside.
 
-/** A run with what insights read of it. */
-export type InsightRun = FoundryWorkflowRun & { startedAt: string };
+/**
+ * A run with what insights read of it: when it started, and the automation
+ * Foundry started it for, if any.
+ */
+export type InsightRun = FoundryWorkflowRun & {
+  startedAt: string;
+  automation?: FoundryWorkflowAutomation;
+};
 
 const HELPED = new Set(["essential", "helpful"]);
 const VERDICTS = ["essential", "helpful", "marginal", "unused", "misleading"];
@@ -39,11 +47,18 @@ type Assessed = {
   suggestions: string[];
 };
 
-/** A done assessment's claims' support, gaps and suggestions; none for any other. */
+/** Whether r finished without a call to the ontology. */
+const neverCalled = (r: FoundryWorkflowRun) =>
+  r.status === "finished" && !r.counts?.accesses;
+
+/**
+ * A done assessment's claims' support, gaps and suggestions; none for any
+ * other, or a run that never called the ontology.
+ */
 function assessed(r: FoundryWorkflowRun): Assessed {
   const a = r.assessment;
   const out: Assessed = { claims: [], gaps: [], suggestions: [] };
-  if (a?.status !== "done" || !a.assessmentJson) return out;
+  if (a?.status !== "done" || !a.assessmentJson || neverCalled(r)) return out;
   try {
     const body = JSON.parse(a.assessmentJson) as {
       claims?: { support?: unknown }[];
@@ -95,6 +110,7 @@ export function totalsOf(runs: readonly InsightRun[]) {
     questions: 0,
     sends: 0,
     uploads: 0,
+    neverCalled: 0,
   };
   const verdicts = new Map<string, number>(),
     kinds = new Map<string, number>();
@@ -109,6 +125,10 @@ export function totalsOf(runs: readonly InsightRun[]) {
     t.sends += c.sends || 0;
     t.uploads += c.uploads || 0;
     usd += Number(r.assessment?.usdMicros || 0);
+    if (neverCalled(r)) {
+      t.neverCalled++;
+      continue;
+    }
     const a = r.assessment;
     if (a?.status !== "done" || !a.verdict) continue;
     t.assessed++;
@@ -246,8 +266,10 @@ export function insights(
   };
   const t = totalsOf(inWindow);
   const finished = inWindow.filter((r) => r.status === "finished"),
-    done = finished.filter((r) => r.assessment?.status === "done"),
-    used = done.filter((r) => (r.counts?.accesses || 0) > 0);
+    used = finished.filter((r) => !neverCalled(r)),
+    done = used.filter(
+      (r) => r.assessment?.status === "done" && !!r.assessment.verdict,
+    );
   return {
     from: dates[0],
     days,
@@ -260,15 +282,29 @@ export function insights(
     funnel: {
       started: inWindow.length,
       finished: finished.length,
-      assessed: done.length,
       used: used.length,
-      helped: used.filter((r) => HELPED.has(r.assessment?.verdict || ""))
+      assessed: done.length,
+      helped: done.filter((r) => HELPED.has(r.assessment?.verdict || ""))
         .length,
     },
     gaps: recurring(inWindow, gapsOf),
     suggestions: recurring(inWindow, suggestionsOf),
-    agents: groups((r) => JSON.stringify(starterOf(r)))
-      .map(([k, rs]) => segment(rs, { principal: JSON.parse(k) }))
+    // An automation's runs count by the automation, apart from what its
+    // owner started themselves.
+    agents: groups((r) =>
+      r.automation
+        ? `automation:${r.automation.automationId}`
+        : JSON.stringify(starterOf(r)),
+    )
+      .map(([, rs]) =>
+        segment(rs, {
+          principal: starterOf(rs[0]!),
+          ...(rs[0]!.automation && {
+            automation: rs[0]!.automation,
+            workflowId: rs[0]!.workflowId,
+          }),
+        }),
+      )
       .sort((a, b) => (b.totals?.runs || 0) - (a.totals?.runs || 0))
       .slice(0, AGENTS),
     workflows: opts.workflowId

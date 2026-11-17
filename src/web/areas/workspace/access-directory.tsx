@@ -13,6 +13,7 @@ import { Button, Panel, Tag, formatRelative } from "../../kit";
 import { useWorkspace } from "../../ui";
 import {
   directoryCounts,
+  directoryNotOffered,
   directoryView,
   issueGroups,
   stateView,
@@ -37,10 +38,10 @@ const base = (ws: string) => `/v1/workspaces/${enc(ws)}/directory`;
 export const directoryQuery = (ws: string) => ({
   queryKey: [ws, "directory"],
   queryFn: () => api<WorkspaceDirectory>(base(ws)),
-  // A workspace that can't have one (or a WFE without the route) answers
-  // 4xx: the panel isn't for it, and asking again changes nothing.
+  // Refused, or a WFE without the route: the panel isn't for it, and asking
+  // again changes nothing. Anything else may pass, so it is asked again.
   retry: (n: number, e: unknown) =>
-    !(e instanceof ApiError && e.status < 500) && n < 2,
+    !(e instanceof ApiError && directoryNotOffered(e.status)) && n < 2,
   refetchInterval: (q: { state: { data?: WorkspaceDirectory } }) =>
     q.state.data && syncing(q.state.data) ? 5000 : false,
 });
@@ -106,10 +107,16 @@ export function DirectoryPanel() {
 
   if (q.isPending) return null;
   if (q.isError)
-    return q.error instanceof ApiError && q.error.status < 500 ? null : (
-      <p className="wk-note" role="alert">
-        Couldn’t read directory sync. {(q.error as Error).message}
-      </p>
+    return q.error instanceof ApiError &&
+      directoryNotOffered(q.error.status) ? null : (
+      <Panel title="Directory sync">
+        <p role="alert" className="hf-form-error">
+          Couldn’t read directory sync. {(q.error as Error).message}
+        </p>
+        <Button size="sm" onClick={() => void q.refetch()}>
+          Retry
+        </Button>
+      </Panel>
     );
   const d = q.data,
     view = directoryView(d);

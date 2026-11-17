@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
@@ -158,10 +157,4 @@ func TestGetContextRefusesASchemaPastTheCap(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Contains(t, text, "past the 256 KiB this tool returns")
 	assert.Contains(t, text, "https://foundry.example/ontology/ontology-1/versions/version-1")
-}
-
-func TestNaturalCompareOrdersDigitsByValue(t *testing.T) {
-	ids := []string{"CQ10", "CQ2", "CQ1", "Q1", "CQ01", "CQ", "CQ2a"}
-	slices.SortFunc(ids, naturalCompare)
-	assert.Equal(t, []string{"CQ", "CQ01", "CQ1", "CQ2", "CQ2a", "CQ10", "Q1"}, ids)
 }

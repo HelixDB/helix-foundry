@@ -431,6 +431,67 @@ describe("jobs", () => {
     expect(local.values.has(PENDING)).toBe(false);
   });
 
+  it("reports a Founder turn's end with where its thread ran", async () => {
+    const a = await load();
+    a.jobStarted(
+      { job: "agent_turn", section: "ask", runtime: "claude_code" },
+      "turn_1",
+    );
+    a.jobStarted(
+      { job: "agent_turn", section: "data", runtime: "api" },
+      "turn_2",
+    );
+    // A runtime it doesn't know, read back from storage, is the worker's.
+    a.jobStarted(
+      { job: "agent_turn", section: "none", runtime: "gemini" as "api" },
+      "turn_3",
+    );
+    a.jobSeen("agent_turn", [
+      { id: "turn_1", status: "done", steps: 3 },
+      { id: "turn_2", status: "failed", steps: 1 },
+      { id: "turn_3", status: "cancelled" },
+    ]);
+    expect(sent()).toEqual([
+      ["agent_turn_started", { section: "ask" }],
+      ["agent_turn_started", { section: "data" }],
+      ["agent_turn_started", { section: "none" }],
+      [
+        "agent_turn_ended",
+        { runtime: "claude_code", section: "ask", status: "done", steps: 3 },
+      ],
+      [
+        "agent_turn_ended",
+        { runtime: "api", section: "data", status: "failed", steps: 1 },
+      ],
+      [
+        "agent_turn_ended",
+        { runtime: "api", section: "none", status: "cancelled", steps: 0 },
+      ],
+    ]);
+  });
+
+  it("reports a generation that asks, then its end once answered here; a cancel ends it quietly", async () => {
+    const a = await load();
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_1");
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_2");
+    a.jobSeen("generation", [
+      { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" },
+      { id: "gen_2", status: "ONTOLOGY_GENERATION_STATUS_CANCELLED" },
+    ]);
+    // Answered: remembered again, with no second start.
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_1", false);
+    a.jobSeen("generation", [
+      { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
+    ]);
+    expect(sent()).toEqual([
+      ["generation_started", { source: "ai" }],
+      ["generation_started", { source: "ai" }],
+      ["generation_needs_input", { source: "ai" }],
+      ["generation_succeeded", { source: "ai" }],
+    ]);
+    expect(local.values.has(PENDING)).toBe(false);
+  });
+
   it("reports a revision's start and end with its mode, apart from generations", async () => {
     const a = await load();
     a.jobStarted({ job: "revision", mode: "preview" }, "rev_1");

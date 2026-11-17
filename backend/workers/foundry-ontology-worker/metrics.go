@@ -8,7 +8,7 @@ import (
 var (
 	generations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "helix_foundry_ontology_generations_total",
-		Help: "Ontology generation attempts by outcome: succeeded, retried or failed.",
+		Help: "Ontology generation attempts by outcome: succeeded, needs_input, retried or failed.",
 	}, []string{"outcome"})
 	tokens = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "helix_foundry_ontology_tokens_total",

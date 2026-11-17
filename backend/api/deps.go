@@ -9,9 +9,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/document"
+	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store"
 )
@@ -43,4 +45,17 @@ type Deps struct {
 	// models. nil hosted, where DetectFoundryAIDefault and
 	// ListFoundryOllamaModels are refused.
 	LocalAI *detect.Detector
+	// AgentSessions opens a person's tools for the Assistant's clicks
+	// (execute and refresh); nil where the host has none, and those are then
+	// Unavailable.
+	AgentSessions integration.SessionHost
+	// AgentHosts is a local install's helpers, which run the Assistant's
+	// threads on the owner's Claude Code or Codex subscription; nil hosted,
+	// where every thread runs on the worker and the runtime routes are
+	// refused.
+	AgentHosts foundryagent.HostRegistry
+	// AgentHostURL is where a helper on the owner's machine reaches the
+	// install's integration listener, when not at the helper's default
+	// (agent.DefaultHelperFoundry): the pair command names it.
+	AgentHostURL string
 }

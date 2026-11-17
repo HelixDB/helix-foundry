@@ -672,6 +672,65 @@ test("shows a version's sources: tables and document routes per type and link", 
   ).toContainText("Identifier · email");
 });
 
+// Contract 4.20.0's routes found in sample documents and 4.19.0's kinds of
+// reason for what a draft left out, in words, never their codes.
+test("says a route was found in sample documents, and why a draft left things out", async ({
+  page,
+}) => {
+  await mock.configure({ ontologyStepMs: 300 });
+  await signIn(page);
+  await uploadInData(page, [file("contract.md", CONTRACT)]);
+  // From General's documents alone.
+  await page.goto(
+    `${O}/generate?connectors=&sets=set_acme_general&goal=${encodeURIComponent("Contracts, without renewals")}`,
+  );
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(page).toHaveURL(/\/generations\/gen_/);
+  const review = page.getByRole("link", { name: /Review version 4/ });
+  await expect(review).toBeVisible({ timeout: 15_000 });
+  await review.click();
+
+  await page.getByRole("tab", { name: /^Sources/ }).click();
+  const head = page
+    .getByRole("table", { name: "Sources" })
+    .getByRole("row")
+    .first();
+  await expect(head.getByRole("columnheader")).toHaveText([
+    "Type or link",
+    /Documents · General.*contracts/,
+    /^Documents · GeneralFound in sample documentsWhy: 3 of 4 sample documents of General state a Contract’s notice period, which no route asked for\.$/,
+  ]);
+  await expect(head).not.toContainText(/probe/i);
+
+  await page.getByRole("tab", { name: /^Questions/ }).click();
+  const left = page.getByRole("list", { name: "Left out" });
+  await expect(left.getByRole("listitem")).toHaveText([
+    "Not checked yet General (document set): the turn’s budget ran out first.The agent ran out of budget before it looked at this. Generating again can pick it up.",
+    "Asked to leave out Contract.renewal_terms: The goal leaves renewals out.Someone asked to leave it out: “Contracts, without renewals”.",
+    "Already read elsewhere Contract.term_months: Stated again in later amendments.Its documents state Contract’s term months, which the route reading General already reads from other documents.",
+  ]);
+  await expect(left).not.toContainText(
+    /not_assessed|user_asked|documents_state|Not assessed/,
+  );
+  // Only what wasn't checked, on asking.
+  await page.getByRole("radio", { name: "Not checked yet (1)" }).click();
+  await expect(left.getByRole("listitem")).toHaveCount(1);
+  await expect(left).toContainText("Not checked yet");
+  await page.getByRole("radio", { name: "All (3)" }).click();
+  await expect(left.getByRole("listitem")).toHaveCount(3);
+
+  // The Edit tab names the route by what found it, not its made-up name.
+  await page.getByRole("tab", { name: /^Edit/ }).click();
+  await page.getByLabel("Item to edit").click();
+  await expect(
+    page.getByRole("listbox").getByRole("option", {
+      name: "Document route · found in sample documents of General",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("listbox")).not.toContainText(/probe/i);
+});
+
 test("opens a property's quote on its span; reads only its version's sets", async ({
   page,
 }) => {
@@ -705,7 +764,7 @@ test("opens a property's quote on its span; reads only its version's sets", asyn
   ).toBeVisible({ timeout: 20_000 });
 
   // The ontology's documents are its sets': not Other's.
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await expect(row(page, "contract.md")).toContainText("Needs review · 1");
   await expect(row(page, "notes.md")).toHaveCount(0);
 
@@ -825,7 +884,7 @@ test("stores a document of a set its version reads but no route names", async ({
   await expect(details.getByText("0 of 1", { exact: true })).toBeVisible();
   await expect(details).toContainText("Not read by this version");
   await unread.getByRole("link", { name: "See what wasn’t read" }).click();
-  await expect(page).toHaveURL(/\/documents\?.*status=out_of_scope/);
+  await expect(page).toHaveURL(/\/connections\?.*status=out_of_scope/);
   await expect(row(page, "notes.md")).toContainText("Not read by its version");
   await row(page, "notes.md").getByRole("link", { name: "notes.md" }).click();
   await expect(

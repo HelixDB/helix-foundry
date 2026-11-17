@@ -47,8 +47,10 @@ export const reviewQueries = {
       const seen = new Set<string>();
       let token = "";
       do {
+        // With the current load's withdraws (contract 4.16.0), which a
+        // client must ask for: one before them couldn't show one.
         const page = await api<ListReviewDecisionsResponse>(
-          `${base(ws, o)}/review-decisions${token ? `?pageToken=${enc(token)}` : ""}`,
+          `${base(ws, o)}/review-decisions?includeWithdraws=true${token ? `&pageToken=${enc(token)}` : ""}`,
         );
         decisions.push(...(page.decisions || []));
         token = page.nextPageToken || "";
@@ -75,7 +77,27 @@ export const reviewQueries = {
       return decisions;
     },
   }),
+  // What the Review page last counted open on its Facts tab, for the
+  // current load it read: the Ontologies panel's Review link shows it,
+  // since counting reads the load's reviews from its database, which the
+  // panel, on every page, can't afford. Only the page writes it; nothing
+  // fetches it.
+  openFacts: (ws: string, o: string) => ({
+    queryKey: [ws, "ontology", o, "review-open-facts"],
+    staleTime: Infinity,
+    enabled: false,
+    queryFn: ({ client }: { client: QueryClient }) =>
+      client.getQueryData<OpenFacts>([
+        ws,
+        "ontology",
+        o,
+        "review-open-facts",
+      ]) ?? null,
+  }),
 };
+
+/** The Facts tab's open count, and the load it was counted on. */
+export type OpenFacts = { loadId: string; open: number };
 // Every label of the ontology, a page (100) at a time: what the review queue
 // measures precision from, and leaves out of its draws.
 export const labelQueries = {
