@@ -2210,6 +2210,20 @@ describe("questions and threads", () => {
         "Claude refused the API key. An owner can enter a new one in Settings › AI models.",
       result: auth,
     });
+    // A custom server's timeout names its host, lowercase, as written.
+    expect(
+      questionView(
+        q({
+          status: "failed",
+          error: "llm.example.com stopped responding; ask again.",
+          resultJson: JSON.stringify(quiet),
+        }),
+      ),
+    ).toEqual({
+      kind: "failed",
+      error: "llm.example.com stopped responding; ask again.",
+      result: quiet,
+    });
     expect(
       questionView(
         q({ status: "failed", error: "", resultJson: JSON.stringify(auth) }),

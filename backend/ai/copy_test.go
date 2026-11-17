@@ -141,7 +141,7 @@ func TestAskFailure(t *testing.T) {
 		if got := AskFailure(own, ontologyagent.ModelRefused); got.Message != askDeclined {
 			t.Errorf("refused = %+v", got)
 		}
-		if got := AskFailure(own, ontologyagent.ModelTimeout); got != (Copy{Message: "Claude stopped responding; ask again"}) {
+		if got := AskFailure(own, ontologyagent.ModelTimeout); got != (Copy{Message: "Claude stopped responding; ask again."}) {
 			t.Errorf("timeout = %+v", got)
 		}
 		if got := AskFailure(own, ontologyagent.ModelUnavailable); got != (Copy{Message: askUnreachable}) {
@@ -150,7 +150,7 @@ func TestAskFailure(t *testing.T) {
 		compat := Resolved{Source: SourceWorkspace, Settings: Settings{
 			Provider: Compatible{BaseURL: "https://llm.example.com/v1"}, Models: Roles{Ask: Model{Name: "m"}},
 		}}
-		if got := AskFailure(compat, ontologyagent.ModelTimeout); got != (Copy{Message: "llm.example.com stopped responding; ask again"}) {
+		if got := AskFailure(compat, ontologyagent.ModelTimeout); got != (Copy{Message: "llm.example.com stopped responding; ask again."}) {
 			t.Errorf("a custom server's timeout = %+v", got)
 		}
 	})

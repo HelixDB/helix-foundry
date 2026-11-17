@@ -381,7 +381,7 @@ func TestOllamaFailure(t *testing.T) {
 				}
 				want := "the model could not be reached; ask again"
 				if f == ontologyagent.ModelTimeout {
-					want = "Ollama stopped responding; ask again"
+					want = "Ollama stopped responding; ask again."
 				}
 				if got := AskFailure(r, f); got != (Copy{Message: want}) {
 					t.Errorf("%s: AskFailure(%s) = %+v", name, f, got)

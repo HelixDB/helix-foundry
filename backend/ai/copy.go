@@ -59,8 +59,10 @@ func DraftFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 // than "ask again", which would send the same request; and the key's and
 // account's failures are Helix's to fix. A timeout is a model call that
 // stopped sending output, or never answered, twice (the agent tries a stalled
-// one once more), on any provider; the workspace's own names it. A failed
-// question is never retried, so Permanent says only whose it is.
+// one once more), on any provider; the workspace's own names it, in a full
+// sentence the site shows as written (a custom server's label is its
+// lowercase host). A failed question is never retried, so Permanent says only
+// whose it is.
 func AskFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 	const unavailable = "the model could not be reached; ask again"
 	switch {
@@ -69,7 +71,7 @@ func AskFailure(r Resolved, f ontologyagent.ModelFailure) Copy {
 	case r.houseCopy():
 		return house(askCopy(f), f)
 	case f == ontologyagent.ModelTimeout:
-		return Copy{Message: r.Label() + " stopped responding; ask again"}
+		return Copy{Message: r.Label() + " stopped responding; ask again."}
 	}
 	if c, ok := own(r, r.Settings.Models.Ask.Name, f); ok {
 		return c
