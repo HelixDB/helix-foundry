@@ -547,12 +547,19 @@ describe("Google Workspace's PDFs", () => {
       edited = named(first, "Pricing terms (edited).pdf");
     expect(form).toMatchObject({
       mediaType: "application/pdf",
-      read: { kind: "FOUNDRY_READ_KIND_PDF", state: "FOUNDRY_FILE_READ_STATE_READING" },
+      read: {
+        kind: "FOUNDRY_READ_KIND_PDF",
+        state: "FOUNDRY_FILE_READ_STATE_READING",
+      },
     });
     // Its bytes are the file; it has no text until it is read.
     const bytes = await call("GET", `${DOCS}/${form.id}:bytes`);
-    expect(Buffer.from(bytes.body.data, "base64").subarray(0, 5).toString()).toBe("%PDF-");
-    expect((await call("GET", `${DOCS}/${form.id}:content`)).status).not.toBe(200);
+    expect(
+      Buffer.from(bytes.body.data, "base64").subarray(0, 5).toString(),
+    ).toBe("%PDF-");
+    expect((await call("GET", `${DOCS}/${form.id}:content`)).status).not.toBe(
+      200,
+    );
 
     vi.setSystemTime(Date.now() + 2000);
     await vi.waitFor(async () => {

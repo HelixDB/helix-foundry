@@ -354,9 +354,9 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
       <li>
         Paste the JSON key below, and an admin’s email as Acts as. Foundry reads
-        Drive and Calendar as that user, and each Google Doc, meeting
-        transcript (.vtt file) and PDF (up to 3 MiB) they can open and download
-        becomes a document.
+        Drive and Calendar as that user, and each Google Doc, meeting transcript
+        (.vtt file) and PDF (up to 3 MiB) they can open and download becomes a
+        document.
       </li>
     </ol>
   ),

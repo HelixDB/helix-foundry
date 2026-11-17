@@ -1447,7 +1447,11 @@ const googlePdfs = [
   {
     name: "Globex order form.pdf",
     pages: [
-      ["Order form", "Customer: Globex", "Term: three years from 1 January 2027."],
+      [
+        "Order form",
+        "Customer: Globex",
+        "Term: three years from 1 January 2027.",
+      ],
       ["Signed by Ada Lovelace for Acme."],
     ],
   },

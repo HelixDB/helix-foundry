@@ -1036,7 +1036,9 @@ export function writeConnectorDocuments(
         if (stream.keepNewest) was.source.at = doc.at;
         continue;
       }
-      const bytes = Buffer.isBuffer(doc.text) ? doc.text : Buffer.from(doc.text),
+      const bytes = Buffer.isBuffer(doc.text)
+          ? doc.text
+          : Buffer.from(doc.text),
         source = {
           externalId: doc.externalId,
           version: doc.version,

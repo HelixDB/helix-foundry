@@ -447,7 +447,9 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   ).toBeVisible();
   const pdfText = page.getByLabel("Document text");
   await expect(pdfText).toContainText("Customer: Globex", { timeout: 10_000 });
-  await expect(pdfText.getByRole("separator", { name: "Page 2" })).toBeVisible();
+  await expect(
+    pdfText.getByRole("separator", { name: "Page 2" }),
+  ).toBeVisible();
   await pdfs.getByRole("link", { name: "Signed MSA (scan).pdf" }).click();
   await expect(
     page.getByText("Ontologies can’t read it", { exact: true }),
