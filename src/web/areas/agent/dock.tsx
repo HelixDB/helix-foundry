@@ -161,7 +161,8 @@ export function AgentDock({
   const title =
     (threadId && thread.data?.thread.title) ||
     (threadId ? "Thread" : "New thread");
-  const disabled = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
+  const disabled = threads.data === "off",
+    list = threads.data === "off" ? undefined : threads.data?.threads;
   const where = useThreadRuntime(threadId, thread.data);
   return (
     <div className="ag-dock" data-replay-block>
@@ -182,11 +183,11 @@ export function AgentDock({
           <MenuItem icon={MessageSquarePlus} onSelect={() => open("")}>
             New thread
           </MenuItem>
-          {!!threads.data?.threads?.length && (
+          {!!list?.length && (
             <>
               <MenuSeparator />
               <MenuLabel>Threads</MenuLabel>
-              {threads.data.threads.map((t) => (
+              {list.map((t) => (
                 <MenuItem
                   key={t.id}
                   checked={t.id === threadId}
@@ -301,12 +302,17 @@ export function useThreadRuntime(
     enabled: LOCAL && role === "owner",
     retry: false,
     refetchInterval: (q) =>
-      q.state.data && threadRuntime(runtimeNow, q.state.data).state !== "ready"
+      q.state.data &&
+      q.state.data !== "off" &&
+      threadRuntime(runtimeNow, q.state.data).state !== "ready"
         ? RUNTIME_POLL_MS
         : false,
   });
   return !threadId || thread
-    ? threadRuntime(runtimeNow, setting.data)
+    ? threadRuntime(
+        runtimeNow,
+        setting.data === "off" ? undefined : setting.data,
+      )
     : undefined;
 }
 
@@ -403,6 +409,14 @@ export function Transcript({
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
     lastTop = useRef(0),
+    // Its height at the last scroll, and when its reader last moved it
+    // (wheel, touch, keys, a pointer): a move up is the reader's when they
+    // just moved it, or when nothing changed size since (find in page, a
+    // screen reader, the scrollbar). The browser moves it up too, clamping
+    // it while a step's content is swapped (an answer moving under a later
+    // step), and that is no reading up.
+    lastHeight = useRef(0),
+    readerAt = useRef(-Infinity),
     turnsSeen = useRef(0);
   const threadId = data?.thread.id,
     turns = data?.turns?.length ?? 0;
@@ -413,6 +427,7 @@ export function Transcript({
     // Another thread opens at its end, wherever the last one was read.
     stick.current = true;
     lastTop.current = 0;
+    lastHeight.current = 0;
     const follow = () => {
       if (stick.current) el.scrollTop = el.scrollHeight;
     };
@@ -439,6 +454,9 @@ export function Transcript({
     () => new Map((data?.actions || []).map((a) => [a.id, a])),
     [data?.actions],
   );
+  const reading = () => {
+    readerAt.current = performance.now();
+  };
   return (
     <div
       ref={log}
@@ -446,6 +464,10 @@ export function Transcript({
       role="log"
       aria-label="Conversation"
       tabIndex={0}
+      onWheel={reading}
+      onTouchMove={reading}
+      onPointerDown={reading}
+      onKeyDown={reading}
       onScroll={(e) => {
         const el = e.currentTarget;
         // At the end it follows again; it stops only when its reader moves
@@ -453,8 +475,14 @@ export function Transcript({
         // scroll's event can come after they grew, short of the new end.
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 48)
           stick.current = true;
-        else if (el.scrollTop < lastTop.current) stick.current = false;
+        else if (
+          el.scrollTop < lastTop.current &&
+          (el.scrollHeight === lastHeight.current ||
+            performance.now() - readerAt.current < 1000)
+        )
+          stick.current = false;
         lastTop.current = el.scrollTop;
+        lastHeight.current = el.scrollHeight;
       }}
     >
       <div ref={body} className="ag-log-body">

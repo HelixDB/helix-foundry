@@ -27,7 +27,6 @@ import {
   HELPER_COMMANDS,
   RUNTIMES,
   accountText,
-  agentRefusal,
   helperAccount,
   threadRuntime,
   type ThreadRuntime,
@@ -96,10 +95,12 @@ export function AssistantRuntimePanel() {
   const [confirming, setConfirming] = useState(false);
   const query = useQuery({
     ...agentQueries.runtime(ws),
-    refetchInterval: (q: { state: { data?: FoundryAgentRuntime } }) =>
-      pairing || waiting(q.state.data) ? RUNTIME_POLL_MS : SLOW_POLL_MS,
+    refetchInterval: (q: { state: { data?: FoundryAgentRuntime | "off" } }) =>
+      pairing || (q.state.data !== "off" && waiting(q.state.data))
+        ? RUNTIME_POLL_MS
+        : SLOW_POLL_MS,
   });
-  const data = query.data;
+  const data = query.data === "off" ? undefined : query.data;
   // A helper the code paired: say so, and how to start it; once it runs
   // (or is revoked), put that away.
   useEffect(() => {
@@ -121,7 +122,7 @@ export function AssistantRuntimePanel() {
     notify(`Paired ${name}.`);
   }, [data, pairing]);
 
-  if (agentRefusal(query.error) === "FOUNDRY_AGENT_DISABLED") return null;
+  if (query.data === "off") return null;
   if (query.isPending)
     return (
       <Panel title="Founder">

@@ -15,7 +15,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
-import { agentRefusal, threadKey } from "../agent/model";
+import { threadKey } from "../agent/model";
 import { agentQueries } from "../agent/queries";
 import { readAccess } from "../workspace/access-model";
 import { AskThreads } from "./ask-threads";
@@ -51,8 +51,7 @@ export function FounderThreads({ onNavigate }: { onNavigate?: () => void }) {
     now = useNow(60_000);
   const o = askOntologyId(pathname);
   const threads = useQuery(agentQueries.threads(ws));
-  if (agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED")
-    return <AskThreads onNavigate={onNavigate} />;
+  if (threads.data === "off") return <AskThreads onNavigate={onNavigate} />;
   const list = threads.data?.threads;
   const view = founderView(params, narrow, list, readStorage(threadKey(ws)));
   // Off an ontology's page, /ask opens the last one opened and keeps the

@@ -23,6 +23,7 @@ import {
 } from "../../analytics";
 import { deleteDashboard } from "../dashboards/queries";
 import {
+  agentRefusal,
   isAgentOperation,
   isLiveTurn,
   parseAgentEvent,
@@ -57,17 +58,32 @@ export const RUNTIME_POLL_MS = 3000;
 
 export const agentQueries = {
   // Where the workspace's new threads run, and the install's helpers: a
-  // local install's owner's only (hosted refuses it).
+  // local install's owner's only (hosted refuses it); "off" where the WFE
+  // has Founder off, as data so it holds through a refetch (as threads).
   runtime: (ws: string) => ({
     queryKey: [ws, "agent", "runtime"],
-    queryFn: async () =>
-      (await api<FoundryAgentRuntimeResponse>(`${at(ws)}/runtime`)).runtime ??
-      {},
+    queryFn: () =>
+      api<FoundryAgentRuntimeResponse>(`${at(ws)}/runtime`)
+        .then((r) => r.runtime ?? {})
+        .catch((e: unknown) =>
+          agentRefusal(e) === "FOUNDRY_AGENT_DISABLED"
+            ? ("off" as const)
+            : Promise.reject(e),
+        ),
   }),
-  // The caller's threads, newest first: the first page (50).
+  // The caller's threads, newest first: the first page (50), or "off" where
+  // the WFE has Founder off. The refusal is data, not an error, so it holds
+  // while the threads are read again (a refetch of a query with no data
+  // clears its error): the pages that show the Analyst's in Founder's place
+  // neither flicker nor remount, dropping what is typed, on each refetch.
   threads: (ws: string) => ({
     queryKey: [ws, "agent", "threads"],
-    queryFn: () => api<ListAgentThreadsResponse>(`${at(ws)}/threads`),
+    queryFn: () =>
+      api<ListAgentThreadsResponse>(`${at(ws)}/threads`).catch((e: unknown) =>
+        agentRefusal(e) === "FOUNDRY_AGENT_DISABLED"
+          ? ("off" as const)
+          : Promise.reject(e),
+      ),
   }),
   // One thread, its turns and actions, polled while it changes on its own.
   thread: (ws: string, id: string) => ({

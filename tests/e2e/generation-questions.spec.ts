@@ -538,7 +538,8 @@ test.describe("an option that is a time zone id", () => {
     await expect(zones).toBeVisible({ timeout: 15_000 });
     const radios = zones.getByRole("radio");
     // The recommended first, each in words; never an id with underscores.
-    await expect(radios.first()).toContainText(/^New York · GMT−[45]/);
+    // Its name, without the aria-hidden shortcut digit.
+    await expect(radios.first()).toHaveAccessibleName(/^New York · GMT−[45]/);
     await expect(radios.first()).toContainText("Recommended");
     await expect(zones).toContainText(/London · GMT(\+1)?/);
     await expect(zones).toContainText(/Los Angeles · GMT−[78]/);
