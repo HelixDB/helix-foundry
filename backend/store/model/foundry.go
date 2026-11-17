@@ -599,6 +599,11 @@ type FoundryExtractionError struct {
 	Code FoundryExtractionErrorCode
 	// Retryable means a later load may succeed: the next one sends it again.
 	Retryable bool
+	// ModelFailure is how the model failed a document of code model: the
+	// engine's model failure class (quota, rate_limited, unavailable, ...).
+	// Empty for every other code, and for a model failure recorded before
+	// Foundry kept the class.
+	ModelFailure string
 }
 
 // FoundryExtractionCounts are what one document put in the database.

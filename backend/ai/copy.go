@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
@@ -238,4 +240,100 @@ func ResolveFailure(err error) Copy {
 	default:
 		return Copy{Message: "AI settings can't be read; Helix will retry"}
 	}
+}
+
+// rereadFailures are the model failures that pass without anyone fixing a
+// document: the provider's quota or account, which Helix's on-call or the
+// workspace's owner restores, and a busy provider. Foundry reads the
+// documents they left unread again on its own (store.QueueFoundryReread);
+// any other failure waits for the next job into the load or a new load.
+var rereadFailures = []ontologyagent.ModelFailure{
+	ontologyagent.ModelQuota, ontologyagent.ModelAuth, ontologyagent.ModelPermission, ontologyagent.ModelNotFound,
+	ontologyagent.ModelUnavailable, ontologyagent.ModelRateLimited, ontologyagent.ModelTimeout,
+}
+
+// RereadFailures are rereadFailures as the classes a load's rows record.
+func RereadFailures() []string {
+	out := make([]string, len(rereadFailures))
+	for i, f := range rereadFailures {
+		out[i] = string(f)
+	}
+	return out
+}
+
+// Rereads reports whether Foundry reads again on its own a document the
+// model failed with f; "" is a failure recorded before Foundry kept its
+// class, which it reads again too: the engine marks every model failure
+// retryable.
+func Rereads(f ontologyagent.ModelFailure) bool {
+	return f == "" || slices.Contains(rereadFailures, f)
+}
+
+// UnreadReason says in a few words why the model left a load's documents
+// unread, by the class of most of them (UnreadFailure): "provider quota" in
+// "ready, 9 documents not read (provider quota)".
+func UnreadReason(f ontologyagent.ModelFailure) string {
+	switch f {
+	case ontologyagent.ModelQuota:
+		return "provider quota"
+	case ontologyagent.ModelAuth, ontologyagent.ModelPermission, ontologyagent.ModelNotFound, ontologyagent.ModelPrivateHost,
+		ontologyagent.ModelChanged:
+		return "provider account"
+	case ontologyagent.ModelUnavailable, ontologyagent.ModelRateLimited, ontologyagent.ModelTimeout:
+		return "provider busy"
+	case ontologyagent.ModelContextTooLong, ontologyagent.ModelTruncated:
+		return "too long for the model"
+	case ontologyagent.ModelRefused:
+		return "model declined"
+	case "":
+		return "model failed"
+	}
+	return "model error"
+}
+
+// UnreadFailure is the class most of failed's documents failed with, failed
+// counting them by class; a tie goes to the class Foundry reads again on its
+// own (Rereads), then to the first in name order, so it never depends on map
+// order. "" when failed is empty, or most were recorded before Foundry kept
+// the class.
+func UnreadFailure(failed map[string]int) ontologyagent.ModelFailure {
+	var best string
+	n := -1
+	for _, f := range slices.Sorted(maps.Keys(failed)) {
+		c := failed[f]
+		better := c > n || c == n && Rereads(ontologyagent.ModelFailure(f)) && !Rereads(ontologyagent.ModelFailure(best))
+		if better {
+			best, n = f, c
+		}
+	}
+	return ontologyagent.ModelFailure(best)
+}
+
+// UnreadMessage is what a load job says of a load whose documents the model
+// left unread: unread of them, by the class most failed with (f), none of
+// the rest read when read is 0. A load with none read failed, and a new
+// load reads them; one with some read is partial, and Foundry reads the
+// rest again on its own when f passes (Rereads).
+func UnreadMessage(unread, read int, f ontologyagent.ModelFailure) string {
+	why := map[string]string{
+		"provider quota":         "the model provider's quota or credit ran out",
+		"provider account":       "the model provider refused the account or its models",
+		"provider busy":          "the model provider was busy",
+		"too long for the model": "they were too long for the model",
+		"model declined":         "the model declined them",
+		"model failed":           "the model failed",
+		"model error":            "the model rejected the request",
+	}[UnreadReason(f)]
+	docs, were := "documents", "weren't"
+	if unread == 1 {
+		docs, were = "document", "wasn't"
+	}
+	if read == 0 {
+		return fmt.Sprintf("none of the load's documents could be read (%d %s): %s; start a new load to read them", unread, docs, why)
+	}
+	then := "the next load reads them"
+	if Rereads(f) {
+		then = "Helix reads them again on its own"
+	}
+	return fmt.Sprintf("%d %s %s read: %s; %s", unread, docs, were, why, then)
 }

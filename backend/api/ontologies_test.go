@@ -49,6 +49,8 @@ type foundryStore struct {
 	layouts map[string]*foundrymodel.FoundryDataLayout
 	// extractions are by load, then document.
 	extractions map[string]map[string]*foundrymodel.FoundryDocumentExtraction
+	// unread answers ListFoundryLoadUnread for a load in place of counting.
+	unread map[string]foundrymodel.FoundryLoadUnread
 	loads       []*foundrymodel.FoundryLoad
 	jobs        []*foundrymodel.FoundryGraphJob
 	// deletesQueued are the delete job ids the store was handed.
@@ -587,6 +589,41 @@ func (s *foundryStore) ListFoundryLoadDocumentSets(_ context.Context, loadID str
 	out := make([]foundrymodel.FoundryLoadDocumentSet, 0, len(bySet))
 	for _, id := range slices.Sorted(maps.Keys(bySet)) {
 		out = append(out, *bySet[id])
+	}
+	return out, nil
+}
+
+// ListFoundryLoadUnread counts each load's extractions as the store does:
+// read (extracted or duplicate), failed by the model by class, and, with a
+// failure, its uploaded members with none as unrecorded. unread, when set
+// for a load, answers for it instead (its jobs, live or ended).
+func (s *foundryStore) ListFoundryLoadUnread(_ context.Context, loadIDs []string) (map[string]foundrymodel.FoundryLoadUnread, error) {
+	out := map[string]foundrymodel.FoundryLoadUnread{}
+	for _, id := range loadIDs {
+		if u, ok := s.unread[id]; ok {
+			out[id] = u
+			continue
+		}
+		var u foundrymodel.FoundryLoadUnread
+		for _, e := range s.extractions[id] {
+			switch {
+			case e.Status == foundrymodel.FoundryExtractionExtracted || e.Status == foundrymodel.FoundryExtractionDuplicate:
+				u.Read++
+			case e.Status == foundrymodel.FoundryExtractionFailed && e.Error != nil && e.Error.Code == foundrymodel.FoundryExtractionModel:
+				if u.Failed == nil {
+					u.Failed = map[string]int{}
+				}
+				u.Failed[e.Error.ModelFailure]++
+			}
+		}
+		if u.Failures() > 0 {
+			for _, d := range s.documents {
+				if _, ok := s.extractions[id][d.ID]; !ok && slices.Contains(s.members[id], d.ID) && d.Status == foundrymodel.FoundryDocumentUploaded {
+					u.Unrecorded++
+				}
+			}
+		}
+		out[id] = u
 	}
 	return out, nil
 }
@@ -2296,7 +2333,7 @@ func TestFoundryOntologyRefreshSetting(t *testing.T) {
 // The loads list tells a refresh from a load someone started.
 func TestFoundryLoadOrigin(t *testing.T) {
 	load := &foundrymodel.FoundryLoad{ID: "l1", Version: 2, Status: foundrymodel.FoundryLoadReady, Origin: foundrymodel.FoundryLoadByRefresh, CreatedAt: time.Now()}
-	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil).GetOrigin(); got != "refresh" {
+	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil, foundrymodel.FoundryLoadUnread{}).GetOrigin(); got != "refresh" {
 		t.Fatalf("origin = %q", got)
 	}
 }

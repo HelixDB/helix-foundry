@@ -266,13 +266,14 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 }
 
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
-// doc-c failed retryably and doc-d already held.
+// doc-c failed retryably (a store write; the model failing one makes a load
+// partial, which unread_test.go covers) and doc-d already held.
 var extracted = []string{
 	`{"event":"extract_started","contract_version":"4.26.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
-	documentEvent("doc-c", `{"kind":"failed","code":"model","model_failure":"unavailable","retryable":true}`, noUsage),
+	documentEvent("doc-c", `{"kind":"failed","code":"store","retryable":true}`, noUsage),
 	documentEvent("doc-d", `{"kind":"already_ingested"}`, noUsage),
 	`{"event":"extract_finished"}`,
 }
@@ -1176,7 +1177,7 @@ func TestLoad(t *testing.T) {
 		if b := h.store.extractions["doc-b"]; b.Status != model.FoundryExtractionDuplicate || *b.DuplicateOf != "doc-a" {
 			t.Fatalf("doc-b = %+v", b)
 		}
-		if c := h.store.extractions["doc-c"]; c.Status != model.FoundryExtractionFailed || c.Error.Code != model.FoundryExtractionModel || !c.Error.Retryable {
+		if c := h.store.extractions["doc-c"]; c.Status != model.FoundryExtractionFailed || c.Error.Code != model.FoundryExtractionStore || !c.Error.Retryable {
 			t.Fatalf("doc-c = %+v", c)
 		}
 		if !h.store.kept["doc-d"] || h.store.kept["doc-a"] {
@@ -4133,4 +4134,34 @@ func TestGraphJobMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ListFoundryLoadUnread counts the recorded extractions as the store does:
+// read (extracted or duplicate), failed by the model by class, and the
+// pending documents with no extraction as unrecorded.
+func (s *memStore) ListFoundryLoadUnread(_ context.Context, loadIDs []string) (map[string]model.FoundryLoadUnread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := model.FoundryLoadUnread{}
+	for _, e := range s.extractions {
+		switch {
+		case e.Status == model.FoundryExtractionExtracted || e.Status == model.FoundryExtractionDuplicate:
+			u.Read++
+		case e.Status == model.FoundryExtractionFailed && e.Error.Code == model.FoundryExtractionModel:
+			if u.Failed == nil {
+				u.Failed = map[string]int{}
+			}
+			u.Failed[e.Error.ModelFailure]++
+		}
+	}
+	for _, d := range s.pending {
+		if _, ok := s.extractions[d.ID]; !ok {
+			u.Unrecorded++
+		}
+	}
+	out := map[string]model.FoundryLoadUnread{}
+	for _, id := range loadIDs {
+		out[id] = u
+	}
+	return out, nil
 }

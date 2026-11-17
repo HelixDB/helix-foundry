@@ -828,7 +828,7 @@ func foundryExtractionProto(e *foundrymodel.FoundryDocumentExtraction) *foundryv
 		out.Names = append(out.Names, name)
 	}
 	if e.Error != nil {
-		out.Error = &foundryv1.FoundryExtractionError{Code: string(e.Error.Code), Retryable: e.Error.Retryable}
+		out.Error = &foundryv1.FoundryExtractionError{Code: string(e.Error.Code), Retryable: e.Error.Retryable, ModelFailure: e.Error.ModelFailure}
 	}
 	return out
 }

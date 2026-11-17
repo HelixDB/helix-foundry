@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -128,9 +129,13 @@ func (s *Service) ListFoundryLoads(ctx context.Context, req *foundryv1.ListFound
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list load sources: %v", err)
 	}
+	unread, err := s.deps.DB.ListFoundryLoadUnread(ctx, ids)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count loads' unread documents: %v", err)
+	}
 	resp := &foundryv1.ListFoundryLoadsResponse{}
 	for _, l := range loads {
-		resp.Loads = append(resp.Loads, foundryLoadToProto(l, o, jobs[l.ID], steps[l.ID], sources[l.ID]))
+		resp.Loads = append(resp.Loads, foundryLoadToProto(l, o, jobs[l.ID], steps[l.ID], sources[l.ID], unread[l.ID]))
 	}
 	return resp, nil
 }
@@ -272,13 +277,18 @@ func (s *Service) foundryLoadResponse(ctx context.Context, o *foundrymodel.Found
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list load sources: %v", err)
 	}
-	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID])}, nil
+	unread, err := s.deps.DB.ListFoundryLoadUnread(ctx, []string{load.ID})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count the load's unread documents: %v", err)
+	}
+	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID], unread[load.ID])}, nil
 }
 
-// foundryLoadToProto is a load with its newest jobs, the snapshots it holds
-// and, when its version enriches people, its step (nil otherwise).
+// foundryLoadToProto is a load with its newest jobs, the snapshots it holds,
+// its documents the model left unread and, when its version enriches
+// people, its step (nil otherwise).
 func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOntology, jobs foundrymodel.FoundryLoadJobs, step *foundrymodel.FoundryLoadEnrichment,
-	sources []foundrymodel.FoundryLoadSource) *foundryv1.FoundryLoad {
+	sources []foundrymodel.FoundryLoadSource, unread foundrymodel.FoundryLoadUnread) *foundryv1.FoundryLoad {
 	out := &foundryv1.FoundryLoad{
 		Id: l.ID, VersionId: l.VersionID, Version: l.OntologyVersion(), Status: string(l.Status),
 		Current: o.CurrentLoadID != nil && *o.CurrentLoadID == l.ID, CreatedAt: timestamppb.New(l.CreatedAt),
@@ -302,6 +312,28 @@ func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOnto
 	}
 	if step != nil {
 		out.Enrichment = foundryLoadEnrichmentToProto(step)
+	}
+	out.Unread = foundryLoadUnreadToProto(l, out.Current, unread)
+	return out
+}
+
+// foundryLoadUnreadToProto is what the model left unread of load l, nil when
+// it failed none, with when Helix reads them again on its own: only into the
+// current load, ready or partial, while one of them failed for a reason
+// that passes (ai.Rereads), as store.QueueFoundryReread decides.
+func foundryLoadUnreadToProto(l *foundrymodel.FoundryLoad, current bool, u foundrymodel.FoundryLoadUnread) *foundryv1.FoundryLoadUnread {
+	n := u.Documents()
+	if n == 0 {
+		return nil
+	}
+	f := ai.UnreadFailure(u.Failed)
+	out := &foundryv1.FoundryLoadUnread{Documents: int32(n), ModelFailure: string(f), Reason: ai.UnreadReason(f)}
+	passes := false
+	for class := range u.Failed {
+		passes = passes || ai.Rereads(ontologyagent.ModelFailure(class))
+	}
+	if at, ok := u.RereadAt(); ok && passes && current && l.Status.Servable() {
+		out.RereadAt = timestamppb.New(at)
 	}
 	return out
 }

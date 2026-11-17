@@ -59,6 +59,7 @@ type store interface {
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
+	ListFoundryLoadUnread(ctx context.Context, loadIDs []string) (map[string]model.FoundryLoadUnread, error)
 	ListRemovedFoundryDocuments(ctx context.Context, loadID string) ([]string, error)
 	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	DeleteFoundryDocument(ctx context.Context, workspaceID, id string) error
@@ -116,6 +117,10 @@ type failure struct {
 	Budget    bool
 	Uncounted bool
 	Internal  bool
+	// Model is a budget stop for the model: the workspace's own provider
+	// refused its key, account or models (ai.DocumentFailure), so every
+	// document after would fail the same way.
+	Model bool
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
 	// TooLarge is an Extract that was never sent, as it is past what one
@@ -355,10 +360,52 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 	extractStart := r.now()
 	err = r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
 	r.timeStep("extract", extractStart)
+	if job.Kind == model.FoundryGraphJobLoad {
+		err = r.unread(ctx, job, err)
+	}
 	if err == nil && job.Kind == model.FoundryGraphJobLoad && job.Origin == model.FoundryLoadByRefresh {
 		r.compareRebuild(ctx, job, def, binding, target, ontologyVersion)
 	}
 	return a, err
+}
+
+// unread ends a load job whose documents the model left unread as they
+// make the load: failed when the model read none of them, else partial,
+// which never replaces a current load holding more (endFoundryLoadWork),
+// its message saying how many went unread and why (ai.UnreadMessage). A
+// document the model failed is never counted as read: no names or facts of
+// it are in the load. err is how the job's extract ended: nil, or a stop
+// for the model (failure.Model), whose own words (the workspace's provider
+// refusing its key or quota) it keeps; any other ending is returned as it
+// is.
+func (r *runner) unread(ctx context.Context, job *model.FoundryGraphJob, err error) error {
+	var stop *failure
+	if err != nil && (!errors.As(err, &stop) || !stop.Model) {
+		return err
+	}
+	counts, cerr := r.db.ListFoundryLoadUnread(ctx, []string{job.LoadID})
+	if cerr != nil {
+		return retry("could not count the load's documents; Helix will retry", cerr)
+	}
+	u := counts[job.LoadID]
+	if u.Failures() == 0 {
+		return err
+	}
+	// The job is live, so Documents would leave out what it never recorded.
+	unread, class := u.Failures()+u.Unrecorded, ai.UnreadFailure(u.Failed)
+	cause := fmt.Errorf("the model left %d of the load's documents unread (%s), %d read", unread, class, u.Read)
+	message := ai.UnreadMessage(unread, u.Read, class)
+	if stop != nil {
+		message = stop.Message
+		if u.Read == 0 {
+			message = "None of the load's documents could be read. " + stop.Message
+		}
+	}
+	documentsUnread.WithLabelValues(string(class)).Add(float64(unread))
+	if u.Read == 0 {
+		return &failure{Message: message, Permanent: true, Err: cause}
+	}
+	return &failure{Message: message, Budget: true, Model: true, Err: cause}
 }
 
 // compareRebuild compares a refresh load with the load it replaces when
@@ -2001,6 +2048,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		extraction.Status = model.FoundryExtractionFailed
 		extraction.Error = &model.FoundryExtractionError{
 			Code: model.FoundryExtractionErrorCode(event.Outcome.Code), Retryable: event.Outcome.Retryable,
+			ModelFailure: string(event.Outcome.ModelFailure),
 		}
 	}
 	keep := event.Outcome.Kind == ontologyagent.OutcomeAlreadyIngested
@@ -2033,7 +2081,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		c, stop := ai.DocumentFailure(resolved, f)
 		if stop {
 			// Ends the load as partial, as a spent budget does: what is in stays.
-			return &failure{Budget: true, Message: c.Message, Err: cause}
+			return &failure{Budget: true, Model: true, Message: c.Message, Err: cause}
 		}
 		c.Logged(ctx, cause)
 	}
