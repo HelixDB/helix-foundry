@@ -14,7 +14,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -161,8 +163,9 @@ func TestBuildWorkers(t *testing.T) {
 	}
 	cfg.Foundry.Read.GRPC.Listen, cfg.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg.Foundry.Agent.HTTP.Listen = freeAddr(t)
 	parts, err := buildWorkers(cfg.foundry(), logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
-		local.Databases{HelixURL: cfg.Local.HelixURL})
+		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,18 +177,20 @@ func TestBuildWorkers(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"foundry-ask-worker", "foundry-document-worker", "foundry-graph-worker", "foundry-ontology-worker", "foundry-read", "foundry-sync-worker"}
+	want := []string{"foundry-agent-worker", "foundry-ask-worker", "foundry-automation-worker", "foundry-document-worker", "foundry-graph-worker",
+		"foundry-ontology-worker", "foundry-read", "foundry-sync-worker"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("parts = %v, want %v", names, want)
 	}
 
 	// With foundry.heal.enabled, the heal worker runs too; off (above), it
-	// isn't built.
+	// isn't built, and nor are the Assistant's and automations' off.
 	heal := cfg.foundry()
 	heal.Foundry.Heal.Enabled = true
 	heal.Foundry.Read.GRPC.Listen, heal.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
+	heal.Foundry.Agent.Enabled, heal.Foundry.Automations.Enabled = false, false
 	parts, err = buildWorkers(heal, logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
-		local.Databases{HelixURL: cfg.Local.HelixURL})
+		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,4 +211,11 @@ func TestBuildWorkers(t *testing.T) {
 	if n := len(workers); n != 6 {
 		t.Fatalf("the heal worker joined the install's own list: %d workers", n)
 	}
+}
+
+// noSessions opens none: the workers are built, never run.
+type noSessions struct{}
+
+func (noSessions) Session(context.Context, ports.Actor, integration.ConfirmMode) (integration.Session, error) {
+	return integration.Session{}, errors.New("no sessions in this test")
 }

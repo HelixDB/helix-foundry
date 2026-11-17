@@ -5,6 +5,7 @@ import { LOCAL } from "../../shared/deployment";
 import {
   ArrowLeftRight,
   ArrowRight,
+  Bot,
   Braces,
   CornerDownLeft,
   History,
@@ -19,8 +20,10 @@ import {
 } from "lucide-react";
 import { useWorkspace, type ShellWorkspace } from "../ui";
 import { cx, useMedia } from "../kit";
+import { PICKER_OPENED } from "../areas/data/paths";
 import { paths } from "../paths";
-import { paletteSources, primaryNav, secondaryNav } from "./nav";
+import { useShell } from "./context";
+import { linkedSections, paletteSources } from "./nav";
 import { readRecents, recordRecent, sectionIcon } from "./recents";
 import { shortcutKeys } from "./shortcut";
 import { themeOptions, useTheme } from "./theme";
@@ -64,7 +67,8 @@ export function CommandPalette({
     navigate = useNavigate(),
     { pathname } = useLocation(),
     [theme, setTheme] = useTheme(),
-    small = useMedia("(max-width: 800px)");
+    small = useMedia("(max-width: 800px)"),
+    { assistant } = useShell();
   const [query, setQuery] = useState(initialQuery),
     [active, setActive] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null),
@@ -96,9 +100,9 @@ export function CommandPalette({
   });
   const loading = results.some((r) => r.isPending);
   const q = query.trim().toLowerCase();
-  const go = (to: string) => () => {
+  const go = (to: string, state?: unknown) => () => {
     onClose();
-    navigate(to);
+    navigate(to, { state });
   };
   const entries = useMemo(() => {
     const out: Entry[] = [];
@@ -112,7 +116,7 @@ export function CommandPalette({
           run: go(r.path),
         });
     // With no query, only the sections; typing also finds their sub-pages.
-    const pages = [...primaryNav, ...secondaryNav].flatMap((n) => [
+    const pages = linkedSections.flatMap((n) => [
       { title: n.label, to: n.to, icon: n.icon },
       ...(q ? n.children(pathname) : [])
         .filter((c) => c.to !== n.to)
@@ -123,6 +127,22 @@ export function CommandPalette({
         })),
     ]);
     const actions: (Entry & { terms: string })[] = [
+      ...(assistant.available
+        ? [
+            {
+              key: "action:assistant",
+              group: "Actions",
+              title: assistant.open ? "Close Founder" : "Open Founder",
+              subtitle: "Ask about your data, or have it do something",
+              terms: "founder assistant agent chat ask help load dashboard",
+              icon: Bot,
+              run: () => {
+                onClose();
+                assistant.toggle("palette");
+              },
+            },
+          ]
+        : []),
       // Owners and admins connect data, make API sources (not in a local
       // build, which has no Helix MCP for them) and create ontologies.
       ...(role !== "member"
@@ -134,7 +154,7 @@ export function CommandPalette({
               subtitle: "Connect a database or an app",
               terms: "add data connect source connection",
               icon: Plus,
-              run: go(paths.connections(true)),
+              run: go(paths.connections(true), PICKER_OPENED),
             },
             ...(LOCAL
               ? []
@@ -148,7 +168,7 @@ export function CommandPalette({
                       : "Send pieces of data from your agent",
                     terms: "new api source event agent pieces send mcp json",
                     icon: Braces,
-                    run: go(paths.connections("events")),
+                    run: go(paths.connections("events"), PICKER_OPENED),
                   },
                 ]),
             {
@@ -239,7 +259,13 @@ export function CommandPalette({
       out.push(...actions.filter((a) => score(a.terms + " " + a.title, q)));
     return out;
     // `go` is recreated each render but only closes over stable values.
-  }, [query, results.map((r) => r.dataUpdatedAt).join(), theme, role]);
+  }, [
+    query,
+    results.map((r) => r.dataUpdatedAt).join(),
+    theme,
+    role,
+    assistant,
+  ]);
   useEffect(() => setActive(0), [q]);
   useEffect(() => {
     list.current

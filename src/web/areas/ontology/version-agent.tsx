@@ -13,7 +13,10 @@ import {
   Unlink,
   UserSearch,
 } from "lucide-react";
-import type { AgentQuestion, FoundryDocumentSet } from "../../../shared/wfe";
+import type {
+  AgentDraftQuestion,
+  FoundryDocumentSet,
+} from "../../../shared/wfe";
 import {
   Button,
   ButtonLink,
@@ -30,6 +33,8 @@ import { enrichmentQuery } from "../workspace/enrichment-api";
 import {
   cluesText,
   fieldText,
+  isProbeRoute,
+  leftOutBecauseText,
   leftOutSetText,
   linkWords,
   mappingSource,
@@ -605,7 +610,23 @@ export function AgentSources({
                       {setsText(c.documents, sets.data)}
                     </span>
                   </span>
-                  <small className="hf-mono">{c.route}</small>
+                  {/* A route the agent added from reading sample documents
+                      of its sets (contract 4.20.0): its made-up name
+                      (`probe_<set>`) says nothing, and its rationale holds
+                      the counts it found. */}
+                  {!isProbeRoute(bundle.items[`extraction.${c.route}`]) ? (
+                    <small className="hf-mono">{c.route}</small>
+                  ) : (
+                    <>
+                      <Tag tone="info">Found in sample documents</Tag>
+                      {bundle.items[`extraction.${c.route}`]?.rationale && (
+                        <small>
+                          Why:{" "}
+                          {bundle.items[`extraction.${c.route}`]!.rationale}
+                        </small>
+                      )}
+                    </>
+                  )}
                 </th>
               ),
             )}
@@ -781,30 +802,39 @@ const itemText = (item: string) => {
   const [kind, ...rest] = item.split(".");
   return `${rest.join(".")} (${kind})`;
 };
-function Question({ q }: { q: AgentQuestion }) {
+function Question({ q }: { q: AgentDraftQuestion }) {
+  const options = q.options || [];
   return (
     <li className="on-question">
       <div className="on-question-head">
         <span className="on-question-id">{q.id}</span>
+        {q.header && <strong>{q.header}</strong>}
         {q.blocking && <Tag tone="warning">Blocks approval</Tag>}
+        {q.multiple && <span className="on-muted">Any that apply</span>}
       </div>
       <p>{q.text}</p>
-      {(q.options?.length || 0) > 0 && (
+      {options.length > 0 && (
         <ul className="on-options" aria-label="Options">
-          {q.options!.map((o) => (
-            <li key={o} className={o === q.default ? "is-default" : undefined}>
-              {o}
-              {o === q.default && <Tag tone="accent">Suggested</Tag>}
+          {options.map((o) => (
+            <li
+              key={o.label}
+              className={o.label === q.default ? "is-default" : undefined}
+            >
+              {o.label}
+              {o.label === q.default && <Tag tone="accent">Recommended</Tag>}
+              {o.description && (
+                <span className="on-muted">{o.description}</span>
+              )}
             </li>
           ))}
         </ul>
       )}
-      {!q.options?.length && q.default && (
+      {!options.length && q.default && (
         // The agent's suggestion, which no one has decided on.
         <p className="on-muted">Suggested answer: {q.default}</p>
       )}
-      {(q.items?.length || 0) > 0 && (
-        <p className="on-muted">About {q.items!.map(itemText).join(", ")}</p>
+      {q.items.length > 0 && (
+        <p className="on-muted">About {q.items.map(itemText).join(", ")}</p>
       )}
     </li>
   );
@@ -825,17 +855,37 @@ export function AgentQuestions({
     ...documentSetQueries.list(id),
     enabled: bundle.leftOut.length > 0,
   });
+  // A route a left-out entry names, by the sets it reads.
+  const routeSets = (name: string) => {
+    const route = bundle.routes.ok
+      ? bundle.routes.value.find((r) => r.name === name)
+      : undefined;
+    return route ? setsText(route.documents, sets.data) : "";
+  };
   const leftOut = bundle.leftOut.map((l) => {
     const { sourceId, rest } = splitSourceText(l.what);
     const info = sourceId ? sources.byAgentId(sourceId) : undefined;
+    const because = l.because && leftOutBecauseText(l.because, routeSets);
     return {
       connector: info?.connector,
       what: info
         ? `${info.table}${rest ? `.${rest}` : ""}`
         : leftOutSetText(l.what, sets.data || []),
-      reason: l.reason,
+      // Not assessed says so in its tag: the reason's own "Not assessed:"
+      // isn't said twice.
+      reason:
+        l.because?.kind === "not_assessed"
+          ? l.reason.replace(/^\s*not assessed\b[\s:.,;-]*/i, "")
+          : l.reason,
+      because,
+      notAssessed: l.because?.kind === "not_assessed",
     };
   });
+  const notAssessed = leftOut.filter((l) => l.notAssessed).length;
+  // Whether the list shows only what wasn't checked yet.
+  const [unchecked, setUnchecked] = useState(false);
+  const shown =
+    unchecked && notAssessed ? leftOut.filter((l) => l.notAssessed) : leftOut;
   return (
     <div className="on-groups">
       <section className="on-group">
@@ -908,13 +958,40 @@ export function AgentQuestions({
           {leftOut.length > 0 && (
             <section>
               <h2>Left out</h2>
-              <ul>
-                {leftOut.map((l, i) => (
+              {notAssessed > 0 && notAssessed < leftOut.length && (
+                <Segmented
+                  label="Show"
+                  value={unchecked ? "not_assessed" : "all"}
+                  onChange={(v) => setUnchecked(v === "not_assessed")}
+                  options={[
+                    { value: "all", label: `All (${leftOut.length})` },
+                    {
+                      value: "not_assessed",
+                      label: `Not checked yet (${notAssessed})`,
+                    },
+                  ]}
+                />
+              )}
+              <ul aria-label="Left out">
+                {shown.map((l, i) => (
                   <li key={i}>
                     <Unlink size={14} aria-hidden />
                     <span>
+                      {l.because && (
+                        <>
+                          <Tag tone={l.notAssessed ? "warning" : "neutral"}>
+                            {l.because.label}
+                          </Tag>{" "}
+                        </>
+                      )}
                       {l.connector && <>{l.connector} · </>}
-                      <span className="hf-mono">{l.what}</span>: {l.reason}
+                      <span className="hf-mono">{l.what}</span>
+                      {l.reason && <>: {l.reason}</>}
+                      {l.because && l.because.detail && (
+                        <small className="on-left-out-why">
+                          {l.because.detail}
+                        </small>
+                      )}
                     </span>
                   </li>
                 ))}

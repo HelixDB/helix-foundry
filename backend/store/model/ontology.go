@@ -45,3 +45,12 @@ type OntologyVersion struct {
 	CreatedByUserID *string
 	CreatedAt       time.Time
 }
+
+// OntologyVersionSources is what a version was drafted from and reads,
+// without its definition, which may be large: the generation that drafted
+// it, nil for one a person wrote, and its scope, a legacy version's
+// resolved as GetOntologyVersionScope resolves it.
+type OntologyVersionSources struct {
+	GenerationID   *string
+	DocumentSetIDs []string
+}

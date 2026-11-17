@@ -8,7 +8,8 @@ import {
   uploadAndLoadContract,
 } from "./support/mock";
 
-// Workflows: an owner or admin makes one for an agent's task and gives the
+// Use cases, on an ontology's Usage page: an owner or admin makes one for an
+// agent's task and gives the
 // agent its prompt; each run the agent starts (through the Helix MCP, here
 // the mock's agent stand-in) shows its request, every read and question it
 // made with the run's id, and its answer. A member reads them, and creates
@@ -29,27 +30,27 @@ test("an agent's run shows its request, what it read and asked, and its answer",
   await page.goto(O);
   await page
     .getByRole("complementary", { name: "Ontologies" })
-    .getByRole("link", { name: "Workflows" })
+    .getByRole("link", { name: "Usage" })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Workflows", level: 1 }),
+    page.getByRole("heading", { name: "Usage", level: 1 }),
   ).toBeVisible();
-  await expect(page.getByText("No workflows yet")).toBeVisible();
+  await expect(page.getByText("No use cases yet")).toBeVisible();
 
-  await page.getByRole("button", { name: "New workflow" }).click();
-  const dialog = page.getByRole("dialog", { name: "New workflow" });
+  await page.getByRole("button", { name: "New use case" }).click();
+  const dialog = page.getByRole("dialog", { name: "New use case" });
   await dialog.getByLabel("Name").fill("Renewal desk");
   await dialog
     .getByLabel("What the agent does (optional)")
     .fill("Answers renewal questions");
-  await dialog.getByRole("button", { name: "Create workflow" }).click();
-  await expect(page).toHaveURL(/\/workflows\/wf_/);
+  await dialog.getByRole("button", { name: "Create use case" }).click();
+  await expect(page).toHaveURL(/\/usage\/wf_/);
   const workflow = new URL(page.url()).pathname.split("/").pop()!;
   await expect(
     page.getByRole("heading", { name: "Renewal desk", level: 1 }),
   ).toBeVisible();
   await expect(page.getByText(workflow, { exact: true })).toBeVisible();
-  await expect(page.getByText(`workflow_id ${workflow}`)).toBeVisible();
+  await expect(page.getByText(`use_case_id ${workflow}`)).toBeVisible();
   await expect(page.getByText("No runs yet")).toBeVisible();
 
   // The agent takes on a request.
@@ -85,7 +86,7 @@ test("an agent's run shows its request, what it read and asked, and its answer",
     ).status,
   ).toBe(404);
 
-  // The open run shows on the workflow's page as it goes.
+  // The open run shows on the use case's page as it goes.
   const runs = page.getByRole("list", { name: "Runs", exact: true });
   // The list asks again every 10 s while no run is open.
   await expect(
@@ -133,7 +134,7 @@ test("an agent's run shows its request, what it read and asked, and its answer",
     "href",
     "#call-1",
   );
-  // Back on the workflow's page, the run reads by its verdict, opening to
+  // Back on the use case's page, the run reads by its verdict, opening to
   // what the assessment found.
   await page.getByRole("link", { name: "Renewal desk" }).click();
   await expect(runs.getByText("Essential", { exact: true })).toBeVisible();
@@ -146,20 +147,55 @@ test("an agent's run shows its request, what it read and asked, and its answer",
   await page.goBack();
 
   // Its question opens in Analyst.
-  await calls.getByRole("link", { name: "Open it in Analyst" }).click();
+  await calls.getByRole("link", { name: "Open the answer" }).click();
   await expect(page).toHaveURL(
     new RegExp(`/ask/ont_acme_contracts.*${asked.body.question.id}`),
   );
 
-  // Deleting the workflow takes its runs.
-  await page.goto(`${O}/workflows/${workflow}`);
+  // A run that never calls the ontology isn't assessed: it counts apart,
+  // and its page says what to check.
+  const silent = (
+    await mock.agent("POST", `${API}/workflows/${workflow}/runs`, {
+      input: "What is the weather like?",
+    })
+  ).body.run.id as string;
+  expect(
+    (
+      await mock.agent(
+        "POST",
+        `${API}/workflows/${workflow}/runs/${silent}:finish`,
+        { output: "Sunny." },
+      )
+    ).status,
+  ).toBe(200);
+  await page.goto(`${O}/usage/${workflow}/runs/${silent}`);
+  await expect(
+    page.getByText(/passes the run’s ID as use_case_run_id on each call/),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Assess again" })).toHaveCount(
+    0,
+  );
+  await page.goto(`${O}/usage/${workflow}?verdict=not_called`);
+  await expect(
+    page
+      .getByRole("radiogroup", { name: "Show runs" })
+      .getByRole("radio", { name: /^Didn’t use the ontology/ }),
+  ).toHaveAttribute("aria-checked", "true");
+  await expect(runs.getByText("What is the weather like?")).toBeVisible();
+  await expect(runs.getByText("No calls", { exact: true })).toBeVisible();
+  await expect(
+    runs.getByText("Which customers are up for renewal?"),
+  ).toHaveCount(0);
+
+  // Deleting the use case takes its runs.
+  await page.goto(`${O}/usage/${workflow}`);
   await page.getByRole("button", { name: "Delete" }).click();
   await page
     .getByRole("dialog", { name: "Delete Renewal desk?" })
-    .getByRole("button", { name: "Delete workflow" })
+    .getByRole("button", { name: "Delete use case" })
     .click();
-  await expect(page).toHaveURL(new RegExp(`${O}/workflows$`));
-  await expect(page.getByText("No workflows yet")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`${O}/usage$`));
+  await expect(page.getByText("No use cases yet")).toBeVisible();
   expect(
     (
       await mock.agent("POST", `${API}/workflows/${workflow}/runs`, {
@@ -169,33 +205,33 @@ test("an agent's run shows its request, what it read and asked, and its answer",
   ).toBe(404);
 });
 
-test("a member reads workflows and creates none", async ({ page }) => {
+test("a member reads use cases and creates none", async ({ page }) => {
   await signIn(page);
-  await page.goto(`${O}/workflows`);
-  await page.getByRole("button", { name: "New workflow" }).click();
-  const dialog = page.getByRole("dialog", { name: "New workflow" });
+  await page.goto(`${O}/usage`);
+  await page.getByRole("button", { name: "New use case" }).click();
+  const dialog = page.getByRole("dialog", { name: "New use case" });
   await dialog.getByLabel("Name").fill("Support triage");
-  await dialog.getByRole("button", { name: "Create workflow" }).click();
-  await expect(page).toHaveURL(/\/workflows\/wf_/);
+  await dialog.getByRole("button", { name: "Create use case" }).click();
+  await expect(page).toHaveURL(/\/usage\/wf_/);
   await page.getByRole("button", { name: "Account" }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
 
   await signIn(page, "alan@example.com");
-  await page.goto(`${O}/workflows`);
+  await page.goto(`${O}/usage`);
   await expect(
     page.getByRole("link", { name: "Support triage" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "New workflow" })).toHaveCount(
+  await expect(page.getByRole("button", { name: "New use case" })).toHaveCount(
     0,
   );
-  await expect(page.getByText("No workflows yet")).toHaveCount(0);
+  await expect(page.getByText("No use cases yet")).toHaveCount(0);
   await page.getByRole("link", { name: "Support triage" }).click();
   await expect(page.getByRole("button", { name: "Copy prompt" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
 });
 
-test("a restricted member uses workflows while their Workflows permission is on", async ({
+test("a restricted member uses use cases while their Usage permission is on", async ({
   page,
   browser,
 }) => {
@@ -215,7 +251,7 @@ test("a restricted member uses workflows while their Workflows permission is on"
   expect(run.status).toBe(200);
 
   // Eve, restricted to General, reads part of Customer contracts: she sees
-  // its workflows, and only the runs she started, which are none.
+  // its use cases, and only the runs she started, which are none.
   const eve = await (
     await browser.newContext({ viewport: { width: 1440, height: 900 } })
   ).newPage();
@@ -223,7 +259,7 @@ test("a restricted member uses workflows while their Workflows permission is on"
   await eve.goto(O);
   await eve
     .getByRole("complementary", { name: "Ontologies" })
-    .getByRole("link", { name: "Workflows" })
+    .getByRole("link", { name: "Usage" })
     .click();
   await eve.getByRole("link", { name: "Renewal desk" }).click();
   await expect(eve.getByRole("heading", { name: "Your runs" })).toBeVisible();
@@ -236,9 +272,7 @@ test("a restricted member uses workflows while their Workflows permission is on"
   await page.goto("/settings/access?tab=people");
   await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
   let sources = page.getByRole("dialog", { name: "Sources for Eve Adler" });
-  await expect(
-    sources.getByRole("checkbox", { name: /^Workflows/ }),
-  ).toBeChecked();
+  await expect(sources.getByRole("checkbox", { name: /^Usage/ })).toBeChecked();
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
   await sources.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
@@ -251,10 +285,10 @@ test("a restricted member uses workflows while their Workflows permission is on"
     eve.getByText("Which customers are up for renewal?"),
   ).toBeVisible();
 
-  // Turned off, she has no Workflows, and their pages open the overview.
+  // Turned off, she has no Usage, and its pages open the overview.
   await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
   sources = page.getByRole("dialog", { name: "Sources for Eve Adler" });
-  await sources.getByRole("checkbox", { name: /^Workflows/ }).uncheck();
+  await sources.getByRole("checkbox", { name: /^Usage/ }).uncheck();
   await sources.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   await sources.getByRole("button", { name: "Close" }).first().click();
@@ -262,26 +296,26 @@ test("a restricted member uses workflows while their Workflows permission is on"
   await expect(
     page
       .getByRole("dialog", { name: "Sources for Eve Adler" })
-      .getByRole("checkbox", { name: /^Workflows/ }),
+      .getByRole("checkbox", { name: /^Usage/ }),
   ).not.toBeChecked();
-  await eve.goto(`${O}/workflows/${workflow}`);
+  await eve.goto(`${O}/usage/${workflow}`);
   await expect(eve).toHaveURL(new RegExp(`${O}$`));
   await expect(
     eve
       .getByRole("complementary", { name: "Ontologies" })
-      .getByRole("link", { name: "Workflows" }),
+      .getByRole("link", { name: "Usage" }),
   ).toHaveCount(0);
   expect(
     (await mock.agent("GET", `${API}/workflows/${workflow}/runs`)).status,
   ).toBe(200);
 });
 
-test("the overview: the metrics, who ran them, the workflows and what to change", async ({
+test("the Usage page: the metrics, who ran them, the use cases and what to change", async ({
   page,
 }) => {
   await mock.configure({ workflowDemo: true });
   await signIn(page);
-  await page.goto(`${O}/workflows`);
+  await page.goto(`${O}/usage`);
   const insights = page.getByRole("region", { name: "Insights" });
   const metrics = insights.getByRole("group", { name: "Metrics" });
   await expect(metrics.getByRole("button")).toHaveCount(4);
@@ -311,8 +345,8 @@ test("the overview: the metrics, who ran them, the workflows and what to change"
     }),
   ).toBeVisible();
 
-  // The workflows side by side, a row opening one.
-  const grid = page.getByRole("grid", { name: "Workflows" });
+  // The use cases side by side, a row opening one.
+  const grid = page.getByRole("grid", { name: "Use cases" });
   await expect(grid.getByRole("row")).toHaveCount(4);
 
   // Suggestions ticked draft one version with them as its goal.
@@ -331,16 +365,16 @@ test("the overview: the metrics, who ran them, the workflows and what to change"
     .getByRole("link")
     .first()
     .click();
-  await expect(page).toHaveURL(/\/workflows\/wf_demo_\w+\/runs\/wfr_demo_/);
+  await expect(page).toHaveURL(/\/usage\/wf_demo_\w+\/runs\/wfr_demo_/);
 });
 
-test("a workflow's page: its numbers, its runs and what to change for it", async ({
+test("a use case's page: its numbers, its runs and what to change for it", async ({
   page,
 }) => {
   await mock.configure({ workflowDemo: true });
   await signIn(page);
-  // The overview's misleading count links here, filtered.
-  await page.goto(`${O}/workflows/wf_demo_renewals?verdict=misleading`);
+  // The Usage page's misleading count links here, filtered.
+  await page.goto(`${O}/usage/wf_demo_renewals?verdict=misleading`);
   await expect(
     page.getByRole("region", { name: "Numbers" }).getByText("Misleading runs"),
   ).toBeVisible();
@@ -357,6 +391,17 @@ test("a workflow's page: its numbers, its runs and what to change for it", async
   await expect(runs.getByRole("listitem")).toHaveCount(10);
   await page.getByRole("button", { name: "Show more runs" }).click();
   await expect(runs.getByRole("listitem")).toHaveCount(30);
+
+  // Runs that never called the ontology, some assessed before such runs
+  // went unassessed, count apart: never as a verdict.
+  await filter.getByRole("radio", { name: /^Didn’t use the ontology/ }).click();
+  await expect(page).toHaveURL(/verdict=not_called/);
+  await expect(page.getByText(/use_case_run_id/)).toBeVisible();
+  await expect(
+    runs.getByText("No calls", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(runs.getByText("Not used", { exact: true })).toHaveCount(0);
+  await filter.getByRole("radio", { name: /^All/ }).click();
 
   // A gap narrows them to the runs that named it.
   await page
@@ -375,5 +420,26 @@ test("a workflow's page: its numbers, its runs and what to change for it", async
       .getByRole("dialog", { name: "Connect your agent" })
       .getByText("wf_demo_renewals", { exact: false })
       .first(),
+  ).toBeVisible();
+});
+
+test("old /workflows links of an ontology open its Usage pages", async ({
+  page,
+}) => {
+  await mock.configure({ workflowDemo: true });
+  await signIn(page);
+  // An agent's or an email's link from before the rename keeps its query
+  // and hash.
+  await page.goto(`${O}/workflows/wf_demo_renewals?verdict=misleading#wf-runs`);
+  await expect(page).toHaveURL(
+    new RegExp(`${O}/usage/wf_demo_renewals\\?verdict=misleading#wf-runs$`),
+  );
+  await expect(
+    page.getByRole("region", { name: "Numbers" }).getByText("Misleading runs"),
+  ).toBeVisible();
+  await page.goto(`${O}/workflows`);
+  await expect(page).toHaveURL(new RegExp(`${O}/usage$`));
+  await expect(
+    page.getByRole("heading", { name: "Usage", level: 1 }),
   ).toBeVisible();
 });

@@ -23,9 +23,9 @@ import (
 type body struct {
 	ClientToken string      `json:"client_token"`
 	Pieces      []bodyPiece `json:"pieces"`
-	// WorkflowRunID is an open run of a workflow of the source's workspace to record the send
-	// under; optional.
-	WorkflowRunID string `json:"workflow_run_id"`
+	// WorkflowRunID is an open run of a use case (the backend's workflow) of the source's
+	// workspace to record the send under; optional.
+	WorkflowRunID string `json:"use_case_run_id"`
 }
 
 // bodyPiece is one piece as sent: its data is kept as written, so its number literals and string

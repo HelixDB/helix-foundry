@@ -15,6 +15,7 @@ import type {
   QuestionEvent,
   QuestionResponse,
   QuestionStatus,
+  QueryWhere,
   VersionOf,
 } from "../../src/shared/wfe";
 import { entityRef, type EntityRef } from "../../src/shared/foundry-read";
@@ -35,6 +36,7 @@ import {
   now,
   ok,
   type MockReply,
+  type MockRequest,
   type MockRoute,
   type MockSeen,
 } from "../http";
@@ -88,7 +90,11 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // cites an entity the evidence read didn't show) and its second, the last
 // call, ends the question, its result carrying neither evidence nor error.
 // Like the model, it names entities by handle (n1, n2, n3). Each event
-// takes `askStepMs`.
+// takes `askStepMs`. A question about invoices billed, unpaid or overdue
+// (invoiceAnswer) reads the invoices alone, no document needed: each with
+// the customer it bills, as a table, then the open and uncollectible ones
+// by status, as bars; the load has no subscription or due date, so it reads
+// an account as the customer and overdue as uncollectible, and says so.
 // As the WFE will, question lists leave the queries' outputs out of
 // `resultJson`; GET of one question keeps them.
 // Test knobs through POST /__mock/config: `askOutcome` "cannot_answer" (a
@@ -487,44 +493,34 @@ const usage = (u: Partial<AskUsage>): AskUsage => ({
   ...u,
 });
 
-function answer(
-  o: StoredOntology,
-  loadId: string,
-  outcome: Outcome,
-  // A grantee who holds all of the load still asks through a view, offered
-  // no helix_query, history_of or changes.
-  viewed = false,
-): Script {
-  const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
-  const found = outcome === "cannot_answer" ? undefined : quotedFact(g);
-  // The asking model in force, and the kind that serves it (./ai.ts).
-  const started: AskEvent = {
-    event: "started",
-    model: aiModel(o.workspaceId, "ask") || MODEL,
-    provider: aiProvider(o.workspaceId),
-  };
-  const callId = (n: number) => `toolu_${String(n).padStart(2, "0")}`;
-  const call = (n: number, tool: string, input: unknown): AskEvent => ({
-    event: "tool_call",
-    call_id: callId(n),
-    tool,
-    input,
-  });
-  const recorded = (n: number, e: number, summary: string): AskEvent => ({
-    event: "tool_result",
-    call_id: callId(n),
-    summary,
-    evidence_id: `e${e}`,
-  });
-  const ended = (n: number, tool: string): AskEvent => ({
-    event: "tool_result",
-    call_id: callId(n),
-    summary: `${tool}: ended the question`,
-  });
-  // What the load holds, which the engine reads and records as e1 before
-  // the model's first call, its summary the engine's: how many of its reads
-  // returned (here a count of each type and of each constraint's breaks,
-  // all returned); every reply follows.
+// The model's calls and the engine's replies, as the stream gives them.
+const callId = (n: number) => `toolu_${String(n).padStart(2, "0")}`;
+const call = (n: number, tool: string, input: unknown): AskEvent => ({
+  event: "tool_call",
+  call_id: callId(n),
+  tool,
+  input,
+});
+const recorded = (n: number, e: number, summary: string): AskEvent => ({
+  event: "tool_result",
+  call_id: callId(n),
+  summary,
+  evidence_id: `e${e}`,
+});
+const ended = (n: number, tool: string): AskEvent => ({
+  event: "tool_result",
+  call_id: callId(n),
+  summary: `${tool}: ended the question`,
+});
+
+/**
+ * How every question starts: the asking model in force and the kind that
+ * serves it (./ai.ts), then what the load holds, which the engine reads and
+ * records as e1 before the model's first call, its summary the engine's: how
+ * many of its reads returned (here a count of each type and of each
+ * constraint's breaks, all returned).
+ */
+function profiledOf(o: StoredOntology, g: LoadGraph): AskEvent[] {
   const profileReads =
     new Set(
       [...g.nodes()]
@@ -536,8 +532,12 @@ function answer(
         .filter((n) => n.label === N.Violation)
         .map((n) => String(n.props.constraint)),
     ).size;
-  const profiled: AskEvent[] = [
-    started,
+  return [
+    {
+      event: "started",
+      model: aiModel(o.workspaceId, "ask") || MODEL,
+      provider: aiProvider(o.workspaceId),
+    },
     {
       event: "tool_call",
       call_id: "load_profile",
@@ -551,6 +551,251 @@ function answer(
       evidence_id: "e1",
     },
   ];
+}
+
+/** Whether a question asks about invoices billed, unpaid or overdue. */
+const asksInvoices = (text: string) =>
+  /\binvoices?\b/i.test(text) && /\b(unpaid|overdue|billed)\b/i.test(text);
+
+/**
+ * The agent's answer to a question about invoices billed, unpaid or overdue,
+ * read from a load of Stripe customers and invoices alone (no document): the
+ * invoices with the customer each bills, by customer, as a table; then the
+ * unpaid or overdue ones counted by status, as bars. The load holds no
+ * subscription or due date, so an account is the customer an invoice bills,
+ * and overdue is an uncollectible invoice: the answer says so. With no
+ * invoice in the load, it can't answer.
+ */
+function invoiceAnswer(o: StoredOntology, loadId: string): Script {
+  const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
+  const profiled = profiledOf(o, g);
+  // A 3.10.0 engine recorded no outputs and drew no visuals.
+  const visuals = knobs.askVisuals !== false;
+  const billed = pairs(g, "Invoice", "billed_to", "Customer");
+  if (!billed.length) {
+    const reason = "This load holds no invoice billed to a customer.",
+      gap =
+        "Invoices with the customer each bills, from a synced invoices table.",
+      kind = "absent";
+    return {
+      events: [
+        ...profiled,
+        call(1, "cannot_answer", { reason, gap, kind }),
+        ended(1, "cannot_answer"),
+        { event: "finished" },
+      ],
+      status: "cannot_answer",
+      result: {
+        status: "cannot_answer",
+        reason,
+        gap,
+        kind,
+        queries: [],
+        usage: usage({ input: 3_400, output: 140, usd: 0.0118 }),
+      },
+      error: "",
+      usdMicros: 11_800,
+    };
+  }
+  // By the customer's name, then the entities, as the engine orders rows.
+  const name = (n: MockNode) => String(n.props.name ?? "");
+  billed.sort(
+    ([a, x], [b, y]) =>
+      (name(x) < name(y) ? -1 : name(x) > name(y) ? 1 : 0) ||
+      byEntity(x, y) ||
+      byEntity(a, b),
+  );
+  const LIMIT = 100;
+  const columns = [
+    { at: 1 },
+    { at: 0 },
+    { at: 0, prop: "amount_due" },
+    { at: 0, prop: "status" },
+  ];
+  const step = { via: "billed_to", dir: "out" as const, to: "Customer" };
+  // As the model wrote them, defaults left out; as the agent ran them,
+  // written out (what a dashboard tile reuses).
+  const rowsAsked = {
+    start: { type: "Invoice" },
+    steps: [step],
+    return: {
+      rows: { columns, order_by: { at: 1, prop: "name" }, limit: LIMIT },
+    },
+  };
+  const rowsRan: OntologyQuery = {
+    start: { type: "Invoice", ids: null, text: null, where: [] },
+    steps: [{ ...step, where: [] }],
+    filters: [],
+    return: {
+      rows: {
+        columns: columns.map((c) => ({ prop: null, ...c })),
+        order_by: { at: 1, prop: "name", desc: false },
+        limit: LIMIT,
+      },
+    },
+  };
+  const rowsOutput: QueryOutput = {
+    kind: "rows",
+    rows: billed.slice(0, LIMIT).map(([invoice, customer]) => ({
+      cells: [
+        entityCell(customer),
+        entityCell(invoice),
+        valueOf(invoice, "amount_due"),
+        valueOf(invoice, "status"),
+      ],
+      edges: [factEdge(0, "billed_to", invoice, customer)],
+    })),
+    total: billed.length,
+  };
+  // Unpaid or overdue: neither paid, void nor a draft (open or
+  // uncollectible). The read contract has no `in`: three `!=` tests.
+  const settled = ["paid", "void", "draft"];
+  const where: QueryWhere[] = settled.map((value) => ({
+    prop: "status",
+    op: "!=" as const,
+    value,
+  }));
+  const owing = [...g.nodes()].filter(
+    (n) =>
+      n.label === "Invoice" &&
+      typeof n.props.status === "string" &&
+      !settled.includes(n.props.status),
+  );
+  const counts = new Map<string, number>();
+  for (const n of owing)
+    counts.set(
+      String(n.props.status),
+      (counts.get(String(n.props.status)) || 0) + 1,
+    );
+  // Most first, then by value.
+  const groups = [...counts]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+  const owingAsked = {
+    start: { type: "Invoice", where },
+    return: { group_count: { at: 0, prop: "status" } },
+  };
+  const owingRan: OntologyQuery = {
+    start: { type: "Invoice", ids: null, text: null, where },
+    steps: [],
+    filters: [],
+    return: { group_count: { at: 0, prop: "status", limit: 50 } },
+  };
+  const owingOutput: QueryOutput = {
+    kind: "group_count",
+    // Every group's value as a document's text, as the engine gives it.
+    groups: groups.map(({ value, count }) => ({
+      value: { untrusted: value },
+      count,
+    })),
+    total_groups: groups.length,
+  };
+  // The customer the largest unpaid or overdue invoice bills.
+  const largest = billed
+    .filter(([invoice]) => owing.includes(invoice))
+    .sort(
+      ([a], [b]) =>
+        Number(b.props.amount_due ?? 0) - Number(a.props.amount_due ?? 0) ||
+        byEntity(a, b),
+    )[0];
+  const accounts = new Set(billed.map(([, customer]) => customer.id)).size;
+  const blocks = [
+    {
+      para: `The load holds ${billed.length} invoices billed to ${accounts} accounts; the table lists each by account, with what it bills and its status [c1]. It holds no subscriptions or due dates, so an account here is the customer an invoice bills, and an overdue invoice is an uncollectible one.`,
+    },
+    {
+      para: owing.length
+        ? `${owing.length} of them are unpaid or overdue (open or uncollectible) [c2]; the largest bills ${nameOf(largest![1])} [c3].`
+        : "None of them is unpaid or overdue [c2].",
+    },
+  ];
+  const cite = (marker: string, e: number, target: CitationTarget) =>
+    ({ marker, evidence_id: `e${e}`, target }) satisfies AskCitation;
+  const citations: AskCitation[] = [
+    cite("c1", 2, { result: { evidence_id: "e2" } }),
+    cite("c2", 3, { result: { evidence_id: "e3" } }),
+    ...(largest ? [cite("c3", 2, { entity: refOf(largest[1]) })] : []),
+  ];
+  // As the model writes them: the entity by the handle its result gave.
+  const written = citations.map((c) =>
+    "entity" in c.target ? { ...c, target: { entity: "n1" } } : c,
+  );
+  const shown: AskVisual[] = visuals
+    ? [
+        {
+          evidence_id: "e2",
+          after: 0,
+          kind: "table",
+          title: "Invoices by account",
+        },
+        {
+          evidence_id: "e3",
+          after: 1,
+          kind: "bar",
+          title: "Unpaid or overdue invoices",
+        },
+      ]
+    : [];
+  const recordOf = (
+    evidence: number,
+    query: OntologyQuery,
+    output: QueryOutput,
+  ) => ({ evidence_id: `e${evidence}`, query, ...(visuals ? { output } : {}) });
+  return {
+    events: [
+      ...profiled,
+      call(1, "query", rowsAsked),
+      recorded(
+        1,
+        2,
+        `query: ${rowsOutput.rows.length} of ${rowsOutput.total} rows`,
+      ),
+      call(2, "query", owingAsked),
+      recorded(
+        2,
+        3,
+        `query: ${owingOutput.groups.length} of ${owingOutput.total_groups} groups`,
+      ),
+      call(3, "answer", {
+        blocks,
+        citations: written,
+        ...(shown.length ? { visuals: shown } : {}),
+      }),
+      ended(3, "answer"),
+      { event: "finished" },
+    ],
+    status: "answered",
+    result: {
+      status: "answered",
+      answer: { blocks, ...(shown.length ? { visuals: shown } : {}) },
+      citations,
+      queries: [
+        recordOf(2, rowsRan, rowsOutput),
+        recordOf(3, owingRan, owingOutput),
+      ],
+      usage: usage({
+        input: 9_600,
+        cache_read: 6_000,
+        output: 620,
+        usd: 0.0362,
+      }),
+    },
+    error: "",
+    usdMicros: 36_200,
+  };
+}
+
+function answer(
+  o: StoredOntology,
+  loadId: string,
+  outcome: Outcome,
+  // A grantee who holds all of the load still asks through a view, offered
+  // no helix_query, history_of or changes.
+  viewed = false,
+): Script {
+  const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
+  const found = outcome === "cannot_answer" ? undefined : quotedFact(g);
+  const profiled = profiledOf(o, g);
   // A 3.10.0 engine recorded no outputs and drew no visuals.
   const visuals = knobs.askVisuals !== false;
   const recordOf = (
@@ -568,7 +813,7 @@ function answer(
         queries: [],
         usage: usage({ input: 4_100, output: 0, usd: 0.0042 }),
       },
-      error: "the model could not be reached; ask again",
+      error: "the model provider is busy; try again in a minute",
       usdMicros: 4_200,
     };
   if (!found) {
@@ -1092,7 +1337,7 @@ function partAnswer(
         queries: [],
         usage: usage({ input: 4_100, output: 0, usd: 0.0042 }),
       },
-      error: "the model could not be reached; ask again",
+      error: "the model provider is busy; try again in a minute",
       usdMicros: 4_200,
     };
   // The first type it can see anything of: what it can say.
@@ -1299,8 +1544,8 @@ function advance(q: StoredQuestion) {
 const advanceAll = (workspaceId: string) =>
   [...ofWorkspace(workspaceId)].reverse().forEach(advance);
 
-/** A result as lists carry it: its queries without their outputs. */
-function listed(resultJson: string): string {
+/** A result as lists carry it (and helix_foundry_get_question): no outputs. */
+export function listed(resultJson: string): string {
   if (!resultJson) return resultJson;
   const r = JSON.parse(resultJson) as AskResult;
   return JSON.stringify({
@@ -1365,6 +1610,29 @@ function question(
 const isQuestion = (x: StoredQuestion | MockReply): x is StoredQuestion =>
   "threadId" in x;
 
+/** A question of the workspace's ontology as it is now (dashboards, agent). */
+export function storedQuestion(
+  workspaceId: string,
+  ontologyId: string,
+  id: string,
+) {
+  advanceAll(workspaceId);
+  const q = state.questions.find(
+    (x) =>
+      x.id === id &&
+      x.ontologyId === ontologyId &&
+      x.workspaceId === workspaceId,
+  );
+  return (
+    q && {
+      question: q.question,
+      loadId: q.loadId,
+      status: q.status,
+      resultJson: q.resultJson,
+    }
+  );
+}
+
 /**
  * The focus a question carries as canonical JSON, or undefined unless it is
  * exactly the engine's EntityRef with both set, as the WFE checks it.
@@ -1382,6 +1650,130 @@ function focusOf(raw: string): string | undefined {
     : undefined;
 }
 
+/**
+ * Asks a question of an ontology's load as the WFE's POST does, checks and
+ * refusals in its order (./agent.ts asks through it as the person, as
+ * helix_foundry_ask does).
+ */
+export function askQuestion(req: MockRequest): MockReply {
+  const s = scope(req);
+  if (!isScope(s)) return s;
+  const unset = aiRefusal(s.m.workspaceId);
+  if (unset) return unset;
+  const body = (req.body || {}) as Partial<AskQuestionRequest>;
+  const clientToken = body.clientToken || "",
+    text = (body.question || "").trim();
+  if (!clientToken || clientToken.length > 64)
+    return fail(
+      "INVALID_ARGUMENT",
+      "client_token is required, at most 64 characters",
+    );
+  if (!text || [...text].length > 4000)
+    return fail(
+      "INVALID_ARGUMENT",
+      "question is required, at most 4000 characters",
+    );
+  if (body.focusJson && new TextEncoder().encode(body.focusJson).length > 4096)
+    return fail("INVALID_ARGUMENT", "focus_json is at most 4096 bytes");
+  const focusJson = body.focusJson ? focusOf(body.focusJson) : "";
+  if (focusJson === undefined)
+    return fail(
+      "INVALID_ARGUMENT",
+      'focus_json: a focus is {"type": ..., "id": ...}, both set',
+    );
+  advanceAll(s.m.workspaceId);
+  const again = state.questions.find(
+    (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
+  );
+  if (again)
+    return again.question === text && visible(req, again)
+      ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
+      : fail(
+          "INVALID_ARGUMENT",
+          "client_token was already used for another question",
+        );
+  // A grantee asks only the load its grants were checked against.
+  const granted = req.grantee?.load?.loadId;
+  if (granted && body.loadId && body.loadId !== granted)
+    return fail("NOT_FOUND", "load not found");
+  const loadId = granted || body.loadId || currentLoadId(s.o.id);
+  if (!loadId)
+    return fail(
+      "FAILED_PRECONDITION",
+      "the ontology has no load to ask yet; load a version first",
+    );
+  const load = ontologyLoad(s.o.id, loadId);
+  if (!load) return fail("NOT_FOUND", "load not found");
+  if (load.status !== "ready" && load.status !== "partial")
+    return fail(
+      "FAILED_PRECONDITION",
+      "only a ready or partial load can be asked",
+    );
+  // A thread is named by its first question.
+  if (
+    body.threadId &&
+    !state.questions.some(
+      (q) =>
+        q.ontologyId === s.o.id &&
+        q.id === body.threadId &&
+        q.threadId === q.id &&
+        visible(req, q),
+    )
+  )
+    return fail("NOT_FOUND", "thread not found");
+  const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
+  if (refusal) return refusal;
+  const qid = id("q"),
+    outcome = knobs.askOutcome || "answered";
+  // Of a load it holds only some of, the agent is told what it holds.
+  const def = (ontologyVersion(s.o.id, load.versionId)?.definition || {}) as {
+    ontology_toml?: unknown;
+    mappings_toml?: unknown;
+  };
+  const view = req.grantee?.load?.partial
+    ? viewOf(
+        req.grantee.visibility(s.o.id),
+        String(def.ontology_toml || ""),
+        String(def.mappings_toml || ""),
+      )
+    : undefined;
+  const q: StoredQuestion = {
+    id: qid,
+    workspaceId: s.m.workspaceId,
+    ontologyId: s.o.id,
+    threadId: body.threadId || qid,
+    loadId: load.id,
+    versionId: load.versionId,
+    question: text,
+    focusJson,
+    clientToken,
+    askedByUserId: req.principal.user.id,
+    ...(req.grantee ? { grantee: req.grantee.principal } : {}),
+    ...(view && req.grantee ? { seen: req.grantee.seen(s.o.id) } : {}),
+    createdAt: now(),
+    status: "queued",
+    attempts: 0,
+    claimedAt: 0,
+    heldAt: 0,
+    stepMs: knobs.askStepMs ?? STEP_MS,
+    // A question about invoices billed, unpaid or overdue reads them alone.
+    script: view
+      ? partAnswer(s.o, load.id, view, outcome)
+      : outcome === "answered" && asksInvoices(text)
+        ? invoiceAnswer(s.o, load.id)
+        : answer(s.o, load.id, outcome, !!req.grantee),
+    events: [],
+    resultJson: "",
+    error: "",
+    usdMicros: 0,
+    reservedMicros: 0,
+    startedAt: null,
+    finishedAt: null,
+  };
+  state.questions.unshift(q);
+  return ok({ question: toQuestion(q) } satisfies QuestionResponse);
+}
+
 const BASE =
   "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/questions" as const;
 
@@ -1393,126 +1785,7 @@ export const questionRoutes: MockRoute[] = [
       tracked(
         req,
         req.params.ontologyId,
-        (): MockReply => {
-          const s = scope(req);
-          if (!isScope(s)) return s;
-          const unset = aiRefusal(s.m.workspaceId);
-          if (unset) return unset;
-          const body = (req.body || {}) as Partial<AskQuestionRequest>;
-          const clientToken = body.clientToken || "",
-            text = (body.question || "").trim();
-          if (!clientToken || clientToken.length > 64)
-            return fail(
-              "INVALID_ARGUMENT",
-              "client_token is required, at most 64 characters",
-            );
-          if (!text || [...text].length > 4000)
-            return fail(
-              "INVALID_ARGUMENT",
-              "question is required, at most 4000 characters",
-            );
-          if (
-            body.focusJson &&
-            new TextEncoder().encode(body.focusJson).length > 4096
-          )
-            return fail("INVALID_ARGUMENT", "focus_json is at most 4096 bytes");
-          const focusJson = body.focusJson ? focusOf(body.focusJson) : "";
-          if (focusJson === undefined)
-            return fail(
-              "INVALID_ARGUMENT",
-              'focus_json: a focus is {"type": ..., "id": ...}, both set',
-            );
-          advanceAll(s.m.workspaceId);
-          const again = state.questions.find(
-            (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
-          );
-          if (again)
-            return again.question === text && visible(req, again)
-              ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
-              : fail(
-                  "INVALID_ARGUMENT",
-                  "client_token was already used for another question",
-                );
-          // A grantee asks only the load its grants were checked against.
-          const granted = req.grantee?.load?.loadId;
-          if (granted && body.loadId && body.loadId !== granted)
-            return fail("NOT_FOUND", "load not found");
-          const loadId = granted || body.loadId || currentLoadId(s.o.id);
-          if (!loadId)
-            return fail(
-              "FAILED_PRECONDITION",
-              "the ontology has no load to ask yet; load a version first",
-            );
-          const load = ontologyLoad(s.o.id, loadId);
-          if (!load) return fail("NOT_FOUND", "load not found");
-          if (load.status !== "ready" && load.status !== "partial")
-            return fail(
-              "FAILED_PRECONDITION",
-              "only a ready or partial load can be asked",
-            );
-          // A thread is named by its first question.
-          if (
-            body.threadId &&
-            !state.questions.some(
-              (q) =>
-                q.ontologyId === s.o.id &&
-                q.id === body.threadId &&
-                q.threadId === q.id &&
-                visible(req, q),
-            )
-          )
-            return fail("NOT_FOUND", "thread not found");
-          const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
-          if (refusal) return refusal;
-          const qid = id("q");
-          // Of a load it holds only some of, the agent is told what it holds.
-          const def = (ontologyVersion(s.o.id, load.versionId)?.definition ||
-            {}) as { ontology_toml?: unknown; mappings_toml?: unknown };
-          const view = req.grantee?.load?.partial
-            ? viewOf(
-                req.grantee.visibility(s.o.id),
-                String(def.ontology_toml || ""),
-                String(def.mappings_toml || ""),
-              )
-            : undefined;
-          const q: StoredQuestion = {
-            id: qid,
-            workspaceId: s.m.workspaceId,
-            ontologyId: s.o.id,
-            threadId: body.threadId || qid,
-            loadId: load.id,
-            versionId: load.versionId,
-            question: text,
-            focusJson,
-            clientToken,
-            askedByUserId: req.principal.user.id,
-            ...(req.grantee ? { grantee: req.grantee.principal } : {}),
-            ...(view && req.grantee ? { seen: req.grantee.seen(s.o.id) } : {}),
-            createdAt: now(),
-            status: "queued",
-            attempts: 0,
-            claimedAt: 0,
-            heldAt: 0,
-            stepMs: knobs.askStepMs ?? STEP_MS,
-            script: view
-              ? partAnswer(s.o, load.id, view, knobs.askOutcome || "answered")
-              : answer(
-                  s.o,
-                  load.id,
-                  knobs.askOutcome || "answered",
-                  !!req.grantee,
-                ),
-            events: [],
-            resultJson: "",
-            error: "",
-            usdMicros: 0,
-            reservedMicros: 0,
-            startedAt: null,
-            finishedAt: null,
-          };
-          state.questions.unshift(q);
-          return ok({ question: toQuestion(q) } satisfies QuestionResponse);
-        },
+        () => askQuestion(req),
         (body) => {
           const q = (body as QuestionResponse).question;
           return { question: { loadId: q.loadId || "", questionId: q.id } };

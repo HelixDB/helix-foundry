@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/helixdb/helix-foundry/backend/access"
 )
 
@@ -250,4 +252,41 @@ func TestDecisionSets(t *testing.T) {
 	if len(got.DecisionSets) != 2 {
 		t.Fatalf("%+v", got)
 	}
+}
+
+func ExampleGrants_Holds() {
+	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
+	fmt.Println(g.Holds([]access.Target{access.TableTarget("stripe", "customers")}))
+	fmt.Println(g.Holds([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general")}))
+	// Output:
+	// true
+	// false
+}
+
+// Holds asks for at least each target: a table by itself or its connector,
+// everything else by itself; nothing is held by everything, and an unknown
+// target never.
+func TestGrantsHolds(t *testing.T) {
+	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.TableTarget("crm", "accounts"),
+		access.DocumentSetTarget("general"), access.EnrichmentTarget()})
+	for name, tc := range map[string]struct {
+		targets []access.Target
+		want    bool
+	}{
+		"nothing":                     {nil, true},
+		"its connector":               {[]access.Target{access.ConnectorTarget("stripe")}, true},
+		"a table of its connector":    {[]access.Target{access.TableTarget("stripe", "invoices")}, true},
+		"a table it holds alone":      {[]access.Target{access.TableTarget("crm", "accounts")}, true},
+		"the connector of that table": {[]access.Target{access.ConnectorTarget("crm")}, false},
+		"another table":               {[]access.Target{access.TableTarget("crm", "deals")}, false},
+		"its set":                     {[]access.Target{access.DocumentSetTarget("general")}, true},
+		"another set":                 {[]access.Target{access.DocumentSetTarget("hr")}, false},
+		"profiles":                    {[]access.Target{access.EnrichmentTarget()}, true},
+		"all of them":                 {[]access.Target{access.ConnectorTarget("stripe"), access.TableTarget("crm", "accounts"), access.DocumentSetTarget("general"), access.EnrichmentTarget()}, true},
+		"one too many":                {[]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("hr")}, false},
+		"an unknown target":           {[]access.Target{{}}, false},
+	} {
+		assert.Equal(t, tc.want, g.Holds(tc.targets), name)
+	}
+	assert.False(t, access.NewGrants(nil).Holds([]access.Target{access.EnrichmentTarget()}), "no grants hold profiles")
 }

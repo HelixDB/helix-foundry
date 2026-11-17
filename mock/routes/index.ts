@@ -1,14 +1,20 @@
 import type { MockRoute } from "../http";
 import { accessRoutes, directoryRoutes, guarded } from "./access";
+import { agentRoutes, whileOn } from "./agent";
+import { agentHostRoutes } from "./agent-hosts";
 import { aiRoutes } from "./ai";
 import { authRoutes } from "./auth";
+import { automationRoutes } from "./automations";
+import { automationSuggestionRoutes } from "./automation-suggestions";
 import { billingRoutes } from "./billing";
 import { dataRoutes } from "./data";
+import { dashboardRoutes } from "./dashboards";
 import { dataLayoutRoutes } from "./data-layout";
 import { databaseRoutes } from "./databases";
 import { documentRoutes } from "./documents";
 import { enrichmentRoutes } from "./enrichment";
 import { eventSourceRoutes } from "./event-sources";
+import { feedbackRoutes } from "./feedback";
 import { reviewRoutes } from "./reviews";
 import { signInRoutes } from "./sign-ins";
 import { loadRoutes } from "./loads";
@@ -26,6 +32,7 @@ import { workspaceRoutes } from "./workspaces";
 // Foundry's routes run source grants' access check first (./access.ts).
 export const routes: MockRoute[] = [
   ...authRoutes,
+  ...feedbackRoutes,
   ...workspaceRoutes,
   ...billingRoutes,
   ...usageRoutes,
@@ -43,6 +50,10 @@ export const routes: MockRoute[] = [
   ...enrichmentRoutes,
   ...aiRoutes,
   ...questionRoutes,
+  ...whileOn([...agentRoutes, ...agentHostRoutes]),
+  ...dashboardRoutes,
+  ...automationRoutes,
+  ...automationSuggestionRoutes,
   ...databaseRoutes,
   ...accessRoutes,
   ...directoryRoutes,

@@ -89,7 +89,8 @@ import { useSampleOntology } from "./use-sample-ontology";
 // sources step with what was chosen (SignInReturn's picks, as router
 // state), the connector it made among them. A live
 // generation shows in its step (the generations query polls while it
-// runs), a failed one says why with Try again. Members see the same steps
+// runs), one waiting for answers its questions (./questions.tsx), a failed
+// one says why with Try again. Members see the same steps
 // without what they can't do. The sample company's connector and set are left
 // out of it all, whatever was chosen before, unless this is the sample's own
 // ontology.
@@ -250,7 +251,9 @@ export function SetupFlow({
   );
   const manage = canManage(role),
     // Until a draft is under way, Data, Documents and Goal are walked.
-    drafting = setup.step === "draft" && setup.state !== "running",
+    drafting =
+      setup.step === "draft" &&
+      (setup.state === "todo" || setup.state === "failed"),
     failed = setup.step === "draft" && setup.state === "failed";
   // A draft that ends stored a version (or failed): the overview reads the
   // ontology's versions again, as LiveGeneration does where it stays shown.
@@ -485,15 +488,21 @@ export function SetupFlow({
               summary={database}
             />
             {wizard.steps.map((s, i) => {
-              const copy = STEP_COPY[s.id],
+              // A draft under way shows in its step: running, or waiting
+              // for answers to the agent's questions.
+              const underWay =
+                  !drafting && s.id === "draft" && setup.step === "draft",
+                copy = STEP_COPY[s.id],
                 state = drafting
                   ? i === at
                     ? "current"
                     : i < at
                       ? "done"
                       : "upcoming"
-                  : s.id === "draft" && setup.step === "draft"
-                    ? "running"
+                  : underWay
+                    ? setup.state === "waiting"
+                      ? "current"
+                      : "running"
                     : "done";
               return (
                 <FlowStep
@@ -506,7 +515,7 @@ export function SetupFlow({
                   summary={drafting ? stepSummary(s.state) : said[s.id]}
                   onEdit={drafting && manage ? () => go(s.id) : undefined}
                 >
-                  {state === "running" ? (
+                  {underWay ? (
                     <LiveGeneration />
                   ) : (
                     state === "current" && (

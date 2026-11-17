@@ -24,3 +24,6 @@ coverage
 *.test
 # Go build output (backend/)
 /backend/bin/
+
+# The helper's build
+/agent-host/dist

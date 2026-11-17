@@ -840,19 +840,20 @@ func (k *changeKind) Release(_ context.Context, src connector.Source, cursor jso
 
 func (k *changeKind) Name() string { return "fake" }
 
-// refreshes records the graph refreshes a sync owes, and the spacing each
-// asked for; fail refuses them.
+// refreshes records the graph refreshes a sync owes, the sync that owed
+// each and the spacing each asked for; fail refuses them.
 type refreshes struct {
 	tables [][]string
+	syncs  []string
 	every  []time.Duration
 	fail   error
 }
 
-func (r *refreshes) OweFoundryRefreshes(_ context.Context, _, _ string, tables []string, refreshEvery time.Duration) error {
+func (r *refreshes) OweFoundryRefreshes(_ context.Context, _, _, syncID string, tables []string, refreshEvery time.Duration) error {
 	if r.fail != nil {
 		return r.fail
 	}
-	r.tables, r.every = append(r.tables, tables), append(r.every, refreshEvery)
+	r.tables, r.syncs, r.every = append(r.tables, tables), append(r.syncs, syncID), append(r.every, refreshEvery)
 	return nil
 }
 
@@ -1270,6 +1271,9 @@ func TestSyncerChanges(t *testing.T) {
 		}
 		if len(owed.tables) != 1 || !slices.Equal(owed.tables[0], []string{"orders"}) {
 			t.Fatalf("owed = %v", owed.tables)
+		}
+		if !slices.Equal(owed.syncs, []string{"sync-1"}) {
+			t.Fatalf("owed by %v, want the sync that changed them, whose cause the refresh takes", owed.syncs)
 		}
 	})
 	// The retry keeps the table the first attempt wrote, so only that

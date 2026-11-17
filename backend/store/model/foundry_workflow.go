@@ -40,11 +40,46 @@ type FoundryWorkflow struct {
 	ClientToken                 string
 	CreatedByUserID             string
 	CreatedAt                   time.Time
-	// Runs and FinishedRuns count the runs it keeps; LastRunAt is when its
-	// newest started, nil before any.
-	Runs, FinishedRuns int64
-	LastRunAt          *time.Time
+	// Runs and FinishedRuns count the runs it keeps, NeverCalledRuns those
+	// that finished without a call to the ontology (they aren't assessed);
+	// LastRunAt is when its newest started, nil before any.
+	Runs, FinishedRuns, NeverCalledRuns int64
+	LastRunAt                           *time.Time
+	// Automation is the automation whose runs it records, for a workflow
+	// Foundry made; nil for one a person made.
+	Automation *FoundryWorkflowAutomation
 }
+
+// FoundryWorkflowAutomation is the automation a workflow Foundry made
+// records the runs of: its id, its name as the workflow keeps it (the
+// automation's, kept in step), and whether it was deleted since, the
+// workflow then keeping its runs as history.
+type FoundryWorkflowAutomation struct {
+	ID, Name string
+	Deleted  bool
+}
+
+// FoundryAutomationWorkflowName is the name of the workflow Foundry makes
+// for an automation named name: its name, cut to FoundryWorkflowNameMax
+// characters.
+//
+//	FoundryAutomationWorkflowName("Weekly digest") // "Weekly digest"
+func FoundryAutomationWorkflowName(name string) string {
+	if runes := []rune(name); len(runes) > FoundryWorkflowNameMax {
+		return string(runes[:FoundryWorkflowNameMax-1]) + "…"
+	}
+	return name
+}
+
+// FoundryAutomationWorkflowDescription is the description of every workflow
+// Foundry makes for an automation.
+const FoundryAutomationWorkflowDescription = "Foundry records here each run of its workflow that uses this ontology: " +
+	"what the run read of it and what the run found, so each run's assessment says how much the ontology helped."
+
+// FoundryWorkflowNeverCalled is why a finished run that made no call to the
+// ontology isn't assessed: an assessment of it would say nothing of the
+// ontology.
+const FoundryWorkflowNeverCalled = "This run made no call to the ontology, so there is nothing to assess."
 
 // FoundryWorkflowRunStatus is where a run stands.
 type FoundryWorkflowRunStatus string
@@ -59,8 +94,8 @@ const (
 // FoundryWorkflowRunTally is what one principal's runs of a workflow come
 // to: a FoundryWorkflow's counts and its verdicts, over those runs alone.
 type FoundryWorkflowRunTally struct {
-	Runs, FinishedRuns int64
-	LastRunAt          *time.Time
+	Runs, FinishedRuns, NeverCalledRuns int64
+	LastRunAt                           *time.Time
 	// Verdicts counts their done assessments by verdict.
 	Verdicts map[string]int64
 }
@@ -76,6 +111,9 @@ type FoundryWorkflowInsightRun struct {
 	Counts         FoundryWorkflowRunCounts
 	// Assessment is nil until the run's first assessment is queued.
 	Assessment *FoundryWorkflowInsightAssessment
+	// Automation is the automation Foundry started it for; nil for an
+	// agent's run.
+	Automation *FoundryWorkflowAutomation
 }
 
 // FoundryWorkflowInsightAssessment is what insights read of a run's
@@ -100,7 +138,22 @@ type FoundryWorkflowRun struct {
 	// Finished is its end; nil while it is open.
 	Finished *FoundryWorkflowRunEnd
 	Counts   FoundryWorkflowRunCounts
+	// AutomationRunID is the automation's run it records, for a run Foundry
+	// started (StartedBy is then the automation's owner); nil for an agent's.
+	AutomationRunID *string
+	// AutomationKey is the secret a call names a run Foundry started with
+	// (Recording), "" for an agent's: only Foundry's workers read it, so
+	// only the automation's own calls record under the run.
+	AutomationKey string
 }
+
+// Recording is what a call of an automation's Assistant step passes as
+// workflow_run_id to be recorded under r, a run Foundry started: its id and
+// its key, joined by "_" (which neither holds, and the MCP's ids allow),
+// which no API answer shows. A run's id alone names an agent's run.
+//
+//	(&model.FoundryWorkflowRun{ID: "01RUN", AutomationKey: "k3y"}).Recording() // "01RUN_k3y"
+func (r *FoundryWorkflowRun) Recording() string { return r.ID + "_" + r.AutomationKey }
 
 // FoundryWorkflowRunEnd is how a run finished.
 type FoundryWorkflowRunEnd struct {

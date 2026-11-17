@@ -1,6 +1,7 @@
 // Package foundryevents is the foundry-events role: Foundry's public HTTP door, to its API
-// sources (connector kind events), beside the MCP's send tool, and for the reminders people ask
-// for on the landing page. It serves two routes. The first is a send's:
+// sources (connector kind events), beside the MCP's send tool, for the reminders people ask for
+// on the landing page, and for dashboards' public links. It serves three routes. The first is a
+// send's:
 //
 //	POST /v1/sources/{event_source_id}/pieces
 //	Authorization: Bearer hx_ev_…
@@ -22,8 +23,15 @@
 //	Authorization: Bearer <the site's secret>
 //
 // It forwards them to FoundryEventsService.CreateFoundryReminder and StopFoundryReminders with the
-// SHA-256 of the bearer, which the backend checks. Another method on a route is 405, and another
-// path 404, from the mux.
+// SHA-256 of the bearer, which the backend checks.
+//
+// The third is a dashboard's public snapshot, for the site's page at its link (shared.go):
+//
+//	GET /v1/shared-dashboards/{token}
+//
+// It forwards the token's SHA-256 to FoundryEventsService.GetSharedFoundryDashboard and answers
+// the snapshot, readable by any page. Another method on a route is 405, and another path 404,
+// from the mux.
 //
 // The role holds nothing: no Secret, database, AWS identity or service-account token; not even the
 // site's secret, only passing its hash on. It reaches only FoundryEventsService, and stores

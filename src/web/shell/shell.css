@@ -557,6 +557,58 @@ html {
   flex: none;
   color: var(--hf-muted);
 }
+/* Feedback (./feedback.tsx), above the account at the sidebar's foot, and
+   an icon in the rail's. */
+.hf-feedback-button {
+  flex: none;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--hf-text-2);
+}
+.hf-sidebar-inner > .hf-feedback-button {
+  align-self: stretch;
+}
+.hf-rail-foot .hf-feedback-button {
+  margin-top: 0;
+  color: var(--hf-muted);
+}
+/* The foot's sections (Connectors: footNav in nav.ts), right above
+   Feedback and drawn as it is, the open one marked as a section's link is. */
+.hf-foot-nav {
+  display: grid;
+  flex: none;
+  margin-top: 6px;
+}
+/* Close under it, as the sections' links sit, past the sidebar's gap. */
+.hf-foot-nav + .hf-feedback-button {
+  margin-top: -5px;
+}
+.hf-foot-link {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.hf-foot-link.is-active,
+.hf-foot-link.is-active:hover:not(:disabled) {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.hf-foot-link.is-active svg {
+  color: var(--hf-accent-text);
+}
+/* In the rail's foot, the size of the buttons beside it, its mark still at
+   the rail's edge. */
+.hf-rail-foot-nav {
+  display: grid;
+}
+.hf-rail-foot .hf-rail-link {
+  width: 34px;
+  height: 34px;
+}
+.hf-rail-foot .hf-rail-link.is-active::before {
+  left: -13px;
+}
 .hf-settings-link.is-active {
   background: var(--hf-sunken);
   color: var(--hf-text);
@@ -695,6 +747,30 @@ html {
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
   line-height: 1.45;
+}
+
+/* Founder's dock (areas/agent): a column right of the page, in view as
+   it scrolls; below 1100px, a drawer from the right. */
+.hf-assistant {
+  position: sticky;
+  top: var(--hf-shell-top);
+  z-index: 19;
+  flex: none;
+  width: 400px;
+  height: calc(100dvh - var(--hf-shell-top));
+  border-left: 1px solid var(--hf-border);
+  background: var(--hf-surface);
+}
+/* Toasts and the star prompt sit left of the column, off its composer. */
+:root:has(.hf-assistant) :is(.hf-toast, .hf-star-prompt) {
+  right: calc(400px + 20px);
+}
+.hf-assistant-drawer.hf-dialog--drawer {
+  width: min(440px, 100vw);
+}
+.hf-assistant-drawer .hf-dialog-body {
+  height: 100%;
+  padding: 0;
 }
 
 /* Main column */

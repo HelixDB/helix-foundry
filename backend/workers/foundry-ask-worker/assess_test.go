@@ -32,6 +32,8 @@ type assessStoreFake struct {
 	renewErr error
 	readErr  error
 	noLoad   bool
+	// noCalls: the run made no call to the ontology.
+	noCalls bool
 }
 
 func (s *assessStoreFake) ClaimFoundryWorkflowRunAssessment(context.Context, string, time.Duration) (*model.FoundryWorkflowAssessment, error) {
@@ -64,6 +66,9 @@ func (s *assessStoreFake) GetFoundryWorkflowRun(_ context.Context, ontologyID, i
 		Finished: &model.FoundryWorkflowRunEnd{Output: "Globex renews in March."}}, nil
 }
 func (s *assessStoreFake) ListFoundryWorkflowRunAccesses(context.Context, string, int32, int) ([]*model.FoundryWorkflowAccess, bool, error) {
+	if s.noCalls {
+		return nil, false, nil
+	}
 	return []*model.FoundryWorkflowAccess{
 		{Seq: 1, Call: &model.FoundryWorkflowRead{LoadID: "load-1", Reads: json.RawMessage(`[{"entity":{}}]`), Result: json.RawMessage(`{"results":[]}`)}},
 		{Seq: 2, Call: &model.FoundryWorkflowQuestion{LoadID: "load-1", QuestionID: "q-1"}},
@@ -210,6 +215,24 @@ func TestAssessorSkipsPastTheMonthsBudget(t *testing.T) {
 	assert.Empty(t, agent.request.RequestID, "the agent isn't called")
 }
 
+// A run that made no call to the ontology, queued before such runs went
+// unqueued, is skipped saying so: the agent isn't called and it costs
+// nothing, whatever the month's budget.
+func TestAssessorSkipsARunThatNeverCalledTheOntology(t *testing.T) {
+	for name, spent := range map[string]int64{"within the budget": 0, "past it": 19_500_000} {
+		t.Run(name, func(t *testing.T) {
+			store, agent := &assessStoreFake{noCalls: true, spent: spent}, &assessAgentFake{result: assessed}
+			newAssessor(t, store, agent).tick(context.Background())
+			require.Len(t, store.outcomes, 1)
+			o := store.outcomes[0]
+			assert.Equal(t, model.FoundryWorkflowAssessmentSkipped, o.Status)
+			assert.Equal(t, model.FoundryWorkflowNeverCalled, o.Error)
+			assert.Zero(t, o.USDMicros)
+			assert.Empty(t, agent.request.RequestID, "the agent isn't called")
+		})
+	}
+}
+
 func TestAssessorRetriesWhatARetryMayFix(t *testing.T) {
 	for name, tc := range map[string]struct {
 		result   string
@@ -220,6 +243,7 @@ func TestAssessorRetriesWhatARetryMayFix(t *testing.T) {
 	}{
 		"an unavailable model":            {result: failedWith("unavailable"), attempts: 1, want: model.FoundryWorkflowAssessmentQueued, failure: "unavailable"},
 		"an unavailable model, at last":   {result: failedWith("unavailable"), attempts: 3, want: model.FoundryWorkflowAssessmentFailed},
+		"a rejected request, at last":     {result: failedWith("unsupported"), attempts: 3, want: model.FoundryWorkflowAssessmentFailed},
 		"a refusal":                       {result: failedWith("refused"), attempts: 1, want: model.FoundryWorkflowAssessmentFailed, failure: "refused"},
 		"an unavailable agent":            {err: status.Error(codes.Unavailable, "down"), attempts: 1, want: model.FoundryWorkflowAssessmentQueued},
 		"a busy agent":                    {err: status.Error(codes.ResourceExhausted, "busy"), attempts: 1, want: model.FoundryWorkflowAssessmentQueued},
@@ -235,6 +259,8 @@ func TestAssessorRetriesWhatARetryMayFix(t *testing.T) {
 			o := store.outcomes[0]
 			assert.Equal(t, tc.want, o.Status)
 			assert.NotEmpty(t, o.Error)
+			// Only an assessment queued again says Helix will retry it.
+			assert.Equal(t, tc.want == model.FoundryWorkflowAssessmentQueued, strings.Contains(o.Error, "will retry"), o.Error)
 			if tc.failure != "" {
 				assert.Equal(t, tc.failure, o.Failure)
 			}

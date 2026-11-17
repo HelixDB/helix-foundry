@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
@@ -122,6 +123,17 @@ func respond(status string) script {
 	return func(stream agentv1.Agent_TurnServer) error { return send(stream, testEvents, testResult(status, 1)) }
 }
 
+// asking is a result that ended needs_input at draft revision rev, its
+// question blocking.
+func asking(rev uint64) string {
+	return strings.Replace(testResult(`"needs_input"`, rev), `"blocking":false`, `"blocking":true`, 1)
+}
+
+// respondAsking sends the test events, then asking(rev).
+func respondAsking(rev uint64) script {
+	return func(stream agentv1.Agent_TurnServer) error { return send(stream, testEvents, asking(rev)) }
+}
+
 // refuse fails the call before any event, as the agent's own errors do.
 func refuse(code codes.Code) script {
 	return func(agentv1.Agent_TurnServer) error { return status.Error(code, "refused") }
@@ -162,6 +174,23 @@ type memStore struct {
 	consentErr error
 	// connectors are the workspace's connectors; nil is the Stripe one alone.
 	connectors []*model.Connector
+	// versions and generations are the ontology's, by id.
+	versions    map[string]*model.OntologyVersion
+	generations map[string]*model.OntologyGeneration
+}
+
+func (s *memStore) GetOntologyVersion(_ context.Context, ontologyID, id string) (*model.OntologyVersion, error) {
+	if v, ok := s.versions[id]; ok && v.OntologyID == ontologyID {
+		return v, nil
+	}
+	return nil, foundrystore.ErrNotFound
+}
+
+func (s *memStore) GetOntologyGeneration(_ context.Context, ontologyID, id string) (*model.OntologyGeneration, error) {
+	if g, ok := s.generations[id]; ok && g.OntologyID == ontologyID {
+		return g, nil
+	}
+	return nil, foundrystore.ErrNotFound
 }
 
 func (s *memStore) ListFoundryDocumentsByID(_ context.Context, workspaceID string, ids []string) (map[string]*model.FoundryDocument, error) {
@@ -570,25 +599,152 @@ func TestGenerator(t *testing.T) {
 		}
 	})
 
-	// A draft with open questions is still a draft; the website shows the questions.
-	t.Run("stores a draft that needs input, with its questions", func(t *testing.T) {
-		for status, want := range map[string]StatusKind{`"needs_input"`: StatusNeedsInput, `"budget_exhausted"`: StatusBudgetExhausted} {
-			h := newHarness(t, respond(status))
+	// A draft out of budget is still a draft, with its open questions; the
+	// website shows them.
+	t.Run("stores a draft out of budget, with its questions", func(t *testing.T) {
+		h := newHarness(t, respond(`"budget_exhausted"`))
+		result, err := h.generator.Run(ctx, generation())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var def Definition
+		if err := json.Unmarshal(result.Definition, &def); err != nil {
+			t.Fatal(err)
+		}
+		var questions []model.OntologyQuestion
+		if err := json.Unmarshal(def.Questions, &questions); err != nil || def.Status != StatusBudgetExhausted || result.Asked != nil ||
+			len(questions) != 1 || questions[0].ID != "q1" || questions[0].Text != "Is a customer an account?" {
+			t.Fatalf("definition %s", result.Definition)
+		}
+	})
+
+	// A turn that asks what only the user can answer stores no version: the
+	// generation waits for the answers with the state to carry on from.
+	t.Run("waits for answers to what it asked", func(t *testing.T) {
+		h := newHarness(t, respondAsking(4))
+		result, err := h.generator.Run(ctx, generation())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Definition != nil || result.Asked == nil || result.InputTokens != 1500 {
+			t.Fatalf("result = %+v", result)
+		}
+		want := []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Header: "Customers", Text: "Is a customer an account?", Blocking: true,
+			Choice: &agentquestion.Choice{Options: []agentquestion.Option{{Label: "An account", Description: "One customer per billing account"}, {Label: "A person"}}}, Recommended: "An account"}, Items: []string{"type.Customer"}}}
+		if result.Asked.DraftRev != 4 || string(result.Asked.State) != `{"draft_rev":4,"opaque":[1,2,3]}` || !reflect.DeepEqual(result.Asked.Questions, want) {
+			t.Fatalf("asked = %+v", result.Asked)
+		}
+	})
+
+	t.Run("fails a turn that waits on nothing it can be told", func(t *testing.T) {
+		for name, c := range map[string]struct {
+			result string
+			want   string
+		}{
+			"no blocking question":              {testResult(`"needs_input"`, 1), "without a question"},
+			"unreadable questions":              {strings.Replace(testResult(`"needs_input"`, 1), `"questions":[{`, `"questions":[7,{`, 1), "can't read"},
+			"a recommendation it doesn't offer": {strings.Replace(asking(1), `"default":"An account"`, `"default":"A team"`, 1), "can't read"},
+			"one option":                        {strings.Replace(asking(1), `,{"label":"A person"}`, ``, 1), "can't read"},
+			"a question twice": {strings.Replace(asking(1), `"blocking":true}]`,
+				`"blocking":true},{"id":"q1","items":[],"text":"Again?","blocking":true}]`, 1), "can't read"},
+			"too large a session": {strings.Replace(asking(1), `"opaque":[1,2,3]`, `"opaque":"`+strings.Repeat("x", maxStateBytes)+`"`, 1),
+				"keeps sessions of up to 4 MiB"},
+		} {
+			h := newHarness(t, func(stream agentv1.Agent_TurnServer) error { return send(stream, testEvents, c.result) })
 			result, err := h.generator.Run(ctx, generation())
-			if err != nil {
-				t.Fatalf("%s: %v", status, err)
+			if f := asFailure(t, err); !f.Permanent || !strings.Contains(f.Message, c.want) || result.Asked != nil {
+				t.Fatalf("%s: failure %+v, asked %+v", name, f, result.Asked)
 			}
-			var def Definition
-			if err := json.Unmarshal(result.Definition, &def); err != nil {
+		}
+	})
+
+	// Answers carry the session on from the state the asking turn kept,
+	// with the same sources, as feedback on the revision asked of.
+	t.Run("carries on from the answers", func(t *testing.T) {
+		h := newHarness(t, respond(`"done"`))
+		gen := generation()
+		gen.TurnState = json.RawMessage(`{"draft_rev":4,"opaque":[1,2,3]}`)
+		gen.Questions = &model.OntologyQuestions{DraftRev: 4, Asked: []model.OntologyQuestion{{Question: agentquestion.Question{ID: "q1", Text: "?", Blocking: true}}},
+			Answers: []agentquestion.Answer{{QuestionID: "q1", Options: []string{"An account"}, Text: "one per customer"}}}
+		result, err := h.generator.Run(ctx, gen)
+		if err != nil || result.Definition == nil || result.Asked != nil {
+			t.Fatalf("result = (%+v, %v)", result, err)
+		}
+		request := h.agent.calls()[0]
+		if err := contracttest.Validate(t, contracttest.Schema(t, "turn_request.json"), []byte(request)); err != nil {
+			t.Fatalf("request %s: %v", request, err)
+		}
+		var req struct {
+			SessionID string            `json:"session_id"`
+			RequestID string            `json:"request_id"`
+			State     json.RawMessage   `json:"state"`
+			Input     json.RawMessage   `json:"input"`
+			Sources   []json.RawMessage `json:"sources"`
+		}
+		if err := json.Unmarshal([]byte(request), &req); err != nil {
+			t.Fatal(err)
+		}
+		if req.SessionID != "gen-1" || req.RequestID != "gen-1.4" || string(req.State) != `{"draft_rev":4,"opaque":[1,2,3]}` || len(req.Sources) != 1 ||
+			string(req.Input) != `{"feedback":{"draft_rev":4,"actions":[{"answer":{"question_id":"q1","options":["An account"],"text":"one per customer"}}]}}` {
+			t.Fatalf("request = %s", request)
+		}
+
+		// Without the state there is nothing to carry on from.
+		h = newHarness(t, respond(`"done"`))
+		gen.TurnState = nil
+		if _, err := h.generator.Run(ctx, gen); !asFailure(t, err).Permanent || len(h.agent.calls()) != 0 {
+			t.Fatalf("without state: %v after %d calls", err, len(h.agent.calls()))
+		}
+	})
+
+	// Answers to an earlier revision can't be applied: a new generation can.
+	t.Run("fails answers the agent finds stale", func(t *testing.T) {
+		h := newHarness(t, respond(`"stale_draft"`))
+		gen := generation()
+		gen.TurnState = json.RawMessage(`{}`)
+		gen.Questions = &model.OntologyQuestions{DraftRev: 2, Answers: []agentquestion.Answer{}}
+		if f := asFailure(t, func() error { _, err := h.generator.Run(ctx, gen); return err }()); !f.Permanent || !strings.Contains(f.Message, "earlier draft") {
+			t.Fatalf("failure %+v", f)
+		}
+	})
+
+	// A new version of an ontology names the sources its current version
+	// wasn't drafted from, so the agent asks about those first.
+	t.Run("names the sources new since the current version", func(t *testing.T) {
+		h := newHarness(t, respond(`"done"`))
+		h.store.sets = map[string]*model.FoundryDocumentSet{
+			"set-old": {ID: "set-old", WorkspaceID: "ws-1", Name: "Contracts"},
+			"set-new": {ID: "set-new", WorkspaceID: "ws-1", Name: "Renewals"},
+		}
+		drafter := "gen-0"
+		h.store.versions = map[string]*model.OntologyVersion{"v-1": {ID: "v-1", OntologyID: "ont-1", GenerationID: &drafter}, "v-hand": {ID: "v-hand", OntologyID: "ont-1"}}
+		h.store.generations = map[string]*model.OntologyGeneration{"gen-0": {ID: "gen-0", OntologyID: "ont-1", Input: model.OntologyGenerationInput{
+			Tables: []model.OntologyGenerationTable{{ConnectorID: "conn-1", Table: "invoices"}}, DocumentSetIDs: []string{"set-old"},
+		}}}
+		gen := generation()
+		gen.Input.DocumentSetIDs = []string{"set-old", "set-new"}
+		gen.Input.BaseVersionID = "v-1"
+		if _, err := h.generator.Run(ctx, gen); err != nil {
+			t.Fatal(err)
+		}
+		workflow := "customer billing health" + NewSourcesBrief([]Source{{ID: TableSourceID("conn-1", "customers")}, {ID: "set-new"}})
+		want, _ := json.Marshal(Start{Workflow: workflow, Goals: []string{"customer billing health"}})
+		if !strings.Contains(h.agent.calls()[0], `"input":`+string(want)) {
+			t.Fatalf("request = %s, want input %s", h.agent.calls()[0], want)
+		}
+
+		// A first draft, a hand-written current version and one whose
+		// generation is gone name nothing as new.
+		for _, base := range []string{"", "v-hand", "v-gone"} {
+			h := newHarness(t, respond(`"done"`))
+			h.store.versions = map[string]*model.OntologyVersion{"v-hand": {ID: "v-hand", OntologyID: "ont-1"}}
+			gen := generation()
+			gen.Input.BaseVersionID = base
+			if _, err := h.generator.Run(ctx, gen); err != nil {
 				t.Fatal(err)
 			}
-			var questions []struct {
-				ID   string `json:"id"`
-				Text string `json:"text"`
-			}
-			if err := json.Unmarshal(def.Questions, &questions); err != nil || def.Status != want ||
-				len(questions) != 1 || questions[0].ID != "q1" || questions[0].Text != "Is a customer an account?" {
-				t.Fatalf("%s: definition %s", status, result.Definition)
+			if !strings.Contains(h.agent.calls()[0], `"input":{"start":{"workflow":"customer billing health","goals"`) {
+				t.Fatalf("base %q: request = %s", base, h.agent.calls()[0])
 			}
 		}
 	})
@@ -633,7 +789,7 @@ func TestGenerator(t *testing.T) {
 
 	// The model recorded is the one the turn says it started on.
 	t.Run("records the model the turn started on", func(t *testing.T) {
-		started := `{"event":"turn_started","contract_version":"4.16.0","model":{"provider":"bedrock","name":"us.anthropic.claude-opus-5-5"}}`
+		started := `{"event":"turn_started","contract_version":"4.26.0","model":{"provider":"bedrock","name":"us.anthropic.claude-opus-5-5"}}`
 		h := newHarness(t, func(stream agentv1.Agent_TurnServer) error {
 			return send(stream, append([]string{started}, testEvents[1:]...), testResult(`"done"`, 1))
 		})

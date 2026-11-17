@@ -15,7 +15,7 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 )
 
-// workflowBackend answers the workflow RPCs and keeps what it was asked.
+// workflowBackend answers the use case (workflow) RPCs and keeps what it was asked.
 type workflowBackend struct {
 	FoundryWorkflowBackendAPI
 	created  *foundryv1.CreateFoundryWorkflowRequest
@@ -31,7 +31,9 @@ func (b *workflowBackend) CreateFoundryWorkflow(_ context.Context, r *foundryv1.
 }
 
 func (b *workflowBackend) ListFoundryWorkflows(context.Context, *foundryv1.ListFoundryWorkflowsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryWorkflowsResponse, error) {
-	return &foundryv1.ListFoundryWorkflowsResponse{Workflows: []*foundryv1.FoundryWorkflow{{Id: "wf-1", Name: "Triage", Runs: 3}}, NextPageToken: "p2"}, nil
+	return &foundryv1.ListFoundryWorkflowsResponse{Workflows: []*foundryv1.FoundryWorkflow{{Id: "wf-1", Name: "Triage", Runs: 3},
+		{Id: "wf-2", Name: "Weekly digest", Automation: &foundryv1.FoundryWorkflowAutomation{AutomationId: "auto-1", Name: "Weekly digest", Deleted: true}}},
+		NextPageToken: "p2"}, nil
 }
 
 func (b *workflowBackend) StartFoundryWorkflowRun(_ context.Context, r *foundryv1.StartFoundryWorkflowRunRequest, _ ...grpc.CallOption) (*foundryv1.FoundryWorkflowRunResponse, error) {
@@ -48,7 +50,7 @@ func (b *workflowBackend) FinishFoundryWorkflowRun(_ context.Context, r *foundry
 }
 
 func (b *workflowBackend) GetFoundryWorkflowRun(_ context.Context, r *foundryv1.GetFoundryWorkflowRunRequest, _ ...grpc.CallOption) (*foundryv1.FoundryWorkflowRunResponse, error) {
-	return &foundryv1.FoundryWorkflowRunResponse{Run: &foundryv1.FoundryWorkflowRun{Id: r.GetId(), Status: "finished",
+	return &foundryv1.FoundryWorkflowRunResponse{Run: &foundryv1.FoundryWorkflowRun{Id: r.GetId(), Status: "finished", AutomationRunId: "arun-1",
 		Assessment: &foundryv1.FoundryWorkflowAssessment{Status: "done", Verdict: "helpful", AssessmentJson: `{"verdict":"helpful","summary":"s"}`, UsdMicros: 7}}}, nil
 }
 
@@ -63,14 +65,14 @@ func (b *workflowBackend) ListFoundryWorkflowRunAccesses(_ context.Context, r *f
 	}}, nil
 }
 
-var workflowTools = []string{toolFoundryCreateWorkflow, toolFoundryListWorkflows, toolFoundryStartWorkflowRun, toolFoundryFinishWorkflowRun, toolFoundryGetWorkflowRun}
+var useCaseTools = []string{toolFoundryCreateUseCase, toolFoundryListUseCases, toolFoundryStartUseCaseRun, toolFoundryFinishUseCaseRun, toolFoundryGetUseCaseRun}
 
-// A user who manages ontologies gets every workflow tool; an agent's key reading databases runs
-// workflows but creates none; restricted callers and hosts without the backend's workflows get none.
+// A user who manages ontologies gets every use case tool; an agent's key reading databases runs
+// use cases but creates none; restricted callers and hosts without the backend's workflows get none.
 func TestWorkflowToolsByIdentity(t *testing.T) {
 	with := &Service{Workflows: &workflowBackend{}}
-	assert.Subset(t, toolNames(t, with, everyTool()), workflowTools)
-	for _, name := range workflowTools {
+	assert.Subset(t, toolNames(t, with, everyTool()), useCaseTools)
+	for _, name := range useCaseTools {
 		assert.NotContains(t, toolNames(t, &Service{}, everyTool()), name)
 	}
 
@@ -79,7 +81,7 @@ func TestWorkflowToolsByIdentity(t *testing.T) {
 		listed, err := connect(t, s, everyTool()).ListTools(context.Background(), nil)
 		require.NoError(t, err)
 		for _, tool := range listed.Tools {
-			if tool.Name == toolFoundryStartWorkflowRun {
+			if tool.Name == toolFoundryStartUseCaseRun {
 				return tool.Description
 			}
 		}
@@ -90,20 +92,20 @@ func TestWorkflowToolsByIdentity(t *testing.T) {
 
 	key := &Identity{ServiceKey: true, HasPermission: func(p Permission) bool { return p == PermissionDatabaseQueryRead }}
 	names := toolNames(t, with, key)
-	assert.Subset(t, names, workflowTools[1:])
-	assert.NotContains(t, names, toolFoundryCreateWorkflow)
+	assert.Subset(t, names, useCaseTools[1:])
+	assert.NotContains(t, names, toolFoundryCreateUseCase)
 
 	// A key reading through source grants gets them too, but for creating one:
-	// Foundry checks its Workflows permission on each call.
+	// Foundry checks its Usage permission on each call.
 	granted := grantKey()
 	granted.FoundryGrants = true
 	names = toolNames(t, with, granted)
 	assert.Contains(t, names, toolFoundryReadGraph)
-	assert.Subset(t, names, workflowTools[1:])
-	assert.NotContains(t, names, toolFoundryCreateWorkflow)
+	assert.Subset(t, names, useCaseTools[1:])
+	assert.NotContains(t, names, toolFoundryCreateUseCase)
 
 	viewer := &Identity{User: true, HasPermission: func(p Permission) bool { return p == PermissionWorkspaceRead }}
-	for _, name := range workflowTools {
+	for _, name := range useCaseTools {
 		assert.NotContains(t, toolNames(t, with, viewer), name)
 	}
 }
@@ -130,28 +132,36 @@ func TestWorkflowRunTools(t *testing.T) {
 	}
 	session := connect(t, &Service{Workflows: b}, identity)
 
-	created := callTool(t, session, toolFoundryCreateWorkflow, `{`+workflowIDs+`,"name":"Triage","description":"Tickets","client_token":"c-1"}`)
+	created := callTool(t, session, toolFoundryCreateUseCase, `{`+workflowIDs+`,"name":"Triage","description":"Tickets","client_token":"c-1"}`)
 	assert.Equal(t, "wf-1", created["id"])
 	assert.Equal(t, contentTrustUntrusted, created["content_trust"])
 	assert.Equal(t, "Tickets", b.created.GetDescription())
 	assert.Equal(t, "c-1", b.created.GetClientToken())
 
-	listed := callTool(t, session, toolFoundryListWorkflows, `{`+workflowIDs+`}`)
+	listed := callTool(t, session, toolFoundryListUseCases, `{`+workflowIDs+`}`)
 	assert.Equal(t, "p2", listed["next_page_token"])
-	assert.Len(t, listed["workflows"], 1)
+	useCases := listed["use_cases"].([]any)
+	require.Len(t, useCases, 2)
+	assert.Equal(t, "person", useCases[0].(map[string]any)["origin"])
+	assert.NotContains(t, useCases[0], "workflow")
+	assert.Equal(t, "workflow", useCases[1].(map[string]any)["origin"], "Foundry's, for a workflow")
+	assert.Equal(t, map[string]any{"id": "auto-1", "name": "Weekly digest", "deleted": true}, useCases[1].(map[string]any)["workflow"])
 
-	started := callTool(t, session, toolFoundryStartWorkflowRun, `{`+workflowIDs+`,"workflow_id":"wf-1","input":"Who renews?","client_token":"r-1"}`)
+	started := callTool(t, session, toolFoundryStartUseCaseRun, `{`+workflowIDs+`,"use_case_id":"wf-1","input":"Who renews?","client_token":"r-1"}`)
 	assert.Equal(t, "run-1", started["id"])
-	assert.Contains(t, started["next"], "workflow_run_id run-1")
+	assert.Equal(t, "wf-1", started["use_case_id"])
+	assert.Equal(t, "wf-1", b.started.GetWorkflowId())
+	assert.Contains(t, started["next"], "use_case_run_id run-1")
 	assert.Equal(t, "Who renews?", b.started.GetInput())
 
-	finished := callTool(t, session, toolFoundryFinishWorkflowRun, `{`+workflowIDs+`,"workflow_id":"wf-1","run_id":"run-1","output":"Acme."}`)
+	finished := callTool(t, session, toolFoundryFinishUseCaseRun, `{`+workflowIDs+`,"use_case_id":"wf-1","run_id":"run-1","output":"Acme."}`)
 	assert.Equal(t, "finished", finished["status"])
 	assert.Equal(t, "Acme.", b.finished.GetOutput())
 	assert.Empty(t, b.finished.GetInput())
 
-	got := callTool(t, session, toolFoundryGetWorkflowRun, `{`+workflowIDs+`,"workflow_id":"wf-1","run_id":"run-1","after_seq":0}`)
+	got := callTool(t, session, toolFoundryGetUseCaseRun, `{`+workflowIDs+`,"use_case_id":"wf-1","run_id":"run-1","after_seq":0}`)
 	assert.EqualValues(t, 5, got["next_after_seq"])
+	assert.Equal(t, "arun-1", got["run"].(map[string]any)["from_workflow_run_id"])
 	assessment := got["run"].(map[string]any)["assessment"].(map[string]any)
 	assert.Equal(t, "helpful", assessment["verdict"])
 	assert.Equal(t, "s", assessment["assessment"].(map[string]any)["summary"])
@@ -175,13 +185,13 @@ func TestWorkflowRunTools(t *testing.T) {
 	}
 
 	// A run id that isn't one is refused before the backend is called.
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryFinishWorkflowRun,
-		Arguments: json.RawMessage(`{` + workflowIDs + `,"workflow_id":"wf-1","run_id":"../x","output":"a"}`)})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryFinishUseCaseRun,
+		Arguments: json.RawMessage(`{` + workflowIDs + `,"use_case_id":"wf-1","run_id":"../x","output":"a"}`)})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 }
 
-// Each tracked tool hands its workflow_run_id to the backend, and refuses one that isn't an id.
+// Each tracked tool hands its use_case_run_id to the backend, and refuses one that isn't an id.
 func TestTrackedToolsPassTheRun(t *testing.T) {
 	b := &graphBackend{}
 	var req *foundryv1.ReadFoundryGraphRequest
@@ -194,12 +204,12 @@ func TestTrackedToolsPassTheRun(t *testing.T) {
 	}
 	session := connect(t, &Service{Foundry: b}, identity)
 	callTool(t, session, toolFoundryReadGraph,
-		`{`+workflowIDs+`,"load_id":"load-1","reads":[{"entity":{"type":"C","id":"1"}}],"workflow_run_id":"run-1"}`)
+		`{`+workflowIDs+`,"load_id":"load-1","reads":[{"entity":{"type":"C","id":"1"}}],"use_case_run_id":"run-1"}`)
 	require.NotNil(t, req)
 	assert.Equal(t, "run-1", req.GetWorkflowRunId())
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: toolFoundryReadGraph, Arguments: json.RawMessage(
-		`{` + workflowIDs + `,"load_id":"load-1","reads":[{"entity":{"type":"C","id":"1"}}],"workflow_run_id":"not an id"}`)})
+		`{` + workflowIDs + `,"load_id":"load-1","reads":[{"entity":{"type":"C","id":"1"}}],"use_case_run_id":"not an id"}`)})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 }

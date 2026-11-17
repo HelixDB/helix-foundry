@@ -1,0 +1,31 @@
+{
+  "name": "@helixdb/foundry-agent-host",
+  "version": "0.1.0",
+  "description": "Runs a local Helix Foundry install's Assistant on the Claude Code or Codex subscription you are signed in to on this computer.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "foundry-agent-host": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.321"
+  },
+  "devDependencies": {
+    "@openai/codex": "0.169.0",
+    "@types/node": "24.5.2",
+    "typescript": "5.9.3"
+  },
+  "packageManager": "pnpm@10.17.0"
+}

@@ -540,7 +540,9 @@ test("allows one live generation at a time", async ({ page }) => {
   await expect(page.getByText("A generation is already queued.")).toBeVisible();
   await page.getByRole("button", { name: "Generate", exact: true }).click();
   await expect(
-    page.getByText("An ontology generation is already queued or running."),
+    page.getByText(
+      "An ontology generation is already queued, running or waiting for answers: answer or cancel it first.",
+    ),
   ).toBeVisible();
 });
 
@@ -700,7 +702,7 @@ test("starts a new ontology empty, drafting from the workspace's synced connecto
   await expect(
     page.getByRole("list", { name: "Connectors" }).getByRole("checkbox"),
   ).toHaveCount(2);
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await finishOntology(page);
   await createdOntology(page);
 });

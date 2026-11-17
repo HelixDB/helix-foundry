@@ -27,14 +27,31 @@ const FoundryResendApproval FoundryResendReason = "approval"
 // so any Extract that ends answers the request, one of no documents included.
 const FoundryResendDecisions FoundryResendReason = "decisions"
 
-// FoundryExtractDecisionsMax is the most decisions one Extract takes (the
-// engine's Decisions). Every value decision of a load goes with every one of
-// its Extracts, so an ontology takes no more value decisions than this
+// FoundryResendName is a person's choice of what a name of a document is (a
+// resolve decision) that the load's list gained after the document was
+// committed: the resolve's own document, and, for a choice of an entity,
+// which is an alias of every document, each document whose reviews ask about
+// that name. The engine settles the name in place by replaying the
+// document's saved model work (contract 4.22.0), so the document goes with
+// its artifacts, still with nothing to spend: a call no artifact holds, as
+// under a load read before prompt 9, leaves the name not_replayed, and the
+// next load applies it.
+const FoundryResendName FoundryResendReason = "name"
+
+// FoundryExtractKindDecisionsMax is the most decisions of one kind (resolve,
+// prop, release, withdraw, alias) one Extract takes, and
+// FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,
+// contract 4.22.0). Every value decision of a load goes with every one of its
+// Extracts, so an ontology takes no more value decisions than one kind's cap
 // (store.FoundryValueDecisionsFull): one more and no Extract of a load that
-// holds them could be sent. At the limit itself an Extract still goes, but
-// only with documents that have no decision of their own: a name settled or
-// a claim approved in one makes it one too many.
-const FoundryExtractDecisionsMax = 10000
+// holds them could be sent. The resolves, releases and withdraws are those of
+// the Extract's documents, and from contract 4.23.0 the aliases are those its
+// documents write, so an ontology links any number of names, and documents
+// whose decisions are past a cap go in smaller Extracts.
+const (
+	FoundryExtractKindDecisionsMax = 10000
+	FoundryExtractAllDecisionsMax  = 50000
+)
 
 // FoundryLoadResend is a document a load owes a resend, for a reason, or the
 // load's own decisions (FoundryResendDecisions), which name no document.
@@ -94,7 +111,9 @@ const (
 	// FoundryReleaseCarried was saved while another load was current, and
 	// joined this load's list when it became current: no review of this load
 	// was read for it, and the engine has yet to say what became of it, as
-	// with a pending one.
+	// with a pending one. A resolve is carried only while it is an alias
+	// whose asking documents in this load are yet to be owed (store
+	// OweFoundryAskingResends); then it waits as pending.
 	FoundryReleaseCarried FoundryReleaseStatus = "carried"
 	// FoundryReleaseWritten is a claim the engine wrote as a fact. From
 	// contract 4.14.0, on a link that holds one value, a statement dated
@@ -144,14 +163,17 @@ func (s FoundryReleaseStatus) Waits() bool {
 // The reasons the backend gives a refused release; the others are the
 // engine's (ontologyagent.ReleaseOutcome.Reason), stored as they came.
 const (
-	// FoundryReleaseNotReplayed: the document's saved extraction didn't
-	// replay, so applying the approval would have cost a model call.
+	// FoundryReleaseNotReplayed: the engine sent no event for the document
+	// and ended budget_exhausted, so applying the approval would have cost a
+	// model call. Through contract 4.16.0 that was a document whose saved
+	// extraction didn't replay; since 4.17.0 a release asks no model, so a
+	// document the load holds gets one.
 	FoundryReleaseNotReplayed = "not_replayed"
 	// FoundryReleaseDocumentGone: the document left the load or was deleted.
 	FoundryReleaseDocumentGone = "document_gone"
 	// FoundryReleaseDocumentUnread: the load holds the document, but its row
 	// no longer says it is extracted, as when a failure was recorded over the
-	// row its commit wrote: there is no saved extraction to replay it from.
+	// row its commit wrote: the load may hold no review of it to write from.
 	FoundryReleaseDocumentUnread = "document_unread"
 	// FoundryReleaseDocumentFailed: the engine failed the document.
 	FoundryReleaseDocumentFailed = "document_failed"
@@ -171,6 +193,12 @@ const (
 	// and said nothing of this decision, which the contract has it do.
 	FoundryReleaseUnanswered = "unanswered"
 )
+
+// FoundryReleaseDocumentChanged is the engine's refusal of every release
+// decision of a document the load holds with other text (contract 4.17.0):
+// it judged none of them, so it says nothing of what the load holds of an
+// approval written or unconfirmed before (FoundryDecisionApplied.After).
+const FoundryReleaseDocumentChanged = "document_changed"
 
 // FoundryReleaseOutcomeKind is what the engine did with a release decision of
 // a document it was sent (the document event's releases[].outcome.kind).
@@ -285,6 +313,12 @@ func (a FoundryDecisionApplied) Unconfirmed() bool {
 // the backend doesn't know wrote nothing it can vouch for: the decision is
 // refused, with the outcome's name as its reason, so none waits for ever.
 //
+// A release refused because the load holds its document with other text
+// (FoundryReleaseDocumentChanged) was not judged: it refuses one that waits
+// with no reason, and leaves any other as it was (ok is false), so one
+// written, unconfirmed, or never reported on keeps what the load may hold of
+// it, and removing it still takes it back.
+//
 // A withdraw ends as the engine says: withdrawn, not_written or refused;
 // another word, which only a release gets, is refused with its name as the
 // reason, as an unknown one is. not_written of an approval its load had
@@ -310,6 +344,9 @@ func (a FoundryDecisionApplied) After(o FoundryReleaseOutcome) (status FoundryRe
 	case FoundryReleaseOutcomeWritten:
 		return FoundryReleaseWritten, "", true
 	case FoundryReleaseOutcomeRefused:
+		if o.Reason == FoundryReleaseDocumentChanged && (!a.Status.Waits() || a.Unconfirmed()) {
+			return a.Status, a.Reason, false
+		}
 		return FoundryReleaseRefused, o.Reason, true
 	case FoundryReleaseOutcomeMissed:
 		return FoundryReleaseMissed, "", true

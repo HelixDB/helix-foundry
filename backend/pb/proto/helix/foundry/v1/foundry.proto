@@ -5,6 +5,7 @@ package helix.foundry.v1;
 import "google/api/annotations.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "helix/foundry/v1/types.proto";
 
 option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
@@ -306,11 +307,29 @@ service FoundryService {
   rpc ListOntologyGenerations(ListOntologyGenerationsRequest) returns (ListOntologyGenerationsResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations"};
   }
+  rpc AnswerOntologyGeneration(AnswerOntologyGenerationRequest) returns (OntologyGenerationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}:answer"
+      body: "*"
+    };
+  }
+  rpc CancelOntologyGeneration(CancelOntologyGenerationRequest) returns (OntologyGenerationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}:cancel"
+      body: "*"
+    };
+  }
   rpc SettleFoundryReview(SettleFoundryReviewRequest) returns (FoundryReviewDecisionResponse) {
     option (google.api.http) = {
       post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/reviews/{review_id}:settle"
       body: "*"
     };
+  }
+  // The reviews the ontology's current load holds, as SettleFoundryReview
+  // reads them: each with what settles it. Read from the load's database as
+  // the caller, a page at a time, or by review key.
+  rpc ListFoundryReviews(ListFoundryReviewsRequest) returns (ListFoundryReviewsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/reviews"};
   }
   rpc ListFoundryReviewDecisions(ListFoundryReviewDecisionsRequest) returns (ListFoundryReviewDecisionsResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions"};
@@ -348,7 +367,12 @@ service FoundryService {
   // agent read of the ontology and wrote to Foundry between its request and
   // its answer. Owners and admins create and delete workflows; a caller that
   // may read the ontology's database starts and finishes runs, and reads
-  // them.
+  // them. Foundry makes a workflow of each ontology an automation uses
+  // (FoundryWorkflow.automation) and records each of its runs there: only
+  // Foundry starts and finishes those runs (FAILED_PRECONDITION, reason
+  // FOUNDRY_WORKFLOW_OF_AUTOMATION), only the automation's own calls record
+  // under them (a run's id alone records nothing), and the workflow is
+  // deleted only once its automation is. A grantee sees none of them.
   rpc CreateFoundryWorkflow(CreateFoundryWorkflowRequest) returns (FoundryWorkflowResponse) {
     option (google.api.http) = {
       post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows"
@@ -456,6 +480,246 @@ service FoundryService {
       post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads/{id}:stop-enrichment"
       body: "*"
     };
+  }
+
+  // The Assistant: a person's conversations with Foundry's own agent, which
+  // reads the workspace with Foundry's tools and prepares actions only that
+  // person runs, with a click. Each thread and its actions are its user's
+  // own: another user's answer NotFound. The UI polls a turn's events as it
+  // polls a question's.
+  rpc SendFoundryAgentMessage(SendFoundryAgentMessageRequest) returns (FoundryAgentTurnResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/turns"
+      body: "*"
+    };
+  }
+  rpc ListFoundryAgentThreads(ListFoundryAgentThreadsRequest) returns (ListFoundryAgentThreadsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/threads"};
+  }
+  rpc GetFoundryAgentThread(GetFoundryAgentThreadRequest) returns (FoundryAgentThreadResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/threads/{id}"};
+  }
+  rpc DeleteFoundryAgentThread(DeleteFoundryAgentThreadRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/agent/threads/{id}"};
+  }
+  rpc ListFoundryAgentTurnEvents(ListFoundryAgentTurnEventsRequest) returns (ListFoundryAgentTurnEventsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/turns/{id}/events"};
+  }
+  rpc CancelFoundryAgentTurn(CancelFoundryAgentTurnRequest) returns (FoundryAgentTurnResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/turns/{id}:cancel"
+      body: "*"
+    };
+  }
+  rpc ExecuteFoundryAgentAction(ExecuteFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:execute"
+      body: "*"
+    };
+  }
+  rpc RefreshFoundryAgentAction(RefreshFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:refresh"
+      body: "*"
+    };
+  }
+  rpc DismissFoundryAgentAction(DismissFoundryAgentActionRequest) returns (FoundryAgentActionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/actions/{id}:dismiss"
+      body: "*"
+    };
+  }
+
+  // Where a local install's Assistant runs its new threads' turns: Foundry's
+  // own worker on the workspace's model provider (api), or a helper on the
+  // owner's machine driving the Claude Code or Codex CLI they signed in to
+  // (claude_code, codex), and the helpers paired with the install. A local
+  // install's owner's only: hosted Helix serves none of these
+  // (FAILED_PRECONDITION, reason FOUNDRY_AGENT_HOSTS_LOCAL_ONLY).
+  rpc GetFoundryAgentRuntime(GetFoundryAgentRuntimeRequest) returns (FoundryAgentRuntimeResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/agent/runtime"};
+  }
+  rpc UpdateFoundryAgentRuntime(UpdateFoundryAgentRuntimeRequest) returns (FoundryAgentRuntimeResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/agent/runtime"
+      body: "*"
+    };
+  }
+  rpc CreateFoundryAgentHostPairing(CreateFoundryAgentHostPairingRequest) returns (FoundryAgentHostPairingResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/host-pairings"
+      body: "*"
+    };
+  }
+  rpc RevokeFoundryAgentHost(RevokeFoundryAgentHostRequest) returns (FoundryAgentHostResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/agent/hosts/{id}:revoke"
+      body: "*"
+    };
+  }
+
+  // Dashboards: tiles of typed queries over ontologies' loads (package
+  // dashboard), which every member of the workspace sees and reads as
+  // themselves through ReadFoundryGraph: a dashboard's page in Foundry is how
+  // it is shared inside the workspace. A member creates dashboards and edits
+  // and deletes their own while unpinned; owners and admins edit and delete
+  // any, pin them in every member's sidebar, and publish one's snapshot at a
+  // public link for people outside the workspace (hosted only, with
+  // foundry.dashboards.public_enabled, while the workspace has public links
+  // on). A grantee of source grants sees the pinned ones and changes none.
+  rpc ListFoundryDashboards(ListFoundryDashboardsRequest) returns (ListFoundryDashboardsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboards"};
+  }
+  rpc GetFoundryDashboard(GetFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}"};
+  }
+  rpc CreateFoundryDashboard(CreateFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards"
+      body: "*"
+    };
+  }
+  rpc UpdateFoundryDashboard(UpdateFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}"
+      body: "*"
+    };
+  }
+  rpc DeleteFoundryDashboard(DeleteFoundryDashboardRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}"};
+  }
+  rpc PinFoundryDashboard(PinFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:pin"
+      body: "*"
+    };
+  }
+  rpc AddFoundryDashboardQuestionVisual(AddFoundryDashboardQuestionVisualRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:add-question-visual"
+      body: "*"
+    };
+  }
+  rpc PreviewFoundryDashboardTile(PreviewFoundryDashboardTileRequest) returns (PreviewFoundryDashboardTileResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards:preview-tile"
+      body: "*"
+    };
+  }
+  rpc PublishFoundryDashboard(PublishFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:publish"
+      body: "*"
+    };
+  }
+  rpc UnpublishFoundryDashboard(UnpublishFoundryDashboardRequest) returns (FoundryDashboardResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/dashboards/{id}:unpublish"
+      body: "*"
+    };
+  }
+  // The workspace's dashboard settings: whether its dashboards may be
+  // published at public links. Any member reads them (a grantee doesn't);
+  // only an owner changes them.
+  rpc GetFoundryDashboardSettings(GetFoundryDashboardSettingsRequest) returns (FoundryDashboardSettingsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/dashboard-settings"};
+  }
+  rpc UpdateFoundryDashboardSettings(UpdateFoundryDashboardSettingsRequest) returns (FoundryDashboardSettingsResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/dashboard-settings"
+      body: "*"
+    };
+  }
+
+  // Automations (package automation): a person's graph of steps, WHEN its
+  // trigger fires (a schedule, or a sync, load, upload or draft that ended)
+  // THEN Assistant steps, approved actions, conditions and emails, run as
+  // that person, its owner. Every member sees every automation of the
+  // workspace and creates their own; only its owner edits, approves, resumes
+  // and runs one, as it runs as them; its owner or an owner or admin pauses,
+  // deletes and cancels a run. An automation runs only once its owner
+  // approved its spec in Foundry (ApproveFoundryAutomation, which the MCP
+  // never calls: an agent's create or edit waits for the person's click). A
+  // grantee of source grants, a service key and an agent see none. Off
+  // (foundry.automations.enabled false) every route is FAILED_PRECONDITION,
+  // reason FOUNDRY_AUTOMATIONS_DISABLED.
+  rpc ListFoundryAutomations(ListFoundryAutomationsRequest) returns (ListFoundryAutomationsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations"};
+  }
+  rpc GetFoundryAutomation(GetFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations/{id}"};
+  }
+  rpc CreateFoundryAutomation(CreateFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations"
+      body: "*"
+    };
+  }
+  rpc UpdateFoundryAutomation(UpdateFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/automations/{id}"
+      body: "*"
+    };
+  }
+  rpc DeleteFoundryAutomation(DeleteFoundryAutomationRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/automations/{id}"};
+  }
+  rpc ApproveFoundryAutomation(ApproveFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:approve"
+      body: "*"
+    };
+  }
+  rpc PauseFoundryAutomation(PauseFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:pause"
+      body: "*"
+    };
+  }
+  rpc ResumeFoundryAutomation(ResumeFoundryAutomationRequest) returns (FoundryAutomationResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:resume"
+      body: "*"
+    };
+  }
+  rpc RunFoundryAutomation(RunFoundryAutomationRequest) returns (FoundryAutomationRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{id}:run"
+      body: "*"
+    };
+  }
+  rpc ListFoundryAutomationRuns(ListFoundryAutomationRunsRequest) returns (ListFoundryAutomationRunsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations/{automation_id}/runs"};
+  }
+  rpc GetFoundryAutomationRun(GetFoundryAutomationRunRequest) returns (FoundryAutomationRunResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automations/{automation_id}/runs/{id}"};
+  }
+  rpc CancelFoundryAutomationRun(CancelFoundryAutomationRunRequest) returns (FoundryAutomationRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/automations/{automation_id}/runs/{id}:cancel"
+      body: "*"
+    };
+  }
+  // Suggestions for Founder, written for one ontology's current version:
+  // prompts of four kinds (2 questions, 2 dashboards, 2 changes to the
+  // ontology and 4 workflows, in that order) that fill a composer for the
+  // person to edit and send, never run: Founder's new chat shows each
+  // kind's first 2 as cards, the new workflow page the workflows. Founder
+  // writes them once per version in one call, on the workspace's cheapest
+  // task model (the AI setting's extraction model), charged to its monthly
+  // budget. Each kind is filled to its count, in order, from: questions,
+  // the version's competency questions, then the model's; dashboards and
+  // workflows, the model's, then the competency questions'; changes to the
+  // ontology, its open audit findings and the connections and document sets
+  // it doesn't read, then the model's; then fixed examples. So until
+  // Founder has written them (generating), and where it can't (no AI
+  // provider, Founder off, its budget or the workspace's 20 writes an hour
+  // spent, a failure), every kind still has its count. Without a current
+  // version, every kind is fixed examples. Workflows are left out where the
+  // deployment has none. Any signed-in member may read them (a grantee may
+  // not); an ontology the workspace hasn't is NOT_FOUND.
+  rpc ListFoundryAutomationSuggestions(ListFoundryAutomationSuggestionsRequest) returns (ListFoundryAutomationSuggestionsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/automation-suggestions"};
   }
 
   // Helix Foundry usage: the workspace's AI spend this month, by task
@@ -965,6 +1229,37 @@ message ListOntologyGenerationsResponse {
   repeated OntologyGeneration generations = 1;
 }
 
+// AnswerOntologyGenerationRequest answers the round of questions a
+// generation waits on (status needs_input) and queues it to carry on from
+// where the agent asked. Each answer names one of its questions, at most
+// once, and answers it as AgentQuestionAnswer says. With use_defaults, every
+// question left out is left to the agent (left_to_agent), which takes its
+// recommended answer, or decides, as its own choice; without, every
+// blocking question must be answered, and a non-blocking one left out stays
+// open in the draft. INVALID_ARGUMENT otherwise, and for a round below 1. A generation that isn't waiting, or waits on another round
+// than round (the questions were answered, and the agent asked again), is
+// FAILED_PRECONDITION. It needs what GenerateOntology needs: managing the
+// ontology, and an AI provider.
+message AnswerOntologyGenerationRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  string id = 3;
+  repeated AgentQuestionAnswer answers = 4;
+  bool use_defaults = 5;
+  // The generation's question_round the answers are for.
+  int32 round = 6;
+}
+
+// CancelOntologyGenerationRequest ends a generation that is queued, running
+// or waiting for answers, storing no draft, so the ontology may generate
+// again; a running one's turn stops at the worker's next lease renewal. One
+// that ended is FAILED_PRECONDITION. It needs what GenerateOntology needs.
+message CancelOntologyGenerationRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  string id = 3;
+}
+
 message CreateFoundryOntologyRequest {
   string workspace_id = 1;
   // 1 to 120 characters.
@@ -1445,6 +1740,23 @@ message SettleFoundryReviewRequest {
 message FoundryReviewDecisionResponse {
   FoundryReviewDecision decision = 1;
 }
+message ListFoundryReviewsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  // Only these reviews, at most 50, each listed once if the current load
+  // holds it; never with page_token.
+  repeated string review_keys = 3;
+  // The next_page_token of a previous page, of the load still current:
+  // FAILED_PRECONDITION once another load became current.
+  string page_token = 4;
+}
+message ListFoundryReviewsResponse {
+  // The current load the reviews are of.
+  string load_id = 1;
+  repeated FoundryReview reviews = 2;
+  // Set while more reviews follow, up to the 10,000th.
+  string next_page_token = 3;
+}
 message ListFoundryReviewDecisionsRequest {
   string workspace_id = 1;
   string ontology_id = 2;
@@ -1799,4 +2111,447 @@ message AssessFoundryWorkflowRunRequest {
   string ontology_id = 2;
   string workflow_id = 3;
   string id = 4;
+}
+
+// SendFoundryAgentMessageRequest queues a person's message in their thread,
+// or in a new one when thread_id is empty, or their answers to the
+// questions their thread's newest turn asked them. The same client_token
+// returns the turn it queued. A thread with a live turn, or an action
+// running, is FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the
+// user's hourly messages and answers RESOURCE_EXHAUSTED; the month's budget
+// FAILED_PRECONDITION.
+message SendFoundryAgentMessageRequest {
+  string workspace_id = 1;
+  // Required with answers: the thread of the turn they answer.
+  string thread_id = 2;
+  oneof input {
+    // At most 4,000 characters.
+    string text = 3;
+    // Answers to the questions answers.turn_id asked, which must be the
+    // thread's newest turn, done, having asked (FAILED_PRECONDITION, reason
+    // FOUNDRY_AGENT_QUESTIONS_CLOSED, once anything followed it, its answers
+    // among them). Checked against its questions as AgentQuestionAnswer
+    // says, every blocking one answered (INVALID_ARGUMENT otherwise).
+    // Answers to a relayed generation's questions are sent to it first, as
+    // the caller (answer_generation_questions, use_defaults when any is left
+    // out), while it still waits on that round: else FAILED_PRECONDITION,
+    // reason FOUNDRY_AGENT_QUESTIONS_CLOSED. A refusal of the send (the
+    // caller may not answer it) is FAILED_PRECONDITION and queues nothing; a
+    // refusal of the turn after it says the answers reached the draft.
+    FoundryAgentAnswers answers = 6;
+  }
+  FoundryAgentPageContext page_context = 4;
+  // At most 64 characters.
+  string client_token = 5;
+}
+message FoundryAgentTurnResponse {
+  FoundryAgentTurn turn = 1;
+  FoundryAgentThread thread = 2;
+}
+// ListFoundryAgentThreadsRequest lists the caller's threads, most recently
+// active first, 50 a page.
+message ListFoundryAgentThreadsRequest {
+  string workspace_id = 1;
+  string page_token = 2;
+}
+message ListFoundryAgentThreadsResponse {
+  repeated FoundryAgentThread threads = 1;
+  string next_page_token = 2;
+}
+message GetFoundryAgentThreadRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// FoundryAgentThreadResponse is a thread with its newest 100 turns, oldest
+// first, and every action the agent prepared in it.
+message FoundryAgentThreadResponse {
+  FoundryAgentThread thread = 1;
+  repeated FoundryAgentTurn turns = 2;
+  repeated FoundryAgentAction actions = 3;
+}
+// DeleteFoundryAgentThreadRequest deletes the caller's thread, cancelling its
+// live turn.
+message DeleteFoundryAgentThreadRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ListFoundryAgentTurnEventsRequest returns up to 200 events after after_seq.
+message ListFoundryAgentTurnEventsRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int32 after_seq = 3;
+}
+message ListFoundryAgentTurnEventsResponse {
+  repeated FoundryAgentEvent events = 1;
+  // The turn's status when read: once it is not queued or running and the
+  // events reach last_seq, none follows.
+  string status = 2;
+  int32 last_seq = 3;
+}
+// CancelFoundryAgentTurnRequest ends the caller's queued or running turn. One
+// that ended otherwise is FAILED_PRECONDITION.
+message CancelFoundryAgentTurnRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ExecuteFoundryAgentActionRequest runs the caller's prepared action once,
+// for the payload they were shown (payload_hash), authorized again as the
+// caller. A thread with a live turn is FAILED_PRECONDITION (reason
+// FOUNDRY_AGENT_THREAD_BUSY), as are an action that isn't prepared
+// (FOUNDRY_AGENT_ACTION_NOT_PREPARED), another payload
+// (FOUNDRY_AGENT_ACTION_CHANGED) and an expired confirmation
+// (FOUNDRY_AGENT_ACTION_EXPIRED: refresh it). The action then ends
+// succeeded, failed or unknown, and the agent goes on from it in a new turn
+// (continuation).
+message ExecuteFoundryAgentActionRequest {
+  string workspace_id = 1;
+  string id = 2;
+  string payload_hash = 3;
+}
+// RefreshFoundryAgentActionRequest prepares the caller's expired (or
+// prepared) action again as the caller, with no model call.
+message RefreshFoundryAgentActionRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// DismissFoundryAgentActionRequest records the caller's no; no turn starts.
+message DismissFoundryAgentActionRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryAgentActionResponse {
+  FoundryAgentAction action = 1;
+  // The turn the agent goes on from the action's result in; unset unless it ran.
+  FoundryAgentTurn continuation = 2;
+}
+message GetFoundryAgentRuntimeRequest {
+  string workspace_id = 1;
+}
+// UpdateFoundryAgentRuntimeRequest sets the runtime the workspace's new
+// threads take (a thread keeps its own): api, claude_code or codex. codex
+// runs with the owner's own Codex setup, so it needs their confirmation,
+// once (confirm_codex, kept as FoundryAgentRuntime.codex_confirmed_at):
+// without it, codex is FAILED_PRECONDITION (reason
+// FOUNDRY_AGENT_CODEX_UNCONFIRMED). A helper need not be online to choose
+// one; sending in its thread then is FAILED_PRECONDITION (reason
+// FOUNDRY_AGENT_HOST_OFFLINE) until it is.
+message UpdateFoundryAgentRuntimeRequest {
+  string workspace_id = 1;
+  string runtime = 2;
+  // The owner confirms what codex runs with (Settings › AI models shows it):
+  // kept, so it is asked once.
+  bool confirm_codex = 3;
+}
+message FoundryAgentRuntimeResponse {
+  FoundryAgentRuntime runtime = 1;
+}
+// CreateFoundryAgentHostPairingRequest makes a one-time code, valid for 10
+// minutes, that pairs a helper with the install: `npx
+// @helixdb/foundry-agent-host pair <code>` on the owner's machine.
+message CreateFoundryAgentHostPairingRequest {
+  string workspace_id = 1;
+}
+message FoundryAgentHostPairingResponse {
+  // hxp_ and 32 characters; shown once, never stored (only its SHA-256).
+  string code = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  // The command that pairs a helper with it, ready to paste.
+  string command = 3;
+}
+// RevokeFoundryAgentHostRequest unpairs a helper: its token and the tokens of
+// the turns it runs stop working at once. Revoking one already revoked
+// returns it.
+message RevokeFoundryAgentHostRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryAgentHostResponse {
+  FoundryAgentHost host = 1;
+}
+
+// ListFoundryDashboardsRequest lists the workspace's dashboards, pinned ones
+// first, without their specs: at most foundry.dashboards' cap of them, so one
+// answer holds all.
+message ListFoundryDashboardsRequest {
+  string workspace_id = 1;
+}
+message ListFoundryDashboardsResponse {
+  repeated FoundryDashboard dashboards = 1;
+  // Whether the caller may create one.
+  bool can_create = 2;
+}
+message GetFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryDashboardResponse {
+  FoundryDashboard dashboard = 1;
+}
+// CreateFoundryDashboardRequest makes a dashboard, unpinned. The same
+// client_token returns the one it made. Past the workspace's cap is
+// FAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_LIMIT; a spec that isn't one
+// is INVALID_ARGUMENT, saying what is wrong.
+message CreateFoundryDashboardRequest {
+  string workspace_id = 1;
+  // 1 to 120 characters.
+  string name = 2;
+  // At most 1,000 characters.
+  string description = 3;
+  // The spec: {"v": 1, "tiles": [...], "layout": {"rows": [...]}} (package
+  // dashboard); empty is a dashboard with no tiles.
+  string spec_json = 4;
+  // 1 to 64 characters.
+  string client_token = 5;
+}
+// UpdateFoundryDashboardRequest edits the dashboard at expected_revision: each
+// field set is changed, at least one. Another revision is FAILED_PRECONDITION,
+// reason FOUNDRY_DASHBOARD_CHANGED; a dashboard the caller may not edit
+// (another member's, or pinned, for a member) PERMISSION_DENIED.
+message UpdateFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  optional string name = 4;
+  optional string description = 5;
+  optional string spec_json = 6;
+}
+message DeleteFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// PinFoundryDashboardRequest pins the dashboard in every member's sidebar, or
+// unpins it, at expected_revision: owners and admins only. Another revision is
+// FAILED_PRECONDITION, reason FOUNDRY_DASHBOARD_CHANGED, so what is pinned is
+// what its pinner saw; past the workspace's pinned cap, reason
+// FOUNDRY_DASHBOARD_LIMIT.
+message PinFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+  bool pinned = 3;
+  int64 expected_revision = 4;
+}
+// AddFoundryDashboardQuestionVisualRequest adds an Analyst answer's query
+// result, as its visual shows it, to the dashboard at expected_revision as a
+// tile of its own row, last: the query the question recorded, the visual's
+// kind and title (else the question's text). The question must be answered and
+// record evidence_id as a query result.
+message AddFoundryDashboardQuestionVisualRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  string ontology_id = 4;
+  string question_id = 5;
+  // The query result, such as e2.
+  string evidence_id = 6;
+  // The tile reads the question's load rather than the current one.
+  bool pin_load = 7;
+}
+// PreviewFoundryDashboardTileRequest checks a tile and reads it once, as the
+// caller: the tile as a spec writes it (package dashboard).
+message PreviewFoundryDashboardTileRequest {
+  string workspace_id = 1;
+  string tile_json = 2;
+}
+message PreviewFoundryDashboardTileResponse {
+  // The tile as a spec would keep it.
+  string tile_json = 1;
+  // The load it read: the ontology's current one, or the one it pins.
+  string load_id = 2;
+  // Its read's outcome as ReadFoundryGraph gives it: {"ok": <the query's
+  // answer>} or {"error": <why it has none>}.
+  string outcome_json = 3;
+  string as_of = 4;
+}
+// PublishFoundryDashboardRequest reads every tile as the caller, an owner or
+// admin, and keeps their outputs as the dashboard's public snapshot, at its
+// link: a new one the first time or once the last one expired, the same one
+// when published already. The snapshot is what the publisher reads; anyone
+// with the link sees it without signing in, and it changes only when
+// published again. The dashboard must still be at expected_revision
+// (FOUNDRY_DASHBOARD_CHANGED) and have a tile. Refusals are
+// FAILED_PRECONDITION with a reason: a caller who isn't an owner or admin,
+// FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY; a host without public links,
+// FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE; a workspace whose owner turned them
+// off, FOUNDRY_DASHBOARD_PUBLIC_OFF; a tile that can't be read, or an
+// ontology it read that was deleted meanwhile or is being purged of People
+// enrichment's profiles, FOUNDRY_DASHBOARD_TILE_FAILED, saying which and why;
+// a snapshot past its size, FOUNDRY_DASHBOARD_TOO_LARGE; an expired link
+// published again with no expiry chosen, FOUNDRY_DASHBOARD_LINK_EXPIRED.
+message PublishFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  // When the link ends, from now; unset keeps a live link's own.
+  FoundryDashboardLinkExpiry expiry = 4;
+}
+// UnpublishFoundryDashboardRequest deletes the dashboard's snapshot, so its
+// link shows nothing: owners and admins only (else
+// FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY), whether or not public links are on.
+message UnpublishFoundryDashboardRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+
+message GetFoundryDashboardSettingsRequest {
+  string workspace_id = 1;
+}
+// UpdateFoundryDashboardSettingsRequest turns the workspace's public
+// dashboard links on or off: owners only. Off, every link of the workspace
+// shows nothing at once; on again, the links not unpublished meanwhile, and
+// not expired, show again.
+message UpdateFoundryDashboardSettingsRequest {
+  string workspace_id = 1;
+  bool public_links = 2;
+}
+message FoundryDashboardSettingsResponse {
+  FoundryDashboardSettings settings = 1;
+}
+
+// ListFoundryAutomationsRequest lists the workspace's automations, most
+// recently changed first, each with its newest run and when it last failed,
+// without their specs: at most foundry.automations.max_per_workspace, so one
+// answer holds all. With stats_days (1 to 30), each also counts its runs of
+// that many days, today included, by the days of time_zone (an IANA zone;
+// UTC when empty), and the answer sums them in summary.
+message ListFoundryAutomationsRequest {
+  string workspace_id = 1;
+  int32 stats_days = 2;
+  string time_zone = 3;
+}
+message ListFoundryAutomationsResponse {
+  repeated FoundryAutomation automations = 1;
+  // Whether the caller may create one.
+  bool can_create = 2;
+  // Whether a notify step emails here: false on a standalone install, which
+  // sends no email and records the step as skipped.
+  bool email = 3;
+  // The workspace's runs of the days asked for; unset without stats_days.
+  FoundryAutomationRunSummary summary = 4;
+}
+message GetFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+message FoundryAutomationResponse {
+  FoundryAutomation automation = 1;
+}
+// CreateFoundryAutomationRequest makes the caller's automation, waiting for
+// their approval (needs_approval): it never runs until they approve it. The
+// same client_token returns the one it made. A spec that isn't one is
+// INVALID_ARGUMENT, saying what is wrong; a spec naming a connector,
+// ontology, document set or dashboard the workspace hasn't, INVALID_ARGUMENT
+// too; past the workspace's cap, FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_LIMIT.
+message CreateFoundryAutomationRequest {
+  string workspace_id = 1;
+  // 1 to 120 characters.
+  string name = 2;
+  // At most 1,000 characters.
+  string description = 3;
+  // The spec: {"v": 1, "nodes": [...], "edges": [...]} (package automation).
+  string spec_json = 4;
+  // 1 to 64 characters.
+  string client_token = 5;
+}
+// UpdateFoundryAutomationRequest edits the caller's automation at
+// expected_revision: each field set changes, at least one. A spec that
+// changes waits for its owner's approval again, stopping the automation
+// until then; a name or description alone keeps it as it is. Another's
+// automation is PERMISSION_DENIED; another revision FAILED_PRECONDITION,
+// reason FOUNDRY_AUTOMATION_CHANGED.
+message UpdateFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+  optional string name = 4;
+  optional string description = 5;
+  optional string spec_json = 6;
+}
+// DeleteFoundryAutomationRequest deletes the automation, its runs and their
+// steps, cancelling a live run: its owner, or an owner or admin.
+message DeleteFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ApproveFoundryAutomationRequest is its owner's click on the spec they read
+// at expected_revision: it becomes active, its schedule firing next at its
+// first time after now, an event trigger counting only work that ends from
+// now. Only the owner, signed in to the site: an agent through the MCP, a
+// key or a grantee is PERMISSION_DENIED. Approving an approved spec again
+// changes nothing; another revision is FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_CHANGED.
+message ApproveFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+  int64 expected_revision = 3;
+}
+// PauseFoundryAutomationRequest stops the active automation's runs (a live
+// one goes on): its owner, or an owner or admin. One waiting for approval
+// is FAILED_PRECONDITION, reason FOUNDRY_AUTOMATION_NOT_ACTIVE.
+message PauseFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// ResumeFoundryAutomationRequest makes the owner's paused automation active
+// again, from now. One waiting for approval is FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_UNAPPROVED.
+message ResumeFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+// RunFoundryAutomationRequest queues a run of the owner's automation now, of
+// its approved spec, active or paused. The same client_token returns the run
+// it queued. A live run is FAILED_PRECONDITION, reason
+// FOUNDRY_AUTOMATION_BUSY; one waiting for approval,
+// FOUNDRY_AUTOMATION_UNAPPROVED; the workspace's runs of the day spent,
+// RESOURCE_EXHAUSTED.
+message RunFoundryAutomationRequest {
+  string workspace_id = 1;
+  string id = 2;
+  // 1 to 64 characters.
+  string client_token = 3;
+}
+// ListFoundryAutomationRunsRequest lists the automation's runs, newest first,
+// 50 a page, without their specs or steps.
+message ListFoundryAutomationRunsRequest {
+  string workspace_id = 1;
+  string automation_id = 2;
+  string page_token = 3;
+}
+message ListFoundryAutomationRunsResponse {
+  repeated FoundryAutomationRun runs = 1;
+  string next_page_token = 2;
+}
+// GetFoundryAutomationRunRequest returns a run with the spec it ran and its
+// steps.
+message GetFoundryAutomationRunRequest {
+  string workspace_id = 1;
+  string automation_id = 2;
+  string id = 3;
+}
+// CancelFoundryAutomationRunRequest ends a live run cancelled, with the step
+// it was running: the automation's owner, or an owner or admin. A run that
+// ended otherwise is FAILED_PRECONDITION, reason FOUNDRY_AUTOMATION_RUN_ENDED.
+message CancelFoundryAutomationRunRequest {
+  string workspace_id = 1;
+  string automation_id = 2;
+  string id = 3;
+}
+message ListFoundryAutomationSuggestionsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+}
+message ListFoundryAutomationSuggestionsResponse {
+  // Each kind's, kinds in their enum's order: at most 10.
+  repeated FoundryAutomationSuggestion suggestions = 1;
+  // Where the first workflow came from (each suggestion says its own).
+  FoundryAutomationSuggestionSource source = 2;
+  // Founder is writing them: these are the fallback; read again in a
+  // few seconds.
+  bool generating = 3;
+  // The version they were written for; empty without a current version.
+  string version_id = 4;
+}
+message FoundryAutomationRunResponse {
+  FoundryAutomationRun run = 1;
 }

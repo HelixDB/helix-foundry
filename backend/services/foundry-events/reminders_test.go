@@ -335,7 +335,10 @@ func TestReminderLog(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
 	require.Len(t, lines, 3)
 	for _, line := range lines {
-		assert.NotContains(t, line, "ada", "the address")
+		// The address's local part and domain, not "ada" alone: a request
+		// id is a random UUID, whose hex can hold "ada".
+		assert.NotContains(t, line, "ada@", "the address")
+		assert.NotContains(t, line, "example.com", "the address")
 		assert.NotContains(t, line, "London", "the zone")
 		assert.NotContains(t, line, siteSecret, "the bearer")
 		var entry map[string]any

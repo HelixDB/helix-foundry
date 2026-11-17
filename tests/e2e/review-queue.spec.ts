@@ -10,7 +10,7 @@ import {
   uploadAndLoadContract,
 } from "./support/mock";
 
-// The review queue (/ontology/:id/review): one list of the current load's
+// The review queue (/ontology/:id/review, the Review page's Facts tab): one list of the current load's
 // open reviews, the decisions writing the most facts first, about one card
 // in ten drawn at random from a score band, each card's evidence before
 // its score, settled by the paths a document's Needs review uses, each
@@ -28,9 +28,7 @@ async function queued(page: Page) {
   await signIn(page);
   await uploadAndLoadContract(page, [file("variant.md", HEDGED)]);
   await page.goto(`${O}/review`);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Review queue",
-  );
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Review");
 }
 const queue = (page: Page) => page.getByRole("list", { name: "Review queue" });
 const cards = (page: Page) => queue(page).locator(":scope > li");
@@ -49,7 +47,7 @@ test("ranks one queue for the ontology: what writes facts first, evidence before
   await expect(cards(page).first()).toBeVisible();
   // It's one of the ontology's pages.
   await expect(page.locator('.hf-subnav-link[aria-current="page"]')).toHaveText(
-    "Review queue",
+    /^Review/,
   );
   await expect(page.getByRole("button", { name: /Approve all/ })).toHaveCount(
     0,
@@ -60,7 +58,8 @@ test("ranks one queue for the ontology: what writes facts first, evidence before
   await expect(held.first()).toContainText(
     /may have signed[\s\S]*variant\.md · section \d+[\s\S]*Verifier score 0\.72 \(0\.7 to 0\.8\)/,
   );
-  // The name in no row writes the claim it holds back, from the next load.
+  // The name in no row writes the claim it holds back, at once where the
+  // load's saved work replays (this load was read before that could be).
   const umbrella = card(page, "A name in a document").filter({
     hasText: "Umbrella Holdings",
   });
@@ -68,7 +67,7 @@ test("ranks one queue for the ontology: what writes facts first, evidence before
     "Settling it writes 1 fact the load holds back for it.",
   );
   await expect(umbrella.first()).toContainText(
-    "A name’s decision applies from the next load",
+    "A name’s decision applies to this load at once",
   );
   // Held claims (a fact each, at once) before names, before values.
   const titles = await cards(page).locator("h3").allTextContents();
@@ -142,7 +141,9 @@ test("settles from the queue by the paths a document's page uses, each decision 
     decision: { resolve: { notInData: true } },
     drawn: "ranked",
   });
-  await expect(umbrella).toContainText("Decision saved. Reload to apply.");
+  await expect(umbrella).toContainText(
+    "This load was built before names could be applied at once; the next load applies it.",
+  );
   // A value.
   const value = card(page, "A value documents state differently").first();
   await choose(

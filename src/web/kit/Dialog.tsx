@@ -34,7 +34,10 @@ export function Dialog({
   children?: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
-    close = useRef(onClose);
+    close = useRef(onClose),
+    // Where the last press began: a text selection that starts in a field
+    // and ends over the backdrop keeps the dialog (and what was typed).
+    pressed = useRef<EventTarget | null>(null);
   close.current = onClose;
   useEffect(() => {
     const el = ref.current!,
@@ -62,8 +65,10 @@ export function Dialog({
         `hf-dialog--${variant}`,
         className,
       )}
+      onMouseDown={(e) => (pressed.current = e.target)}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && pressed.current === e.target)
+          onClose();
       }}
     >
       <div className="hf-dialog-card">

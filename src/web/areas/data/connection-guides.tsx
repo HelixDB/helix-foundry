@@ -223,6 +223,29 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
     </ol>
   ),
+  databuddy: () => (
+    <ol>
+      <li>
+        In{" "}
+        <External href="https://app.databuddy.cc">
+          your Databuddy dashboard
+        </External>
+        , open <strong>Organization settings → API keys</strong> and create a
+        key named “Helix Foundry” with the <strong>read:data</strong> scope, for
+        every website or only the ones to sync.
+      </li>
+      <li>
+        Copy the <code>dbdy_…</code> key and paste it below. Databuddy shows it
+        only once.
+      </li>
+      <li>
+        Foundry only reads: each website’s daily metrics, pages, referrers,
+        custom events, sessions and visitors over the days of history you
+        choose. Name website ids to sync only those; blank syncs every website
+        the key reads.
+      </li>
+    </ol>
+  ),
   granola: () => (
     <ol>
       <li>

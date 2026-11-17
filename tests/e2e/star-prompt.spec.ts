@@ -10,12 +10,17 @@ import {
 // The GitHub star prompt (src/web/shell/star-prompt.tsx), on the hosted
 // site: from the third question asked in Analyst, once the page has gone
 // 30 s without input, a card asks for a star; Star on GitHub opens the
-// repository, and once it is clicked or dismissed nothing asks again.
+// repository, and once it is clicked or dismissed nothing asks again. Only
+// the Analyst's composer counts questions, so these run where the WFE has
+// Founder off, and /ask is the Analyst's page.
 
 const REPOSITORY = "https://github.com/helixdb/helix-foundry";
 
 async function ask(page: Page, question: string) {
-  await page.getByRole("link", { name: "Analyst", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Founder", exact: true })
+    .click();
   const form = page.getByRole("form", { name: "Ask a question" });
   await form.getByRole("textbox", { name: /^Question/ }).fill(question);
   await form.getByRole("button", { name: "Ask", exact: true }).click();
@@ -41,7 +46,11 @@ test.beforeEach(async ({ page, context }) => {
   await context.route(`${REPOSITORY}**`, (route) =>
     route.fulfill({ contentType: "text/html", body: "<title>GitHub</title>" }),
   );
-  await mock.configure({ loadStepMs: 200, askStepMs: 100 });
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    agentEnabled: false,
+  });
   await signIn(page);
   await uploadAndLoadContract(page);
 });

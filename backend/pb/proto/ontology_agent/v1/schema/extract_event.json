@@ -112,6 +112,14 @@
           "type": "string",
           "const": "document"
         },
+        "names": {
+          "description": "What the run did with each name decision of the document: each resolve decision of\nit, and each `alias` that met one of its names the resolution ladder asked about.\n`written`: what it settles is written, by the document's commit in this run or, of a\ndocument the load held, now, as a load built again with it holds it (\"not in data\"\ntakes the name's reviews away); `not_asked`: of a document the load held, its reviews\nask about no such name, and nothing is written; `not_named`: the document names no\nentity so; or refused and why. Of a document the load held, `counts` counts what the\nrun wrote of it. A duplicate or out-of-scope document, or one that fails before its\ncommit, resolves no name and lists none; one a stopped run ends failed and retryable\nafter its commit or settling wrote lists what that wrote.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NamedDecision"
+          }
+        },
         "outcome": {
           "description": "How it ended.",
           "$ref": "#/$defs/DocumentOutcome"
@@ -149,7 +157,8 @@
         "sections",
         "counts",
         "usage",
-        "releases"
+        "releases",
+        "names"
       ]
     },
     {
@@ -540,6 +549,179 @@
         }
       ]
     },
+    "NameDecision": {
+      "description": "Which kind of name decision a [`NamedDecision`] is.",
+      "oneOf": [
+        {
+          "description": "A resolve decision of the document.",
+          "type": "string",
+          "const": "resolve"
+        },
+        {
+          "description": "A name the load carries to every document.",
+          "type": "string",
+          "const": "alias"
+        }
+      ]
+    },
+    "NameOutcome": {
+      "description": "What became of a name decision of a document.",
+      "oneOf": [
+        {
+          "description": "What it settles is written: by the document's commit in this run, or, of a document the\nload held, now, as a load built again with it holds it. \"Not in data\" takes the name's\nreviews away.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "written"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Of a document the load held: its reviews ask about no such name, so nothing waited on\nthe decision and nothing is written, as a decision sent again once written finds. What\nthe document's commit linked the name to stays, so a choice other than the one it\napplied takes effect when the document is committed again: on a new load, or sent\nagain with a removal of it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_asked"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The document names no entity so: nothing to settle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_named"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The name isn't settled. Of a document the load held, where the decision still changes\nhow a name its reviews ask about is asked (as a carried name that yields, or two\ndecisions that choose one entity), the name's review is written again as a load built\nwith the decision writes it; else nothing is.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "refused"
+            },
+            "reason": {
+              "description": "Why.",
+              "$ref": "#/$defs/NameRefusal"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "NameRefusal": {
+      "description": "Why a name decision didn't settle its name.",
+      "oneOf": [
+        {
+          "description": "The entity it chose isn't in the load, or its type's identity no longer reads it.",
+          "type": "string",
+          "const": "absent"
+        },
+        {
+          "description": "Of a document the load held: the load links the name already, by a rung a person can\noverturn or by another choice. Changing that link takes the document sent again with a\nremoval of it, in one request.",
+          "type": "string",
+          "const": "bound"
+        },
+        {
+          "description": "Another of the document's entities is the chosen entity, or would be linked otherwise\nwith it. A carried name yields, so the document's own link stands, and the name is\nasked again offering the chosen entity; a resolve decision leaves both names a\ncollision for a person. Of a document the load held, a decision that would change\nanother of its names writes nothing: send it again with a removal of it.",
+          "type": "string",
+          "const": "collides"
+        },
+        {
+          "description": "Of a document the load held: what the load holds of its names isn't what its commit\ngives, run again, as after a commit by another version, a choice of a name it doesn't\nask about changed since, or a row that a name now reaches arrived since. Send it again\nwith a removal.\nSaid of every decision of a name its reviews ask about: none is written.",
+          "type": "string",
+          "const": "differs"
+        },
+        {
+          "description": "The write was past what the store takes in one, or the document holds more reviews than\none read takes. Of a document the load held, said of every decision of a name its\nreviews ask about: none is written.",
+          "type": "string",
+          "const": "too_large"
+        },
+        {
+          "description": "Of a carried name: the names rung finds another entity for the name too, or two aliases\nof the name choose different entities.",
+          "type": "string",
+          "const": "two_rows"
+        },
+        {
+          "description": "Of a carried name: a role or defined term (\"Customer\", \"the Company\"), which says what a\nparty does in one document, not who it is.",
+          "type": "string",
+          "const": "role_term"
+        },
+        {
+          "description": "Of a carried name: another of the document's entities goes by it too.",
+          "type": "string",
+          "const": "shared"
+        },
+        {
+          "description": "Of a carried name: a verified identifier the document gives the entity found no row, so\nit is none of them.",
+          "type": "string",
+          "const": "identifier"
+        },
+        {
+          "description": "Of a carried name: the entity's names state a legal form that a name of the chosen\nentity shows to be another legal person's.",
+          "type": "string",
+          "const": "other_identity"
+        },
+        {
+          "description": "Of a document the load held: its model work couldn't be replayed, as its saved work lacks\na call settling the name asks (as the values in other words, asked since 4.13.0, of a load\ncommitted before) and the run has no budget for it, or a call the run asked failed. It is\nsettled when the document is committed again, or sent again with a budget.",
+          "type": "string",
+          "const": "not_replayed"
+        }
+      ]
+    },
+    "NamedDecision": {
+      "description": "What a run did with one name decision of a document's: a resolve decision of the document\n([`Decision::Resolve`]), or a name the load carries ([`Decision::Alias`]) that met the\nfullest name of one of its entities where the names rung would otherwise have asked. A\ncarried name the rung links by itself isn't listed: the ladder didn't ask.",
+      "type": "object",
+      "properties": {
+        "decision": {
+          "description": "Which kind of decision it is.",
+          "$ref": "#/$defs/NameDecision"
+        },
+        "decision_id": {
+          "description": "The decision's `decision_id`, if the request named it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "norm_name": {
+          "description": "The name it settles.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "What the run did with it.",
+          "$ref": "#/$defs/NameOutcome"
+        },
+        "type": {
+          "description": "The type it names.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "type",
+        "norm_name",
+        "outcome"
+      ]
+    },
     "PhaseUsage": {
       "description": "What one phase's model calls spent.",
       "type": "object",
@@ -725,7 +907,7 @@
           "const": "changed"
         },
         {
-          "description": "The document's model work states no such claim at that place now, as other artifacts,\nmodels or prompts may read the sentence otherwise.",
+          "description": "The document, cut into sections as the run cuts it, doesn't say the review's quote at its\nplace; the load keeps no record of the model work that stated it there; or the document's\nset no longer states its link, or reads an end's type. Since 4.17.0 a release reads no\nmodel work, so another prompt, model or artifact never refuses it.",
           "type": "string",
           "const": "not_stated"
         },
@@ -763,6 +945,11 @@
           "description": "It would open a `block` violation, or checking that needed more reading than the budget\nallows.",
           "type": "string",
           "const": "blocked"
+        },
+        {
+          "description": "The load holds the document under its id with other text: the claim the person read may\nnot be in it any more. Only a new load reads the new text.",
+          "type": "string",
+          "const": "document_changed"
         }
       ]
     },
@@ -797,6 +984,12 @@
         },
         "alias": {
           "description": "By another of its names, its fullest naming none.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "carried": {
+          "description": "By its fullest name, a name a person linked to the entity once for the whole load\n(an `alias` decision).",
           "type": "integer",
           "format": "uint",
           "minimum": 0
@@ -854,7 +1047,8 @@
         "alias",
         "legal_form",
         "part_name",
-        "created"
+        "created",
+        "carried"
       ]
     }
   }

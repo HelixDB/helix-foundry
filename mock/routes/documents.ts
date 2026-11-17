@@ -502,6 +502,16 @@ export const textDocumentCount = (
 
 /** A set's name, or "" for none of the workspace's. */
 export const setName = (setId: string) => sets.get(setId)?.name || "";
+/**
+ * The documents that arrived in a set (uploaded, or written by a sync),
+ * oldest first: what an automation's document_arrived trigger looks for
+ * (./automations.ts).
+ */
+export const documentsArrived = (setId: string) =>
+  [...documents.values()]
+    .filter((d) => d.setId === setId && d.status === "uploaded")
+    .map((d) => ({ id: d.id, at: Date.parse(d.createdAt) }))
+    .sort((a, b) => a.at - b.at);
 
 /**
  * A load's uploaded documents with their text, the set each joined with and
@@ -687,6 +697,10 @@ export function documentCount(workspaceId: string, ontologyId: string) {
 }
 
 // ---------------------------------------------------------------- Shapes
+
+/** A workspace's live sets as the WFE lists them (for ./automation-suggestions.ts). */
+export const listedSets = (workspaceId: string) =>
+  documentSets(workspaceId).map(toSet);
 
 function toSet(s: StoredSet): FoundryDocumentSet {
   const allowance = allowanceOf(s);

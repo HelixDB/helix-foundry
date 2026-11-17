@@ -36,12 +36,15 @@ import { canManage, useWorkspace } from "../../ui";
 import { SettingsLinked } from "../workspace/ai-gate";
 import { DASHBOARD_URL } from "../workspace/members";
 import {
-  isLive,
   isRetrying,
+  isUnderWay,
+  isWaiting,
   ontologyQueries,
   setCurrentVersion,
 } from "./queries";
+import { GenerationQuestions } from "./questions";
 import { versionFormat } from "./format";
+import { ProgressBar, useGenerationProgress } from "./job-progress";
 import {
   generationTitle,
   jobBadge,
@@ -58,6 +61,8 @@ const statuses: Record<string, Status> = {
   ONTOLOGY_GENERATION_STATUS_RUNNING: "running",
   ONTOLOGY_GENERATION_STATUS_SUCCEEDED: "succeeded",
   ONTOLOGY_GENERATION_STATUS_FAILED: "failed",
+  ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT: "review",
+  ONTOLOGY_GENERATION_STATUS_CANCELLED: "canceled",
 };
 export const generationStatus = (g?: OntologyGeneration | null): Status =>
   statuses[g?.status || ""] || "draft";
@@ -78,7 +83,11 @@ export function GenerationBadge({
           ? "Unknown"
           : isRetrying(generation)
             ? "Retrying"
-            : undefined
+            : isWaiting(generation)
+              ? "Needs answers"
+              : status === "canceled"
+                ? "Cancelled"
+                : undefined
       }
     />
   );
@@ -150,6 +159,7 @@ export function Callout({
   action,
   tone,
   live,
+  children,
 }: {
   icon: LucideIcon;
   title: ReactNode;
@@ -157,6 +167,8 @@ export function Callout({
   action?: ReactNode;
   tone?: "danger" | "muted";
   live?: boolean;
+  // Under the text: a job's bar.
+  children?: ReactNode;
 }) {
   return (
     <div
@@ -169,6 +181,7 @@ export function Callout({
       <div className="on-card-text">
         <strong>{title}</strong>
         {text && <p>{text}</p>}
+        {children}
       </div>
       {action}
     </div>
@@ -252,13 +265,16 @@ export function FlowStep({
   );
 }
 
-/** The ontology's queued or running generation, if any, as a callout. */
+/**
+ * The ontology's queued or running generation, if any, as a callout, or
+ * the questions one waits on.
+ */
 export function LiveGeneration() {
   const { id } = useWorkspace(),
     { id: o, ontology } = useOntology(),
     qc = useQueryClient();
   const list = useQuery(ontologyQueries.generations(id, o));
-  const live = list.data?.generations?.find(isLive);
+  const live = list.data?.generations?.find(isUnderWay);
   const now = useNow();
   // When it ends, its version (or its failure) shows up on this page.
   const seen = useRef("");
@@ -269,7 +285,15 @@ export function LiveGeneration() {
       void qc.invalidateQueries({ queryKey: [id, "ontology", o] });
     }
   }, [live?.id]);
+  const progress = useGenerationProgress(id, o, live);
   if (!live) return null;
+  if (isWaiting(live)) return <GenerationQuestions generation={live} />;
+  const bar = progress && (
+    <ProgressBar
+      progress={progress}
+      label={`Progress of ${ontologyName(ontology)}`}
+    />
+  );
   if (live.revision)
     return (
       <Callout
@@ -288,7 +312,9 @@ export function LiveGeneration() {
             View progress
           </ButtonLink>
         }
-      />
+      >
+        {bar}
+      </Callout>
     );
   const title = generationTitle(live, "");
   return (
@@ -314,7 +340,9 @@ export function LiveGeneration() {
           View progress
         </ButtonLink>
       }
-    />
+    >
+      {bar}
+    </Callout>
   );
 }
 

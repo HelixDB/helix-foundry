@@ -12,7 +12,7 @@ import type {
 import { infiniteQueryOptions } from "@tanstack/react-query";
 import { api } from "../../api";
 
-// The Workflows pages' routes: an ontology's workflows, one, its runs, and
+// The Usage pages' WFE routes (still .../workflows): an ontology's use cases, one, its runs, and
 // what a run recorded. Runs are started and finished by agents, never here.
 const enc = encodeURIComponent;
 const base = (ws: string, o: string) =>
@@ -21,7 +21,7 @@ const runs = (ws: string, o: string, w: string) =>
   `${base(ws, o)}/${enc(w)}/runs`;
 
 // How often an open run's pages ask again: the agent records as it goes. A
-// workflow's runs are asked again as often while one is open, and every
+// use case's runs are asked again as often while one is open, and every
 // RUNS_POLL_MS otherwise, so a run an agent starts shows without a reload.
 export const OPEN_RUN_POLL_MS = 3000;
 export const RUNS_POLL_MS = 10_000;
@@ -38,7 +38,7 @@ export const workflowQueries = {
     queryKey: [ws, "ontology", o, "workflows"],
     queryFn: () => api<ListFoundryWorkflowsResponse>(base(ws, o)),
   }),
-  // A workflow, with its runs' verdicts: read again as its page opens and
+  // A use case, with its runs' verdicts: read again as its page opens and
   // as often as its runs, since a run's assessment ends on its own.
   workflow: (ws: string, o: string, w: string) => ({
     queryKey: [ws, "ontology", o, "workflows", w],
@@ -46,7 +46,7 @@ export const workflowQueries = {
     refetchOnMount: "always" as const,
     refetchInterval: RUNS_POLL_MS,
   }),
-  // What the window's runs came to (of one workflow, or all of the
+  // What the window's runs came to (of one use case, or all of the
   // ontology's; of one who started them, when `startedBy` names them), asked
   // again as often as runs are, so the trends follow new runs.
   insights: (
@@ -77,7 +77,7 @@ export const workflowQueries = {
     refetchInterval: RUNS_POLL_MS,
     placeholderData: (previous?: FoundryWorkflowInsights) => previous,
   }),
-  // A workflow's runs, newest first, a page of 50 at a time (Load more asks
+  // A use case's runs, newest first, a page of 50 at a time (Load more asks
   // for the next); every page read is asked again so new runs show.
   runs: (ws: string, o: string, w: string) =>
     infiniteQueryOptions({

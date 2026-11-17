@@ -1,8 +1,8 @@
-// Workflows area: an ontology's workflows (an agent's task) and what their
-// runs recorded, lazy-loaded by the Ontology area's route table under
-// /ontology/:ontologyId/workflows. Owners and admins create and delete a
-// workflow; anyone else reads them. An agent starts and finishes a run
-// through the Helix MCP, with the workflow's id, and passes the run's id to
+// Workflows area (shown as Usage): an ontology's use cases (an agent's task)
+// and what their runs recorded, lazy-loaded by the Ontology area's route
+// table under /ontology/:ontologyId/usage. Owners and admins create and
+// delete a use case; anyone else reads them. An agent starts and finishes a
+// run through the Helix MCP, with the use case's id, and passes the run's id to
 // every read, question, send and upload it makes for the request: the run's
 // page shows the request, those calls and the answer side by side. Nothing
 // here starts a run.
@@ -28,9 +28,15 @@ import {
   Trash2,
   Workflow,
   X,
+  Zap,
 } from "lucide-react";
-import type { FoundryWorkflow, FoundryWorkflowRun } from "../../../shared/wfe";
+import type {
+  FoundryWorkflow,
+  FoundryWorkflowAutomation,
+  FoundryWorkflowRun,
+} from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
+import { ApiError } from "../../api";
 import {
   Button,
   ConfirmDialog,
@@ -56,6 +62,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
+import { automationQueries } from "../automations/queries";
 import { MCP_URL } from "../ontology/agent-setup";
 import { MAX_GOAL } from "../ontology/model";
 import { ontologyName, useOntology } from "../ontology/scope";
@@ -89,12 +96,14 @@ import {
   countsText,
   isRunFilter,
   metricText,
+  neverCalled,
+  notAssessed,
   preview,
   readText,
   runDuration,
   runShown,
-  starterLabel,
-  starterOf,
+  runStarter,
+  starterText,
   suggestionGoal,
   verdictRuns,
   windowStart,
@@ -109,7 +118,7 @@ function useCrumbs(): Crumb[] {
   return [
     { label: "Ontologies", to: paths.ontologies() },
     { label: ontologyName(ontology), to: paths.ontology(o) },
-    { label: "Workflows", to: paths.workflows(o) },
+    { label: "Usage", to: paths.workflows(o) },
   ];
 }
 
@@ -122,11 +131,69 @@ function useCopy() {
       .catch(() => notify(`Couldn’t copy the ${what}.`, true));
 }
 
+/**
+ * Where a use case Foundry made for a workflow comes from, linking back:
+ * the workflow (a run's page, its run, while the workflow keeps it), or
+ * a deleted one's history.
+ */
+function MadeBy({
+  automation: a,
+  runId,
+}: {
+  automation: FoundryWorkflowAutomation;
+  runId?: string;
+}) {
+  const { id: ws } = useWorkspace();
+  // A workflow keeps its runs for a while; its use case keeps their
+  // records longer.
+  const run = useQuery({
+    ...automationQueries.run(ws, a.automationId, runId || ""),
+    enabled: !!runId && !a.deleted,
+    refetchInterval: false,
+  });
+  const pruned = run.error instanceof ApiError && run.error.status === 404;
+  return (
+    <p className="wf-origin" role="note">
+      <Zap size={14} aria-hidden />
+      {a.deleted ? (
+        <span>
+          Made by a deleted workflow, {a.name ? <q>{a.name}</q> : "unnamed"}:{" "}
+          {runId
+            ? "this run records one of its runs."
+            : "it keeps the runs it recorded as history."}
+        </span>
+      ) : (
+        <span>
+          Made by the workflow{" "}
+          <Link to={paths.automation(a.automationId)}>
+            {a.name || "unnamed"}
+          </Link>
+          {runId && pruned ? (
+            ": this run records one of its runs, which the workflow no longer keeps."
+          ) : runId ? (
+            <>
+              : this run records{" "}
+              <Link to={paths.automationRun(a.automationId, runId)}>
+                one of its runs
+              </Link>
+              .
+            </>
+          ) : (
+            ": Foundry records here each of its runs that uses this ontology, and how much it helped. It goes only once the workflow is deleted."
+          )}
+        </span>
+      )}
+    </p>
+  );
+}
+
 // What a run's assessment found, as its row shows it: its verdict once
-// done, else where the run or its assessment stands.
+// done, else where the run or its assessment stands. A run that never
+// called the ontology isn't assessed, whatever an old assessment said.
 function RunVerdict({ run: r }: { run: FoundryWorkflowRun }) {
   if (r.status === "open")
     return <StatusBadge status="running" label="Open" size="sm" />;
+  if (neverCalled(r)) return <Tag>No calls</Tag>;
   const a = r.assessment;
   if (a?.status === "done" && a.verdict && a.verdict in VERDICT_LABELS) {
     const v = VERDICT_LABELS[a.verdict as Verdict];
@@ -150,13 +217,13 @@ const runStatus = (r: FoundryWorkflowRun) =>
     <StatusBadge status="running" label="Open" size="sm" />
   );
 
-// /ontology/:ontologyId/workflows: whether the ontology pays off across its
-// workflows, and what to change in it. A sentence and the impact cards lead,
-// then the workflows side by side (a row opens its runs), then what to change.
+// /ontology/:ontologyId/usage: whether the ontology pays off across its use
+// cases, and what to change in it. A sentence and the impact cards lead,
+// then the use cases side by side (a row opens its runs), then what to change.
 export function WorkflowsPage() {
   const { id: ws, role, partial } = useWorkspace(),
     { id: o } = useOntology();
-  useTitle("Workflows");
+  useTitle("Usage");
   const crumbs = useCrumbs(),
     navigate = useNavigate();
   const list = useQuery(workflowQueries.list(ws, o));
@@ -168,8 +235,8 @@ export function WorkflowsPage() {
   const [creating, setCreating] = useState(false);
   const header = (
     <PageHeader
-      breadcrumbs={crumbs.slice(0, 2).concat({ label: "Workflows" })}
-      title="Workflows"
+      breadcrumbs={crumbs.slice(0, 2).concat({ label: "Usage" })}
+      title="Usage"
       subtitle="How much this ontology helps your agents’ tasks, and what to change in it."
       actions={
         canManage(role) && (
@@ -178,7 +245,7 @@ export function WorkflowsPage() {
             icon={Plus}
             onClick={() => setCreating(true)}
           >
-            New workflow
+            New use case
           </Button>
         )
       }
@@ -204,7 +271,7 @@ export function WorkflowsPage() {
         {header}
         <EmptyState
           icon={Workflow}
-          title="Couldn’t load the workflows"
+          title="Couldn’t load the use cases"
           text={list.error?.message}
           action={<Button onClick={() => void list.refetch()}>Retry</Button>}
         />
@@ -217,6 +284,15 @@ export function WorkflowsPage() {
   const segments = new Map(
     (data?.workflows || []).map((w) => [w.workflowId, w]),
   );
+  // Narrowed to a workflow, the window's runs are its use case's alone
+  // (the read names that use case, so it lists none).
+  const who = insights.who;
+  if (data && who && "automation" in who)
+    segments.set(who.workflowId, {
+      workflowId: who.workflowId,
+      totals: data.totals,
+      dailyRuns: (data.series || []).map((d) => d.totals?.runs || 0),
+    });
   return (
     <Page>
       {header}
@@ -225,7 +301,7 @@ export function WorkflowsPage() {
         {!workflows.length ? (
           <EmptyState
             icon={Workflow}
-            title="No workflows yet"
+            title="No use cases yet"
             text={
               canManage(role)
                 ? "Create one for each task an agent does with this ontology, then give the agent its prompt. What its runs come to shows here."
@@ -249,18 +325,18 @@ export function WorkflowsPage() {
                   size="sm"
                   icon={Workflow}
                   title={`No runs in the last ${days} days`}
-                  text="Once an agent runs a workflow, what its runs come to shows here."
+                  text="Once an agent runs a use case, what its runs come to shows here."
                 />
               )}
             </section>
             <Panel
-              title="Workflows"
-              subtitle={`What each workflow’s runs came to in the last ${days} days. Open one for its runs.`}
+              title="Use cases"
+              subtitle={`What each use case’s runs came to in the last ${days} days. Open one for its runs.`}
               padded={false}
             >
               <DataGrid<FoundryWorkflow>
                 className="wf-grid"
-                label="Workflows"
+                label="Use cases"
                 rows={workflows}
                 getRowKey={(w) => w.id}
                 onRowClick={(w) => navigate(paths.workflow(o, w.id))}
@@ -268,7 +344,7 @@ export function WorkflowsPage() {
                 columns={[
                   {
                     key: "name",
-                    label: "Workflow",
+                    label: "Use case",
                     type: "string",
                     width: 220,
                     render: (w) => (
@@ -279,13 +355,21 @@ export function WorkflowsPage() {
                         >
                           {w.name}
                         </Link>
-                        {w.description && (
-                          <span
-                            className="on-cell-text on-muted"
-                            title={w.description}
-                          >
-                            {w.description}
+                        {w.automation ? (
+                          <span className="on-cell-text on-muted">
+                            {w.automation.deleted
+                              ? "From a deleted workflow"
+                              : "A workflow’s runs"}
                           </span>
+                        ) : (
+                          w.description && (
+                            <span
+                              className="on-cell-text on-muted"
+                              title={w.description}
+                            >
+                              {w.description}
+                            </span>
+                          )
                         )}
                       </span>
                     ),
@@ -412,7 +496,7 @@ function NewWorkflowDialog({
     [error, setError] = useState(""),
     [token] = useState(() => crypto.randomUUID());
   return (
-    <Dialog title="New workflow" size="sm" onClose={onClose}>
+    <Dialog title="New use case" size="sm" onClose={onClose}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -470,7 +554,7 @@ function NewWorkflowDialog({
             pending={pending}
             disabled={!name.trim()}
           >
-            Create workflow
+            Create use case
           </Button>
         </div>
       </form>
@@ -478,7 +562,7 @@ function NewWorkflowDialog({
   );
 }
 
-// /ontology/:ontologyId/workflows/:workflowId: how this task goes and why.
+// /ontology/:ontologyId/usage/:workflowId: how this use case goes and why.
 // Until its first run, connecting the agent; then a strip of its numbers
 // with where its runs went, its runs, and what to change for it.
 export function WorkflowPage() {
@@ -500,21 +584,22 @@ export function WorkflowPage() {
     [pending, setPending] = useState(false),
     [deleteError, setDeleteError] = useState("");
   const w = workflow.data?.workflow;
-  useTitle(w?.name || "Workflow");
+  useTitle(w?.name || "Use case");
   const header = (
     <PageHeader
-      breadcrumbs={[...crumbs, { label: w?.name || "Workflow" }]}
-      title={w?.name || "Workflow"}
+      breadcrumbs={[...crumbs, { label: w?.name || "Use case" }]}
+      title={w?.name || "Use case"}
       subtitle={w?.description || undefined}
       actions={
         w && (
           <>
-            {Number(w.runs || 0) > 0 && (
+            {Number(w.runs || 0) > 0 && !w.automation && (
               <Button icon={Copy} onClick={() => setConnecting(true)}>
                 Connect agent
               </Button>
             )}
-            {canManage(role) && (
+            {/* A workflow's goes only once the workflow is deleted. */}
+            {canManage(role) && (!w.automation || w.automation.deleted) && (
               <Button icon={Trash2} onClick={() => setDeleting(true)}>
                 Delete
               </Button>
@@ -537,7 +622,7 @@ export function WorkflowPage() {
         {header}
         <EmptyState
           icon={Workflow}
-          title="Couldn’t load the workflow"
+          title="Couldn’t load the use case"
           text={workflow.error?.message}
           action={
             <Button onClick={() => void workflow.refetch()}>Retry</Button>
@@ -572,7 +657,7 @@ export function WorkflowPage() {
       <KeyValue
         items={[
           {
-            label: "Workflow ID",
+            label: "Use case ID",
             value: (
               <span className="wf-id">
                 <code>{w.id}</code>
@@ -580,8 +665,8 @@ export function WorkflowPage() {
                   size="sm"
                   variant="ghost"
                   icon={Copy}
-                  aria-label="Copy workflow ID"
-                  onClick={() => void copy(w.id, "workflow ID")}
+                  aria-label="Copy use case ID"
+                  onClick={() => void copy(w.id, "use case ID")}
                 />
               </span>
             ),
@@ -600,6 +685,7 @@ export function WorkflowPage() {
       {header}
       <div className="on-stack">
         <RefreshFailed query={workflow} />
+        {w.automation && <MadeBy automation={w.automation} />}
         {ran ? (
           <section className="wf-insights" aria-label="Insights">
             <InsightsToolbar state={insights} own={own} />
@@ -610,7 +696,7 @@ export function WorkflowPage() {
               <InsightsPending state={insights} />
             )}
           </section>
-        ) : (
+        ) : w.automation ? null : (
           <Panel
             title="Connect your agent"
             subtitle={`Give the agent this prompt, with the Helix MCP added. In ${workspaceName}, each request it takes on becomes a run here.`}
@@ -621,6 +707,7 @@ export function WorkflowPage() {
         )}
         <WorkflowRuns
           workflowId={w.id}
+          automation={w.automation}
           own={own}
           insights={insights}
           issue={issue}
@@ -655,7 +742,7 @@ export function WorkflowPage() {
         <ConfirmDialog
           title={`Delete ${w.name}?`}
           description="Its runs and what they recorded go with it. An agent still using its ID can’t start runs any more."
-          confirmLabel="Delete workflow"
+          confirmLabel="Delete use case"
           tone="danger"
           pending={pending}
           onCancel={() => setDeleting(false)}
@@ -690,7 +777,7 @@ export function WorkflowPage() {
 }
 
 /**
- * A workflow's runs of the window, newest first: each its request, what its
+ * A use case's runs of the window, newest first: each its request, what its
  * assessment said of it, its claims grounded and when it started, opening to
  * its claims and gaps. Narrowed by who started them (the toolbar), what the
  * assessment found (`?verdict=`, which the overview links) and a gap or
@@ -699,12 +786,15 @@ export function WorkflowPage() {
  */
 function WorkflowRuns({
   workflowId,
+  automation,
   own,
   insights,
   issue,
   onIssue,
 }: {
   workflowId: string;
+  // The workflow whose runs it records, for a workflow's use case.
+  automation?: FoundryWorkflowAutomation | null;
   own: boolean;
   insights: InsightsState;
   issue?: { key: string; text: string };
@@ -737,7 +827,8 @@ function WorkflowRuns({
         helped: t.helped || 0,
         not_helped: verdictRuns(t, "marginal") + verdictRuns(t, "unused"),
         misleading: verdictRuns(t, "misleading"),
-        pending: (t.runs || 0) - (t.assessed || 0),
+        not_called: t.neverCalled || 0,
+        pending: notAssessed(t),
       }
     : {};
   const choose = (f: string) =>
@@ -787,6 +878,9 @@ function WorkflowRuns({
           </span>
         )}
       </div>
+      {filter === "not_called" && (
+        <p className="wf-runs-hint">{noCallsText(!!automation)}</p>
+      )}
       <RefreshFailed query={runs} />
       {runs.isPending ? (
         <div className="on-pad">
@@ -799,7 +893,9 @@ function WorkflowRuns({
           title={runs.error ? "Couldn’t load the runs" : "No runs yet"}
           text={
             runs.error?.message ||
-            "Once the agent starts a run with this workflow’s ID, it shows here."
+            (automation
+              ? "Once a run of the workflow uses this ontology, it shows here."
+              : "Once the agent starts a run with this use case’s ID, it shows here.")
           }
         />
       ) : (
@@ -821,7 +917,10 @@ function WorkflowRuns({
               </div>
               <ul className="wf-runs" aria-label="Runs">
                 {shown.slice(0, limit).map((r) => {
-                  const a = assessmentOf(r.assessment?.assessmentJson);
+                  const silent = neverCalled(r);
+                  const a = silent
+                    ? null
+                    : assessmentOf(r.assessment?.assessmentJson);
                   const backed = (a?.claims || []).filter(
                     (c) => c.support === "supported",
                   ).length;
@@ -840,11 +939,17 @@ function WorkflowRuns({
                           {a?.summary ||
                             (r.status === "open"
                               ? "The agent is still recording its calls."
-                              : r.assessment?.error || "")}
+                              : silent
+                                ? "No call to the ontology was recorded, so it isn’t assessed."
+                                : r.assessment?.error || "")}
                         </span>
                         <span className="wf-run-meta">
                           {countsText(r.counts)} ·{" "}
-                          {starterLabel(starterOf(r), names, user.id)}
+                          {starterText(
+                            runStarter(r, automation),
+                            names,
+                            user.id,
+                          )}
                         </span>
                       </span>
                       <span className="wf-run-verdict">
@@ -952,7 +1057,7 @@ const SUPPORT = {
   contradicted: { label: "Contradicted", tone: "danger" },
 } as const;
 
-// /ontology/:ontologyId/workflows/:workflowId/runs/:runId
+// /ontology/:ontologyId/usage/:workflowId/runs/:runId
 export function WorkflowRunPage() {
   const { workflowId = "", runId = "" } = useParams();
   const { id: ws } = useWorkspace(),
@@ -973,7 +1078,7 @@ export function WorkflowRunPage() {
       refetchInterval: r?.status === "open" ? OPEN_RUN_POLL_MS : false,
     });
   useTitle("Run");
-  const name = workflow.data?.workflow.name || "Workflow";
+  const name = workflow.data?.workflow.name || "Use case";
   const header = (
     <PageHeader
       breadcrumbs={[
@@ -1019,6 +1124,12 @@ export function WorkflowRunPage() {
       {header}
       <div className="on-stack">
         <RefreshFailed query={run} />
+        {r.automationRunId && workflow.data?.workflow.automation && (
+          <MadeBy
+            automation={workflow.data.workflow.automation}
+            runId={r.automationRunId}
+          />
+        )}
         <Panel title="Request">
           {r.input ? (
             <p className="wf-text">{r.input}</p>
@@ -1073,11 +1184,30 @@ export function WorkflowRunPage() {
             </p>
           )}
         </Panel>
-        {r.assessment && <AssessmentPanel run={r} workflowId={workflowId} />}
+        {neverCalled(r) ? (
+          <Panel
+            title="How much the ontology helped"
+            subtitle={<Tag>No calls</Tag>}
+          >
+            <p className="on-muted">
+              {noCallsText(!!workflow.data?.workflow.automation)}
+            </p>
+          </Panel>
+        ) : (
+          r.assessment && <AssessmentPanel run={r} workflowId={workflowId} />
+        )}
       </div>
     </Page>
   );
 }
+
+// Why a run that never called the ontology isn't assessed, and what to
+// check: an agent of a person's use case may not pass the run's id; an
+// automation's runs pass it themselves.
+const noCallsText = (automation: boolean) =>
+  automation
+    ? "The workflow’s run made no read or question of this ontology, so it isn’t assessed and doesn’t count toward how much the ontology helped. It may have used the ontology otherwise, such as by loading it."
+    : "The agent made no call to the ontology with this run’s ID, so it isn’t assessed and doesn’t count toward how much the ontology helped. If it did call the ontology, check that it passes the run’s ID as use_case_run_id on each call.";
 
 function AccessItem({ view: v }: { view: AccessView }) {
   const { id: o } = useOntology();
@@ -1124,7 +1254,7 @@ function AccessItem({ view: v }: { view: AccessView }) {
       {v.kind === "question" && (
         <p className="on-muted">
           <Link to={paths.ask(o, { thread: v.questionId })}>
-            Open it in Analyst
+            Open the answer
           </Link>
         </p>
       )}

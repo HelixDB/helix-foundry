@@ -498,6 +498,12 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
 }
+/* A route found in sample documents: its tag under the route's name. */
+.on-sources thead th .hf-tag {
+  display: flex;
+  width: fit-content;
+  margin-top: 6px;
+}
 .on-sources tbody th[scope="row"] {
   color: var(--hf-text);
 }
@@ -657,6 +663,66 @@
   border-color: var(--hf-accent-border);
   background: var(--hf-accent-soft);
   color: var(--hf-accent-text);
+}
+/* A generation's questions, answered: a radio per choice, then a field for
+   an answer in one's own words. */
+.on-asked-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Narrow (a phone, or beside Founder), Cancel generation goes under
+   the title rather than squeezing it into a column. */
+.on-asked {
+  container-type: inline-size;
+}
+@container (max-width: 560px) {
+  .on-asked > .hf-panel-head {
+    flex-wrap: wrap;
+  }
+  .on-asked > .hf-panel-head > :first-child {
+    flex: 1 1 100%;
+  }
+}
+.on-answer {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.on-answer-choice {
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+.on-answer-choice:has(input:checked) {
+  border-color: var(--hf-text-2);
+  color: var(--hf-text);
+}
+.on-answer-choice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.on-answer-own textarea {
+  resize: vertical;
+}
+/* Inside the setup card, flat as its other callouts. */
+.on-setup .on-asked {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.on-setup .on-asked > .hf-panel-head,
+.on-setup .on-asked > .hf-panel-body {
+  padding-inline: 0;
+}
+.on-setup .on-asked > .hf-panel-head,
+.on-setup .on-asked > .hf-panel-head:hover {
+  border-radius: 0;
+  background: none;
+  cursor: auto;
 }
 .on-cqs li {
   display: grid;
@@ -820,6 +886,9 @@
 .on-generate-foot .hf-form-error,
 .on-generate-foot .hf-form-actions {
   margin-top: 0;
+}
+.on-generate-foot .hf-form-actions {
+  flex-wrap: wrap;
 }
 
 /* New ontology, and an unfinished ontology's overview: its steps, a
@@ -997,6 +1066,18 @@
 .on-db-cell small {
   color: var(--hf-muted);
 }
+/* The overview's header on a narrow page (Founder's dock open, a laptop):
+   the title keeps a readable width and wraps by word, and the actions move
+   under it once they don't fit beside it. */
+.on-overview-head .hf-page-header-row {
+  flex-wrap: wrap;
+}
+.on-overview-head .hf-page-header-title {
+  flex: 1 1 360px;
+}
+.on-overview-head h1 {
+  overflow-wrap: break-word;
+}
 .on-new-db {
   display: grid;
   gap: 4px;
@@ -1106,33 +1187,6 @@
 .on-panel-list .hf-subnav {
   margin: 2px 0 6px 18px;
 }
-/* Documents' count, as the Data tree counts a folder's. */
-.on-panel-count {
-  margin-left: auto;
-  color: var(--hf-muted);
-  font-size: var(--hf-text-xs);
-  font-variant-numeric: tabular-nums;
-}
-/* Under an ontology's Documents in the panel: its documents as the Data
-   explorer's tree, a set's count being of its documents to review, in the
-   review dot's colour. */
-.on-docs-nested {
-  margin: 2px 0 4px;
-}
-.on-docs-nested .dx-body {
-  padding: 0;
-}
-.on-docs-nested .dx-none {
-  margin: 4px 10px;
-}
-.on-docs-nested .dx-loading {
-  padding: 4px 10px;
-}
-.on-docs-tree .dt-count {
-  color: var(--hf-warning-text);
-  font-weight: 600;
-}
-
 /* The sample's steps (./sample-tour.tsx): its database and documents, a
    line each, and the questions it suggests. */
 .on-tour-sources {
@@ -1179,8 +1233,126 @@
 .on-tour-answer {
   margin: 4px 0 14px;
 }
-/* Ask's suggestions, left-aligned in the tour: ask.css loads after this file. */
+/* Ask's suggestions in the tour: ask.css loads after this file. */
 .ak-suggestions.on-tour-asks {
-  justify-content: flex-start;
   margin: 0 0 14px;
+}
+
+/* A job's bar (job-progress.tsx): its step, a bar and the time left. An
+   unmeasured stretch (a load's tables) shimmers across the bar. */
+.on-progress {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.on-progress-track {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+}
+.on-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--hf-accent);
+  transition: width 0.6s ease;
+}
+.on-progress-fill.is-indeterminate {
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--hf-accent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: hf-shimmer 1.6s linear infinite;
+}
+.on-progress-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.on-progress-time {
+  color: var(--hf-muted);
+  font-variant-numeric: tabular-nums;
+}
+.on-progress--page {
+  margin-top: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+
+/* The job dock (job-dock.tsx): the generations and loads this browser
+   started, at the sidebar's foot on every page that doesn't show them. */
+.on-job-dock {
+  display: grid;
+  flex: none;
+  gap: 6px;
+  margin-top: 6px;
+}
+.on-job-dock:empty {
+  display: none;
+}
+.on-job-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding: 10px 4px 10px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+  animation: hf-pop 160ms var(--hf-ease);
+}
+.on-job-card-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.on-job-card.is-done .on-job-card-icon {
+  background: var(--hf-success-soft);
+  color: var(--hf-success-text);
+}
+.on-job-card.is-failed .on-job-card-icon {
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+.on-job-card-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--hf-text-sm);
+}
+.on-job-card-text strong {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+}
+.on-job-card-name {
+  overflow: hidden;
+  color: var(--hf-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-job-card .on-progress {
+  margin-top: 6px;
+}
+.on-job-card-link {
+  justify-self: start;
+  margin-top: 6px;
+  color: var(--hf-accent-text);
+  font-weight: 500;
 }

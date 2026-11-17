@@ -84,7 +84,8 @@ func (s *generationStore) ListFoundryDocumentSets(_ context.Context, workspaceID
 
 func (s *generationStore) live(ontologyID string) *foundrymodel.OntologyGeneration {
 	for _, g := range s.generations {
-		if g.OntologyID == ontologyID && (g.Status == foundrymodel.OntologyGenerationQueued || g.Status == foundrymodel.OntologyGenerationRunning) {
+		if g.OntologyID == ontologyID && (g.Status == foundrymodel.OntologyGenerationQueued || g.Status == foundrymodel.OntologyGenerationRunning ||
+			g.Status == foundrymodel.OntologyGenerationNeedsInput) {
 			return g
 		}
 	}
@@ -467,6 +468,24 @@ func TestFoundryOntologyGenerationRPCs(t *testing.T) {
 		if gen.GetSample() != sample.Acme || store.generations[0].Input.Sample != sample.Acme || len(gen.GetTables()) != len(sample.Tables) ||
 			gen.GetTitle() != sample.Title || calls.calls.Load() != 0 {
 			t.Fatalf("generation = %+v after %d title requests", gen, calls.calls.Load())
+		}
+	})
+	// The sample's draft calls no model, so a local install with no AI
+	// provider queues it, and still refuses a draft of its own data.
+	t.Run("queues the sample with no AI provider", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		acme(store, "")
+		s.deps.AI, s.deps.DB = deployment(t, aiConfig(modeLocal, true)), noAIChosen{s.deps.DB}
+		if _, err := generate(s, sampleRequest()); err != nil {
+			t.Fatalf("GenerateOntology(sample) = %v", err)
+		}
+		if len(store.generations) != 1 || store.generations[0].Input.Sample != sample.Acme {
+			t.Fatalf("generations = %+v", store.generations)
+		}
+		own := sampleRequest()
+		own.Sample = ""
+		if _, err := generate(s, own); reason(err) != "FOUNDRY_AI_NOT_CONFIGURED" {
+			t.Fatalf("GenerateOntology(own data) = %v, want FOUNDRY_AI_NOT_CONFIGURED", err)
 		}
 	})
 	t.Run("refuses another sample, or the sample beside other sources", func(t *testing.T) {
@@ -950,7 +969,7 @@ func TestOntologyGenerationTitleJSON(t *testing.T) {
 		title *string
 		want  any
 	}{{&title, title}, {nil, nil}} {
-		encoded, err := protojson.Marshal(ontologyGenerationToProto(&foundrymodel.OntologyGeneration{ID: "gen-1", Title: tc.title}, false))
+		encoded, err := protojson.Marshal(ontologyGenerationToProto(&foundrymodel.OntologyGeneration{ID: "gen-1", Title: tc.title}, false, 0))
 		if err != nil {
 			t.Fatal(err)
 		}

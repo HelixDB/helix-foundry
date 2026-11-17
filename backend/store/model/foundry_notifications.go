@@ -12,11 +12,24 @@ const (
 	// failed, not drafted, or drafted and waiting for review. Its subject is
 	// the generation.
 	FoundryNotifyOntologyReady FoundryNotificationKind = "ontology_ready"
+	// FoundryNotifyOntologyQuestions tells the requester of an ontology's
+	// first draft that its agent asked questions the draft waits on, and
+	// when Helix answers them with the agent's defaults. Its subject is the
+	// generation, so it goes once, at the first round.
+	FoundryNotifyOntologyQuestions FoundryNotificationKind = "ontology_questions"
 	// FoundryNotifySampleFollowUp asks a person who watched the sample
 	// draft an ontology, and a day later has no data of their own in its
 	// workspace, to try Foundry on theirs. Its subject is the person, so
 	// each gets one at most, ever.
 	FoundryNotifySampleFollowUp FoundryNotificationKind = "sample_follow_up"
+	// FoundryNotifyAutomationRun is an automation's notify step: it emails
+	// the automation's owner what its run did. Its subject is the step's
+	// foundry_automation_run_nodes.notification_id.
+	FoundryNotifyAutomationRun FoundryNotificationKind = "automation_run"
+	// FoundryNotifyAutomationPaused tells an automation's owner it paused
+	// itself after its runs failed in a row. Its subject is the automation's
+	// notice_id, new at each such pause.
+	FoundryNotifyAutomationPaused FoundryNotificationKind = "automation_paused"
 )
 
 // FoundryNotificationStatus is where an email is in its sending.
@@ -44,7 +57,8 @@ type FoundryNotification struct {
 	SubjectID   string
 	WorkspaceID string
 	UserID      string
-	// OntologyID is set exactly for FoundryNotifyOntologyReady.
+	// OntologyID is set exactly for FoundryNotifyOntologyReady and
+	// FoundryNotifyOntologyQuestions.
 	OntologyID *string
 	Status     FoundryNotificationStatus
 	// Attempts counts the claims made of it, the one held included.

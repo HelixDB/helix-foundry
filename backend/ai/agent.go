@@ -108,6 +108,8 @@ func (s Settings) endpoint(callTimeout time.Duration) ontologyagent.Endpoint {
 		e.Provider = ontologyagent.AzureOpenAI{Endpoint: p.Endpoint}
 	case Bedrock:
 		e.Provider = ontologyagent.Bedrock{Region: p.Region, FIPS: p.FIPS}
+	case Cohere:
+		e.Provider = ontologyagent.OpenAICompatible{BaseURL: CohereBaseURL, API: ontologyagent.CompatChatCompletions}
 	case Ollama:
 		e.Provider, e.MaxCallsInFlight = ontologyagent.Ollama{BaseURL: p.BaseURL}, 1
 	case Compatible:
@@ -117,10 +119,12 @@ func (s Settings) endpoint(callTimeout time.Duration) ontologyagent.Endpoint {
 	return e
 }
 
-// spec is m as the contract writes it: Ollama's models with the server's
-// context window and, once tested, the digest revision.
+// spec is m as the contract writes it: the reasoning knob only where its
+// kind takes it (Kind.Reasons), Ollama's models with the server's context
+// window and, once tested, the digest revision, and Cohere's under their
+// output ceiling (cohereMaxOutput).
 func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.ModelSpec {
-	spec := ontologyagent.ModelSpec{Name: m.Name, Reasoning: reasoning}
+	spec := ontologyagent.ModelSpec{Name: m.Name, Reasoning: reasoning && s.Provider.Kind().Reasons()}
 	switch p := m.Price.(type) {
 	case PriceTable:
 		spec.Price = ontologyagent.PriceTable{}
@@ -131,6 +135,12 @@ func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.M
 	case PriceFree:
 		spec.Price = ontologyagent.PriceFree{}
 	}
+	if _, ok := s.Provider.(Cohere); ok {
+		spec.MaxOutputTokens = cohereLeastOutput
+		if most, known := cohereMaxOutput[m.Name]; known {
+			spec.MaxOutputTokens = most
+		}
+	}
 	if o, ok := s.Provider.(Ollama); ok {
 		spec.ContextTokens, spec.Revision = o.ContextTokens, revision
 	}
@@ -138,9 +148,9 @@ func (s Settings) spec(m Model, reasoning bool, revision string) ontologyagent.M
 }
 
 // ProbeRequest is the agent's test of s, saved as config configID: every
-// role's model as it would run, reasoning on (the probe turns it off where a
-// model refuses it), and a title on the extraction model, under ProbeMaxUSD
-// and the deployment's probe timeout.
+// role's model as it would run, reasoning on where its kind takes it (the
+// probe turns it off where a model refuses it), and a title on the
+// extraction model, under ProbeMaxUSD and the deployment's probe timeout.
 func (d *Deployment) ProbeRequest(configID string, s Settings, timeout time.Duration) ontologyagent.ProbeRequest {
 	m := s.Models
 	title := s.spec(m.Extract, false, "")

@@ -79,7 +79,7 @@ test("loads: upload a document, load a version and explore it", async ({
   await shot(page, "ontology", "loads");
   await page.setViewportSize({ width: 1280, height: 800 });
 
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await expect(page.getByRole("grid", { name: "Documents" })).toBeVisible();
   await shot(page, "ontology", "documents");
   await page.getByRole("link", { name: "contract.md" }).first().click();
@@ -199,10 +199,8 @@ test("loads: video", async ({ browser, page: setup }) => {
   await caption(page, "The Explorer draws what the load wrote");
   await click(
     page
-      .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", {
-        name: "Explorer",
-      }),
+      .getByRole("complementary", { name: "Ontologies" })
+      .getByRole("link", { name: "Explorer" }),
   );
   await expect(graph(page)).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(2500);

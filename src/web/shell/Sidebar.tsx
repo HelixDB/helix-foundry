@@ -1,21 +1,26 @@
 import {
   Suspense,
+  lazy,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Search, Settings, X } from "lucide-react";
+import { Bot, Search, Settings, X } from "lucide-react";
 import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
+import { useWatchedJobs } from "../areas/ontology/use-watched-jobs";
+import { FeedbackButton } from "./feedback";
 import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {
   activeSection,
   childActive,
+  footNav,
   granteeNav,
+  navSection,
   onboardingNav,
   primaryNav,
   sectionSidebars,
@@ -30,7 +35,18 @@ import {
   maxSectionOffset,
   storedSectionOffset,
 } from "./section-offset";
-import { ariaShortcut, shortcut } from "./shortcut";
+import {
+  ariaAssistantShortcut,
+  ariaShortcut,
+  assistantShortcut,
+  shortcut,
+} from "./shortcut";
+
+// The generations and loads this browser started, followed from any page
+// (the Ontology area's), above Feedback: its code loads once there is one.
+const JobDock = lazy(() =>
+  import("../areas/ontology/job-dock").then((m) => ({ default: m.JobDock })),
+);
 
 // Settings sits beside the user in the footer rather than in the section list.
 export function SettingsLink() {
@@ -90,7 +106,7 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   const { pathname } = useLocation(),
-    section = activeSection(pathname);
+    section = navSection(activeSection(pathname));
   return (
     <ul className="hf-nav-list" aria-label={label}>
       {items.map((n) => {
@@ -210,10 +226,12 @@ function SectionSplit({
 // The sidebar, on every page beside the page (and in a phone's drawer where
 // the open section has no panel: Rail.tsx): the mark and search, the
 // workspace, the sections with their names, what the open section shows
-// under them (Ask's threads), then the account and settings. While the
+// under them (Ask's threads), then the jobs this browser follows, the foot's
+// sections (Connectors), Feedback, the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
-// back to the onboarding and the account; for a grantee, no search or
-// settings, and only Analyst, Ontologies and the Explorer.
+// back to the onboarding and the account; for a grantee, no search,
+// Connectors or settings, and only Analyst, Dashboards, Ontologies and the
+// Explorer.
 export function Sidebar({
   workspaces,
   current,
@@ -229,9 +247,12 @@ export function Sidebar({
   onSwitch: (id: string) => void;
 }) {
   const shell = useShell(),
-    { onboarding, grantee } = useWorkspace(),
-    section = activeSection(useLocation().pathname),
-    extra = onboarding ? undefined : section && sectionSidebars[section];
+    { id, onboarding, grantee } = useWorkspace(),
+    watching = useWatchedJobs(id).length > 0,
+    { pathname } = useLocation(),
+    section = activeSection(pathname),
+    open = onboarding ? undefined : section && sectionSidebars[section],
+    extra = open && (!open.shows || open.shows(pathname)) ? open : undefined;
   return (
     <div className="hf-sidebar-inner">
       <div className="hf-brand-row">
@@ -303,8 +324,57 @@ export function Sidebar({
           </ChromeBoundary>
         </SectionSplit>
       )}
+      {watching && (
+        <ChromeBoundary name="Jobs in progress" fallback={null}>
+          <Suspense fallback={null}>
+            <JobDock />
+          </Suspense>
+        </ChromeBoundary>
+      )}
+      {!onboarding && !grantee && (
+        <nav aria-label="Data" className="hf-foot-nav">
+          {footNav.map((n) => {
+            const active = navSection(section) === n.id;
+            return (
+              <Link
+                key={n.id}
+                to={n.to}
+                onClick={onClose}
+                className={cx(
+                  "hf-btn hf-btn--ghost hf-btn--sm hf-foot-link",
+                  active && "is-active",
+                )}
+                aria-current={active ? "page" : undefined}
+              >
+                <n.icon size={15} aria-hidden />
+                {n.label}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
+      <FeedbackButton />
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
+        {shell.assistant.available && (
+          <button
+            type="button"
+            className={cx(
+              "hf-btn hf-btn--ghost hf-btn--md hf-btn--icon hf-settings-link",
+              shell.assistant.open && "is-active",
+            )}
+            aria-label="Founder"
+            aria-pressed={shell.assistant.open}
+            aria-keyshortcuts={ariaAssistantShortcut}
+            title={`Founder (${assistantShortcut})`}
+            onClick={() => {
+              onClose?.();
+              shell.assistant.toggle("button");
+            }}
+          >
+            <Bot size={17} aria-hidden />
+          </button>
+        )}
         {!onboarding && !grantee && <SettingsLink />}
       </div>
     </div>

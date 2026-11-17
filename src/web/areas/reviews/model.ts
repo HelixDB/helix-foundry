@@ -581,7 +581,8 @@ export type ReviewGroup<R> = {
 
 /**
  * Groups reviews by what their card says of their reason (documents' reviewCopy),
- * so an ambiguous name with one candidate is apart from one with several, and
+ * so an ambiguous name with one candidate is apart from one with several, a
+ * claim held for an end its passage doesn't name from an unsure one, and
  * every reason this site doesn't know is one group. Groups go in GROUP_ORDER,
  * then as they first appear; a group keeps its reviews' order.
  *
@@ -594,11 +595,19 @@ export type ReviewGroup<R> = {
  * // [["low_confidence", [2]], ["unmatched", [1]], ["unresolved", [0]]]
  */
 export function reviewGroups<
-  R extends { reason: string; candidates: readonly unknown[] },
+  R extends {
+    reason: string;
+    candidates: readonly unknown[];
+    confidence?: number;
+  },
 >(reviews: readonly R[]): ReviewGroup<R>[] {
   const groups = new Map<string, ReviewGroup<R>>();
   reviews.forEach((review, index) => {
-    const copy = reviewCopy(review.reason, review.candidates.length);
+    const copy = reviewCopy(
+      review.reason,
+      review.candidates.length,
+      review.confidence,
+    );
     const group = groups.get(copy.title) ?? {
       reason: review.reason,
       ...copy,
@@ -1073,6 +1082,7 @@ export const WEAK_LINK_TEXT: Record<WeakLink, string> = {
  *
  * @example
  * refusalText("unresolved"); // "A name in it isn’t matched to one record in your data. …"
+ * refusalText("document_changed"); // "Its document’s text changed after this load read it, …"
  * refusalText("part_name", [{ name: "Westmere", by: "part_name" }]); // "“Westmere” is linked only by part of a row’s name, …"
  * refusalText("part_name", [{ name: "Globex Ltd", by: "legal_form" }]); // "A name in it is linked only by part of a row’s name, … Settle that name and “Globex Ltd”, which holds it too, …"
  * refusalText("a_new_reason"); // "The load kept it held (a_new_reason)."
@@ -1122,8 +1132,15 @@ export function refusalText(
       return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
     case "no_statement":
       return "Its review keeps nothing to write. Load again to read it afresh.";
+    // Contract 4.17.0: the document doesn't say the quote at its place, or
+    // the version no longer reads the link or a type of its ends; through
+    // 4.16.0 also a reading of the document under new prompts or models.
     case "not_stated":
-      return "The document’s saved reading no longer states it at this place. Load again to read it afresh.";
+      return "The load no longer finds it stated at this place: its document doesn’t say it there, or this version doesn’t read this link from it. Load again to read it afresh.";
+    // Contract 4.17.0: the load holds the document under its id with other
+    // text than the claim was read in. Only a new load reads the new text.
+    case "document_changed":
+      return "Its document’s text changed after this load read it, so the claim may not be in it now, and this load can’t write it. The next load reads the new text and writes this where it holds the same claim; otherwise find the claim in that load’s review and approve it there.";
     case "too_large":
       return "Its document holds more held claims than one approval can be matched among.";
     case "not_replayed":
@@ -1153,8 +1170,17 @@ export function refusalText(
  */
 export function waitingText(
   live?: string | null,
-  kind: "release" | "prop" = "release",
+  kind: "release" | "prop" | "resolve" = "release",
 ) {
+  if (kind === "resolve")
+    switch (live || "resend") {
+      case "resend":
+        return "Decision saved. Linking this name in this load…";
+      case "load":
+        return "Decision saved. A load is running, so this waits: it’s linked when that ends if this load is still current, and otherwise the next load applies it.";
+      default:
+        return "Decision saved. Another job is running, so this waits: it’s linked in this load when that ends.";
+    }
   const value = kind === "prop";
   switch (live || "resend") {
     case "resend":
@@ -1230,6 +1256,60 @@ export function decidedText(
       return `Decided: ${shown}, but the job that sends it to this load failed. Choose it again to send it.`;
     default:
       return `A decision is saved (${shown}), and this load hasn’t read it. Choose it again to apply it now.`;
+  }
+}
+
+/**
+ * What a name review's card says of the resolve saved for it, from what the
+ * current load made of it on its document (`applied`): a person's choice of
+ * a name applies to the current load at once (contract 4.22.0), by the
+ * document's saved model work, which the engine replays. A load read before
+ * names could be settled in place has none that settles it (not_replayed),
+ * so the next load applies the choice. Undefined where the load's list
+ * doesn't hold it or read it when it was made: the card says that its own
+ * way (loadRead).
+ *
+ * @example
+ * resolvedText({ status: "written" }); // "Linked in this load. Later loads read the choice too."
+ * resolvedText({ status: "refused", reason: "not_replayed" }); // "This load was built before names could be applied at once; the next load applies it."
+ */
+export function resolvedText(
+  applied: DecisionApplied | null | undefined,
+  live?: string | null,
+): string | undefined {
+  const next = "The next load applies your choice.";
+  switch (applied?.status) {
+    case "pending":
+      return waitingText(live, "resolve");
+    case "written":
+      return applied.reason === "not_asked"
+        ? "This load already settled this name in this document. Later loads read your choice; the next load applies it if it differs."
+        : "Linked in this load. Later loads read the choice too.";
+    case "unconfirmed":
+      return "Decision saved, but the job that links it failed before it said whether it did. Choose it again to finish.";
+    case "refused":
+      switch (applied.reason) {
+        case "not_replayed":
+          return "This load was built before names could be applied at once; the next load applies it.";
+        case "no_word":
+          return `The job that links it ended without saying what became of it. ${next}`;
+        case "not_named":
+          return `This load doesn’t name anyone so in this document, so nothing was linked. ${next}`;
+        case "bound":
+          return `This load already links this name another way. ${next}`;
+        case "collides":
+          return `Linking it would change another name in this document, so this load keeps it as it is. ${next}`;
+        case "differs":
+          return `This load no longer reads this document as it did, so nothing was linked here. ${next}`;
+        case "absent":
+          return `The record chosen isn’t in this load. ${next}`;
+        case "document_gone":
+          return "The document left this load, so nothing was linked here.";
+        default:
+          return `Not linked in this load (${applied.reason || "no reason given"}). ${next}`;
+      }
+    default:
+      return undefined;
   }
 }
 

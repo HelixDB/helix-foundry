@@ -10,12 +10,16 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// Result is a generation's draft and what producing it cost. Tokens are set
-// even when the attempt fails, because a failed answer is still billed.
+// Result is a generation's draft, or the questions the agent asked in its
+// place, and what producing it cost. Tokens are set even when the attempt
+// fails, because a failed answer is still billed.
 type Result struct {
 	// Format is the shape of Definition: an agent bundle.
 	Format     model.OntologyFormat
 	Definition json.RawMessage
+	// Asked is set in place of Definition when the agent asked questions the
+	// draft can't go on without: the generation waits for their answers.
+	Asked *model.OntologyGenerationAsked
 	// Model drafted it, served by a provider of kind ModelProvider
 	// (anthropic, ...).
 	Model         string

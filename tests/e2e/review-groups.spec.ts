@@ -22,7 +22,7 @@ async function reviewed(page: Page, text: string) {
   await makeContractsCurrent(page);
   await uploadInData(page, [file("variant.md", text)]);
   await loadVersion3(page);
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await page
     .getByRole("grid", { name: "Documents" })
     .getByRole("link", { name: "variant.md", exact: true })
@@ -72,6 +72,9 @@ test("groups a document's reviews by reason, what a person can act on first", as
     "Globex Corporation and Initech may have signed.",
   );
   await expect(held.first()).toContainText("suggested link: signed_with");
+  // How its quote states it (contract 4.18.0), in words.
+  await expect(held.first()).toContainText(/Section \d+ · A sentence · /);
+  await expect(held.first()).not.toContainText("prose_sentence");
   await expect(held.first()).toContainText("Approving writes:");
   await expect(
     held.first().getByRole("button", { name: "Approve", exact: true }),
@@ -82,8 +85,8 @@ test("groups a document's reviews by reason, what a person can act on first", as
   await expect(
     group(page, "A relationship the ontology doesn’t have").rows,
   ).toHaveText([
-    /Globex Corporation supplies Initech\..*suggested link: supplier_of/,
-    /Initech competes with Globex Corporation\..*suggested link: competitor of/,
+    /Globex Corporation supplies Initech\..*suggested link: supplier_of · between a company and a company/,
+    /Initech competes with Globex Corporation\..*suggested link: competitor of · between a company and a company/,
   ]);
   // A review marked in the text opens its row, wherever its group is.
   const unresolved = group(page, "Names something that isn’t in your data");
@@ -270,7 +273,7 @@ test("leaves claims held for a name out of Approve all, on the page of their oth
     "“Globex Corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
   );
   await expect(globex).toContainText(
-    "the first load after that name is settled writes it",
+    "until that name is settled, then writes it",
   );
   await expect(globex).not.toContainText("written to this load at once");
   await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(

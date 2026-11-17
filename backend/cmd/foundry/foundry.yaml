@@ -40,7 +40,7 @@ billing:
       plans:
         - code: local
           display_name: Local
-          kinds: [stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, events, postgres, mysql, s3]
+          kinds: [stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, events, postgres, mysql, s3]
           sync: { every: 15m, shortest: 15m, capture: [full, cursor, events, log], reconcile_every: 24h, refresh_every: 15m }
 
 backend:
@@ -63,7 +63,7 @@ foundry:
   # http, and a local model on a CPU is slow: a call gets half an hour and a
   # probe a quarter of an hour to pass.
   ai:
-    kinds: [ollama, anthropic, openai, azure_openai, openai_compatible, bedrock]
+    kinds: [ollama, anthropic, openai, azure_openai, openai_compatible, bedrock, cohere]
     allow_private_hosts: true
     call_timeout: "30m"
     probe: { timeout: "15m", lease: "20m" }
@@ -114,3 +114,23 @@ foundry:
     per_hour: 30
     grantee_monthly_usd: 10
     grantee_per_hour: 10
+  # The Assistant: Foundry's own agent, which the owner talks to in the site
+  # and which prepares actions they run with a click. Its turns run on the
+  # install's model provider (the ask model) under these caps, apart from
+  # questions'.
+  agent:
+    enabled: true
+    http: { listen: "127.0.0.1:8102" }
+    max_usd: 0.5
+    max_steps: 20
+    max_wall_secs: 240
+    monthly_usd: 30
+  # Automations: the owner's graphs of steps the install runs as them when a
+  # schedule fires or a sync, load, upload or draft ends. Their Assistant
+  # steps run as the Assistant's turns, under a monthly budget of their own.
+  # An install sends no email, so a notify step is recorded as skipped.
+  automations:
+    enabled: true
+    http: { listen: "127.0.0.1:8103" }
+    monthly_usd: 20
+    max_usd: 0.5

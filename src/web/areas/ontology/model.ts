@@ -2,7 +2,7 @@ import { parse } from "smol-toml";
 import type {
   AgentBundleDefinition,
   AgentDraftItem,
-  AgentQuestion,
+  AgentDraftQuestion,
   AgentRuleCounts,
   AgentTurnStatus,
   Connector,
@@ -45,7 +45,7 @@ import {
 import { mayBeStarting } from "../explore/database-query";
 import { versionFormat } from "./format";
 import { EVENT_SOURCE_MODE_WORDS } from "./paths";
-import { isLive } from "./queries";
+import { isLive, isWaiting } from "./queries";
 import { isRecord } from "../../../shared/json";
 
 // Reads an ontology version's definition, in either stored format, into what
@@ -763,6 +763,24 @@ export function startingSets(
     .map((s) => s.id);
 }
 
+/**
+ * The goal Generate starts with: the one written before a sign-in's round
+ * trip, else a link's (`?goal=`, "" for none), else the goal of the
+ * generation that drafted the current version (a revision's is its
+ * parent's), so a new draft carries on from it; "" without one.
+ *
+ * @example
+ * startingGoal(undefined, null, { id: "g", goal: "Trace orders" }); // "Trace orders"
+ * startingGoal(undefined, "", { id: "g", goal: "Trace orders" }); // ""
+ * startingGoal("Mine", "Linked", { id: "g", goal: "Trace orders" }); // "Mine"
+ * startingGoal(undefined, null, undefined); // ""
+ */
+export const startingGoal = (
+  back: string | undefined,
+  link: string | null,
+  drafted: OntologyGeneration | null | undefined,
+) => back ?? link ?? drafted?.goal?.trim() ?? "";
+
 /** A connection's own document sets, as Generate's picker groups them. */
 export type OwnedSets = {
   connectorId: string;
@@ -1321,7 +1339,7 @@ export type Gap = { id: string; description: string };
 export type AgentBundle = {
   status?: AgentTurnStatus;
   summary: string;
-  questions: AgentQuestion[];
+  questions: AgentDraftQuestion[];
   usage: NonNullable<AgentBundleDefinition["usage"]>;
   ontologyToml: string;
   mappingsToml: string;
@@ -1335,8 +1353,131 @@ export type AgentBundle = {
   items: Record<string, AgentDraftItem>;
   competency: CompetencyQuestion[];
   gaps: Gap[];
-  leftOut: { what: string; reason: string }[];
+  leftOut: LeftOut[];
 };
+
+/**
+ * The kind of reason a draft gives for leaving a source out, when it is one
+ * the agent checks at its finish (contract 4.19.0, a `left_out` entry's
+ * `because`): the turn ran out of budget before it looked (`not_assessed`),
+ * the user asked for it (`said` quotes their words), or the set's documents
+ * state what a route of the draft already reads from other sets.
+ */
+export type LeftOutBecause =
+  | { kind: "not_assessed" }
+  | { kind: "user_asked"; said: string }
+  | { kind: "documents_state"; route: string; item: string };
+
+/**
+ * Whether a draft's item is a document route the agent added from reading
+ * sample documents of its sets (contract 4.20.0: it serves "probe"). Its
+ * rationale says what the sample held. Any other serves value is no probe.
+ *
+ * @example
+ * isProbeRoute({ toml: "", status: "proposed", rationale: "", serves: ["probe"] }); // true
+ * isProbeRoute({ toml: "", status: "proposed", rationale: "", serves: ["cq.CQ1"] }); // false
+ * isProbeRoute(undefined); // false
+ */
+export const isProbeRoute = (item?: AgentDraftItem) =>
+  !!item?.serves?.includes("probe");
+
+/** A source, field or object the draft left out, and why. */
+export type LeftOut = {
+  what: string;
+  reason: string;
+  because?: LeftOutBecause;
+};
+
+/**
+ * A `left_out` entry's `because`. An entry with none whose reason starts
+ * "Not assessed" counts as not assessed, as the agent reads entries stored
+ * before 4.19.0. A kind this site doesn't know is none, so only the reason
+ * shows, never a code.
+ *
+ * @example
+ * leftOutBecause("not_assessed", "Out of budget."); // { kind: "not_assessed" }
+ * leftOutBecause(undefined, "Not assessed: out of budget."); // { kind: "not_assessed" }
+ * leftOutBecause({ user_asked: { said: "skip the memos" } }, "Asked."); // { kind: "user_asked", said: "skip the memos" }
+ * leftOutBecause({ documents_state: { route: "notes", item: "Person.status" } }, "Read."); // { kind: "documents_state", route: "notes", item: "Person.status" }
+ * leftOutBecause({ guessed: {} }, "Not assessed"); // undefined
+ */
+export function leftOutBecause(
+  because: unknown,
+  reason: string,
+): LeftOutBecause | undefined {
+  if (because === "not_assessed") return { kind: "not_assessed" };
+  if (because == null)
+    return /^not assessed\b/i.test(reason.trim())
+      ? { kind: "not_assessed" }
+      : undefined;
+  if (!isRecord(because)) return undefined;
+  const asked = because.user_asked,
+    stated = because.documents_state;
+  if (isRecord(asked) && text(asked.said))
+    return { kind: "user_asked", said: text(asked.said) };
+  if (isRecord(stated) && text(stated.route) && text(stated.item))
+    return {
+      kind: "documents_state",
+      route: text(stated.route),
+      item: text(stated.item),
+    };
+  return undefined;
+}
+
+/**
+ * A route's item as words: a property "Type.prop" reads "Type’s prop", a
+ * link's name as linkWords reads it.
+ *
+ * @example
+ * routeItemWords("Person.status"); // "Person’s status"
+ * routeItemWords("works_at"); // "works at"
+ */
+export function routeItemWords(item: string): string {
+  const dot = item.indexOf(".");
+  return dot > 0
+    ? `${item.slice(0, dot)}’s ${linkWords(item.slice(dot + 1))}`
+    : linkWords(item);
+}
+
+/**
+ * Why a left-out entry is left out, in plain words, from its `because`:
+ * `route` names the route's documents (the sets it reads). Undefined when
+ * the entry has no kind this site knows, so only its reason shows.
+ *
+ * @example
+ * leftOutBecauseText({ kind: "not_assessed" }, () => ""); // { label: "Not checked yet", detail: "The agent ran out of budget before it looked at this. Generating again can pick it up." }
+ * leftOutBecauseText({ kind: "user_asked", said: "skip the memos" }, () => "").detail; // "Someone asked to leave it out: “skip the memos”."
+ * leftOutBecauseText({ kind: "documents_state", route: "notes", item: "Person.status" }, () => "Board minutes").detail; // "Its documents state Person’s status, which the route reading Board minutes already reads from other documents."
+ */
+export function leftOutBecauseText(
+  because: LeftOutBecause,
+  route: (name: string) => string,
+): { label: string; detail: string } {
+  switch (because.kind) {
+    case "not_assessed":
+      return {
+        label: "Not checked yet",
+        detail:
+          "The agent ran out of budget before it looked at this. Generating again can pick it up.",
+      };
+    case "user_asked":
+      return {
+        label: "Asked to leave out",
+        detail: `Someone asked to leave it out: “${because.said}”.`,
+      };
+    case "documents_state": {
+      const reads = route(because.route);
+      return {
+        label: "Already read elsewhere",
+        detail: `Its documents state ${routeItemWords(because.item)}, which ${
+          reads
+            ? `the route reading ${reads}`
+            : `the ${linkWords(because.route)} route`
+        } already reads from other documents.`,
+      };
+    }
+  }
+}
 
 const STATUSES: AgentTurnStatus[] = ["done", "needs_input", "budget_exhausted"];
 
@@ -1362,7 +1503,22 @@ export function readAgentBundle(
       id: text(q.id),
       items: texts(q.items),
       text: text(q.text),
-      options: texts(q.options),
+      header: text(q.header) || null,
+      // Options are {label, description}; a version from before 4.25.0
+      // has bare labels.
+      options: (Array.isArray(q.options) ? q.options : [])
+        .map((o) =>
+          typeof o === "string"
+            ? { label: o, description: null }
+            : isRecord(o)
+              ? {
+                  label: text(o.label),
+                  description: text(o.description) || null,
+                }
+              : { label: "", description: null },
+        )
+        .filter((o) => o.label),
+      multiple: q.multiple === true,
       default: text(q.default) || null,
       blocking: q.blocking === true,
     }));
@@ -1410,7 +1566,15 @@ export function readAgentBundle(
     })),
     gaps: review("gap", (id, t) => ({ id, description: text(t.description) })),
     leftOut: tables(draft.left_out)
-      .map((l) => ({ what: text(l.what), reason: text(l.reason) }))
+      .map((l): LeftOut => {
+        const reason = text(l.reason),
+          because = leftOutBecause(l.because, reason);
+        return {
+          what: text(l.what),
+          reason,
+          ...(because ? { because } : {}),
+        };
+      })
       .filter((l) => l.what),
   };
 }
@@ -1762,6 +1926,98 @@ export const loadSources = (mappings: AgentMapping[]) => [
     mappings.flatMap((m) => (m.rows.kind === "source" ? [m.rows.source] : [])),
   ),
 ];
+
+/**
+ * The tables a version reads, each once: Definition v1's entities name a
+ * connector and a table, an agent bundle's mappings a source id (a synced
+ * table's hash, or a table file's document id). One that doesn't parse
+ * reads none.
+ *
+ * @example
+ * versionTables({ id: "v", definition: { entities: [{ name: "Customer", source: { connector_id: "c1", table: "customers" } }] } });
+ * // [{ kind: "table", connectorId: "c1", table: "customers" }]
+ */
+export function versionTables(v: OntologyVersion): SourceRef[] {
+  if (versionFormat(v) === "agent_bundle") {
+    const { mappings } = readAgentBundle(v.definition);
+    return mappings.ok
+      ? loadSources(mappings.value).map((sourceId) => ({
+          kind: "agent" as const,
+          sourceId,
+        }))
+      : [];
+  }
+  const pairs = readFoundry(v.definition).entities.flatMap((e) =>
+    e.source?.connector_id && e.source.table
+      ? [`${e.source.connector_id}\0${e.source.table}`]
+      : [],
+  );
+  return [...new Set(pairs)].map((pair) => {
+    const [connectorId = "", table = ""] = pair.split("\0");
+    return { kind: "table", connectorId, table };
+  });
+}
+
+/** A connection an ontology reads, with what it reads of it. */
+export type OntologyConnection = {
+  connector: Connector;
+  // Its synced tables the version maps, in the version's order.
+  tables: string[];
+  // Its own document sets the ontology reads (an API source's pieces, a
+  // Granola connection's notes), by name.
+  sets: string[];
+};
+
+/**
+ * The connections an ontology reads (its Connections page): the connectors
+ * of the synced tables its version maps (`tables`, named by `resolve`: a
+ * connector's table, null for a table file, which is a document rather than
+ * a connection, or undefined when nothing names it), and those whose own
+ * document sets it reads (`sets`, those whose `readBy` names it: an API
+ * source's pieces, a connection's notes or pages). In the workspace's
+ * connector order. `unknown` counts the tables nothing names and those of a
+ * connector deleted since.
+ *
+ * @example
+ * const stripe = { id: "c1", kind: "stripe", name: "Stripe" };
+ * ontologyConnections(
+ *   [stripe],
+ *   ["a", "b", "f"],
+ *   (id) => (id === "f" ? null : id === "a" ? { connectorId: "c1", table: "customers" } : undefined),
+ * );
+ * // { connections: [{ connector: stripe, tables: ["customers"], sets: [] }], unknown: 1 }
+ */
+export function ontologyConnections<T>(
+  connectors: readonly Connector[],
+  tables: readonly T[],
+  resolve: (
+    table: T,
+  ) => { connectorId: string; table: string } | null | undefined,
+  sets: readonly FoundryDocumentSet[] = [],
+): { connections: OntologyConnection[]; unknown: number } {
+  const named = tables.map(resolve).filter((t) => t !== null);
+  const connections = connectors.flatMap((connector): OntologyConnection[] => {
+    const own = [
+        ...new Set(
+          named.flatMap((t) =>
+            t?.connectorId === connector.id ? [t.table] : [],
+          ),
+        ),
+      ],
+      owned = sets
+        .filter((x) => x.connector?.connectorId === connector.id)
+        .map((x) => x.name || x.id);
+    return own.length || owned.length
+      ? [{ connector, tables: own, sets: owned }]
+      : [];
+  });
+  return {
+    connections,
+    unknown: named.filter(
+      (t) => !t || !connectors.some((c) => c.id === t.connectorId),
+    ).length,
+  };
+}
 
 const phases: JobPhase[] = ["provisioning", "ingest", "documents", "finishing"];
 const phaseLabels: Record<JobPhase, string> = {
@@ -3364,7 +3620,8 @@ export type SetupFacts = {
  * done and how it stands, or done once every one is.
  *
  * - draft: nothing drafted. To do; running while a generation is queued or
- *   running; failed when the newest generation failed (`error` says why).
+ *   running; waiting while it waits for answers to the agent's questions;
+ *   failed when the newest generation failed (`error` says why).
  * - current: drafted, no version current; `versionId` is the newest draft.
  * - load: a version is current, but no load is current and the last one
  *   didn't succeed; running while a load job runs.
@@ -3374,7 +3631,7 @@ export type OntologySetup =
   | { step: "draft"; state: "todo" }
   | {
       step: "draft";
-      state: "running" | "failed";
+      state: "running" | "waiting" | "failed";
       generation: OntologyGeneration;
     }
   | { step: "current"; state: "todo"; versionId: string }
@@ -3392,6 +3649,8 @@ export type OntologySetup =
  * ontologySetup({ ontology: o, ...none }); // { step: "draft", state: "todo" }
  * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_RUNNING" }] });
  * // { step: "draft", state: "running", generation: { id: "g", ... } }
+ * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_NEEDS_INPUT" }] });
+ * // { step: "draft", state: "waiting", generation: { id: "g", ... } }
  * ontologySetup({ ontology: o, ...none, generations: [{ id: "g", status: "ONTOLOGY_GENERATION_STATUS_FAILED" }] });
  * // { step: "draft", state: "failed", generation: { id: "g", ... } }
  * ontologySetup({ ontology: o, ...none, versions: [{ id: "v1" }] });
@@ -3413,6 +3672,9 @@ export function ontologySetup({
     if (draft) return { step: "current", state: "todo", versionId: draft };
     const live = generations.find(isLive);
     if (live) return { step: "draft", state: "running", generation: live };
+    const waiting = generations.find(isWaiting);
+    if (waiting)
+      return { step: "draft", state: "waiting", generation: waiting };
     const last = generations[0];
     return last?.status === "ONTOLOGY_GENERATION_STATUS_FAILED"
       ? { step: "draft", state: "failed", generation: last }

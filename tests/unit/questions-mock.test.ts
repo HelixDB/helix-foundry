@@ -720,7 +720,9 @@ describe("mock questions", () => {
     const failed = await end("failed");
     await fitsContract(failed.id);
     expect(failed.status).toBe("failed");
-    expect(failed.error).toBe("the model could not be reached; ask again");
+    expect(failed.error).toBe(
+      "the model provider is busy; try again in a minute",
+    );
     expect(parseAskResult(failed.resultJson)).toMatchObject({
       status: "failed",
       reason: "model_failed",
@@ -747,5 +749,121 @@ describe("mock questions", () => {
     later(10_000);
     const kept = JSON.parse((await fitsContract(stopped.id)).resultJson);
     expect(kept.queries[0].output).toMatchObject({ kind: "rows", total: 2 });
+  });
+
+  it("answers which invoices are billed, unpaid or overdue from the invoices alone", async () => {
+    const { load } = await loaded();
+    Object.assign(config, { askStepMs: 10 });
+    const q = (
+      await ask({
+        loadId: load,
+        question:
+          "Which invoices are billed to each account, and which are unpaid or overdue?",
+      })
+    ).body.question;
+    later(10_000);
+    const done = await fitsContract(q.id);
+    expect(done).toMatchObject({ status: "answered", loadId: load });
+    // It reads the load, then two queries, then answers once.
+    const stream = reduceEvents(
+      EMPTY_STREAM,
+      (await call("GET", `${Q}/${q.id}/events`)).body,
+    );
+    expect(
+      stream.steps.map((s) => [
+        s.tool,
+        s.result?.kind,
+        s.result?.kind === "recorded" ? s.result.evidenceId : undefined,
+      ]),
+    ).toEqual([
+      ["load_profile", "recorded", "e1"],
+      ["query", "recorded", "e2"],
+      ["query", "recorded", "e3"],
+      ["answer", "ended", undefined],
+    ]);
+    const result = parseAskResult(done.resultJson)!;
+    if (result.status !== "answered") throw new Error(result.status);
+    expect(result.queries.map((r) => r.evidence_id)).toEqual(["e2", "e3"]);
+    expect(queryText(result.queries[0]!.query).path).toBe(
+      "Invoice → billed_to → Customer",
+    );
+    // Unpaid or overdue: neither paid, void nor a draft, as three tests (the
+    // read contract has no `in`).
+    expect(result.queries[1]!.query.start.where).toEqual([
+      { prop: "status", op: "!=", value: "paid" },
+      { prop: "status", op: "!=", value: "void" },
+      { prop: "status", op: "!=", value: "draft" },
+    ]);
+    // Every invoice with the account it bills, by account; then the unpaid
+    // or overdue ones by status, as the engine gives groups.
+    const [rows, owing] = result.queries.map((r) => r.output);
+    if (rows?.kind !== "rows") throw new Error("no rows");
+    expect(rows.total).toBe(65);
+    expect(rows.rows[0]!.cells.slice(0, 2)).toEqual([
+      expect.objectContaining({ type: "Customer" }),
+      expect.objectContaining({ type: "Invoice" }),
+    ]);
+    const accounts = rows.rows.map(
+      (r) => (r.cells[0] as { name: string }).name,
+    );
+    expect(accounts).toEqual([...accounts].sort());
+    expect(owing).toEqual({
+      kind: "group_count",
+      groups: [
+        { value: { untrusted: "open" }, count: 9 },
+        { value: { untrusted: "uncollectible" }, count: 7 },
+      ],
+      total_groups: 2,
+    });
+    // Each after the paragraph that introduces it: a table, then bars.
+    expect(result.answer.visuals).toEqual([
+      {
+        evidence_id: "e2",
+        after: 0,
+        kind: "table",
+        title: "Invoices by account",
+      },
+      {
+        evidence_id: "e3",
+        after: 1,
+        kind: "bar",
+        title: "Unpaid or overdue invoices",
+      },
+    ]);
+    const plans = drawable(result).map((d) =>
+      visualPlan(d.output, d.query, d.visual),
+    );
+    expect(plans.map((p) => [p.kind, p.title])).toEqual([
+      ["table", "Invoices by account"],
+      ["chart", "Unpaid or overdue invoices"],
+    ]);
+    // It says how it reads the words the load has nothing for.
+    expect(result.answer.blocks[0]).toEqual({
+      para: expect.stringContaining("no subscriptions or due dates"),
+    });
+    expect(result.answer.blocks[1]).toEqual({
+      para: expect.stringMatching(/^16 of them are unpaid or overdue/),
+    });
+    const view = answerView(result.answer.blocks, result.citations);
+    expect(view.sources.map((s) => Object.keys(s.citation.target)[0])).toEqual([
+      "result",
+      "result",
+      "entity",
+    ]);
+    expect(result.citations[2]!.target).toMatchObject({
+      entity: { type: "Customer" },
+    });
+    // Without visuals, as a 3.10.0 engine: no outputs, no visuals.
+    Object.assign(config, { askVisuals: false });
+    const plain = (
+      await ask({ loadId: load, question: "How many invoices are overdue?" })
+    ).body.question;
+    later(10_000);
+    const old = JSON.parse((await fitsContract(plain.id)).resultJson);
+    expect(old.answer.visuals).toBe(undefined);
+    expect(old.queries.map((r: object) => "output" in r)).toEqual([
+      false,
+      false,
+    ]);
   });
 });

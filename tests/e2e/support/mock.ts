@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   expect,
@@ -38,6 +39,18 @@ export const mock = {
       stopReason: "signed_in" | null;
     }[]
   > => (await (await fetch(`${MOCK}/__mock/reminders`)).json()).reminders,
+  /** The reset links the mock's forgot emailed, oldest first (mock/routes/auth.ts). */
+  passwordResets: async (): Promise<{ email: string; token: string }[]> =>
+    (await (await fetch(`${MOCK}/__mock/password-resets`)).json()).resets,
+  /** The feedback POST /v1/feedback took (mock/routes/feedback.ts). */
+  feedback: async (): Promise<
+    {
+      category: string;
+      message: string;
+      page: string;
+      workspaceId: string | null;
+    }[]
+  > => (await (await fetch(`${MOCK}/__mock/feedback`)).json()).feedback,
   configure: (config: {
     // Seeds Customer contracts' demo workflows and 45 days of their runs.
     workflowDemo?: boolean;
@@ -54,10 +67,19 @@ export const mock = {
     // provider refused the workspace's key).
     ontologyStepMs?: number;
     ontologyOutcome?: "succeed" | "fail" | "retry" | "auth";
+    // A new generation's agent asks three questions before it drafts.
+    ontologyQuestions?: boolean | "time_zone";
     // A revision measuring rules on a comparable load is over its budget.
     reviseOutcome?: "budget";
     // A load's step, how it ends, and whether reading a document fails.
     loadStepMs?: number;
+    // What the engine says in place of a person's resolve (contract 4.22.0).
+    nameInPlace?:
+      | "written"
+      | "not_replayed"
+      | "bound"
+      | "collides"
+      | "not_asked";
     loadOutcome?: "succeed" | "fail" | "sources_changed" | "budget_exhausted";
     documentOutcome?: "succeed" | "fail";
     // Seeds a variant of a customer's name linked to that customer this way,
@@ -114,6 +136,38 @@ export const mock = {
     // false: answers as a 3.10.0 engine did, without outputs or visuals.
     askVisuals?: boolean;
     askSpentUsdMicros?: number;
+    // Founder (mock/routes/agent.ts): each event's time, how a turn
+    // ends otherwise (or a call a limit kept from running), and how long a
+    // card's confirmation lives (5 minutes).
+    agentStepMs?: number;
+    // How far apart a text's deltas stream (a quarter of agentStepMs).
+    agentDeltaMs?: number;
+    agentOutcome?: "fail" | "budget_exhausted" | "not_run";
+    agentActionTtlMs?: number;
+    // false: Founder is off (foundry.agent.enabled): every one of its routes
+    // refuses, so /ask is the Analyst's page, its composer and all.
+    agentEnabled?: boolean;
+    // Automations (mock/routes/automations.ts): the worker's clock moved
+    // this far ahead (a schedule fires without waiting), each step's time,
+    // the runs a workspace starts a day, automations off on this stamp,
+    // and what the mock Founder answers a yes-or-no or how-many step.
+    automationClockMs?: number;
+    automationStepMs?: number;
+    automationRunsPerDay?: number;
+    automationsDisabled?: boolean;
+    automationAnswer?: "yes" | "no";
+    automationCount?: number;
+    // The new automation page's suggestions
+    // (mock/routes/automation-suggestions.ts): how long the Assistant
+    // takes to write them (0: the first read's), its writing failing, and
+    // false: no AI provider, so only the competency questions' ones.
+    automationSuggestionsMs?: number;
+    automationSuggestionsOutcome?: "fail";
+    automationSuggestionsAi?: boolean;
+    // false: no public dashboard links, as a stamp with them turned off.
+    dashboardsPublic?: boolean;
+    // Dashboards' public links read their expiry this many days from now.
+    dashboardClockDays?: number;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.
     s3RoleAccess?: boolean;
     // Another writer comes first on each of the next n data-layout PUTs.
@@ -184,6 +238,9 @@ export const mock = {
     // What the engine says of an approval taken back (contract 4.16.0), in
     // place of withdrawn: nothing of it in the load, or a refusal.
     withdrawOutcome?: "not_written" | "differs" | "too_large";
+    // The load holds an approved claim's document with other text than a
+    // resend sends (contract 4.17.0): refused in place as document_changed.
+    documentChanged?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
@@ -205,6 +262,29 @@ export const mock = {
       ...(body && { body: JSON.stringify(body) }),
     });
     return { status: res.status, body: await res.json() };
+  },
+  /** Records ended runs of a workflow, each `ago` ms before now: its history. */
+  pastRuns: async (
+    automationId: string,
+    runs: {
+      status: "succeeded" | "failed" | "cancelled" | "skipped";
+      ago: number;
+      usdMicros?: number;
+    }[],
+  ) => {
+    const res = await fetch(
+      `${MOCK}/__mock/automations/${encodeURIComponent(automationId)}/past-runs`,
+      { method: "POST", body: JSON.stringify({ runs }) },
+    );
+    if (!res.ok) throw new Error(`past runs: ${res.status}`);
+  },
+  /** Drops an ended run of a workflow, as the backend's retention does. */
+  pruneRun: async (automationId: string, runId: string) => {
+    const res = await fetch(
+      `${MOCK}/__mock/automations/${encodeURIComponent(automationId)}/runs/${encodeURIComponent(runId)}/prune`,
+      { method: "POST" },
+    );
+    if (!res.ok) throw new Error(`prune run: ${res.status}`);
   },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP
@@ -251,6 +331,8 @@ export async function signIn(
   if (!new URL(page.url(), "http://x").pathname.startsWith("/login"))
     await page.goto("/login");
   await page.getByRole("button", { name: `Continue with ${provider}` }).click();
+  // The sign-in page has an Email field of its own: wait for the mock's.
+  await page.waitForURL(/\/mock\/authorize\?/);
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"));
@@ -470,6 +552,42 @@ export async function postToWfe(page: Page, path: string, data: object) {
   });
   expect(res.status(), await res.text()).toBe(200);
   return res.json();
+}
+
+/**
+ * Asks `question` of an ontology's current load through the WFE, as the
+ * Analyst's composer did before Founder, and opens its thread on Founder's
+ * page, read only (`?thread=`): the question's article.
+ */
+export async function askAnalyst(
+  page: Page,
+  question: string,
+  ontologyId = "ont_acme_contracts",
+) {
+  const asked = await postToWfe(
+    page,
+    `/v1/workspaces/ws_acme/foundry/ontologies/${ontologyId}/questions`,
+    { question, clientToken: randomUUID() },
+  );
+  const thread: string = asked.question.threadId || asked.question.id;
+  await page.goto(`/ask/${ontologyId}?thread=${thread}`);
+  return page.getByRole("article", { name: `Question: ${question}` });
+}
+
+/**
+ * Starts one of Ada's threads with Founder through the WFE, as its composer
+ * does, sending no page: the thread's id.
+ */
+export async function startFounderThread(
+  page: Page,
+  text: string,
+): Promise<string> {
+  return (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/agent/turns", {
+      text,
+      clientToken: randomUUID(),
+    })
+  ).thread.id;
 }
 
 /**

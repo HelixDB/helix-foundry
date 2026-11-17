@@ -84,7 +84,7 @@ function idle() {
 }
 
 /**
- * Counts a question asked in Analyst. From the third, once a session until
+ * Counts a question asked in Analyst, or a message sent to Founder. From the third, once a session until
  * the prompt is answered or dismissed in this browser, shows it once the
  * window has gone 30 s without input, unless the install's GitHub token has
  * starred the repository already.

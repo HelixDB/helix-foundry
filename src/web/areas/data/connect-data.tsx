@@ -4,13 +4,14 @@ import {
   useId,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import type { Connector, ConnectorKindName } from "../../../shared/wfe";
-import { sourceMark } from "../../kit";
+import { Button, SourceLogo, connectorLabel, sourceMark } from "../../kit";
 import { paths } from "../../paths";
 import { useCurrentTheme, type Theme } from "../../shell/theme";
 import { Loading, canManage, useWorkspace } from "../../ui";
@@ -18,6 +19,7 @@ import { ProGate } from "../workspace/pro-gate";
 import { ConnectionForm } from "./connection-form";
 import { connectorKindsQuery, connectorsQuery, signInQuery } from "./data-api";
 import { EventSourceForm } from "./event-source-form";
+import { RequestConnectorForm } from "./request-connector";
 import { isEventSource, isKnownKind } from "./model";
 import { AgentSignIn, SignInReturn } from "./sign-in";
 
@@ -29,8 +31,10 @@ import { AgentSignIn, SignInReturn } from "./sign-in";
 // API card, has a form of its own (./event-source-form.tsx), whose send
 // panel shows in the modal once the source is made; `onCreated` hears of a
 // source as soon as it is made, before Done, since the modal may be closed
-// without it. A new connection opens its page, unless the caller takes it
-// (`onConnected`) to stay where it is.
+// without it. A new connection ends on what was made (`Connected`), with Add
+// another source and Open, unless the caller takes it (`onConnected`) to
+// stay where it is. Under the kinds, Request a connector takes the
+// picker's place (./request-connector.tsx), for members too.
 //
 // A kind may connect by signing in at its provider (the kind's
 // `signIn`), a round trip that leaves the page: the callback comes back to
@@ -52,6 +56,7 @@ const appChoices: [ConnectorKindName, string, string][] = [
   ["slack", "Slack", "Channels, messages and people"],
   ["notion", "Notion", "Pages and databases"],
   ["google", "Google Workspace", "Drive docs, calendars and people"],
+  ["databuddy", "Databuddy", "Web analytics: sessions, pages and visitors"],
 ];
 const databaseChoices: [ConnectorKindName, string, string][] = [
   ["postgres", "PostgreSQL", "Import tables from your database."],
@@ -90,6 +95,14 @@ function logo(kind: ConnectorKindName, theme: Theme) {
   );
 }
 
+// A drag of files over the picker: kept from the page, and refused.
+const refuseFiles = (e: DragEvent<HTMLElement>) => {
+  e.stopPropagation();
+  if (!e.dataTransfer.types.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "none";
+};
+
 // helix-foundry's Modal (ui.tsx): a native dialog with its header.
 export function Modal({
   title,
@@ -103,7 +116,10 @@ export function Modal({
   className?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null),
-    close = useRef(onClose);
+    close = useRef(onClose),
+    // Where the last press began: a press that starts in the card (a text
+    // selection in a field) and ends over the backdrop keeps the dialog.
+    pressed = useRef<EventTarget | null>(null);
   close.current = onClose;
   useEffect(() => {
     const el = dialog.current!,
@@ -125,9 +141,18 @@ export function Modal({
       ref={dialog}
       className={"modal " + className}
       aria-label={title}
+      onMouseDown={(e) => (pressed.current = e.target)}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && pressed.current === e.target)
+          onClose();
       }}
+      // A page that takes dropped files as documents (the Data page) never
+      // gets one dropped on the dialog, and the browser doesn't open it: no
+      // field here takes a file.
+      onDragEnter={(e) => e.stopPropagation()}
+      onDragOver={refuseFiles}
+      onDragLeave={(e) => e.stopPropagation()}
+      onDrop={refuseFiles}
     >
       <div className="modal-head">
         <h2>{title}</h2>
@@ -193,6 +218,39 @@ function ConnectionCard({
   );
 }
 
+// What a connect from the picker ends on: the connection made, and where to
+// go next, so adding several sources never leaves the picker.
+function Connected({
+  connector,
+  message,
+  onAnother,
+  onOpen,
+}: {
+  connector: Connector;
+  message: string;
+  onAnother: () => void;
+  onOpen: () => void;
+}) {
+  const name = connector.name || connectorLabel(connector.kind);
+  return (
+    <div className="dc-connected" role="status">
+      <SourceLogo source={connector.kind} size={28} />
+      <p className="dc-connected-text">
+        <strong>{name}</strong>
+        <span>{message}.</span>
+      </p>
+      <div className="dc-connected-actions">
+        <Button icon={Plus} onClick={onAnother} autoFocus>
+          Add another source
+        </Button>
+        <Button variant="primary" onClick={onOpen}>
+          Open {name}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ConnectData({
   onClose,
   initialKind,
@@ -245,12 +303,35 @@ export function ConnectData({
   );
   const count = (k: ConnectorKindName) =>
     (connectors.data?.connectors || []).filter((c) => c.kind === k).length;
-  const done = async (connector: Connector, message: string) => {
-    await qc.invalidateQueries({ queryKey: [id, "connectors"] });
+  // What was just connected, while the dialog says so: Add another source
+  // goes back to the picker, Open to its page.
+  // Request a connector, in the picker's place.
+  const [requesting, setRequesting] = useState(false);
+  const requestLine = (
+    <>
+      <hr className="connection-divider" />
+      <p className="dc-request-line">
+        Don’t see your tool or database?{" "}
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => setRequesting(true)}
+        >
+          Request a connector
+        </button>
+      </p>
+    </>
+  );
+  const [connected, setConnected] = useState<{
+    connector: Connector;
+    message: string;
+  } | null>(null);
+  const done = (connector: Connector, message: string) => {
+    void qc.invalidateQueries({ queryKey: [id, "connectors"] });
+    if (!onConnected) return setConnected({ connector, message });
     onClose();
     notify(message);
-    if (onConnected) onConnected(connector);
-    else navigate(paths.connection(connector.id));
+    onConnected(connector);
   };
   const cards = (choices: typeof appChoices) =>
     choices
@@ -272,12 +353,51 @@ export function ConnectData({
   const chosen = kind ? offered.get(kind) : undefined;
   return (
     <Modal
-      title={kind ? titles[kind] : "Where is your data?"}
+      title={
+        connected
+          ? "Connected"
+          : requesting
+            ? "Request a connector"
+            : kind && chosen
+              ? titles[kind]
+              : "Where is your data?"
+      }
       onClose={onClose}
     >
       <div className="pad connection-dialog">
-        {!canManage(role) ? (
-          <p>An owner or admin can add data to this workspace.</p>
+        {connected ? (
+          <Connected
+            connector={connected.connector}
+            message={connected.message}
+            onAnother={() => {
+              setConnected(null);
+              setBound(null);
+              setKind(null);
+              // The picker's first kind takes the focus the panel had.
+              requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLElement>("dialog[open] .connection-card")
+                  ?.focus(),
+              );
+            }}
+            // The connection's page takes the picker's entry: Back from it
+            // is where the picker was opened.
+            onOpen={() =>
+              navigate(paths.connection(connected.connector.id), {
+                replace: true,
+              })
+            }
+          />
+        ) : requesting ? (
+          <RequestConnectorForm
+            onDone={() => setRequesting(false)}
+            onCancel={() => setRequesting(false)}
+          />
+        ) : !canManage(role) ? (
+          <>
+            <p>An owner or admin can add data to this workspace.</p>
+            {requestLine}
+          </>
         ) : kinds.isPending ? (
           <Loading />
         ) : kinds.error ? (
@@ -330,6 +450,7 @@ export function ConnectData({
                 </div>
               </>
             )}
+            {requestLine}
           </>
         ) : (
           <>

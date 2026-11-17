@@ -101,6 +101,9 @@ const nextConfig: NextConfig = {
           ? databuddy.clientId
           : "",
     NEXT_PUBLIC_BOTID: botid ? "1" : "",
+    // Founder (src/web/areas/agent): every build's, since every backend
+    // serves it (prod's from helixsvc with foundry.agent on).
+    NEXT_PUBLIC_FOUNDRY_ASSISTANT: "1",
   },
   async headers() {
     return [
@@ -111,6 +114,17 @@ const nextConfig: NextConfig = {
           { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+      // A published dashboard's page: its address is the link's token, so it
+      // sends no referrer anywhere, and it is no page for a search engine or
+      // a cache.
+      {
+        source: "/share/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cache-Control", value: "no-store" },
         ],
       },
     ];

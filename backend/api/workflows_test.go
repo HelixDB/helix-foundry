@@ -90,13 +90,13 @@ func (s *workflowStore) GetFoundryWorkflowByClientToken(_ context.Context, ontol
 	})
 }
 
-func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflow, string, error) {
+func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID string, withAutomations bool, pageToken string, _ int) ([]*foundrymodel.FoundryWorkflow, string, error) {
 	if pageToken == "bad" {
 		return nil, "", foundrystore.ErrInvalidPageToken
 	}
 	var out []*foundrymodel.FoundryWorkflow
 	for _, w := range s.workflows {
-		if w.OntologyID == ontologyID {
+		if w.OntologyID == ontologyID && (withAutomations || w.Automation == nil) {
 			out = append(out, s.counted(w))
 		}
 	}
@@ -104,6 +104,9 @@ func (s *workflowStore) ListFoundryWorkflows(_ context.Context, ontologyID, page
 }
 
 func (s *workflowStore) DeleteFoundryWorkflow(_ context.Context, ontologyID, id string) error {
+	if w, err := s.GetFoundryWorkflow(context.Background(), ontologyID, id); err == nil && w.Automation != nil && !w.Automation.Deleted {
+		return foundrystore.ErrAutomationWorkflow
+	}
 	n := len(s.workflows)
 	s.workflows = slices.DeleteFunc(s.workflows, func(w *foundrymodel.FoundryWorkflow) bool { return w.ID == id && w.OntologyID == ontologyID })
 	if len(s.workflows) == n {
@@ -166,15 +169,18 @@ func (s *workflowStore) ListFoundryWorkflowRuns(_ context.Context, workflowID st
 }
 
 func (s *workflowStore) ListFoundryWorkflowInsightRuns(_ context.Context, ontologyID, workflowID string, startedBy *access.Principal,
-	from, to time.Time, limit int) ([]foundrymodel.FoundryWorkflowInsightRun, error) {
+	withAutomations bool, from, to time.Time, limit int) ([]foundrymodel.FoundryWorkflowInsightRun, error) {
 	var out []foundrymodel.FoundryWorkflowInsightRun
 	for _, r := range s.runs {
 		if r.OntologyID != ontologyID || workflowID != "" && r.WorkflowID != workflowID || startedBy != nil && r.StartedBy != *startedBy ||
-			r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
+			!withAutomations && r.AutomationRunID != nil || r.StartedAt.Before(from) || !r.StartedAt.Before(to) {
 			continue
 		}
 		run := foundrymodel.FoundryWorkflowInsightRun{ID: r.ID, WorkflowID: r.WorkflowID, StartedBy: r.StartedBy, StartedAt: r.StartedAt,
 			Status: r.Status(), Counts: r.Counts}
+		if w, err := s.GetFoundryWorkflow(context.Background(), r.OntologyID, r.WorkflowID); err == nil {
+			run.Automation = w.Automation
+		}
 		if a := s.assessments[r.ID]; a != nil {
 			run.Assessment = &foundrymodel.FoundryWorkflowInsightAssessment{Status: a.Status, Verdict: a.Verdict, Assessment: a.Assessment,
 				USDMicros: a.USDMicros}
@@ -196,8 +202,11 @@ func (s *workflowStore) TallyFoundryWorkflowRuns(_ context.Context, workflowIDs 
 			t.Runs++
 			if r.Finished != nil {
 				t.FinishedRuns++
+				if r.Counts.Accesses == 0 {
+					t.NeverCalledRuns++
+				}
 			}
-			if a := s.assessments[r.ID]; a != nil && a.Status == foundrymodel.FoundryWorkflowAssessmentDone {
+			if a := s.assessments[r.ID]; a != nil && a.Status == foundrymodel.FoundryWorkflowAssessmentDone && r.Counts.Accesses > 0 {
 				t.Verdicts[a.Verdict]++
 			}
 		}
@@ -220,7 +229,7 @@ func (s *workflowStore) FinishFoundryWorkflowRun(_ context.Context, id string, i
 		return foundrystore.ErrNotFound
 	}
 	r.Finished = &foundrymodel.FoundryWorkflowRunEnd{At: time.Now(), Output: output}
-	if assess {
+	if assess && r.Counts.Accesses > 0 {
 		s.assessments[id] = &foundrymodel.FoundryWorkflowAssessment{RunID: id, Status: foundrymodel.FoundryWorkflowAssessmentQueued, QueuedAt: time.Now()}
 	}
 	return nil
@@ -247,7 +256,7 @@ func (s *workflowStore) CountFoundryWorkflowVerdicts(_ context.Context, workflow
 	out := map[string]map[string]int64{}
 	for _, r := range s.runs {
 		a := s.assessments[r.ID]
-		if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || !slices.Contains(workflowIDs, r.WorkflowID) {
+		if a == nil || a.Status != foundrymodel.FoundryWorkflowAssessmentDone || r.Counts.Accesses == 0 || !slices.Contains(workflowIDs, r.WorkflowID) {
 			continue
 		}
 		if out[r.WorkflowID] == nil {
@@ -262,6 +271,9 @@ func (s *workflowStore) QueueFoundryWorkflowRunAssessment(_ context.Context, run
 	if err := s.queueErr; err != nil {
 		s.queueErr = nil
 		return err
+	}
+	if i := slices.IndexFunc(s.runs, func(r *foundrymodel.FoundryWorkflowRun) bool { return r.ID == runID }); i < 0 || s.runs[i].Finished == nil {
+		return foundrystore.ErrNotFound
 	}
 	s.assessments[runID] = &foundrymodel.FoundryWorkflowAssessment{RunID: runID, Status: foundrymodel.FoundryWorkflowAssessmentQueued}
 	return nil
@@ -428,6 +440,9 @@ func TestFoundryWorkflowReads(t *testing.T) {
 	}
 	_, err = s.GetFoundryWorkflow(ctx, &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "nope"})
 	wantCode(t, err, codes.NotFound)
+	if msg := status.Convert(err).Message(); msg != "use case not found" {
+		t.Fatalf("not found = %q, want it named a use case", msg)
+	}
 
 	runs, err := s.ListFoundryWorkflowRuns(ctx, &foundryv1.ListFoundryWorkflowRunsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: w.ID})
 	if err != nil || len(runs.GetRuns()) != 1 || runs.GetRuns()[0].GetId() != run.GetId() || runs.GetRuns()[0].GetStatus() != "open" {
@@ -800,7 +815,9 @@ func TestFoundryWorkflowAssessments(t *testing.T) {
 
 	t.Run("finishing a run queues its assessment, where they are on", func(t *testing.T) {
 		s, store := workflowService(t)
-		run := finish(s, startRun(t, s, "q"))
+		run := startRun(t, s, "q")
+		must(store.RecordFoundryWorkflowAccess(context.Background(), run.GetId(), &foundrymodel.FoundryWorkflowRead{LoadID: "load-1"}))
+		run = finish(s, run)
 		if run.GetAssessment().GetStatus() != "queued" {
 			t.Fatalf("assessment = %+v", run.GetAssessment())
 		}
@@ -845,10 +862,50 @@ func TestFoundryWorkflowAssessments(t *testing.T) {
 		wantCode(t, err, codes.NotFound)
 	})
 
+	t.Run("a run that made no call isn't assessed, and one assessed before counts nowhere", func(t *testing.T) {
+		s, store := workflowService(t)
+		run := finish(s, startRun(t, s, "q"))
+		if run.GetAssessment() != nil || len(store.assessments) != 0 {
+			t.Fatalf("assessment = %+v", run.GetAssessment())
+		}
+		_, err := assess(s, run)
+		wantCode(t, err, codes.FailedPrecondition)
+		if !strings.Contains(err.Error(), foundrymodel.FoundryWorkflowNeverCalled) || len(store.assessments) != 0 {
+			t.Fatalf("again = %v, %d queued", err, len(store.assessments))
+		}
+		// Assessed unused before such runs went unassessed: the workflow
+		// counts no verdict of it.
+		store.assessments[run.GetId()] = &foundrymodel.FoundryWorkflowAssessment{RunID: run.GetId(), Status: foundrymodel.FoundryWorkflowAssessmentDone,
+			Verdict: "unused", Assessment: []byte(`{"verdict":"unused"}`)}
+		w := must(s.GetFoundryWorkflow(asPerson(), &foundryv1.GetFoundryWorkflowRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: run.GetWorkflowId()}))
+		if len(w.GetWorkflow().GetVerdicts()) != 0 {
+			t.Fatalf("verdicts = %+v", w.GetWorkflow().GetVerdicts())
+		}
+		// Nor does the run show it, read alone or listed.
+		got := must(s.GetFoundryWorkflowRun(asPerson(), &foundryv1.GetFoundryWorkflowRunRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(), Id: run.GetId(),
+		}))
+		listed := must(s.ListFoundryWorkflowRuns(asPerson(), &foundryv1.ListFoundryWorkflowRunsRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", WorkflowId: run.GetWorkflowId(),
+		}))
+		if got.GetRun().GetAssessment() != nil || listed.GetRuns()[0].GetAssessment() != nil {
+			t.Fatalf("run = %+v, listed = %+v", got.GetRun().GetAssessment(), listed.GetRuns()[0].GetAssessment())
+		}
+		// An open run that made none yet may still: it says so.
+		open := startRun(t, s, "open")
+		_, err = assess(s, open)
+		if err == nil || strings.Contains(err.Error(), foundrymodel.FoundryWorkflowNeverCalled) {
+			t.Fatalf("an open run = %v", err)
+		}
+	})
+
 	t.Run("where they are off, none is queued or asked for", func(t *testing.T) {
 		s, store := workflowService(t)
 		s.deps.Cfg.Foundry.Workflows.Assess.Enabled = false
-		run := finish(s, startRun(t, s, "q"))
+		// It made a call: only the setting keeps it unassessed.
+		run := startRun(t, s, "q")
+		must(store.RecordFoundryWorkflowAccess(context.Background(), run.GetId(), &foundrymodel.FoundryWorkflowRead{LoadID: "load-1"}))
+		run = finish(s, run)
 		if run.GetAssessment() != nil || len(store.assessments) != 0 {
 			t.Fatalf("assessment = %+v", run.GetAssessment())
 		}
@@ -944,6 +1001,7 @@ func TestGranteeWorkflows(t *testing.T) {
 		t.Fatalf("started by %v and %v", agents, members)
 	}
 	for id, verdict := range map[string]string{owners.GetId(): "helpful", members.GetId(): "unused"} {
+		must(store.RecordFoundryWorkflowAccess(context.Background(), id, &foundrymodel.FoundryWorkflowRead{LoadID: "load-1"}))
 		store.assessments[id] = &foundrymodel.FoundryWorkflowAssessment{RunID: id, WorkflowID: wf, Status: foundrymodel.FoundryWorkflowAssessmentDone, Verdict: verdict}
 	}
 	ids := func(who ports.Actor) []string {
@@ -1036,7 +1094,7 @@ func TestGranteeWorkflows(t *testing.T) {
 	}
 	_, err = client.ListFoundryWorkflows(as(agent), &foundryv1.ListFoundryWorkflowsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
 	wantCode(t, err, codes.PermissionDenied)
-	if !strings.Contains(status.Convert(err).Message(), "Settings › Access") {
+	if !strings.Contains(status.Convert(err).Message(), "Settings › Access") || !strings.HasPrefix(status.Convert(err).Message(), "use cases are off") {
 		t.Fatalf("refusal %q doesn't say where to turn it on", status.Convert(err).Message())
 	}
 	_, err = s.trackedRun(wholly, "ws-1", "ont-1", owners.GetId())

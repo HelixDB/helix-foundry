@@ -101,7 +101,7 @@ func TestFoundryWorkflows(t *testing.T) {
 		seen := map[string]bool{}
 		token := ""
 		for {
-			page, next, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, token, 30)
+			page, next, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, true, token, 30)
 			require.NoError(t, err)
 			for _, w := range page {
 				assert.False(t, seen[w.ID], "listed twice: %s", w.ID)
@@ -113,7 +113,7 @@ func TestFoundryWorkflows(t *testing.T) {
 			token = next
 		}
 		assert.Len(t, seen, model.FoundryWorkflowsMax)
-		_, _, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, "not-a-token", 30)
+		_, _, err := f.db.ListFoundryWorkflows(ctx, f.ontology.ID, true, "not-a-token", 30)
 		assert.ErrorIs(t, err, store.ErrInvalidPageToken)
 	})
 }
@@ -144,6 +144,8 @@ func TestFoundryWorkflowRuns(t *testing.T) {
 	w := f.workflow(t, "A")
 	input := "Which customers renew this quarter?"
 	r := f.run(t, w, "A", &input)
+	_, err := f.db.RecordFoundryWorkflowAccess(ctx, r.ID, read(id26("L1"), ""))
+	require.NoError(t, err)
 
 	assert.Equal(t, model.FoundryWorkflowRunOpen, r.Status())
 	require.NotNil(t, r.Input)
@@ -257,9 +259,11 @@ func TestFoundryWorkflowRuns(t *testing.T) {
 		}
 	})
 	t.Run("a tally counts one principal's runs and their verdicts", func(t *testing.T) {
+		// LATER finished without a call: its verdict, from before such runs
+		// went unassessed, counts nowhere.
 		_, err := testDB.Exec(`INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status, verdict, assessment, finished_at)
-VALUES (?, ?, ?, ?, 'done', 'helpful', '{}', NOW(6)), (?, ?, ?, ?, 'queued', NULL, NULL, NULL)`,
-			r.ID, w.WorkspaceID, w.OntologyID, w.ID, id26("FR-KEY"), w.WorkspaceID, w.OntologyID, w.ID)
+VALUES (?, ?, ?, ?, 'done', 'helpful', '{}', NOW(6)), (?, ?, ?, ?, 'queued', NULL, NULL, NULL), (?, ?, ?, ?, 'done', 'unused', '{}', NOW(6))`,
+			r.ID, w.WorkspaceID, w.OntologyID, w.ID, id26("FR-KEY"), w.WorkspaceID, w.OntologyID, w.ID, id26("FR-LATER"), w.WorkspaceID, w.OntologyID, w.ID)
 		require.NoError(t, err)
 		other := id26("WF-NONE")
 		tallies, err := f.db.TallyFoundryWorkflowRuns(ctx, []string{w.ID, other}, ada)
@@ -267,6 +271,7 @@ VALUES (?, ?, ?, ?, 'done', 'helpful', '{}', NOW(6)), (?, ?, ?, ?, 'queued', NUL
 		mine := tallies[w.ID]
 		assert.EqualValues(t, 3, mine.Runs)
 		assert.EqualValues(t, 2, mine.FinishedRuns)
+		assert.EqualValues(t, 1, mine.NeverCalledRuns, "LATER made no call")
 		require.NotNil(t, mine.LastRunAt)
 		assert.Equal(t, map[string]int64{"helpful": 1}, mine.Verdicts)
 		assert.Equal(t, model.FoundryWorkflowRunTally{Verdicts: map[string]int64{}}, tallies[other])
@@ -549,6 +554,8 @@ func TestFoundryWorkflowRunAssessments(t *testing.T) {
 	in := "Who renews?"
 	finished := func(tag string) *model.FoundryWorkflowRun {
 		r := f.run(t, w, tag, &in)
+		_, err := f.db.RecordFoundryWorkflowAccess(ctx, r.ID, read(id26("L1"), ""))
+		require.NoError(t, err)
 		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, nil, "Acme.", true))
 		return r
 	}
@@ -571,6 +578,21 @@ func TestFoundryWorkflowRunAssessments(t *testing.T) {
 		// Queued, it can't be queued again.
 		assert.ErrorIs(t, f.db.QueueFoundryWorkflowRunAssessment(ctx, plain.ID), store.ErrConflict)
 		_, err = testDB.Exec(`DELETE FROM foundry_workflow_run_assessments WHERE run_id=?`, plain.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("a run that made no call finishes unqueued", func(t *testing.T) {
+		silent := f.run(t, w, "SILENT", &in)
+		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, silent.ID, nil, "Acme.", true))
+		_, err := f.db.GetFoundryWorkflowRunAssessment(ctx, silent.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound)
+		got, err := f.db.GetFoundryWorkflowRun(ctx, f.ontology.ID, silent.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryWorkflowRunFinished, got.Status())
+		// Assessed before such runs went unqueued: its verdict counts
+		// nowhere (below).
+		_, err = testDB.Exec(`INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status, verdict, assessment, finished_at)
+VALUES (?, ?, ?, ?, 'done', 'unused', '{}', NOW(6))`, silent.ID, w.WorkspaceID, w.OntologyID, w.ID)
 		require.NoError(t, err)
 	})
 
@@ -809,7 +831,7 @@ VALUES (?, ?, ?, ?, 'done', 'helpful', '{"verdict":"helpful"}', 123, NOW(6)), (?
 	}
 	window := func(workflowID string, by *access.Principal, limit int) []model.FoundryWorkflowInsightRun {
 		t.Helper()
-		runs, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.ontology.ID, workflowID, by, day, day.AddDate(0, 0, 3), limit)
+		runs, err := f.db.ListFoundryWorkflowInsightRuns(ctx, f.ontology.ID, workflowID, by, true, day, day.AddDate(0, 0, 3), limit)
 		require.NoError(t, err)
 		return runs
 	}
@@ -838,7 +860,7 @@ VALUES (?, ?, ?, ?, 'done', 'helpful', '{"verdict":"helpful"}', 123, NOW(6)), (?
 	ada := access.Principal{Kind: access.PrincipalUser, ID: id26("U-ADA")}
 	assert.Equal(t, []string{other.ID, first.ID}, ids(window("", &ada, 10)))
 	assert.Equal(t, []string{other.ID}, ids(window("", nil, 1)), "the newest, up to limit")
-	none, err := f.db.ListFoundryWorkflowInsightRuns(ctx, id26("ONT-NONE"), "", nil, day, day.AddDate(0, 0, 3), 10)
+	none, err := f.db.ListFoundryWorkflowInsightRuns(ctx, id26("ONT-NONE"), "", nil, true, day, day.AddDate(0, 0, 3), 10)
 	require.NoError(t, err)
 	assert.Empty(t, none, "another ontology's")
 }

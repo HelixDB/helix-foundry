@@ -45,7 +45,7 @@ func (s *Service) GetFoundryUsage(ctx context.Context, req *foundryv1.GetFoundry
 	}
 	assessments, err := s.deps.DB.SumFoundryWorkflowAssessmentSpend(ctx, ws, month.Since)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "sum workflow assessments spend: %v", err)
+		return nil, status.Errorf(codes.Internal, "sum use case assessments spend: %v", err)
 	}
 	assessCap := cfg.Workflows.Assess.MonthlyMicros()
 	sourcesCap := cfg.SetAllowances()[foundrymodel.ConnectorKindEvents].WorkspaceMicros

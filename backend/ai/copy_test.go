@@ -12,9 +12,9 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 )
 
-// What generations and questions said of Helix's Claude before providers
-// (ontologyagent/generator.go:267,269 and foundry-ask-worker/run.go:392,393
-// at origin/dev): its copy may never change.
+// What generations said of Helix's Claude before providers
+// (ontologyagent/generator.go:267,269 at origin/dev), which drafts still say,
+// and what a workspace's own provider's questions say.
 const (
 	houseDeclined    = "Claude declined to draft this ontology"
 	houseUnavailable = "Claude is unavailable; Helix will retry"
@@ -86,20 +86,49 @@ func TestDraftFailure(t *testing.T) {
 }
 
 func TestAskFailure(t *testing.T) {
-	// Helix's Claude says exactly what questions said before providers.
-	t.Run("keeps Helix's Claude's copy", func(t *testing.T) {
-		house := Resolved{Source: SourceDefault, Settings: claude}
+	house := Resolved{Source: SourceDefault, Settings: claude}
+	const (
+		busy    = "the model provider is busy; try again in a minute"
+		bug     = "Helix sent the model a request it rejected. That's a bug in Helix, not your question; on-call has been told"
+		account = "Helix's model account can't take questions right now; on-call has been told, so try again later"
+		room    = "the question needed more room than the model has; ask something narrower"
+	)
+	// Helix's Claude says what each failure is: a provider still busy after
+	// the agent's retries says to try again, a request the model rejected is
+	// Helix's bug and never "ask again", and the key's and account's
+	// failures are Helix's; all but the provider's passing trouble are
+	// raised with on-call.
+	t.Run("words Helix's Claude's failures for what they are", func(t *testing.T) {
+		want := map[ontologyagent.ModelFailure]Copy{
+			ontologyagent.ModelRefused:        {Message: askDeclined, Permanent: true},
+			ontologyagent.ModelUnavailable:    {Message: busy},
+			ontologyagent.ModelRateLimited:    {Message: busy},
+			ontologyagent.ModelTimeout:        {Message: busy},
+			ontologyagent.ModelMalformed:      {Message: "the model's answer couldn't be read; ask again"},
+			ontologyagent.ModelUnsupported:    {Message: bug, Ops: true},
+			ontologyagent.ModelChanged:        {Message: bug, Ops: true},
+			ontologyagent.ModelPrivateHost:    {Message: bug, Ops: true},
+			ontologyagent.ModelAuth:           {Message: account, Ops: true},
+			ontologyagent.ModelPermission:     {Message: account, Ops: true},
+			ontologyagent.ModelNotFound:       {Message: account, Ops: true},
+			ontologyagent.ModelQuota:          {Message: account, Ops: true},
+			ontologyagent.ModelTruncated:      {Message: room, Ops: true},
+			ontologyagent.ModelContextTooLong: {Message: room, Ops: true},
+		}
 		for _, f := range ontologyagent.ModelFailures {
-			want := Copy{Message: askUnreachable, Ops: true}
-			switch f {
-			case ontologyagent.ModelRefused:
-				want = Copy{Message: askDeclined, Permanent: true}
-			case ontologyagent.ModelUnavailable, ontologyagent.ModelRateLimited, ontologyagent.ModelMalformed, ontologyagent.ModelTimeout:
-				want = Copy{Message: askUnreachable}
+			w, ok := want[f]
+			if !ok {
+				t.Fatalf("no copy expected for %s", f)
 			}
-			if got := AskFailure(house, f); got != want {
-				t.Errorf("AskFailure(house, %s) = %+v, want %+v", f, got, want)
+			if got := AskFailure(house, f); got != w {
+				t.Errorf("AskFailure(house, %s) = %+v, want %+v", f, got, w)
 			}
+			if f != ontologyagent.ModelMalformed && strings.Contains(w.Message, "ask again") {
+				t.Errorf("%s: only an answer that couldn't be read is worth asking again: %q", f, w.Message)
+			}
+		}
+		if len(want) != len(ontologyagent.ModelFailures) {
+			t.Errorf("%d failures worded, %d known", len(want), len(ontologyagent.ModelFailures))
 		}
 	})
 	// The owner's own key's failures name the question's model.
@@ -115,6 +144,29 @@ func TestAskFailure(t *testing.T) {
 			t.Errorf("timeout = %+v", got)
 		}
 	})
+}
+
+func TestAssessFailure(t *testing.T) {
+	house := Resolved{Source: SourceDefault, Settings: claude}
+	// An assessment is retried, so Helix's Claude's copy says what failed and
+	// that Helix will retry it; a rejected request is Helix's bug, raised
+	// with on-call.
+	for f, want := range map[ontologyagent.ModelFailure]Copy{
+		ontologyagent.ModelRefused:     {Message: "the model declined to assess this run", Permanent: true},
+		ontologyagent.ModelRateLimited: {Message: "the model provider is busy; Helix will retry"},
+		ontologyagent.ModelMalformed:   {Message: "the model's answer couldn't be read; Helix will retry"},
+		ontologyagent.ModelUnsupported: {Message: "Helix sent the model a request it rejected. That's a bug in Helix; on-call has been told, and Helix will retry", Ops: true},
+		ontologyagent.ModelQuota:       {Message: "Helix's model account can't take this right now; on-call has been told, and Helix will retry", Ops: true},
+		ontologyagent.ModelTruncated:   {Message: "the run was too large for the model to assess; on-call has been told, and Helix will retry", Ops: true},
+	} {
+		if got := AssessFailure(house, f); got != want {
+			t.Errorf("AssessFailure(house, %s) = %+v, want %+v", f, got, want)
+		}
+	}
+	own := Resolved{Source: SourceWorkspace, Settings: claude}
+	if got := AssessFailure(own, ontologyagent.ModelUnavailable); got != (Copy{Message: "the model could not be reached; Helix will retry"}) {
+		t.Errorf("own unavailable = %+v", got)
+	}
 }
 
 func TestDocumentFailure(t *testing.T) {

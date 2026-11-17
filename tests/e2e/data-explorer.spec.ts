@@ -161,13 +161,21 @@ test("marks the row of the page open as the URL changes", async ({ page }) => {
   await postgres.locator(":scope > .dt-row .dt-chevron").click();
   await expect(postgres).toHaveAttribute("aria-expanded", "false");
   await expect(shop).toHaveCount(0);
-  // Opened from the Data page's grid, its row shows again.
+  // The picker opened from the explorer closes back to the page it was
+  // opened on.
   await explorer(page).getByRole("link", { name: "Add data" }).click();
   await expect(page).toHaveURL(/\/data\?add=1$/);
   const picker = page.getByRole("dialog", { name: "Where is your data?" });
   await expect(picker).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(picker).toHaveCount(0);
+  await expect(page).toHaveURL(/\/data\/connections\/conn_acme_shop$/);
+  // Opened from the Data page's grid, its row shows again.
+  await page
+    .getByRole("navigation", { name: "Data" })
+    .getByRole("link", { name: "Connectors" })
+    .click();
+  await expect(page).toHaveURL(/\/data$/);
   await page
     .getByRole("grid", { name: "Connections" })
     .getByRole("link", { name: "Shop database" })
@@ -185,6 +193,10 @@ test("opens a connection on its tables and its own sets, 50 documents at a time"
   await form.getByLabel("API key").fill("grn_e2eTeamGranolaKey");
   await form.getByRole("button", { name: "Test connection" }).click();
   await form.getByRole("button", { name: "Connect and sync" }).click();
+  await page
+    .getByRole("dialog", { name: "Connected" })
+    .getByRole("button", { name: /^Open / })
+    .click();
   // Its sync writes each note into a set of its own.
   const granola = connection(page, "Granola");
   await expect(granola).toBeVisible({ timeout: 15_000 });

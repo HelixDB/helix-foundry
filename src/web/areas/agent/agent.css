@@ -1,0 +1,663 @@
+/* Founder's dock (dock.tsx, cards.tsx): its head, the conversation,
+   tool steps, action cards and the composer. Where it sits (a column right
+   of the page, or a phone's drawer) is the shell's (shell.css .hf-assistant). */
+.ag-dock {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--hf-surface);
+}
+.ag-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--hf-space-1);
+  min-height: 48px;
+  padding: 0 var(--hf-space-1) 0 var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+}
+.ag-head-icon {
+  flex: none;
+  color: var(--hf-accent-text);
+}
+.ag-head-title {
+  margin: 0 auto 0 0;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.ag-threads-trigger {
+  max-width: 200px;
+}
+.ag-threads-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The conversation, scrolling on its own. */
+.ag-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.ag-log:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: -2px;
+}
+.ag-log-body {
+  display: grid;
+  gap: var(--hf-space-2);
+  padding: var(--hf-space-2);
+}
+.ag-msg {
+  display: grid;
+  gap: var(--hf-space-1);
+  min-width: 0;
+}
+.ag-msg--person {
+  justify-self: end;
+  max-width: 88%;
+  padding: var(--hf-space-1) var(--hf-space-15);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-sunken);
+}
+.ag-who {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.ag-text {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.ag-text a,
+.ag-ran a,
+.ag-link {
+  color: var(--hf-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ag-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: start;
+  font-size: var(--hf-text-sm);
+}
+.ag-working,
+.ag-note,
+.ag-ran,
+.ag-card-muted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+/* An icon and a sentence: the sentence wraps beside the icon, not under it. */
+.ag-ran > svg {
+  flex: none;
+}
+.ag-ran > svg + span {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.ag-card-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-card-error svg {
+  flex: none;
+  margin-top: 2px;
+}
+.ag-card-error a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* The text the model is writing, ending in a caret while it writes: a
+   glyph joined to the last word, so it never wraps alone. */
+.ag-live::after {
+  content: "\2060\258D";
+  color: var(--hf-muted);
+  animation: hf-pulse 1s ease-in-out infinite;
+}
+
+/* A tool call, collapsed to its name. */
+.ag-step {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+  font-size: var(--hf-text-sm);
+}
+.ag-step summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px var(--hf-space-1);
+  color: var(--hf-text-2);
+  cursor: pointer;
+}
+.ag-step summary svg {
+  flex: none;
+  color: var(--hf-faint);
+}
+.ag-step-failed {
+  margin-left: auto;
+  color: var(--hf-danger-text);
+  font-weight: 600;
+}
+.ag-step-skipped {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-weight: 600;
+}
+.ag-connect {
+  justify-self: start;
+  gap: 6px;
+  text-decoration: none;
+}
+.ag-step-body {
+  display: grid;
+  gap: 6px;
+  padding: 0 var(--hf-space-1) var(--hf-space-1);
+}
+.ag-label {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+}
+.ag-code {
+  max-height: 220px;
+  margin: 0;
+  padding: var(--hf-space-1);
+  overflow: auto;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* An action the agent prepared: set apart from its words. */
+/* Questions Founder asks: the question-by-question flow, in a box
+   like a card's. */
+.ag-asked {
+  display: grid;
+  gap: var(--hf-space-15);
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-accent-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+}
+.ag-asked-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.ag-asked-title svg {
+  flex: none;
+  color: var(--hf-accent-text);
+}
+.ag-msg--person .qf-summary {
+  min-width: 0;
+}
+.ag-card {
+  display: grid;
+  gap: var(--hf-space-1);
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-accent-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+}
+.ag-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--hf-space-1);
+}
+.ag-card-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-accent-text);
+}
+.ag-card-title {
+  min-width: 0;
+  margin-right: auto;
+  overflow-wrap: anywhere;
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+}
+.ag-card-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 6px var(--hf-space-1);
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-card-warn svg {
+  flex: none;
+  margin-top: 2px;
+}
+.ag-card-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--hf-space-15);
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
+.ag-card-facts dt {
+  color: var(--hf-muted);
+}
+.ag-card-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ag-card-quote {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 2px 0 2px var(--hf-space-15);
+  border-left: 2px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+.ag-card-quote q {
+  color: var(--hf-text-2);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+.ag-card-proposal {
+  display: grid;
+  gap: 6px;
+}
+.ag-card-text {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-card-muted code,
+.ag-card-facts code {
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  overflow-wrap: anywhere;
+}
+.ag-disclosure {
+  font-size: var(--hf-text-sm);
+}
+.ag-disclosure summary {
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+.ag-disclosure[open] {
+  display: grid;
+  gap: 6px;
+}
+.ag-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hf-space-1);
+}
+
+/* The composer: one box holding the page's chip, the field and its button,
+   and a line under it saying how to send or why it can't. Founder's
+   (dock.tsx Composer) and the Analyst's (ask.tsx) everywhere they show:
+   the dock, Founder's page and a new automation's. Where it sits is its
+   page's; the dock pins it under the conversation. */
+.ag-dock-composer {
+  flex: none;
+  padding: var(--hf-space-1) var(--hf-space-2) var(--hf-space-15);
+}
+.ag-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+.ag-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 7px 7px 7px 16px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-xl);
+  background: var(--hf-field);
+  box-shadow: var(--hf-shadow-2);
+  cursor: text;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    box-shadow var(--hf-duration) var(--hf-ease);
+}
+/* Focused as the app's other fields are (style.css input:focus). */
+.ag-box:focus-within {
+  border-color: var(--hf-faint);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--hf-focus) 14.5%, transparent),
+    var(--hf-shadow-2);
+}
+/* The page's chip, a pill over the field's first line. */
+.ag-chip {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-self: start;
+  gap: 2px;
+  max-width: 100%;
+  margin: 2px 0 0 -6px;
+  cursor: default;
+}
+.ag-chip .hf-tag {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ag-chip-drop {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+.ag-chip-drop:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.ag-chip-drop:focus-visible,
+.ag-send:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+/* The field wraps its text and grows down to its most rows (PromptInput
+   sets its height), then scrolls down; it never scrolls sideways. */
+.ag-input {
+  min-width: 0;
+  margin: 0;
+  /* 1px at its end: with fractional glyph widths, a line broken mid-word
+     can otherwise end 1px past the field, which then scrolls sideways. */
+  padding: 7px 1px 7px 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  resize: none;
+  scrollbar-width: thin;
+}
+.ag-input:focus,
+.ag-input:focus-visible {
+  border: 0;
+  outline: none;
+}
+.ag-input::placeholder {
+  color: var(--hf-muted);
+  opacity: 1;
+}
+/* Send, and Stop in its place while a turn is live: a quiet icon in the
+   box's corner, the same size in every state. */
+.ag-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hf-radius-lg);
+  background: none;
+  color: var(--hf-text);
+  cursor: pointer;
+  transition:
+    background-color var(--hf-duration) var(--hf-ease),
+    color var(--hf-duration) var(--hf-ease);
+}
+@media (hover: hover) {
+  .ag-send:hover:not(:disabled) {
+    background: var(--hf-hover);
+  }
+}
+.ag-send:disabled {
+  color: var(--hf-faint);
+  cursor: default;
+}
+.ag-composer[aria-busy="true"] .ag-send {
+  color: var(--hf-text);
+  cursor: progress;
+}
+.ag-status {
+  margin: 0;
+  /* Empty while idle; one line's height kept, so a message never jumps the layout. */
+  min-height: 1.4em;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.ag-status.is-error {
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+}
+.ag-status a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (max-width: 800px) {
+  /* iOS zooms into focused fields under 16px. */
+  .ag-input {
+    font-size: 16px;
+  }
+  .ag-dock-composer {
+    padding-bottom: calc(var(--hf-space-15) + env(safe-area-inset-bottom));
+  }
+}
+
+/* The dotted ground Founder's full pages sit on (a new automation's,
+   Founder's page and the Analyst's). */
+.ag-dots {
+  background-color: var(--hf-sunken);
+  background-image: radial-gradient(
+    var(--hf-border-strong) 1.2px,
+    transparent 1.2px
+  );
+  background-size: 20px 20px;
+}
+/* What sits straight on the dots stands on its own ground. */
+.ag-dots .ag-msg--person {
+  border: 1px solid var(--hf-border);
+  background: var(--hf-raised);
+}
+
+/* Settings › AI models on a local install (runtime-settings.tsx): the
+   Founder's helpers, a pairing code's commands, and what to run when the
+   chosen runtime's helper isn't running. Its rows are the members list's
+   (workspace.css .wk-member). */
+.ag-helpers {
+  display: grid;
+  gap: var(--hf-space-1);
+  width: 100%;
+  min-width: 0;
+}
+.ag-helpers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+}
+.ag-helpers-head h4 {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.ag-helpers .wk-members {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+}
+/* What a helper's CLI is signed in to matters more than one line: its
+   row wraps, where the members list's truncates. */
+.ag-helper .wk-member-text strong {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+.ag-helper .wk-member-text small {
+  white-space: normal;
+}
+.ag-helper .wk-member-text small.ag-helper-problem {
+  color: var(--hf-warning-text);
+}
+.ag-pairing {
+  display: grid;
+  gap: var(--hf-space-1);
+  min-width: 0;
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+.ag-pairing-step {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-pairing-step code {
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.ag-pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hf-space-1);
+}
+/* What Codex runs with: confirmed once, then said while it is chosen. */
+.ag-codex-note {
+  display: grid;
+  gap: var(--hf-space-1);
+  min-width: 0;
+  padding: var(--hf-space-15);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-surface);
+}
+.ag-codex-note .wk-note {
+  margin: 0;
+}
+.ag-codex-terms {
+  display: grid;
+  gap: var(--hf-space-1);
+  margin: 0;
+  padding-left: 1.1em;
+  list-style: disc;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-mark-openai {
+  display: block;
+  width: 36px;
+  height: 36px;
+  background: currentColor;
+  mask: url("/providers/openai.svg") center / contain no-repeat;
+}
+/* A command to copy, its button over the code's corner. */
+.ag-command {
+  position: relative;
+  min-width: 0;
+  margin: 0;
+}
+.ag-command pre {
+  margin: 0;
+  padding: 10px 76px 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ag-command > button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+/* The dock's line under its head: where the open thread runs, and how to
+   start its helper while none is running. */
+.ag-runtime {
+  display: grid;
+  flex: none;
+  gap: 6px;
+  padding: var(--hf-space-1) var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ag-runtime-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.ag-runtime-line img,
+.ag-runtime-line .ag-mark-openai {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.ag-runtime.is-offline .ag-runtime-line:first-child {
+  color: var(--hf-warning-text);
+}

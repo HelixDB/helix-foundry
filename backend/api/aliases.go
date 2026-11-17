@@ -21,9 +21,9 @@ func (s *Service) CreateFoundryOntologyDocument(ctx context.Context, req *foundr
 }
 
 // CompleteFoundryOntologyDocumentUpload is also how an agent's tools
-// complete an upload: with workflow_run_id, the document is recorded under
-// that open run of the ontology's workflow, once however often it is
-// completed.
+// complete an upload: with workflow_run_id (the MCP's use_case_run_id), the
+// document is recorded under that open run of the ontology's use case (a
+// workflow in the RPCs' names), once however often it is completed.
 func (s *Service) CompleteFoundryOntologyDocumentUpload(ctx context.Context, req *foundryv1.CompleteFoundryOntologyDocumentUploadRequest) (
 	*foundryv1.FoundryDocumentReadsResponse, error) {
 	run, err := s.trackedRun(ctx, req.GetWorkspaceId(), req.GetOntologyId(), req.GetWorkflowRunId())

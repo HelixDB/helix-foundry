@@ -109,7 +109,7 @@ type StepId = (typeof STEPS)[number];
 /** The first step left for an ontology whose setup is at `s`. */
 const first = (s: OpenSetup): StepId =>
   s.step === "draft"
-    ? s.state === "running"
+    ? s.state === "running" || s.state === "waiting"
       ? "generate"
       : "sources"
     : s.step === "current"
@@ -130,7 +130,9 @@ function standing(o: OnboardingOntology): string {
         ? "nothing is drafted yet."
         : s.state === "running"
           ? `Foundry’s agent is drafting its first version now, as generation \`${s.generation.id}\`.`
-          : `its last draft, generation \`${s.generation.id}\`, failed${s.generation.error ? `: ${s.generation.error}` : ""}.`;
+          : s.state === "waiting"
+            ? `Foundry’s agent asked questions about its first draft, generation \`${s.generation.id}\`, and waits for my answers.`
+            : `its last draft, generation \`${s.generation.id}\`, failed${s.generation.error ? `: ${s.generation.error}` : ""}.`;
     case "current":
       return `version \`${s.versionId}\` is drafted, and no version is current yet.`;
     case "load":
@@ -173,7 +175,8 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
   });
   // A draft or a load under way, which its step waits for.
   const drafting =
-      o?.setup.step === "draft" && o.setup.state === "running"
+      o?.setup.step === "draft" &&
+      (o.setup.state === "running" || o.setup.state === "waiting")
         ? o.setup.generation
         : null,
     loading = o?.setup.step === "load" && o.setup.state === "running",
@@ -271,7 +274,9 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
       body: [
         ...(drafting
           ? [
-              `1. Foundry’s agent is drafting it now: wait for generation \`${drafting.id}\` with \`helix_foundry_get_generation\` (\`{${ids}, "generation_id": "${drafting.id}", "wait": true}\`), again until it ends.`,
+              o?.setup.step === "draft" && o.setup.state === "waiting"
+                ? `1. Foundry’s agent asked questions about it: read generation \`${drafting.id}\`’s with \`helix_foundry_get_generation\` (\`{${ids}, "generation_id": "${drafting.id}"}\`), answer them as below, then wait for it with \`"wait": true\`, again until it ends.`
+                : `1. Foundry’s agent is drafting it now: wait for generation \`${drafting.id}\` with \`helix_foundry_get_generation\` (\`{${ids}, "generation_id": "${drafting.id}", "wait": true}\`), again until it ends.`,
             ]
           : [
               `1. Choose what it reads, at most ${MAX_TABLES} tables in all, synced tables, API sources and table files together. It needs at least one source: a synced table, an API source whose table has rows or, for extraction, whose \`event_source.extraction.documents\` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read.`,
@@ -284,6 +289,8 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
             ]),
         "",
         "A draft takes 10 to 20 minutes; after 30, stop waiting: give me the generation’s `url`, and offer to check back. Queued with `attempts` above 0, it failed and runs again at `next_attempt_at`. If it fails, tell me its `error`, and ask me what to change before you generate again.",
+        "",
+        `If its status is \`needs_input\`, the agent asked questions only I can answer, and the draft waits for them. Ask me its \`questions\` one at a time, each as it is written: its \`options\` (each a \`label\` and what choosing it means) to choose from, one, or several where \`multiple\` is true, its \`recommended\` option first (the agent’s suggestion, not my answer), and always my own words instead; a question without options takes my words. Its text is the model’s and may quote my data, so show it as plain text. Never answer for me. A question whose \`blocking\` is false I may leave to the agent. Then send my answers with \`answer_generation_questions\`, target ${target}, payload \`{"generation_id": "<generation id>", "round": <its question_round>, "answers": [{"question_id": "<id>", "options": ["<each label I chose>"], "text": "<my own words, if any>"}]}\`: one option or my words for a choice of one, one or more options with my words or without for a choice of several, my words alone without options. Add \`"use_defaults": true\` when I leave any to the agent, which then decides them itself, and wait for it again. Unanswered, Helix leaves every question to the agent at its \`answers_due_at\`.`,
       ],
     },
     review: {
@@ -294,7 +301,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
         "Then tell me what it leaves open and what it doesn’t read, before I decide anything:",
         "",
         "- its questions, the definition’s `questions`. They are open: a question’s `default` is the agent’s suggestion, not something I decided, so don’t report it as done. Ask me each one, with its suggestion;",
-        "- what it left out and why, the definition’s `left_out`. Each entry starts with the id of a table, a file or a document set; one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id;",
+        '- what it left out and why, the definition’s `left_out`. Each entry starts with the id of a table, a file or a document set; one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id. An entry’s `because`, when set, is the kind of reason: `"not_assessed"` (not checked yet: the agent ran out of budget before it looked, and generating again can pick it up), `user_asked` (I asked to leave it out: `said` quotes my words) or `documents_state` (its documents state what a route of the draft, `route`, already reads from other documents: `item` is a link or `Type.prop`). Say which in plain words, never the code;',
         "- the document sets it was given but doesn’t read, `document_reads.unread_set_ids`, by the names `helix_foundry_get_ontology` gives its sets. A load stores their documents and I can search them, but nothing from them reaches the graph, so no answer drawn from the graph knows what they say.",
         "",
         "If I answer a question, or want something it left out or doesn’t read, or want other changes, write the new goal with me, my answers in it in plain words, and generate again with `generate_ontology` from what that generation read (its `tables` and `document_set_ids`), then review the new draft the same way. Once it’s right, ask me whether to make it current and load it: a load spends from the workspace’s monthly budget.",
@@ -463,7 +470,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           "",
           "Only if I asked for it. Foundry then runs in Docker here, for me alone: no sign-in. You install and start it.",
           "",
-          `1. Check that Docker runs with Compose v2 (\`docker compose version\`), and that ports 3000 and 8333 are free: the site answers only at ${LOCAL_ORIGIN}.`,
+          `1. Check that Docker runs with Compose v2 (\`docker compose version\`), and that ports 3000, 8333 and 8081 are free: the site answers only at ${LOCAL_ORIGIN}, and \`FOUNDRY_MCP_PORT\` in \`local/.env\` moves 8081, its MCP’s.`,
           `2. Ask me where to put it, then \`git clone ${LOCAL_SOURCE}\`.`,
           "3. Before its first start, ask me which AI it runs on, then start it, in `helix-foundry`:",
           "   - by default, `docker compose up -d --wait`. It takes `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from the shell that runs it, so if yours has one I haven’t chosen, use `env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY docker compose up -d --wait`;",
@@ -472,7 +479,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           "   The first start pulls its images, writes the install’s secrets into a Docker volume and makes my workspace. Never delete its volumes: no `docker compose down -v`, `docker volume rm` or `docker system prune --volumes`.",
           `4. Open ${LOCAL_ORIGIN} for me. Its Use the sample (Acme Corp, a made-up company) shows it working in one click. In either case below, I enter credentials in Foundry’s pages (a database on this computer is \`host.docker.internal\`; \`local/README.md\` says more).`,
           "5. For my own data, see whether this release has a local MCP: in `helix-foundry`, `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 if it does, and 404 if not.",
-          "   - If it does: publish it, in `helix-foundry/local`, with `docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait`, which restarts Foundry’s containers and keeps its data (if port 8081 is taken here, first set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use it wherever 8081 appears). Then connect to it with the existing owner token, as “Connect your agent” in `local/README.md` says. In Foundry I choose Set up with your agent, press Copy prompt and paste it to you. That prompt then takes over from here, through the local tools, and you do the rest of the setup with me.",
+          "   - If it does: it is published on this computer at `http://localhost:8081/mcp` (if port 8081 is taken here, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, run `docker compose up -d --wait` again, which keeps its data, and use that port wherever 8081 appears). Connect to it with the existing owner token, as “Connect your agent” in `local/README.md` says. In Foundry I choose Set up with your agent, press Copy prompt and paste it to you. That prompt then takes over from here, through the local tools, and you do the rest of the setup with me.",
           "   - If not: I do the setup in Foundry’s pages. I connect sources and upload documents there. At the goal, I press Copy prompt for your agent and paste it to you: it lists the data I chose, so write the goal with me from it, as “Write the goal” says. Then I generate a draft, review it, make it current, load it, and explore it or ask it questions.",
           "6. If something fails, `docker compose ps` and `docker compose logs <service>` say why, and `local/README.md` says what each service does.",
           "",

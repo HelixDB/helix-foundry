@@ -93,7 +93,7 @@ test("picks a load: the Explorer, Records, an entity's page and a document's vie
   );
 
   // A document's view: the current load read the contract, the first didn't.
-  await page.goto(`${O}/documents`);
+  await page.goto(`${O}/connections`);
   await page.getByRole("link", { name: "contract.md" }).first().click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "contract.md",

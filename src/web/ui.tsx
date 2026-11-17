@@ -29,8 +29,9 @@ export type WorkspaceValue = ShellWorkspace & {
   // onboarding (main.tsx's OnboardingRoutes).
   onboarding: boolean;
   // The user reads only through source grants (a member an owner or admin
-  // restricted, GET .../foundry/access/me): the shell offers Analyst and
-  // the ontologies those grants cover, read only, and nothing else.
+  // restricted, GET .../foundry/access/me): the shell offers Ask (Founder,
+  // read-only, where the build has it), the pinned dashboards and the
+  // ontologies those grants cover, read only, and nothing else.
   grantee: boolean;
   // The ontologies whose current loads the user's source grants hold any of:
   // what a grantee, or a member who can't query an ontology's database,
@@ -38,8 +39,8 @@ export type WorkspaceValue = ShellWorkspace & {
   granted: readonly string[];
   // Those of them the grants hold only some of (readsPart).
   partial: readonly string[];
-  // The user may use the workflows of the ontologies they read: anyone but a
-  // grantee whose Workflows permission is off. A grantee sees the runs it
+  // The user may use the use cases (Usage pages) of the ontologies they read:
+  // anyone but a grantee whose Usage permission is off. A grantee sees the runs it
   // started of an ontology in `partial`, and every run of the others.
   workflows: boolean;
   notify: (text: string, error?: boolean) => void;

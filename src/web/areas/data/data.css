@@ -940,3 +940,49 @@
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
 }
+
+/* The picker after a connect (connect-data.tsx Connected): the connection
+   made, then Add another source or Open it. */
+.dc-connected {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--hf-space-3);
+  padding: var(--hf-space-3);
+  border: 1px solid color-mix(in srgb, var(--hf-success) 40%, var(--hf-border));
+  border-radius: var(--hf-radius);
+  background: var(--hf-success-soft);
+}
+.dc-connected-text {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  color: var(--hf-text);
+}
+.dc-connected-text span {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-connected-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+/* Request a connector (request-connector.tsx): under the picker's kinds,
+   and its form in the picker's place or a dialog. */
+.dc-request-line {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-request-intro {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-request .hf-form-actions {
+  margin-top: var(--hf-space-3);
+}

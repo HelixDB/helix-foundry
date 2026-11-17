@@ -1,9 +1,12 @@
 package foundrynotifyworker
 
 import (
+	"fmt"
 	"html/template"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -46,6 +49,16 @@ func (s site) overview(workspaceID, ontologyID string) string {
 // (?via=email), which the page welcomes back.
 func (s site) home() string {
 	return string(s) + "/?via=email"
+}
+
+// automation is a workflow's (an automation's) page.
+func (s site) automation(workspaceID, automationID string) string {
+	return string(s) + "/workflows/" + url.PathEscape(automationID) + "?workspace=" + url.QueryEscape(workspaceID)
+}
+
+// automationRun is a run's page, its steps on the workflow's canvas.
+func (s site) automationRun(workspaceID, automationID, runID string) string {
+	return string(s) + "/workflows/" + url.PathEscape(automationID) + "/runs/" + url.PathEscape(runID) + "?workspace=" + url.QueryEscape(workspaceID)
 }
 
 // connect is where a new ontology starts from the workspace's own data.
@@ -179,6 +192,16 @@ func draftOnly(name, start, overview string) message {
 	}}
 }
 
+// draftQuestions is a first draft's email once its agent asked questions
+// the draft waits on, which take the agent's defaults at due (UTC).
+func draftQuestions(name, start string, due time.Time, overview string) message {
+	return message{subject: start + " has questions for you", paragraphs: []paragraph{
+		{Text: "Foundry's agent is drafting " + name + " and needs a few answers from you before it can finish."},
+		{Text: "Answer them:", Link: overview},
+		{Text: "If no one answers by " + due.UTC().Format("January 2") + ", it carries on with its own best guesses."},
+	}}
+}
+
 // sampleFollowUp asks a person who watched the sample to try their own
 // data; they didn't ask for it, so it goes under ports.TopicFoundryTips.
 func sampleFollowUp(connect string) message {
@@ -229,4 +252,86 @@ func reminderEmail(n int, last bool, home string) message {
 	}
 	m.paragraphs = append(m.paragraphs, paragraph{Text: "If you get stuck, reply to this email and I'll help."})
 	return m
+}
+
+// links finds what reads as a link in text a model wrote, or what a mail
+// client would make one of: an automation's Assistant step's summary, which
+// may quote what it read. It takes a URL with a scheme (or one of the schemes
+// written without slashes, such as mailto:), www., an email address, an IPv4
+// address, and a bare domain: labels, a dot and a top-level domain of
+// letters, with any port or path after it. A file name such as report.pdf
+// reads as a domain too, and goes with them: Gmail and Outlook link names
+// under top-level domains like .zip and .mov.
+var links = regexp.MustCompile(`(?i)` +
+	`(?:\b[a-z][a-z0-9+.-]*://|\bwww\.)\S*` +
+	`|\b(?:mailto|tel|sms|callto|javascript|data|file|news|xmpp):\S+` +
+	`|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+` +
+	`|\b\d{1,3}(?:\.\d{1,3}){3}(?:[:/?#]\S*)?` +
+	`|(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+(?:xn--[a-z0-9-]+|\p{L}{2,63})(?:[:/?#]\S*)?`)
+
+// unlinked is a model's text for an email: on one line per paragraph, with
+// every link taken out, so an email never carries a link that text a
+// workspace's documents planted in an answer put there.
+func unlinked(text string) string {
+	return strings.TrimSpace(links.ReplaceAllString(text, "[link removed]"))
+}
+
+// automationNoticeName is how the emails call a workflow: its name on one
+// line, or "your workflow" without one.
+func automationNoticeName(name string) string {
+	mid, _ := ontologyName(name)
+	if mid == "your ontology" {
+		return "your workflow"
+	}
+	return mid
+}
+
+// automationRunEmail is an automation's notify step's email: its message, what
+// each Assistant step before it said, and the actions they left for the
+// owner, then the run's page.
+func automationRunEmail(name, note string, said []string, pending int, run string) message {
+	m := message{subject: name + ": " + firstLine(note, "what it did")}
+	if note = strings.TrimSpace(note); note != "" {
+		m.paragraphs = append(m.paragraphs, paragraph{Text: note})
+	}
+	for _, s := range said {
+		if s = unlinked(s); s != "" {
+			m.paragraphs = append(m.paragraphs, paragraph{Text: "Founder: " + s})
+		}
+	}
+	switch {
+	case pending == 1:
+		m.paragraphs = append(m.paragraphs, paragraph{Text: "One action waits for you: open the run to see it and run it, or not."})
+	case pending > 1:
+		m.paragraphs = append(m.paragraphs, paragraph{Text: fmt.Sprintf("%d actions wait for you: open the run to see them and run them, or not.", pending)})
+	}
+	m.paragraphs = append(m.paragraphs, paragraph{Text: "See every step of the run:", Link: run})
+	return m
+}
+
+// automationPausedEmail tells an automation's owner it paused itself after
+// failures failed runs in a row, the last saying why.
+func automationPausedEmail(name string, failures int, why, page string) message {
+	first := fmt.Sprintf("Your workflow %s failed %d times in a row, so Foundry paused it.", name, failures)
+	if why = sentence(unlinked(why)); why != "" {
+		first += " Its last run said: " + why
+	}
+	return message{subject: name + " paused after failing", paragraphs: []paragraph{
+		{Text: first},
+		{Text: "Fix what it needs, then resume it from its page:", Link: page},
+	}}
+}
+
+// firstLine is text's first line, cut to a subject's length, or fallback for
+// none.
+func firstLine(text, fallback string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return fallback
+	}
+	if utf8.RuneCountInString(line) > 80 {
+		return string([]rune(line)[:79]) + "…"
+	}
+	return line
 }

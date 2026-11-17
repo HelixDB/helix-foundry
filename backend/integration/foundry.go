@@ -50,6 +50,8 @@ const (
 	toolFoundryListDocuments       = "helix_foundry_list_documents"
 	toolFoundryListQuestions       = "helix_foundry_list_questions"
 	toolFoundryListReviewDecisions = "helix_foundry_list_review_decisions"
+	// toolFoundryListReviews lists what settle_review settles: the current load's reviews.
+	toolFoundryListReviews = "helix_foundry_list_reviews"
 	// A load and its jobs, and one sync: what an agent waits on after create_load and
 	// sync_connector.
 	toolFoundryGetLoad = "helix_foundry_get_load"
@@ -60,39 +62,52 @@ const (
 	// the Workspace's plan includes.
 	toolFoundryConnect            = "helix_foundry_connect"
 	toolFoundryListConnectorKinds = "helix_foundry_list_connector_kinds"
+	// toolFoundryGetAISettings says which provider and models a workspace's model work runs
+	// on (foundry_ai.go); they are changed in Foundry, never through an agent.
+	toolFoundryGetAISettings = "helix_foundry_get_ai_settings"
 )
 
 // toolTitles are the tools' names for people, which clients and MCP directories show beside
 // the name an agent calls. TestEveryToolHasATitle keeps one for each.
 var toolTitles = map[string]string{
-	toolFoundryListOntologies:      "List Foundry ontologies",
-	toolFoundryGetOntology:         "Get a Foundry ontology",
-	toolFoundryGetVersion:          "Get an ontology version",
-	toolFoundryGetContext:          "Get an ontology's schema and example questions",
-	toolFoundryListConnectors:      "List Foundry connectors",
-	toolFoundryReadGuide:           "Describe Foundry graph reads",
-	toolFoundryReadGraph:           "Read a Foundry graph",
-	toolFoundryAsk:                 "Ask a Foundry ontology",
-	toolFoundryGetQuestion:         "Get a Foundry question",
-	toolFoundryCancelQuestion:      "Cancel a Foundry question",
-	toolFoundryGetGeneration:       "Get an ontology generation",
-	toolFoundryListDocuments:       "List Foundry documents",
-	toolFoundryListQuestions:       "List Foundry questions",
-	toolFoundryListReviewDecisions: "List review decisions",
-	toolFoundryGetLoad:             "Get a Foundry load",
-	toolFoundryGetSync:             "Get a connector sync",
-	toolFoundryConnect:             "Connect a source",
-	toolFoundryListConnectorKinds:  "List connector kinds",
-	toolFoundryGetSignIn:           "Get a connector sign-in",
-	toolFoundrySendPieces:          "Send pieces to an API source",
-	toolPrepareFoundry:             "Prepare a Foundry action",
-	toolExecuteFoundry:             "Run a prepared Foundry action",
-	toolFoundryCompleteUpload:      "Complete a document upload",
-	toolFoundryCreateWorkflow:      "Create a Foundry workflow",
-	toolFoundryListWorkflows:       "List Foundry workflows",
-	toolFoundryStartWorkflowRun:    "Start a workflow run",
-	toolFoundryFinishWorkflowRun:   "Finish a workflow run",
-	toolFoundryGetWorkflowRun:      "Get a workflow run",
+	toolFoundryListOntologies:       "List Foundry ontologies",
+	toolFoundryGetOntology:          "Get a Foundry ontology",
+	toolFoundryGetVersion:           "Get an ontology version",
+	toolFoundryGetContext:           "Get an ontology's schema and example questions",
+	toolFoundryListConnectors:       "List Foundry connectors",
+	toolFoundryReadGuide:            "Describe Foundry graph reads",
+	toolFoundryReadGraph:            "Read a Foundry graph",
+	toolFoundryAsk:                  "Ask a Foundry ontology",
+	toolFoundryGetQuestion:          "Get a Foundry question",
+	toolFoundryCancelQuestion:       "Cancel a Foundry question",
+	toolFoundryGetGeneration:        "Get an ontology generation",
+	toolFoundryListDocuments:        "List Foundry documents",
+	toolFoundryListQuestions:        "List Foundry questions",
+	toolFoundryListReviewDecisions:  "List review decisions",
+	toolFoundryListReviews:          "List an ontology's reviews",
+	toolFoundryGetLoad:              "Get a Foundry load",
+	toolFoundryGetSync:              "Get a connector sync",
+	toolFoundryConnect:              "Connect a source",
+	toolFoundryListConnectorKinds:   "List connector kinds",
+	toolFoundryGetAISettings:        "Get a workspace's AI settings",
+	toolFoundryGetAssistantRuntime:  "Get where Founder runs",
+	toolFoundryGetSignIn:            "Get a connector sign-in",
+	toolFoundrySendPieces:           "Send pieces to an API source",
+	toolPrepareFoundry:              "Prepare a Foundry action",
+	toolExecuteFoundry:              "Run a prepared Foundry action",
+	toolFoundryCompleteUpload:       "Complete a document upload",
+	toolFoundryCreateUseCase:        "Create a Foundry use case",
+	toolFoundryListUseCases:         "List Foundry use cases",
+	toolFoundryStartUseCaseRun:      "Start a use case run",
+	toolFoundryFinishUseCaseRun:     "Finish a use case run",
+	toolFoundryGetUseCaseRun:        "Get a use case run",
+	toolFoundryListDashboards:       "List Foundry dashboards",
+	toolFoundryGetDashboard:         "Get a Foundry dashboard",
+	toolFoundryListWorkflows:        "List Foundry workflows",
+	toolFoundryGetWorkflow:          "Get a Foundry workflow",
+	toolFoundryListWorkflowRuns:     "List a workflow's runs",
+	toolFoundryGetWorkflowRun:       "Get a workflow's run",
+	toolFoundryPreviewDashboardTile: "Preview a dashboard tile",
 }
 
 const (
@@ -130,6 +145,8 @@ type FoundryBackendAPI interface {
 	ListOntologyGenerations(context.Context, *foundryv1.ListOntologyGenerationsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyGenerationsResponse, error)
 	ListFoundryDocumentSets(context.Context, *foundryv1.ListFoundryDocumentSetsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentSetsResponse, error)
 	ListConnectors(context.Context, *foundryv1.ListConnectorsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorsResponse, error)
+	GetFoundryAI(context.Context, *foundryv1.GetFoundryAIRequest, ...grpc.CallOption) (*foundryv1.FoundryAIResponse, error)
+	GetFoundryAgentRuntime(context.Context, *foundryv1.GetFoundryAgentRuntimeRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentRuntimeResponse, error)
 	GetConnector(context.Context, *foundryv1.GetConnectorRequest, ...grpc.CallOption) (*foundryv1.ConnectorResponse, error)
 	StartConnectorSignIn(context.Context, *foundryv1.StartConnectorSignInRequest, ...grpc.CallOption) (*foundryv1.ConnectorSignInResponse, error)
 	GetConnectorSignIn(context.Context, *foundryv1.GetConnectorSignInRequest, ...grpc.CallOption) (*foundryv1.ConnectorSignInResponse, error)
@@ -141,10 +158,20 @@ type FoundryBackendAPI interface {
 	ListFoundryOntologyDocuments(context.Context, *foundryv1.ListFoundryOntologyDocumentsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error)
 	ListFoundryQuestions(context.Context, *foundryv1.ListFoundryQuestionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryQuestionsResponse, error)
 	ListFoundryReviewDecisions(context.Context, *foundryv1.ListFoundryReviewDecisionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewDecisionsResponse, error)
+	ListFoundryReviews(context.Context, *foundryv1.ListFoundryReviewsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error)
 	GetConnectorSync(context.Context, *foundryv1.GetConnectorSyncRequest, ...grpc.CallOption) (*foundryv1.ConnectorSyncResponse, error)
 	ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error)
 	ListFoundryEventBatches(context.Context, *foundryv1.ListFoundryEventBatchesRequest, ...grpc.CallOption) (*foundryv1.ListFoundryEventBatchesResponse, error)
 	GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error)
+	ListFoundryDashboards(context.Context, *foundryv1.ListFoundryDashboardsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDashboardsResponse, error)
+	GetFoundryDashboard(context.Context, *foundryv1.GetFoundryDashboardRequest, ...grpc.CallOption) (*foundryv1.FoundryDashboardResponse, error)
+	PreviewFoundryDashboardTile(context.Context, *foundryv1.PreviewFoundryDashboardTileRequest, ...grpc.CallOption) (
+		*foundryv1.PreviewFoundryDashboardTileResponse, error)
+	ListFoundryAutomations(context.Context, *foundryv1.ListFoundryAutomationsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryAutomationsResponse, error)
+	GetFoundryAutomation(context.Context, *foundryv1.GetFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+	ListFoundryAutomationRuns(context.Context, *foundryv1.ListFoundryAutomationRunsRequest, ...grpc.CallOption) (
+		*foundryv1.ListFoundryAutomationRunsResponse, error)
+	GetFoundryAutomationRun(context.Context, *foundryv1.GetFoundryAutomationRunRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationRunResponse, error)
 }
 
 type ListFoundryOntologiesInput struct {
@@ -182,7 +209,7 @@ type ReadFoundryGraphInput struct {
 	OntologyInput
 	LoadID        string           `json:"load_id,omitempty" jsonschema:"Load to read; the ontology's current load when empty."`
 	Reads         []map[string]any `json:"reads" jsonschema:"1 to 20 reads, each an object with exactly one key: entity, pattern, explain, violations, evidence or query. helix_foundry_read_guide returns their schema."`
-	WorkflowRunID string           `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this call under; empty for none."`
+	WorkflowRunID string           `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
 }
 
 type FoundryEntityInput struct {
@@ -197,7 +224,7 @@ type AskFoundryInput struct {
 	ThreadID      string              `json:"thread_id,omitempty" jsonschema:"A question's thread_id, to continue that conversation; empty starts a new one."`
 	Focus         *FoundryEntityInput `json:"focus,omitempty" jsonschema:"The entity the question is about."`
 	LoadID        string              `json:"load_id,omitempty" jsonschema:"Load to ask; the ontology's current load when empty."`
-	WorkflowRunID string              `json:"workflow_run_id,omitempty" jsonschema:"An open run of a workflow (helix_foundry_start_workflow_run) to record this call under; empty for none."`
+	WorkflowRunID string              `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
 }
 
 type GetFoundryQuestionInput struct {
@@ -232,6 +259,12 @@ type ListFoundryQuestionsInput struct {
 type ListFoundryReviewDecisionsInput struct {
 	OntologyInput
 	PageToken string `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call."`
+}
+
+type ListFoundryReviewsInput struct {
+	OntologyInput
+	ReviewKeys []string `json:"review_keys,omitempty" jsonschema:"Only these reviews, by review_key, at most 50; never with page_token."`
+	PageToken  string   `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call, of the same load: once another load is current it is refused, and the list starts again."`
 }
 
 type GetFoundrySyncInput struct {
@@ -318,7 +351,7 @@ type FoundryVersionOutput struct {
 	LoadRefusal string `json:"load_refusal,omitempty"`
 	// The description keeps this schema an object: an any's schema without one marshals as true,
 	// which some clients refuse.
-	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, not a decision, so read what the draft does from its files and document_reads. Its left_out lists what the draft left out of the sources it was given, each {what, reason}: what starts with a source's id, then names the field when it is one. A synced table's id is src_ and 16 hex digits, and its entry also has connector_id and table (the version's tables lists every one); a table file's is its document id, which helix_foundry_list_documents names; a document set's is the set's id, which helix_foundry_get_ontology names."`
+	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, not a decision, so read what the draft does from its files and document_reads. Its left_out lists what the draft left out of the sources it was given, each {what, reason} and, when the agent said, because (helix_foundry_get_version gives its three shapes): what starts with a source's id, then names the field when it is one. A synced table's id is src_ and 16 hex digits, and its entry also has connector_id and table (the version's tables lists every one); a table file's is its document id, which helix_foundry_list_documents names; a document set's is the set's id, which helix_foundry_get_ontology names."`
 	// definitionBytes is the size of Definition encoded, for get_version's cap.
 	definitionBytes int
 }
@@ -410,7 +443,7 @@ type FoundryLoadDocumentsOutput struct {
 	ValuesWritten int64 `json:"values_written" jsonschema:"Values written by the documents: property values each document stated that were written as evidence, counted by document as facts_written is, so a value two documents state counts twice. A value held back or in conflict is a review, not a value written."`
 	// LeftForReview is every review the documents left: Foundry counts a document's reviews in
 	// one number, whatever their kind, as of when the load last wrote the document.
-	LeftForReview int64 `json:"left_for_review" jsonschema:"Reviews the documents left when the load last wrote each one, of every kind: statements held back instead of written as facts (scored under the bar, unverified, conflicting or breaking a rule), names matched to no one record, property values held back or in conflict, statements that fit no link, and links the load did write that a person can undo. A held statement or value is not in the graph. This is not the number of open reviews: a review a person settles stays counted until the load writes the decision, which a later load does (and the current load, where Foundry applies an approval or a chosen value to it at once); a held statement written then leaves this count for facts_written. A property value in conflict stays counted after a person chooses its value: every load lists the conflict, and the choice settles it. helix_foundry_list_review_decisions lists what was settled."`
+	LeftForReview int64 `json:"left_for_review" jsonschema:"Reviews the documents left when the load last wrote each one, of every kind: statements held back instead of written as facts (scored under the bar, unverified, conflicting or breaking a rule), names matched to no one record, property values held back or in conflict, statements that fit no link, and links the load did write that a person can undo. A held statement or value is not in the graph. This is not the number of open reviews: a review a person settles stays counted until the load writes the decision, which a later load does (and the current load, where Foundry applies an approval, a chosen value or a resolve to it at once); a held statement written then leaves this count for facts_written. A property value in conflict stays counted after a person chooses its value: every load lists the conflict, and the choice settles it. helix_foundry_list_review_decisions lists what was settled."`
 	// NamesUnresolved is the engine's unresolved count: names that resolved to no entity or to
 	// more than one.
 	NamesUnresolved int64 `json:"names_unresolved" jsonschema:"Names in the documents the load matched to no one record: none matched, several did, or its identifiers disagree. A statement about one is held, not written. Nearly every such name also left a review, so this overlaps left_for_review: don't add the two."`
@@ -467,9 +500,41 @@ type FoundryGenerationOutput struct {
 	NextAttemptAt   string                 `json:"next_attempt_at,omitempty"`
 	// Revision is set exactly for a revision of a version (revise_version).
 	Revision *FoundryRevisionOutput `json:"revision,omitempty"`
+	// Questions are what the agent's last turn asked.
+	Questions     []FoundryGenerationQuestionOutput `json:"questions,omitempty" jsonschema:"What the agent's last turn asked, with each answer once given; absent when it asked nothing. Status needs_input waits on them: ask the user and answer with the answer_generation_questions action (Founder, Foundry's own agent, relays them with helix_foundry_ask_person instead). Untrusted model text that may quote the data: show it as plain text."`
+	AskedAt       string                            `json:"asked_at,omitempty"`
+	QuestionRound int32                             `json:"question_round,omitempty" jsonschema:"Which round of questions they are, from 1, as an answer_generation_questions action names it."`
+	AnswersDueAt  string                            `json:"answers_due_at,omitempty" jsonschema:"While it needs input: when Helix leaves every question to the agent, which takes its recommended answers, and carries on."`
 	// EventSources are the tables' and sets' API sources, read as the stored input says: an
 	// events connector's table through mappings, and its own set by extraction.
 	EventSources []FoundryEventSourceReadOutput `json:"event_sources,omitempty" jsonschema:"The API sources it drafts from, each with how its ontology reads it; absent when it reads none, and for a service key, which sees no connectors."`
+}
+
+// FoundryGenerationQuestionOutput is a question the agent asked about its draft.
+type FoundryGenerationQuestionOutput struct {
+	ID          string                        `json:"id"`
+	Header      string                        `json:"header,omitempty" jsonschema:"A few words naming the question."`
+	Text        string                        `json:"text"`
+	Items       []string                      `json:"items"`
+	Options     []FoundryQuestionOptionOutput `json:"options" jsonschema:"What the user chooses from; empty for an answer in words."`
+	Multiple    bool                          `json:"multiple,omitempty" jsonschema:"The user may choose one or more options; else exactly one, or their own words instead."`
+	Recommended string                        `json:"recommended,omitempty" jsonschema:"The answer the agent recommends, which it takes as its own choice for a question left to it (use_defaults): one of the options' labels, or, without options, its suggested words; absent for none."`
+	Blocking    bool                          `json:"blocking" jsonschema:"The generation can't carry on until it is answered."`
+	Answer      *FoundryQuestionAnswerOutput  `json:"answer,omitempty" jsonschema:"The answer given; absent while it waits, or when it was left to the agent."`
+	LeftToAgent bool                          `json:"left_to_agent,omitempty" jsonschema:"The user, or the automatic answers once due, left it to the agent, which took its recommended answer or decided, as its own choice."`
+}
+
+// FoundryQuestionOptionOutput is one option of a question.
+type FoundryQuestionOptionOutput struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// FoundryQuestionAnswerOutput is a question's answer: the labels of the options chosen, and the
+// user's own words.
+type FoundryQuestionAnswerOutput struct {
+	Options []string `json:"options"`
+	Text    string   `json:"text,omitempty"`
 }
 
 type FoundryRevisionOutput struct {
@@ -493,15 +558,27 @@ type FoundryExtractionOutput struct {
 	Status      string `json:"status"`
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	// ErrorCode is too_large, unsupported, model or store, for failed.
-	ErrorCode  string `json:"error_code,omitempty"`
-	Retryable  bool   `json:"retryable,omitempty"`
-	Sections   int32  `json:"sections"`
-	Entities   int32  `json:"entities"`
-	Facts      int32  `json:"facts"`
-	Values     int32  `json:"values" jsonschema:"Values written: property values it stated that were written as evidence."`
-	Reviews    int32  `json:"reviews"`
-	USDMicros  int64  `json:"usd_micros"`
-	FinishedAt string `json:"finished_at,omitempty"`
+	ErrorCode  string                        `json:"error_code,omitempty"`
+	Retryable  bool                          `json:"retryable,omitempty"`
+	Sections   int32                         `json:"sections"`
+	Entities   int32                         `json:"entities"`
+	Facts      int32                         `json:"facts"`
+	Values     int32                         `json:"values" jsonschema:"Values written: property values it stated that were written as evidence."`
+	Reviews    int32                         `json:"reviews"`
+	USDMicros  int64                         `json:"usd_micros"`
+	FinishedAt string                        `json:"finished_at,omitempty"`
+	Carried    int32                         `json:"carried,omitempty" jsonschema:"Entities linked by a name a person linked to that entity in another document, which the load carries to every document."`
+	Names      []FoundryExtractionNameOutput `json:"names,omitempty" jsonschema:"What the load did with each decision on a name that met the document: its own resolve decisions, and the names carried from other documents where the load would otherwise have asked a person."`
+}
+
+// FoundryExtractionNameOutput is what a load did with one decision on a name of a document.
+type FoundryExtractionNameOutput struct {
+	Decision   string `json:"decision" jsonschema:"resolve (the document's own decision on the name) or alias (a name a person linked to an entity in another document, carried to this one)."`
+	Type       string `json:"type"`
+	NormName   string `json:"norm_name"`
+	DecisionID string `json:"decision_id,omitempty" jsonschema:"The decision's id: of an alias, the resolve decision that linked the name."`
+	Outcome    string `json:"outcome" jsonschema:"written (applied in this load), not_asked (nothing in this load waited on it; it applies when the document is read again), not_named (the document doesn't name it) or refused (not applied; reason says why)."`
+	Reason     string `json:"reason,omitempty" jsonschema:"Why it was refused: absent (the entity chosen isn't in the load), bound (the document's name is already linked another way; it changes when the document is read again), collides (another name in the document is already that entity), differs (the load no longer matches what the document gave; it applies when the document is read again), too_large (too large to write in place; the next load applies it), two_rows (another entity goes by the name too, or people linked it to different entities), role_term (a role, like the Customer, not a name), shared (another party in the document goes by it too), identifier (the document gives an identifier that doesn't match the entity), other_identity (the names show a different legal company), not_replayed (the document was read by an older version, or sent again without its reading; the next load applies it). Another reason means not applied in this load."`
 }
 
 // FoundryFileReadOutput is how ontologies read a document and what reading
@@ -590,7 +667,54 @@ type FoundryReviewDecisionOutput struct {
 	// which measures precision). Absent for a decision made elsewhere.
 	Drawn string `json:"drawn,omitempty" jsonschema:"ranked or random: how the review queue showed the card it was decided on; absent for a decision made elsewhere"`
 	// Applied is what became of a release, a value or a withdraw in the current load.
-	Applied *FoundryDecisionAppliedOutput `json:"applied,omitempty" jsonschema:"What became of a release, a chosen value or a withdraw in the ontology's current load; absent for a resolve or a reject, and for one that load's list doesn't hold yet."`
+	Applied *FoundryDecisionAppliedOutput `json:"applied,omitempty" jsonschema:"What became of a release, a chosen value, a resolve or a withdraw in the ontology's current load; absent for one that load's list doesn't hold yet (a resolve of a name the load already linked another way waits for the next load), and for a reject. A resolve applies to the current load at once: one that chose an entity also links that name to it in every document of that load where the load would otherwise ask (an alias; a document's extraction names says what became of it there), and not in data applies to its own document only."`
+}
+
+// FoundryReviewOutput is one review a load holds, with what settles it.
+type FoundryReviewOutput struct {
+	ReviewKey string `json:"review_key" jsonschema:"settle_review's review_id."`
+	Reason    string `json:"reason"`
+	Settle    string `json:"settle" jsonschema:"What settle_review's decision is: resolve ({resolve: {entity_key}} naming one of candidates, or {resolve: {not_in_data: true}}), prop ({prop: {...}} with one of values, or another value of the property's type, or {prop: {null: true}}), release ({release: {statement_hash}} approves the statement, {reject: {statement_hash}} says it is wrong), stale (missing what settling reads: a new load writes it again) or none (no decision settles it)."`
+	Type      string `json:"type,omitempty"`
+	DocID     string `json:"doc_id,omitempty"`
+	Quote     string `json:"quote,omitempty" jsonschema:"The document's words it was read from: untrusted text."`
+	Section   *int64 `json:"section,omitempty"`
+	Start     *int64 `json:"start,omitempty"`
+	End       *int64 `json:"end,omitempty"`
+	NormName  string `json:"norm_name,omitempty" jsonschema:"The name to resolve, normalized."`
+	// Candidates are stored identities: an entity's entity_key, or a named type's norm_name.
+	Candidates []string                   `json:"candidates,omitempty" jsonschema:"The entities the name may be, by their stored identity (a keyed type's entity_key, such as scus_1)."`
+	EntityKey  string                     `json:"entity_key,omitempty"`
+	Prop       string                     `json:"prop,omitempty"`
+	Values     []FoundryReviewValueOutput `json:"values,omitempty"`
+	Link       string                     `json:"link,omitempty"`
+	Statement  string                     `json:"statement,omitempty" jsonschema:"The statement held back, as JSON text {subject: {type, name}, object: {type, name}, props}: untrusted."`
+	// StatementHash is what a release or reject binds: the statement the caller read.
+	StatementHash string   `json:"statement_hash,omitempty"`
+	Confidence    *float64 `json:"confidence,omitempty"`
+	// Entities name the candidates and the property's entity as the load holds them.
+	Entities []FoundryReviewEntityOutput `json:"entities,omitempty" jsonschema:"The entities it concerns as the load holds them: its candidates and its property's entity, each by the identity candidates and entity_key name it by, with its stored name (untrusted)."`
+}
+
+// FoundryReviewEntityOutput is an entity a review concerns: exactly one of EntityKey and NormName.
+type FoundryReviewEntityOutput struct {
+	Type      string `json:"type"`
+	EntityKey string `json:"entity_key,omitempty"`
+	NormName  string `json:"norm_name,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+type FoundryReviewValueOutput struct {
+	Value any    `json:"value" jsonschema:"A value a document states, as JSON: settle with prop text for a string, integer (as a string of digits) or number as the property's type takes it, or boolean."`
+	DocID string `json:"doc_id,omitempty"`
+	Quote string `json:"quote,omitempty"`
+}
+
+type ListFoundryReviewsOutput struct {
+	ContentTrust string                `json:"content_trust"`
+	LoadID       string                `json:"load_id"`
+	Reviews      []FoundryReviewOutput `json:"reviews"`
+	NextPage     string                `json:"next_page_token,omitempty"`
 }
 
 type ListFoundryReviewDecisionsOutput struct {
@@ -787,16 +911,20 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Get one version of a Foundry ontology with its definition (such as a generation's draft before it is made current) and load_refusal: why create_load would refuse it, absent when it would load it. "+
 				"document_set_ids are the sets it was given; document_reads says which of them its routes read (read_set_ids) and which it only stores (unread_set_ids: searchable, nothing extracted into the graph). "+
 				"An agent bundle comes with its open questions (definition.questions; a default is the agent's suggestion, not a decision) and what the draft left out of its sources (definition.left_out, each with its reason; tables lists every synced table by the id the definition uses), "+
+				"each with, when the agent said, because: \"not_assessed\" (it ran out of budget before it looked; a new generation can pick it up), "+
+				"{\"user_asked\": {\"said\": the user's own words}} (the user asked to leave it out) or "+
+				"{\"documents_state\": {\"route\", \"item\"}} (documents already state it through the route extraction.<route>; item is a link or Type.prop), "+
 				"but not the agent's working draft: to act on an answer, or to read what it left out, generate again with that in the goal. A definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetContext,
 			"Learn what a business's Foundry ontology holds before you ask or read it: its schema (each type's properties, key, names and identifiers, and its links, rules and constraints) "+
-				"and example questions it answers, the ones Foundry's Analyst suggests. "+
+				"and example questions it answers, the ones Foundry suggests. "+
 				"It describes the version of the current load, which "+toolFoundryAsk+" and "+toolFoundryReadGraph+" use by default, or the current version while nothing is loaded. "+
 				"An agent bundle's schema is its ontology.toml; a Definition v1 version's is its definition. With source grants that cover part of the load, it describes that part."), s.GetFoundryContext)
 		addFoundryTool(s, server, identity, tool(toolFoundryReadGuide,
 			"Describe the reads helix_foundry_read_graph takes: their kinds and JSON Schema."), s.FoundryReadGuide)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetGeneration,
-			"Get one generation of a Foundry ontology, or a revision of one of its versions with the engine's result once it ended. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundryGeneration)
+			"Get one generation of a Foundry ontology, or a revision of one of its versions with the engine's result once it ended. With wait, waits up to 25 s while it runs; call again until it ends. "+
+				"A generation that needs_input waits on the questions it lists: ask the user, then answer with the answer_generation_questions action (Founder, Foundry's own agent, relays them with helix_foundry_ask_person instead)."), s.GetFoundryGeneration)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetLoad,
 			"Get one load of a Foundry ontology with its newest jobs (the load that writes it, and extracts that add documents to it): their status, phase, progress, error and spend. "+
 				"documents counts what it made of its documents, in all and by document set: how many a model read, how many its version does not read (not_read_by_version: stored and searchable, nothing in the graph), their fact writes, "+
@@ -815,6 +943,12 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		}
 		return ""
 	}
+	// An API source takes no credential: an agent whose person confirms opens its form, which
+	// makes its send tokens; any other prepares create_event_source.
+	eventsKind := "; an API source (events) has no credential, so create one with the create_event_source operation"
+	if _, person := identity.Confirm.(ConfirmByPerson); person {
+		eventsKind = "; an API source (events) through its form too, which makes its send tokens"
+	}
 	if browse && user {
 		addFoundryTool(s, server, identity, tool(toolFoundryListConnectors,
 			"List a workspace's Foundry connectors with their synced tables and newest sync. Credentials are never returned."+
@@ -825,9 +959,25 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryListConnectorKinds,
 			"List the kinds of connector Foundry offers a workspace, and whether its plan includes each: a Foundry Pro kind is unavailable without Pro. "+toolFoundryConnect+" connects one"+
 				signingIn(", a kind with sign_in by signing in at its provider and any other through its form")+
-				apiSources("; an API source (events) has no credential, so create one with the create_event_source operation")+"."), s.ListFoundryConnectorKinds)
+				apiSources(eventsKind)+"."), s.ListFoundryConnectorKinds)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetSync,
 			"Get one sync of a Foundry connector, with its status, rows and error. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundrySync)
+		addFoundryTool(s, server, identity, tool(toolFoundryGetAISettings,
+			"Get where a workspace's model calls go: the provider and models its generations, loads, questions and Founder, Foundry's own agent, run on (in_force), "+
+				"a saved provider waiting for its test (pending) or whose test failed (last_failed, with why), and whether Founder can run on each (assistant). "+
+				"Keys are never returned. Only an owner changes it, in Foundry's Settings › AI models (settings_url): never take a key or change it here."), s.GetFoundryAISettings)
+	}
+	if browse && user && s.AgentHosts {
+		addFoundryTool(s, server, identity, tool(toolFoundryGetAssistantRuntime,
+			"Get where this install's Founder runs a workspace's new threads: api (Foundry's own worker, on the workspace's model) or claude_code or codex "+
+				"(a helper on the owner's computer, on the Claude or ChatGPT subscription its CLI is signed in to), and the helpers paired with the install: "+
+				"what each offers and whether it is online. set_assistant_runtime, pair_assistant_helper and revoke_assistant_helper change them."), s.GetAssistantRuntime)
+	}
+	if browse && user {
+		s.addFoundryDashboardTools(server, identity, reads)
+		if !s.AutomationsOff {
+			s.addFoundryAutomationTools(server, identity)
+		}
 	}
 	if user && s.FoundryURL != "" && identity.HasPermission(PermissionWorkspaceConnectorsManage) {
 		s.addFoundryConnectTool(server, identity, signIns)
@@ -858,12 +1008,18 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			Description: "Stop a queued or running Foundry question, so it spends no more of the workspace's question budget. A question that ended is returned as it is.",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 		}, s.CancelFoundryQuestion)
+		addFoundryTool(s, server, identity, tool(toolFoundryListReviews,
+			"List the reviews a Foundry ontology's current load holds: what its documents state that it didn't write as it stands. "+
+				"A name it matched to no one record (settle resolve, with its candidates), a property its documents state differently (prop, with each value and its quote), "+
+				"or a statement it held back (release: approve or reject it by its statement_hash), each with the entities it concerns by name. "+
+				"50 a page of one load, or the ones review_keys names. "+
+				"Settle one with the settle_review action. A review someone settled stays listed until a load writes the decision: "+toolFoundryListReviewDecisions+" lists those."), s.ListFoundryReviews)
 		addFoundryTool(s, server, identity, tool(toolFoundryListReviewDecisions,
-			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release) and a chosen value (prop) also apply to the current load at once. A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back from the current load, which may have written it: that load is sent it at once, and it is listed only while that load is current. applied says what became of each in the current load; of a withdraw, withdrawn means the claim is held for review again, and refused that what the approval wrote stays."), s.ListFoundryReviewDecisions)
+			"List the review decisions settled on a Foundry ontology: the overrides each load after them applies. An approval of a held claim (release), a chosen value (prop) and a resolve also apply to the current load at once (a resolve of a name that load already links another way only from the next load). A reject is a person's word that a held claim is wrong: it is sent to no load, its review stays in the graph and stays counted in left_for_review, and people no longer see it under Needs review or in the review queue. A decision made on a card of the site's review queue says how it was drawn (drawn). A withdraw is an approval a person took back from the current load, which may have written it: that load is sent it at once, and it is listed only while that load is current. applied says what became of each in the current load; of a withdraw, withdrawn means the claim is held for review again, and refused that what the approval wrote stays."), s.ListFoundryReviewDecisions)
 	}
 	if s.Workflows != nil && browse {
 		// A grantee, whose reads source grants admit, gets them too: Foundry
-		// refuses its calls while its Workflows permission is off, and shows
+		// refuses its calls while its Usage permission is off, and shows
 		// it only its own runs of an ontology it holds only some of.
 		s.addFoundryWorkflowTools(server, identity, reads)
 	}
@@ -1714,6 +1870,59 @@ func (s *Service) ListFoundryReviewDecisions(
 	return out, len(out.Decisions), nil
 }
 
+func (s *Service) ListFoundryReviews(
+	ctx context.Context, identity *Identity, call *Call, input ListFoundryReviewsInput,
+) (ListFoundryReviewsOutput, int, error) {
+	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}) || len(input.PageToken) > 160 || len(input.ReviewKeys) > 50 {
+		return ListFoundryReviewsOutput{}, 0, errCodeInvalidArguments
+	}
+	req := &foundryv1.ListFoundryReviewsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, ReviewKeys: input.ReviewKeys,
+		PageToken: input.PageToken}
+	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead, "ListFoundryReviews"); err != nil {
+		return ListFoundryReviewsOutput{}, 0, err
+	}
+	response, err := s.Foundry.ListFoundryReviews(ctx, req)
+	if err != nil {
+		return ListFoundryReviewsOutput{}, 0, FoundryError(err)
+	}
+	out := ListFoundryReviewsOutput{ContentTrust: contentTrustUntrusted, LoadID: response.GetLoadId(), NextPage: response.GetNextPageToken(),
+		Reviews: make([]FoundryReviewOutput, 0, len(response.GetReviews()))}
+	for _, r := range response.GetReviews() {
+		out.Reviews = append(out.Reviews, FoundryReview(r))
+	}
+	return out, len(out.Reviews), nil
+}
+
+// FoundryReview is a review as the tools show it; a value that isn't JSON is left out.
+func FoundryReview(r *foundryv1.FoundryReview) FoundryReviewOutput {
+	settle := EnumName(r.GetSettle().String(), "FOUNDRY_REVIEW_SETTLE_")
+	if r.GetSettle() == foundryv1.FoundryReviewSettle_FOUNDRY_REVIEW_SETTLE_UNSPECIFIED {
+		settle = "none"
+	}
+	out := FoundryReviewOutput{
+		ReviewKey: r.GetReviewKey(), Reason: r.GetReason(), Settle: settle, Type: r.GetType(), DocID: r.GetDocId(), Quote: r.GetQuote(),
+		NormName: r.GetNormName(), Candidates: r.GetCandidates(), EntityKey: r.GetEntityKey(), Prop: r.GetProp(), Link: r.GetLink(),
+		Statement: r.GetStatementJson(), StatementHash: r.GetStatementHash(), Confidence: r.Confidence,
+	}
+	if span := r.GetSpan(); span != nil {
+		out.Section, out.Start, out.End = &span.Section, &span.Start, &span.End
+	}
+	for _, e := range r.GetEntities() {
+		out.Entities = append(out.Entities, FoundryReviewEntityOutput{Type: e.GetType(), EntityKey: e.GetEntityKey(), NormName: e.GetNormName(), Name: e.GetName()})
+	}
+	for _, v := range r.GetValues() {
+		decoder := json.NewDecoder(strings.NewReader(v.GetValueJson()))
+		// Numbers as written, so every digit of an integer is kept.
+		decoder.UseNumber()
+		var value any
+		if decoder.Decode(&value) == nil {
+			out.Values = append(out.Values, FoundryReviewValueOutput{Value: value, DocID: v.GetDocId(), Quote: v.GetQuote()})
+		}
+	}
+	return out
+}
+
 // GetFoundrySync is one sync of the connector the caller names: the backend finds a sync by its
 // Workspace alone, so one of another connector is not found.
 func (s *Service) GetFoundrySync(
@@ -1774,6 +1983,10 @@ func (s *Service) ListFoundryConnectorKinds(
 		})
 		if kind.GetKind() == foundrymodel.ConnectorKindEvents {
 			out.Kinds[len(out.Kinds)-1].Create = "Create one with the create_event_source operation (" + toolPrepareFoundry + "), then send it pieces with " + toolFoundrySendPieces + "."
+			if _, person := identity.Confirm.(ConfirmByPerson); person {
+				// Its person confirms what it prepares, and create_event_source isn't one of those.
+				out.Kinds[len(out.Kinds)-1].Create = "Its form in Foundry makes one, and its send tokens: " + toolFoundryConnect + " links it."
+			}
 		}
 	}
 	return out, len(out.Kinds), nil
@@ -1911,6 +2124,21 @@ func (s *Service) FoundryGeneration(workspaceID, ontologyID string, gen *foundry
 	for _, file := range gen.GetDocuments() {
 		out.Files = append(out.Files, FoundryFileRefOutput{DocumentID: file.GetId(), SetID: file.GetSetId()})
 	}
+	for _, q := range gen.GetQuestions() {
+		question := FoundryGenerationQuestionOutput{
+			ID: q.GetId(), Header: q.GetHeader(), Text: q.GetText(), Items: append([]string{}, q.GetItems()...), Options: []FoundryQuestionOptionOutput{},
+			Multiple: q.GetMultiple(), Recommended: q.GetRecommended(), Blocking: q.GetBlocking(),
+		}
+		for _, o := range q.GetOptions() {
+			question.Options = append(question.Options, FoundryQuestionOptionOutput{Label: o.GetLabel(), Description: o.GetDescription()})
+		}
+		if a := q.GetAnswer(); a != nil {
+			question.Answer = &FoundryQuestionAnswerOutput{Options: append([]string{}, a.GetOptions()...), Text: a.GetText()}
+		}
+		question.LeftToAgent = q.GetLeftToAgent()
+		out.Questions = append(out.Questions, question)
+	}
+	out.AskedAt, out.QuestionRound, out.AnswersDueAt = protoTimestamp(gen.GetAskedAt()), gen.GetQuestionRound(), protoTimestamp(gen.GetAnswersDueAt())
 	if revision := gen.GetRevision(); revision != nil {
 		out.Revision = &FoundryRevisionOutput{
 			ParentVersionID: revision.GetParentVersionId(), DryRun: revision.GetDryRun(), ResultWithheld: revision.GetResultWithheld(),
@@ -1951,7 +2179,12 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 		out.Extraction = &FoundryExtractionOutput{
 			Status: x.GetStatus(), DuplicateOf: x.GetDuplicateOf(), ErrorCode: x.GetError().GetCode(), Retryable: x.GetError().GetRetryable(),
 			Sections: x.GetSections(), Entities: x.GetEntities(), Facts: x.GetFacts(), Values: x.GetAttributes(), Reviews: x.GetReviews(),
-			USDMicros: x.GetUsdMicros(), FinishedAt: protoTimestamp(x.GetFinishedAt()),
+			USDMicros: x.GetUsdMicros(), FinishedAt: protoTimestamp(x.GetFinishedAt()), Carried: x.GetResolvedCarried(),
+		}
+		for _, n := range x.GetNames() {
+			out.Extraction.Names = append(out.Extraction.Names, FoundryExtractionNameOutput{
+				Decision: n.GetDecision(), Type: n.GetType(), NormName: n.GetNormName(), DecisionID: n.GetDecisionId(), Outcome: n.GetOutcome(), Reason: n.GetReason(),
+			})
 		}
 	}
 	return out
@@ -1959,8 +2192,8 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 
 // FoundryDecisionAppliedOutput is what became of a decision in the ontology's current load.
 type FoundryDecisionAppliedOutput struct {
-	Status string `json:"status" jsonschema:"A release: pending, written, refused, missed or unconfirmed (its job failed before saying). A value: pending, applied or unconfirmed. A withdraw: pending, withdrawn (the claim is held again), not_written (the load held nothing the approval wrote), refused (what the approval wrote stays) or unconfirmed (no word came: its job failed, and the ontology's next job sends it again; or, with not_replayed, its document's saved reading can't be reused, so no word can come while this load is current and the next load won't write the approval; or, with document_failed, the next approval or take-back in its document sends it again). Empty: the load read it when it was made and no job said what became of it."`
-	Reason string `json:"reason,omitempty" jsonschema:"Why it was refused, in the engine's word or the backend's; when unconfirmed, why no word came (job_failed, or of a withdraw not_replayed or document_failed)."`
+	Status string `json:"status" jsonschema:"A release: pending, written, refused, missed or unconfirmed (its job failed before saying). A value: pending, applied or unconfirmed. A resolve: pending, written (reason not_asked: nothing in the load asked about the name any more), refused (reason: the engine's word, as an extraction name's reason, or not_named, or no_word: its job ended without word of its document, and the next load applies it) or unconfirmed. A withdraw: pending, withdrawn (the claim is held again), not_written (the load held nothing the approval wrote), refused (what the approval wrote stays) or unconfirmed (no word came: its job failed, and the ontology's next job sends it again; or, with not_replayed, its document's saved reading can't be reused, so no word can come while this load is current and the next load won't write the approval; or, with document_failed, the next approval or take-back in its document sends it again). Empty: the load read it when it was made and no job said what became of it."`
+	Reason string `json:"reason,omitempty" jsonschema:"Why it was refused, in the engine's word or the backend's (document_changed: the load holds the claim's document with other text than the claim was read in, so it can't write it; a new load reads the new text and writes it where its commit holds the same claim, and otherwise the claim must be found and approved again in that load's reviews); when unconfirmed, why no word came (job_failed, or of a withdraw not_replayed or document_failed)."`
 	At     string `json:"at,omitempty" jsonschema:"When a job said so."`
 	// TakesBack is of a release: removing it takes it back from the current load.
 	TakesBack bool `json:"takes_back,omitempty" jsonschema:"Of a release: the current load may have written it, so removing the decision takes it back from that load rather than only dropping it."`

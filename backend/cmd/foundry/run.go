@@ -23,11 +23,14 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 
+	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/api"
 	foundryconfig "github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/document"
+	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local"
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	directoryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/directory/v1"
@@ -38,7 +41,9 @@ import (
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	foundryreadservice "github.com/helixdb/helix-foundry/backend/services/foundry-read"
 	"github.com/helixdb/helix-foundry/backend/store"
+	foundryagentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-agent-worker"
 	foundryaskworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ask-worker"
+	foundryautomationworker "github.com/helixdb/helix-foundry/backend/workers/foundry-automation-worker"
 	foundrydocumentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-document-worker"
 	foundrygraphworker "github.com/helixdb/helix-foundry/backend/workers/foundry-graph-worker"
 	foundryhealworker "github.com/helixdb/helix-foundry/backend/workers/foundry-heal-worker"
@@ -73,6 +78,14 @@ var workers = []any{
 // healWorker audits loads for self-healing's findings, beside the graph
 // worker on its sidecar, only with foundry.heal.enabled (off by default).
 var healWorker = foundryhealworker.New
+
+// agentWorker runs the Assistant's turns, with foundry.agent.enabled (on in
+// the image's foundry.yaml).
+var agentWorker = foundryagentworker.New
+
+// automationWorker fires the owner's automations and walks their runs, with
+// foundry.automations.enabled (on in the image's foundry.yaml).
+var automationWorker = foundryautomationworker.New
 
 // run starts the install and blocks until ctx is cancelled, SIGINT or
 // SIGTERM arrives, or a part exits, returning the first error.
@@ -135,7 +148,7 @@ func run(parent context.Context, cfg *Config) error {
 		return err
 	}
 	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
-	parts, err := buildWorkers(fcfg, logger, probes, st, awsCfg, dbs)
+	parts, err := buildWorkers(fcfg, logger, probes, st, awsCfg, dbs, f.sessions)
 	if err != nil {
 		_ = f.Stop(ctx)
 		return err
@@ -207,7 +220,18 @@ func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 type front struct {
 	ep  *endpoint.Endpoint
 	api *api.Service
+	// sessions open the owner's tools for the Assistant, in this process.
+	sessions *local.AgentSessions
+	// turns are the helpers' side of the Assistant's turns, nil while it is
+	// off; hosts the install's helpers.
+	turns  *foundryagent.Hosts
+	hosts  *directory.Store
+	logger *slog.Logger
 }
+
+// sweepUnclaimedEvery is how often the front end fails helpers' turns that
+// no helper took (agent.Hosts.EndUnclaimed).
+const sweepUnclaimedEvery = 30 * time.Second
 
 // newFront builds the front end over the install's directory and Foundry's
 // store, its objects kept in the install's bucket (foundry.sync.data_bucket),
@@ -222,29 +246,36 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		return nil, err
 	}
 	fcfg := cfg.foundry()
-	foundrySvc, err := api.New(api.Deps{
-		Cfg: fcfg, Logger: logger.With("service", "foundry"), DB: st, AWS: awsCfg,
-		Documents: document.New(s3.NewFromConfig(awsCfg), fcfg.Foundry.Sync.DataBucket),
-		Databases: local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL},
-		Graph:     local.GraphReader{Directory: directorySvc}, People: local.People{Directory: dir},
-		LocalAI: detector,
-	})
-	if err != nil {
-		return nil, err
-	}
 	ep, err := endpoint.New(endpoint.Options{
 		Name: "foundry", Logger: logger.With("service", "foundry"), Health: probes,
 		GRPC: endpoint.GRPC{Listen: cfg.Local.Listen.GRPC, MaxRecvMsgMB: 16}, HTTP: endpoint.HTTP{Listen: cfg.Local.Listen.REST},
 		Interceptor: auth, BuildGateway: true,
-		// local/compose.mcp.yaml publishes REST on the host for agents; the probes
-		// stay on the health listener (serve), which isn't.
+		// local/compose.yaml publishes REST on this machine's loopback for
+		// agents and the Assistant's helper; the probes stay on the health
+		// listener (serve), which isn't published.
 		NoProbes: true,
 	})
 	if err != nil {
-		_ = foundrySvc.Close()
 		return nil, err
 	}
-	f := &front{ep: ep, api: foundrySvc}
+	// The Assistant's tools call this front end's gRPC as the owner, as the
+	// MCP's do; its clicks run them from the API, its turns from the worker.
+	sessions := local.NewAgentSessions(auth, local.LocalService(dir, ep.GatewayConn, fcfg.Foundry.Documents, fcfg.Foundry.Automations.Enabled, cfg.Local.SiteOrigin,
+		logger.With("component", "agent")), directoryv1.NewDirectoryServiceClient(ep.GatewayConn), cfg.Local.SiteToken)
+	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
+	foundrySvc, err := api.New(api.Deps{
+		Cfg: fcfg, Logger: logger.With("service", "foundry"), DB: st, AWS: awsCfg,
+		Documents: document.New(s3.NewFromConfig(awsCfg), fcfg.Foundry.Sync.DataBucket),
+		Databases: dbs,
+		Graph:     local.GraphReader{Directory: directorySvc}, People: local.People{Directory: dir},
+		LocalAI: detector, AgentSessions: sessions, AgentHosts: dir,
+		AgentHostURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Local.MCPPort),
+	})
+	if err != nil {
+		_ = ep.GracefulStop(ctx)
+		return nil, err
+	}
+	f := &front{ep: ep, api: foundrySvc, sessions: sessions, hosts: dir, logger: logger.With("component", "agent")}
 	directoryv1.RegisterDirectoryServiceServer(ep.GRPC, directorySvc)
 	foundrySvc.Register(ep.GRPC)
 	for _, register := range []func(context.Context, *runtime.ServeMux, *grpc.ClientConn) error{
@@ -255,15 +286,51 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 			return nil, err
 		}
 	}
-	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, logger.With("component", "integration"))
+	// The helpers on the owner's machine run the Assistant's threads on their
+	// CLIs' subscriptions, and call back to this listener (local/agent_host.go).
+	var turns *foundryagent.Hosts
+	if fcfg.Foundry.Agent.Enabled {
+		keys, err := connector.NewKeyring(fcfg.Foundry.Connectors)
+		if err != nil {
+			_ = f.Stop(ctx)
+			return nil, err
+		}
+		turns = &foundryagent.Hosts{DB: st, Sessions: sessions, Keys: keys, Databases: dbs, Cfg: fcfg.Foundry.Agent, Now: time.Now}
+		f.turns = turns
+	}
+	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, fcfg.Foundry.Automations.Enabled, cfg.Local.SiteOrigin, turns, logger.With("component", "integration"))
 	ep.RegisterHTTPHandler("/mcp", integrations)
 	ep.RegisterHTTPHandler("/v1/ontologies/", integrations)
+	ep.RegisterHTTPHandler("/agent-host/", integrations)
 	return f, nil
 }
 
 func (f *front) Name() string { return "foundry" }
 
-func (f *front) Start(ctx context.Context) error { return f.ep.Serve(ctx) }
+func (f *front) Start(ctx context.Context) error {
+	if f.turns != nil {
+		go f.sweepUnclaimed(ctx)
+	}
+	return f.ep.Serve(ctx)
+}
+
+// sweepUnclaimed fails, every sweepUnclaimedEvery until ctx ends, the
+// helpers' turns that waited too long while no helper that runs them is
+// online, so their threads don't wait for ever.
+func (f *front) sweepUnclaimed(ctx context.Context) {
+	tick := time.NewTicker(sweepUnclaimedEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		if err := f.turns.EndUnclaimed(ctx, f.hosts); err != nil && ctx.Err() == nil {
+			f.logger.Warn("agent: end unclaimed helper turns", "err", err)
+		}
+	}
+}
 
 func (f *front) Stop(ctx context.Context) error {
 	return errors.Join(f.ep.GracefulStop(ctx), f.api.Close())
@@ -275,7 +342,7 @@ func (f *front) Stop(ctx context.Context) error {
 // optional ports an install lacks are nil: no plan is sold (PlanReader) and
 // nothing is boosted (Boosts).
 func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes, st store.Store, awsCfg aws.Config,
-	dbs ports.Databases) ([]component, error) {
+	dbs ports.Databases, sessions integration.SessionHost) ([]component, error) {
 	c := dig.New()
 	for _, provide := range []any{
 		func() *foundryconfig.Config { return cfg },
@@ -284,14 +351,21 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 		func() store.Store { return st },
 		func() aws.Config { return awsCfg },
 		func() ports.Databases { return dbs },
+		func() integration.SessionHost { return sessions },
 	} {
 		if err := c.Provide(provide); err != nil {
 			return nil, err
 		}
 	}
-	constructors := workers
+	constructors := slices.Clip(workers)
 	if cfg.Foundry.Heal.Enabled {
-		constructors = append(slices.Clip(workers), healWorker)
+		constructors = append(constructors, healWorker)
+	}
+	if cfg.Foundry.Agent.Enabled {
+		constructors = append(constructors, agentWorker)
+	}
+	if cfg.Foundry.Automations.Enabled {
+		constructors = append(constructors, automationWorker)
 	}
 	for _, constructor := range constructors {
 		if err := c.Provide(constructor, dig.Group("components"), dig.As(new(component))); err != nil {

@@ -9,7 +9,6 @@ import {
   useState,
   type ReactNode,
   type RefObject,
-  type TextareaHTMLAttributes,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,16 +20,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  CornerDownRight,
   CircleAlert,
   FileQuestion,
   Gauge,
   LoaderCircle,
   SearchX,
   Sparkles,
+  SquarePen,
   CircleStop,
   X,
 } from "lucide-react";
-import { LOCAL } from "../../../shared/deployment";
+import { FOUNDER, LOCAL } from "../../../shared/deployment";
 import type { EntityRef } from "../../../shared/foundry-read";
 import type { FoundryQuestion, QuestionBudget } from "../../../shared/wfe";
 import {
@@ -60,6 +61,7 @@ import {
   useReadsPart,
 } from "../explore/graph-reader";
 import { PartNote } from "../explore/part-note";
+import type { Naming } from "../explore/naming";
 import { useNaming } from "../explore/use-naming";
 import {
   AiRefusal,
@@ -117,9 +119,11 @@ import {
   questionEvents,
   questionQueries,
 } from "./queries";
+import { PromptInput } from "../agent/dock";
 import { AskThreads } from "./ask-threads";
 import { AskVisual } from "./ask-visual";
-import { drawable, placeVisuals } from "./ask-visuals";
+import { drawable, placeVisuals, visualPlan } from "./ask-visuals";
+import { PinVisual } from "../dashboards/pin-visual";
 import { OntologyPicker, ontologyName, useOntology } from "./scope";
 import { useSources } from "./sources";
 import { recordQuestionAsked } from "../../shell/star-prompt";
@@ -153,6 +157,15 @@ import { recordQuestionAsked } from "../../shell/star-prompt";
 // once with them.
 // Nothing the model writes renders as a link, an image or HTML. The entity
 // page's "Ask about this" opens the same flow in a drawer (AskDrawer).
+// Where the build has Founder, everyone (a grantee read-only) gets Founder's
+// page here instead (founder-page.tsx, which reuses ChatBar and ThreadView);
+// this page is the fallback for a build without Founder, or while the WFE
+// has Founder off.
+
+// The page's name: the Analyst's on a build without Founder; on a build
+// with Founder (the WFE has it off), never the Analyst, a name people no
+// longer see there.
+const PAGE = FOUNDER ? "Questions" : "Analyst";
 
 const askable = (status?: string) => status === "ready" || status === "partial";
 // How a shortcut is written: "⌘" on Apple devices, "Ctrl+" elsewhere.
@@ -198,7 +211,7 @@ export function AskPage() {
     enabled: !!load?.versionId && list.data !== undefined && !threads.length,
   }).data?.version;
   const suggestions = useMemo(() => askSuggestions(version), [version]);
-  useTitle(view.kind === "thread" ? undefined : "Analyst");
+  useTitle(view.kind === "thread" ? undefined : PAGE);
   const setThread = (id: string) =>
     setParams(
       (p) => {
@@ -222,7 +235,7 @@ export function AskPage() {
   if (access === "none")
     return (
       <div className="ak-chat">
-        <ChatBar title="Analyst">{picker}</ChatBar>
+        <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <NotShared />
         </div>
@@ -233,7 +246,7 @@ export function AskPage() {
   if (!ontology.tenantId && access === "database")
     return (
       <div className="ak-chat">
-        <ChatBar title="Analyst">{picker}</ChatBar>
+        <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <EmptyState
             icon={Ban}
@@ -246,7 +259,7 @@ export function AskPage() {
   if (view.kind === "threads")
     return (
       <div className="ak-chat">
-        <ChatBar title="Analyst">{picker}</ChatBar>
+        <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll">
           <AskThreads />
         </div>
@@ -274,7 +287,7 @@ export function AskPage() {
     return (
       <div className="ak-chat">
         <ChatBar
-          title="Analyst"
+          title={PAGE}
           onBack={threads.length > 0 ? () => setThread("") : undefined}
         >
           {picker}
@@ -310,16 +323,19 @@ export function AskPage() {
 
 /**
  * The conversation's slim bar: on a narrow screen, where the threads are a
- * page of their own, the way back; the thread's title; and the Ontology and
- * Load pickers. Getting into production's card hangs under it (a local
- * install has no Helix MCP, so no card).
+ * page of their own, the way back; the thread's title, and a tag after it
+ * (Founder's page marks an Analyst thread so); and the Ontology and Load
+ * pickers. Getting into production's card hangs under it (a local install
+ * has no Helix MCP, so no card). Founder's page has it too.
  */
-function ChatBar({
+export function ChatBar({
   title,
+  tag,
   onBack,
   children,
 }: {
   title?: string;
+  tag?: string;
   onBack?: () => void;
   children: ReactNode;
 }) {
@@ -346,6 +362,7 @@ function ChatBar({
         ) : (
           <span className="ak-bar-title" />
         )}
+        {tag && <Tag>{tag}</Tag>}
         {children}
       </header>
       {!LOCAL && reads === "database" && <ProductionCard />}
@@ -353,15 +370,17 @@ function ChatBar({
   );
 }
 
-type Load =
+export type Load =
   | { id: string; status?: string; version?: string; current?: boolean }
   | undefined;
 
 /**
  * A thread's questions, oldest first, following the newest answer unless
- * scrolled up, and the follow-up composer pinned under them.
+ * scrolled up, and the follow-up composer pinned under them. `readOnly`
+ * (Founder's page, for an Analyst thread from before it): no composer, but
+ * a note that Founder goes on from here, with New chat.
  */
-function ThreadView({
+export function ThreadView({
   thread,
   title,
   load,
@@ -369,6 +388,7 @@ function ThreadView({
   picker,
   notice,
   onBack,
+  readOnly = false,
 }: {
   thread: string;
   // Its title as the page's list has it, while the thread is read.
@@ -378,9 +398,12 @@ function ThreadView({
   picker: ReactNode;
   notice: ReactNode;
   onBack: () => void;
+  readOnly?: boolean;
 }) {
   const { id: ws } = useWorkspace(),
-    { id: o } = useOntology();
+    { id: o } = useOntology(),
+    [params] = useSearchParams();
+  const tag = readOnly ? "Earlier question" : undefined;
   const list = useQuery(questionQueries.list(ws, o, thread));
   const questions = threadsOf(list.data?.questions || [])[0]?.questions || [];
   const first = questions[0],
@@ -419,7 +442,11 @@ function ThreadView({
   if (!first || !last)
     return (
       <div className="ak-chat" aria-busy={list.isPending || undefined}>
-        <ChatBar title={list.isPending ? title : undefined} onBack={onBack}>
+        <ChatBar
+          title={list.isPending ? title : undefined}
+          tag={tag}
+          onBack={onBack}
+        >
           {picker}
         </ChatBar>
         {list.isPending ? (
@@ -436,7 +463,11 @@ function ThreadView({
                 list.isError ? "Couldn’t read this thread" : "No such thread"
               }
               text={list.error?.message}
-              action={<Button onClick={onBack}>New thread</Button>}
+              action={
+                <Button onClick={onBack}>
+                  {readOnly ? "Back to Founder" : "New thread"}
+                </Button>
+              }
             />
           </div>
         )}
@@ -444,7 +475,7 @@ function ThreadView({
     );
   return (
     <div className="ak-chat">
-      <ChatBar title={first.question || "Thread"} onBack={onBack}>
+      <ChatBar title={first.question || "Thread"} tag={tag} onBack={onBack}>
         {picker}
       </ChatBar>
       <div
@@ -493,16 +524,29 @@ function ThreadView({
             Jump to latest
           </button>
         )}
-        <Composer
-          docked
-          load={load}
-          thread={thread}
-          focus={questionFocus(last)}
-          busy={isLiveQuestion(last)}
-          onAsked={() => {
-            stick.current = true;
-          }}
-        />
+        {readOnly ? (
+          <div className="ak-readonly">
+            <p>This earlier question is read only. Ask Founder to go on.</p>
+            <ButtonLink
+              size="sm"
+              icon={SquarePen}
+              to={withLoad(paths.ask(o, { new: true }), params.get("load"))}
+            >
+              New chat
+            </ButtonLink>
+          </div>
+        ) : (
+          <Composer
+            docked
+            load={load}
+            thread={thread}
+            focus={questionFocus(last)}
+            busy={isLiveQuestion(last)}
+            onAsked={() => {
+              stick.current = true;
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -538,13 +582,15 @@ function useStream(q: FoundryQuestion): AskStream {
  * the names the pages of `cited` give them, by refKey, read in the
  * background with one lookup in the question's load. Entity names and
  * result labels come from its steps and `named` (knownOf: `name`,
- * `result`), which the caller adds.
+ * `result`), which the caller adds. `naming` is the load's version's, which
+ * heads its visuals' columns.
  */
 function useCitations(
   q: FoundryQuestion,
   cited: readonly EntityRef[],
 ): Omit<CitationContext, "name" | "result"> & {
   named: ReadonlyMap<string, string>;
+  naming: Naming;
 } {
   const { id: ws } = useWorkspace(),
     { id: o, ontology } = useOntology(),
@@ -570,6 +616,7 @@ function useCitations(
   const sources = useSources();
   return {
     named: names.data ?? new Map(),
+    naming,
     ontologyId: o,
     loadId,
     ...(access === "grants" ? { shared: true as const } : {}),
@@ -689,13 +736,20 @@ function useSeen(ref: RefObject<Element | null>) {
  * reply: its steps, then how it ended. An ended question from a list has
  * no outputs: once it is near the view and its answer has visuals, or a
  * step's Result is opened, it is read once with them (questionQueries.answer).
+ * Shown elsewhere (Founder's dock), it may leave out what was asked
+ * (`asked`), which the conversation shows already, and the avatar
+ * (`avatar`).
  */
 export function QuestionCard({
   question: listed,
   budget,
+  asked = true,
+  avatar = true,
 }: {
   question: FoundryQuestion;
   budget?: QuestionBudget | null;
+  asked?: boolean;
+  avatar?: boolean;
 }) {
   const { id: ws, notify } = useWorkspace(),
     { id: o } = useOntology(),
@@ -739,7 +793,7 @@ export function QuestionCard({
   const citations = view.kind === "answered" ? view.result.citations : [];
   // The cited entities are named as their pages name them, once near the
   // view: a long thread doesn't read the names of every answer it holds.
-  const { named, ...links } = useCitations(
+  const { named, naming, ...links } = useCitations(
     q,
     seen ? citedEntities(citations) : [],
   );
@@ -752,15 +806,17 @@ export function QuestionCard({
   const [cancelling, setCancelling] = useState(false);
   const stepId = (evidence: string) => `${q.id}-${evidence}`;
   // A citation with no page opens the step that returned it, and reads the
-  // outputs its Output shows.
+  // outputs its Output shows. The step is this card's own: the same
+  // question may show twice at once (on its page and in Founder's dock).
   const showStep = (evidence: string) => {
     setLit("");
     setOpened(true);
     setTraceOpen(true);
     requestAnimationFrame(() => {
       setLit(evidence);
-      document
-        .getElementById(stepId(evidence))
+      const id = stepId(evidence);
+      [...(card.current?.querySelectorAll<HTMLElement>("[id]") ?? [])]
+        .find((el) => el.id === id)
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
   };
@@ -807,16 +863,20 @@ export function QuestionCard({
       aria-label={`Question: ${q.question}`}
       ref={card}
     >
-      <div className="ak-question">
-        <span className="hf-sr-only">You asked: </span>
-        <p>{q.question}</p>
-      </div>
-      <p className="ak-question-meta">
-        {focus && `About ${focus.type} ${focus.id} · `}
-        {formatRelative(q.createdAt || "")}
-      </p>
-      <div className="ak-reply">
-        <Avatar />
+      {asked && (
+        <>
+          <div className="ak-question">
+            <span className="hf-sr-only">You asked: </span>
+            <p>{q.question}</p>
+          </div>
+          <p className="ak-question-meta">
+            {focus && `About ${focus.type} ${focus.id} · `}
+            {formatRelative(q.createdAt || "")}
+          </p>
+        </>
+      )}
+      <div className={avatar ? "ak-reply" : undefined}>
+        {avatar && <Avatar />}
         <div className="ak-reply-body">
           <section className={cx("ak-trace", `is-${trace.phase}`)}>
             <div className="ak-trace-head">
@@ -1067,6 +1127,7 @@ export function QuestionCard({
                                   output={record.output}
                                   query={record.query}
                                   href={entityHref}
+                                  naming={naming}
                                   untitled
                                 />
                               ) : reading ? (
@@ -1103,6 +1164,7 @@ export function QuestionCard({
             budget={budget}
             showStep={showStep}
             entityHref={entityHref}
+            naming={naming}
             reading={reading}
           />
         </div>
@@ -1119,6 +1181,7 @@ function Outcome({
   budget,
   showStep,
   entityHref,
+  naming,
   reading,
 }: {
   q: FoundryQuestion;
@@ -1127,6 +1190,7 @@ function Outcome({
   budget?: QuestionBudget | null;
   showStep: (evidence: string) => void;
   entityHref: (r: EntityRef) => string | undefined;
+  naming: Naming;
   reading: boolean;
 }) {
   const { id: o } = useOntology(),
@@ -1216,6 +1280,7 @@ function Outcome({
           ctx={ctx}
           showStep={showStep}
           entityHref={entityHref}
+          naming={naming}
           reading={reading}
         />
       );
@@ -1234,6 +1299,7 @@ function Answer({
   ctx,
   showStep,
   entityHref,
+  naming,
   reading,
 }: {
   q: FoundryQuestion;
@@ -1241,6 +1307,7 @@ function Answer({
   ctx: CitationContext;
   showStep: (evidence: string) => void;
   entityHref: (r: EntityRef) => string | undefined;
+  naming: Naming;
   reading: boolean;
 }) {
   const result = view.result;
@@ -1333,7 +1400,16 @@ function Answer({
                 query={d.query}
                 hint={visual}
                 href={entityHref}
+                naming={naming}
                 onShowQuery={() => showStep(visual.evidence_id)}
+                actions={
+                  <PinVisual
+                    ontologyId={ctx.ontologyId}
+                    questionId={q.id}
+                    evidenceId={visual.evidence_id}
+                    title={visualPlan(d.output, d.query, visual).title}
+                  />
+                }
               />
             );
           })}
@@ -1366,52 +1442,6 @@ function Answer({
       </div>
     </section>
   );
-}
-
-/**
- * A textarea that grows with its text from `minRows` to `maxRows` lines,
- * then scrolls down (never sideways): helix-foundry's Analyst PromptInput,
- * without its suggestions.
- */
-function PromptInput({
-  value,
-  minRows,
-  maxRows,
-  inputRef,
-  ...rest
-}: {
-  value: string;
-  minRows: number;
-  maxRows: number;
-  inputRef: RefObject<HTMLTextAreaElement | null>;
-} & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "rows">) {
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const fit = () => {
-      const style = getComputedStyle(el),
-        line = parseFloat(style.lineHeight) || 20,
-        pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-      const min = line * minRows + pad,
-        max = line * maxRows + pad;
-      el.style.height = "auto";
-      const full = el.scrollHeight;
-      el.style.height = Math.max(min, Math.min(full, max)) + "px";
-      el.style.overflowY = full > max + 1 ? "auto" : "hidden";
-    };
-    fit();
-    if (typeof ResizeObserver === "undefined") return;
-    // A new width rewraps the text.
-    let width = el.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (width === el.clientWidth) return;
-      width = el.clientWidth;
-      fit();
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [value, minRows, maxRows]);
-  return <textarea {...rest} ref={inputRef} rows={minRows} value={value} />;
 }
 
 /**
@@ -1495,7 +1525,7 @@ function Composer({
           : `Answers from ${named}${thread ? ", using this thread’s earlier answers" : ""} · ${MOD}Enter to ask`;
   return (
     <form
-      className="ak-ask"
+      className="ag-composer"
       aria-label={thread ? "Ask a follow-up" : "Ask a question"}
       aria-busy={pending || undefined}
       onSubmit={(e) => {
@@ -1503,33 +1533,33 @@ function Composer({
         void submit();
       }}
     >
-      {about && (
-        <span className="ak-focus">
-          <Tag>
-            About {about.type} {about.id}
-          </Tag>
-          {!thread && (
-            <button
-              type="button"
-              className="ak-focus-clear"
-              aria-label="Ask about anything"
-              title="Ask about anything"
-              onClick={() => setAbout(undefined)}
-            >
-              <X size={13} aria-hidden />
-            </button>
-          )}
-        </span>
-      )}
       <div
-        className="ak-composer"
+        className="ag-box"
         onClick={(e) => {
           if (e.target === e.currentTarget) input.current?.focus();
         }}
       >
+        {about && (
+          <span className="ag-chip">
+            <Tag>
+              About {about.type} {about.id}
+            </Tag>
+            {!thread && (
+              <button
+                type="button"
+                className="ag-chip-drop"
+                aria-label="Ask about anything"
+                title="Ask about anything"
+                onClick={() => setAbout(undefined)}
+              >
+                <X size={13} aria-hidden />
+              </button>
+            )}
+          </span>
+        )}
         <PromptInput
           inputRef={input}
-          className="ak-input"
+          className="ag-input"
           aria-label="Question"
           aria-describedby={hint}
           aria-keyshortcuts="Meta+Enter Control+Enter"
@@ -1552,7 +1582,7 @@ function Composer({
         />
         <button
           type="submit"
-          className="ak-send"
+          className="ag-send"
           aria-label="Ask"
           title="Ask"
           disabled={
@@ -1571,12 +1601,12 @@ function Composer({
           )}
         </button>
       </div>
-      <p id={hint} className={cx("ak-hint", tooLong && "is-error")}>
+      <p id={hint} className={cx("ag-status", tooLong && "is-error")}>
         {caption}
       </p>
       <AiRefusal action="Asking questions" error={error} ready={aiReady}>
         {!!error && (
-          <p className="ak-hint is-error" role="alert">
+          <p className="ag-status is-error" role="alert">
             <SettingsLinked text={sentence((error as Error).message)} />
           </p>
         )}
@@ -1595,7 +1625,8 @@ function Composer({
               disabled={pending || !ready || busy || aiReady === false}
               onClick={() => void submit(q)}
             >
-              {q}
+              <CornerDownRight size={14} aria-hidden />
+              <span>{q}</span>
             </button>
           ))}
         </div>
