@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   TriangleAlert,
 } from "lucide-react";
+import { parseTranscript, turnStart } from "../../../shared/transcript";
 import type { FoundryDocument } from "../../../shared/wfe";
 import { Button, SkeletonText } from "../../kit";
 import { Callout } from "../ontology/parts";
@@ -23,7 +24,8 @@ import {
 // PDF's pages, a Parquet file and a type this page doesn't know. A PDF
 // shows the text Foundry read from it, its pages one after another, each
 // after a rule with its number, once that read is done, unless `pages`
-// asks for its pages. `source` shows a rendered view's text as uploaded.
+// asks for its pages. A WebVTT transcript shows as ontologies read it, its
+// turns. `source` shows a rendered view's text as uploaded.
 // Each viewer is loaded with the first document that needs it. `textOnly`
 // (someone reading through source grants, who may read a document's text
 // but not its bytes) says what needs its bytes isn't shown, and reads none.
@@ -50,6 +52,35 @@ const PlainText = ({ text }: { text: string }) => (
     <p className="dc-doc-section">{text}</p>
   </div>
 );
+
+// A WebVTT transcript as ontologies read it (src/shared/transcript.ts): its
+// title and notes, then each turn's start, speaker and words. One that isn't
+// WebVTT, or has no cue with text, is read as the text it is, and shown so.
+function Transcript({ text }: { text: string }) {
+  const t = parseTranscript(text);
+  if (!t?.turns.length) return <PlainText text={text} />;
+  const header = t.title ? [t.title, ...t.notes] : t.notes;
+  return (
+    <div className="dc-doc-text" aria-label="Transcript">
+      {header.length > 0 && (
+        <p className="dc-doc-section dc-transcript-notes">
+          {header.join("\n")}
+        </p>
+      )}
+      <ol className="dc-transcript">
+        {t.turns.map((turn, i) => (
+          <li key={i} className="dc-turn">
+            <span className="dc-turn-start">{turnStart(turn.startMs)}</span>
+            <p className="dc-turn-text">
+              {turn.speaker && <strong>{turn.speaker}: </strong>}
+              {turn.text}
+            </p>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 /** Where a PDF's page starts in its text: a rule with the page's number. */
 export const PageBreak = ({ page }: { page: number }) => (
@@ -206,6 +237,8 @@ export function DocumentView({
       <Markdown text={t} mdx={viewer.mdx} />
     ) : viewer.kind === "plain" ? (
       <PlainText text={t} />
+    ) : viewer.kind === "transcript" ? (
+      <Transcript text={t} />
     ) : viewer.kind === "json" ? (
       <JsonTree text={t} />
     ) : pdfText ? (
