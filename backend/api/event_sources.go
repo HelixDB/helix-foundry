@@ -125,7 +125,8 @@ type eventSends struct {
 	slots chan struct{}
 	// reading is the deployment-wide semaphore of lists of pieces
 	// (eventPieceLists), each of which reads a source's waiting batches and
-	// up to eventPieceTableBytes of its table.
+	// its table's snapshot; a workspace's own (eventWorkspace.reading) comes
+	// first.
 	reading chan struct{}
 
 	mu sync.Mutex
@@ -183,6 +184,10 @@ type eventSource struct {
 type eventWorkspace struct {
 	eventHolders
 	bucket *rate.Limiter
+	// reading is the workspace's one-slot semaphore of lists of pieces: its
+	// lists read one at a time, so no workspace holds every turn of the
+	// deployment's.
+	reading chan struct{}
 	// mu guards the day's counters, and is held while they are seeded.
 	mu sync.Mutex
 	// day is the UTC day pieces and bytes count, the zero time until they
@@ -213,7 +218,7 @@ func (e *eventSends) enter(workspaceID, connectorID string) (*eventSource, *even
 	}
 	ws := e.workspaces[workspaceID]
 	if ws == nil {
-		ws = &eventWorkspace{bucket: rate.NewLimiter(rate.Limit(e.cfg.WorkspaceSendsPerSecond), e.cfg.WorkspaceSendsBurst)}
+		ws = &eventWorkspace{bucket: rate.NewLimiter(rate.Limit(e.cfg.WorkspaceSendsPerSecond), e.cfg.WorkspaceSendsBurst), reading: make(chan struct{}, 1)}
 		e.workspaces[workspaceID] = ws
 	}
 	src.holders++

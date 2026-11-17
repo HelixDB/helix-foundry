@@ -199,7 +199,7 @@ func (s *Service) SendFoundryPieces(
 type RecallInput struct {
 	WorkspaceID   string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`
 	EventSourceID string `json:"event_source_id" jsonschema:"The API source: a connector of kind events that has a text field."`
-	Query         string `json:"query,omitempty" jsonschema:"Words to find, separated by spaces: only the notes holding every one, whatever its case, are returned. At most 200 bytes and 10 words. Leave it out for the newest notes."`
+	Query         string `json:"query,omitempty" jsonschema:"Words to find, separated by spaces: only the notes holding every one as a substring, whatever its case, in their id, fields or text, are returned. At most 200 bytes and 10 words. Leave it out for the newest notes."`
 	Limit         int32  `json:"limit,omitempty" jsonschema:"The most notes to return: at most 50, and 20 when left out."`
 }
 
@@ -213,11 +213,12 @@ type RecalledPieceOutput struct {
 	Synced     bool   `json:"synced" jsonschema:"False while it waits for the source's next sync, about a minute after it was sent: no ontology has read it yet."`
 }
 
+// RecallOutput leads with truncated, so a caller that cuts a long answer short still reads it.
 type RecallOutput struct {
 	ContentTrust  string                `json:"content_trust"`
 	EventSourceID string                `json:"event_source_id"`
+	Truncated     bool                  `json:"truncated" jsonschema:"True when notes were left out: more were found than limit or 1 MiB of text holds (ask again with words that narrow it), or the source holds more than one call reads, which no words change: its 100 newest sends still waiting to sync, and the 64 MiB of its table synced last."`
 	Pieces        []RecalledPieceOutput `json:"pieces" jsonschema:"Newest first, each id once, as its newest send has it."`
-	Truncated     bool                  `json:"truncated" jsonschema:"True when notes were left out: more were found than limit or 1 MiB of text holds, or the source holds more than one call reads. Ask again with words that narrow it."`
 }
 
 // RecallFoundryPieces lists an API source's pieces, the newest or those holding the query's

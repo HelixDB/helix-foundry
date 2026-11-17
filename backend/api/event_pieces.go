@@ -39,27 +39,38 @@ const (
 	maxEventPieceQueryWords = 10
 	// eventPieceBatches is how many of a source's batches no sync has read
 	// one list reads, the newest, eventPieceBatchReads at a time, and
-	// eventPieceTableBytes how much of its table's snapshot, uncompressed.
+	// eventPieceTableBytes how much of its table's snapshot, uncompressed:
+	// its end, where a sync's merge writes the rows it changed.
 	eventPieceBatches    = 100
 	eventPieceBatchReads = 8
 	eventPieceTableBytes = 64 << 20
 	// eventPieceLists is how many lists the backend reads at once, across
-	// the deployment: each reads up to eventPieceTableBytes, and one past it
-	// waits.
+	// the deployment, one of a workspace at a time: each reads up to
+	// eventPieceTableBytes, and gunzips all of a larger table to reach its
+	// end, so one past either waits.
 	eventPieceLists = 4
 )
 
+// The labels events.Render writes before a piece's id and its time, in
+// lower case: a document's own words, which a query is not matched against.
+var (
+	pieceLabel    = []byte("\n- piece: ")
+	occurredLabel = []byte("\n- occurred: ")
+)
+
 // pieceList keeps the newest limit pieces of those offered that hold every
-// word, in memory for at most twice that however many it is offered. Each
-// id is offered newest send first, so its first offer is the piece and any
-// later one is a send it replaced.
+// word, in memory for at most twice that however many it is offered. A
+// source's waiting pieces are offered first, newest batch first, so an id's
+// first offer is the piece and any later one is a send it replaced.
 type pieceList struct {
 	limit     int
 	words     [][]byte
 	schema    events.Schema
 	textField string
-	seen      map[string]bool
-	kept      []listedPiece
+	// waiting are the ids of the waiting pieces offered: a row of the table
+	// with one of them is a send the waiting piece replaced.
+	waiting map[string]bool
+	kept    []listedPiece
 	// floor is the arrival of the oldest piece kept once limit are: nothing
 	// that arrived no later can be among the newest limit.
 	floor time.Time
@@ -75,14 +86,17 @@ type listedPiece struct {
 	piece *foundryv1.FoundryEventSourcePiece
 }
 
-// offer takes row, a row of the source's table or a waiting piece's line as
-// one (events.Line.Row), with its id and arrival. A row that does not render
-// is events.ErrCorruptRow, or an error of the source's settings.
+// offer takes row, a row of the source's table (synced) or a waiting piece's
+// line as one (events.Line.Row), with its id and arrival. The table holds an
+// id once, so only waiting ids are remembered. A row that does not render is
+// events.ErrCorruptRow, or an error of the source's settings.
 func (l *pieceList) offer(id string, at time.Time, synced bool, row []byte) error {
-	if l.seen[id] {
+	if l.waiting[id] {
 		return nil
 	}
-	l.seen[id] = true
+	if !synced {
+		l.waiting[id] = true
+	}
 	if !l.floor.IsZero() && !at.After(l.floor) {
 		l.left = true
 		return nil
@@ -91,9 +105,12 @@ func (l *pieceList) offer(id string, at time.Time, synced bool, row []byte) erro
 	if err != nil {
 		return err
 	}
-	text := bytes.ToLower(doc.Body)
-	if slices.ContainsFunc(l.words, func(word []byte) bool { return !bytes.Contains(text, word) }) {
-		return nil
+	if len(l.words) > 0 {
+		// The document without its own labels: its id, fields and text.
+		text := bytes.Replace(bytes.Replace(bytes.ToLower(doc.Body), pieceLabel, []byte("\n"), 1), occurredLabel, []byte("\n"), 1)
+		if slices.ContainsFunc(l.words, func(word []byte) bool { return !bytes.Contains(text, word) }) {
+			return nil
+		}
 	}
 	l.kept = append(l.kept, listedPiece{at: at, bytes: int64(len(doc.Body)), piece: &foundryv1.FoundryEventSourcePiece{
 		Id: id, ReceivedAt: timestamppb.New(at), Title: doc.Title, Text: string(doc.Body), Synced: synced,
@@ -118,16 +135,23 @@ func (l *pieceList) trim() {
 // ListFoundryEventPieces lists the pieces of a live event source of the
 // workspace, newest first by arrival, each id once and as the document a sync
 // makes of it (events.Render): with a query, those whose document holds every
-// word of it, whatever its case. The source must have a text field, which
-// the document's text is.
+// word of it as a substring, whatever its case, in its id, fields or text.
+// The source must have a text field, which the document's text is.
 //
 // It reads, in this order, the source's batches no sync has read (above its
-// cursor), newest first, with its schema from the same consistent read, then
-// its table's snapshot: a sync writes the snapshot before it moves the
-// cursor, so a piece is in one of them, or in both, where the batch's is the
-// newer send. Nothing indexes a source's pieces, so a list costs what the
-// source holds, within bounds: the eventPieceBatches newest batches, and
-// eventPieceTableBytes of the snapshot, eventPieceLists lists at once.
+// cursor, or all of them while it has no table), newest first, with its
+// schema from the same consistent read, then its table's snapshot: a sync
+// writes the snapshot before it moves the cursor, so a piece is in one of
+// them, or in both, where the batch's is the newer send.
+//
+// Nothing indexes a source's pieces, so a list costs what the source holds,
+// within bounds: its eventPieceBatches newest waiting batches, and the last
+// eventPieceTableBytes of its table, where a sync's merge writes the rows it
+// changed. Past either bound the list is a part of the source: with more
+// batches waiting than it reads, a piece it lists from the table may be an
+// older send of its id; of a larger table it reads the rows synced last,
+// which a full sync, writing the newest first, leaves the oldest. One list
+// of a workspace reads at a time, and eventPieceLists across the deployment.
 //
 // The list holds at most the request's limit and maxEventPieceTextBytes of
 // text (always its newest piece), and says when pieces were left out: more
@@ -165,19 +189,33 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 		return nil, eventPrecondition(reasonEventSourceNoText,
 			"this API source has no text field, so its pieces are rows of its table with no text to list: choose its text field, then list its pieces")
 	}
-	select {
-	case e.reading <- struct{}{}:
-		defer func() { <-e.reading }()
-	case <-ctx.Done():
-		return nil, status.FromContextError(ctx.Err()).Err()
+	src, workspace := e.enter(ws, cid)
+	defer e.leave(src, workspace)
+	// The workspace's turn first, so its lists wait on each other and hold
+	// one of the deployment's turns between them.
+	if err := takeTurn(ctx, workspace.reading); err != nil {
+		return nil, err
 	}
+	defer func() { <-workspace.reading }()
+	if err := takeTurn(ctx, e.reading); err != nil {
+		return nil, err
+	}
+	defer func() { <-e.reading }()
 
+	// A table without a snapshot holds nothing whatever the cursor says, as
+	// a sync reads it (connector's tableCursor).
+	key, cursor := source.State.TableKey, source.State.Cursor
+	if key == "" {
+		cursor = 0
+	}
 	waiting := source.Batches
-	if synced := slices.IndexFunc(waiting, func(b *foundrymodel.FoundryEventBatch) bool { return b.Seq <= source.State.Cursor }); synced >= 0 {
+	if synced := slices.IndexFunc(waiting, func(b *foundrymodel.FoundryEventBatch) bool { return b.Seq <= cursor }); synced >= 0 {
 		waiting = waiting[:synced]
 	}
-	list := &pieceList{limit: limit, words: words, schema: source.State.Schema, textField: stored.TextField, seen: map[string]bool{}}
-	var read int64
+	list := &pieceList{limit: limit, words: words, schema: source.State.Schema, textField: stored.TextField, waiting: map[string]bool{}}
+	// A source's batches are numbered from 1 with no gap, so more wait than
+	// the list reads when the oldest it reads is not the cursor's next.
+	list.left = len(waiting) > 0 && waiting[len(waiting)-1].Seq > cursor+1
 	// A few batches at a time, so a list holds that many in memory however
 	// many wait.
 	for batches := range slices.Chunk(waiting, eventPieceBatchReads) {
@@ -203,7 +241,6 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 			return nil, err
 		}
 		for i, b := range batches {
-			read += int64(b.Pieces)
 			for _, l := range lines[i] {
 				row, err := l.Row(list.schema)
 				if err == nil {
@@ -215,15 +252,15 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 			}
 		}
 	}
-	// More batches wait than one list reads: their pieces were left out.
-	list.left = list.left || read < source.State.PendingPieces
 
-	if key := source.State.TableKey; key != "" {
-		whole, err := e.tableRows(ctx, key, list)
+	if key != "" {
+		size, err := e.tableBytes(ctx, src, key)
 		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "read the size of the API source's table: %v", err)
+		}
+		if err := e.tableRows(ctx, key, size-eventPieceTableBytes, list); err != nil {
 			return nil, err
 		}
-		list.left = list.left || !whole
 	}
 	list.trim()
 	kept, text := 0, int64(0)
@@ -238,47 +275,71 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 	return resp, nil
 }
 
+// takeTurn takes a place in turns, a semaphore, waiting for one for as long
+// as ctx lasts.
+func takeTurn(ctx context.Context, turns chan struct{}) error {
+	select {
+	case turns <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return status.FromContextError(ctx.Err()).Err()
+	}
+}
+
 // tableRows offers list the rows of the events table's snapshot at key, in
-// the order it holds them, and reports whether it read the snapshot whole:
-// it stops once it has read eventPieceTableBytes of it, uncompressed. A row
+// the order it holds them, but for its first skip bytes, uncompressed, and
+// the rest of the row they end in: a positive skip leaves pieces out. A row
 // no sync writes, or one the source's settings can't render, is INTERNAL; a
 // snapshot that can't be read, such as one a sync replaced and its grace
 // has removed, is UNAVAILABLE: the next list reads the source's new one.
-func (e *eventSends) tableRows(ctx context.Context, key string, list *pieceList) (bool, error) {
+func (e *eventSends) tableRows(ctx context.Context, key string, skip int64, list *pieceList) error {
+	unread := func(err error) error { return status.Errorf(codes.Unavailable, "read the API source's table: %v", err) }
 	body, err := e.objects.Open(ctx, key)
 	if err != nil {
-		return false, status.Errorf(codes.Unavailable, "read the API source's table: %v", err)
+		return unread(err)
 	}
 	defer func() { _ = body.Close() }() // best-effort: only read
 	gz, err := gzip.NewReader(bufio.NewReaderSize(body, 1<<16))
 	if err != nil {
-		return false, status.Errorf(codes.Unavailable, "read the API source's table: %v", err)
+		return unread(err)
 	}
 	rows := bufio.NewReaderSize(gz, 1<<16)
-	for read := 0; read < eventPieceTableBytes; {
+	if skip > 0 {
+		list.left = true
+		if _, err := io.CopyN(io.Discard, rows, skip); err != nil {
+			return unread(err)
+		}
+		if _, err := rows.ReadBytes('\n'); err != nil && !errors.Is(err, io.EOF) {
+			return unread(err)
+		}
+	}
+	for {
 		line, err := rows.ReadBytes('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			return false, status.Errorf(codes.Unavailable, "read the API source's table: %v", err)
+			return unread(err)
 		}
-		read += len(line)
 		if row := bytes.TrimSuffix(line, []byte("\n")); len(row) > 0 {
-			var piece struct {
-				ID         string    `json:"id"`
-				ReceivedAt time.Time `json:"received_at"`
-			}
-			rerr := json.Unmarshal(row, &piece)
+			// By its own keys: a piece's field may be named as a column is
+			// but for its case, which a struct's tags would take for it.
+			var columns map[string]json.RawMessage
+			var id string
+			var at time.Time
+			rerr := json.Unmarshal(row, &columns)
 			if rerr == nil {
-				rerr = list.offer(piece.ID, piece.ReceivedAt, true, row)
+				rerr = json.Unmarshal(columns["id"], &id)
+			}
+			if rerr == nil {
+				rerr = json.Unmarshal(columns["received_at"], &at)
+			}
+			if rerr == nil {
+				rerr = list.offer(id, at, true, row)
 			}
 			if rerr != nil {
-				return false, status.Errorf(codes.Internal, "read the API source's table: %v", rerr)
+				return status.Errorf(codes.Internal, "read the API source's table: %v", rerr)
 			}
 		}
 		if err != nil {
-			return true, nil
+			return nil
 		}
 	}
-	// Whole only if nothing follows what was read.
-	_, err = rows.Peek(1)
-	return errors.Is(err, io.EOF), nil
 }

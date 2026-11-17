@@ -1137,8 +1137,9 @@ message ListFoundryEventPiecesRequest {
   string workspace_id = 1;
   string connector_id = 2;
   // Words to find, separated by spaces: only the pieces whose document holds
-  // every one, whatever its case, are listed. At most 200 bytes and 10
-  // words; empty lists every piece.
+  // every one as a substring, whatever its case, in its id, its fields or
+  // its text, are listed. At most 200 bytes and 10 words; empty lists every
+  // piece.
   string query = 3;
   // At most 50; 0 means 20.
   int32 limit = 4;
@@ -1149,9 +1150,11 @@ message ListFoundryEventPiecesRequest {
 message ListFoundryEventPiecesResponse {
   // At most limit, and at most 1 MiB of text together (always the newest).
   repeated FoundryEventSourcePiece pieces = 1;
-  // Pieces were left out: more were found than pieces holds, or the source
-  // holds more than one list reads (its 100 newest sends no sync has read,
-  // and 64 MiB of its table). A narrower query finds what a list left out.
+  // Pieces were left out. More were found than pieces holds: a narrower
+  // query finds the rest. Or the source holds more than one list reads,
+  // which no query changes: its 100 newest sends no sync has read (a piece
+  // listed from its table may then be an older send of its id), and the 64
+  // MiB of its table synced last.
   bool truncated = 2;
 }
 

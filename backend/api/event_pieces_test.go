@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -193,6 +194,10 @@ func TestListFoundryEventPieces(t *testing.T) {
 			"emails march":       nil,
 			"n-2":                {"n-2+"},
 			"préférences":        nil,
+			// A document's own labels are not the piece's words.
+			"piece":    nil,
+			"occurred": nil,
+			"mail":     {"n-3-", "n-1+"},
 		} {
 			resp, err := h.list(query, 0)
 			if err != nil {
@@ -200,6 +205,20 @@ func TestListFoundryEventPieces(t *testing.T) {
 			}
 			if got := pieceIDs(resp); !slices.Equal(got, want) || resp.GetTruncated() {
 				t.Errorf("%q: pieces %v, truncated %v", query, got, resp.GetTruncated())
+			}
+		}
+	})
+
+	// A piece's time is its own, and is found; the label before it is not.
+	t.Run("finds a piece by when it occurred, not by the label", func(t *testing.T) {
+		h := newPiecesHarness(t)
+		h.note(t, "n-0=Small")
+		h.store.rows[h.notes].ChangeCursor = []byte(`{"seq":1}`)
+		h.table(t, "snap-1", `{"id":"n-1","received_at":"2026-10-24T12:01:00.000000Z","occurred_at":"2026-10-23T09:30:00Z","note":"Renewal call"}`)
+		for query, want := range map[string][]string{"occurred": nil, "2026-10-23": {"n-1+"}, "renewal 09:30": {"n-1+"}} {
+			resp, err := h.list(query, 0)
+			if err != nil || !slices.Equal(pieceIDs(resp), want) {
+				t.Errorf("%q: pieces %v, %v", query, pieceIDs(resp), err)
 			}
 		}
 	})
@@ -275,6 +294,8 @@ func TestListFoundryEventPieces(t *testing.T) {
 			t.Fatalf("a piece of the batch not read: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
 		}
 
+		// Of a table past 64 MiB a list reads the end, where a sync's merge
+		// writes the rows it changed.
 		h = newPiecesHarness(t)
 		h.note(t, "n-0=Small")
 		h.store.rows[h.notes].ChangeCursor = []byte(`{"seq":1}`)
@@ -284,15 +305,64 @@ func TestListFoundryEventPieces(t *testing.T) {
 			rows = append(rows, tableRow(fmt.Sprintf("big-%02d", i), at.Add(-time.Hour), filler))
 		}
 		h.table(t, "snap-1", append(rows, tableRow("last", at, "needle"))...)
-		if resp, err = h.list("needle", 0); err != nil || !slices.Equal(pieceIDs(resp), []string{"first+"}) || !resp.GetTruncated() {
+		if resp, err = h.list("needle", 0); err != nil || !slices.Equal(pieceIDs(resp), []string{"last+"}) || !resp.GetTruncated() {
 			t.Fatalf("a table past 64 MiB: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
 		}
-		// A table that ends where the read does was read whole.
+		// A snapshot shorter than its size says, or cut where the list starts
+		// to read it, can't be read.
+		key := h.store.tables[len(h.store.tables)-1].S3Key
+		size := len(strings.Join(rows, "\n")) + len(tableRow("last", at, "needle")) + 2
+		h.bucket.objects[key] = gzipped(t, "short\n")
+		if _, err = h.list("", 0); status.Code(err) != codes.Unavailable {
+			t.Fatalf("a snapshot shorter than its size = %v", err)
+		}
+		var stored bytes.Buffer
+		w, _ := gzip.NewWriterLevel(&stored, gzip.NoCompression)
+		_, _ = w.Write(bytes.Repeat([]byte{'x'}, size-eventPieceTableBytes+100<<10))
+		_ = w.Close()
+		h.bucket.objects[key] = stored.Bytes()[:stored.Len()-9]
+		if _, err = h.list("", 0); status.Code(err) != codes.Unavailable {
+			t.Fatalf("a snapshot cut where the list reads it = %v", err)
+		}
+		// A table of 64 MiB is read whole.
 		first, last := tableRow("first", at, "needle"), tableRow("last", at, "needle")
 		pad := eventPieceTableBytes - len(first) - len(last) - len(tableRow("pad", at, "")) - 3
 		h.table(t, "snap-2", first, tableRow("pad", at, strings.Repeat("x", pad)), last)
 		if resp, err = h.list("needle", 0); err != nil || !slices.Equal(pieceIDs(resp), []string{"first+", "last+"}) || resp.GetTruncated() {
 			t.Fatalf("a table of 64 MiB: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
+		}
+		h.bucket.tailErr = errors.New("s3 down")
+		h.table(t, "snap-3", first)
+		if _, err = h.list("", 0); status.Code(err) != codes.Unavailable {
+			t.Fatalf("a table whose size can't be read = %v", err)
+		}
+	})
+
+	// A piece's field may be named as one of its row's columns is, but for
+	// its case: the row's own id and arrival are still the piece's.
+	t.Run("reads a row's id and arrival by their own names", func(t *testing.T) {
+		h := newPiecesHarness(t)
+		h.clock.advance(time.Minute)
+		if _, err := h.send(h.notes, "", `n-1={"note":"Hello","Id":7,"ID":"other","Received_At":"never"}`); err != nil {
+			t.Fatal(err)
+		}
+		h.sync(t)
+		resp, err := h.list("", 0)
+		if err != nil || !slices.Equal(pieceIDs(resp), []string{"n-1+"}) || !resp.GetPieces()[0].GetReceivedAt().AsTime().Equal(h.clock.now()) {
+			t.Fatalf("pieces %v, %v", pieceIDs(resp), err)
+		}
+	})
+
+	// A table without a snapshot holds nothing whatever the cursor says, so
+	// every batch still waits, as a sync reads it.
+	t.Run("reads every batch of a source with a cursor and no table", func(t *testing.T) {
+		h := newPiecesHarness(t)
+		h.note(t, "n-1=First")
+		h.note(t, "n-2=Second")
+		h.store.rows[h.notes].ChangeCursor = []byte(`{"seq":2}`)
+		resp, err := h.list("", 0)
+		if err != nil || !slices.Equal(pieceIDs(resp), []string{"n-2-", "n-1-"}) || resp.GetTruncated() {
+			t.Fatalf("pieces %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
 		}
 	})
 
@@ -387,19 +457,36 @@ func TestListFoundryEventPieces(t *testing.T) {
 		h := newPiecesHarness(t)
 		h.note(t, "n-1=Hello")
 		h.sync(t)
-		key := h.store.tables[len(h.store.tables)-1].S3Key
-		snapshot := h.bucket.objects[key]
+		synced := h.store.tables[len(h.store.tables)-1].S3Key
+		snapshot := h.bucket.objects[synced]
+		// A snapshot whose size the source has read, then cut or removed.
+		if _, err := h.list("", 0); err != nil {
+			t.Fatal(err)
+		}
+		h.bucket.objects[synced] = snapshot[:len(snapshot)-9]
+		if _, err := h.list("", 0); status.Code(err) != codes.Unavailable {
+			t.Fatalf("a snapshot cut since its size was read = %v", err)
+		}
+		delete(h.bucket.objects, synced)
+		if _, err := h.list("", 0); status.Code(err) != codes.Unavailable {
+			t.Fatalf("a snapshot removed since its size was read = %v", err)
+		}
 		for name, tc := range map[string]struct {
 			object []byte
 			code   codes.Code
 		}{
-			"a cut snapshot":       {snapshot[:len(snapshot)-9], codes.Unavailable},
-			"a snapshot not gzip":  {[]byte("this is not a gzip stream"), codes.Unavailable},
-			"a missing snapshot":   {nil, codes.Unavailable},
-			"a row that is no row": {gzipped(t, "not a row\n"), codes.Internal},
+			"a cut snapshot":        {snapshot[:len(snapshot)-9], codes.Unavailable},
+			"a snapshot not gzip":   {[]byte("this is not a gzip stream"), codes.Unavailable},
+			"a missing snapshot":    {nil, codes.Unavailable},
+			"a row that is no row":  {gzipped(t, "not a row\n"), codes.Internal},
+			"a row with no id":      {gzipped(t, `{"received_at":"2026-10-24T12:01:00.000000Z","note":"Hello"}`+"\n"), codes.Internal},
+			"a row with no arrival": {gzipped(t, `{"id":"n-1","note":"Hello"}`+"\n"), codes.Internal},
 			"a row of a field the schema lacks": {gzipped(t, `{"id":"n-1","received_at":"2026-10-24T12:01:00.000000Z","occurred_at":null,"other":1}`+"\n"),
 				codes.Internal},
 		} {
+			// A snapshot of its own, as a sync's is: a key's size is read once.
+			h.table(t, strings.ReplaceAll(name, " ", "-"))
+			key := h.store.tables[len(h.store.tables)-1].S3Key
 			if h.bucket.objects[key] = tc.object; tc.object == nil {
 				delete(h.bucket.objects, key)
 			}
@@ -417,33 +504,43 @@ func TestListFoundryEventPieces(t *testing.T) {
 		}
 	})
 
-	// A list reads up to 64 MiB, so the backend reads 4 at once: one past
-	// that waits its turn, for as long as its caller does.
-	t.Run("waits its turn among the lists the backend reads at once", func(t *testing.T) {
+	// A list may read a whole table, so the backend reads 4 at once, and one
+	// of a workspace at a time: one past either waits its turn, for as long
+	// as its caller does.
+	t.Run("waits its turn among its workspace's lists and the backend's", func(t *testing.T) {
 		h := newPiecesHarness(t)
 		h.note(t, "n-1=Hello")
-		reading := h.s.deps.EventSends.reading
-		for range eventPieceLists {
-			reading <- struct{}{}
+		e := h.s.deps.EventSends
+		src, workspace := e.enter("ws-1", h.notes)
+		defer e.leave(src, workspace)
+		waits := func(turns chan struct{}, held int) {
+			t.Helper()
+			for range held {
+				turns <- struct{}{}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				_, err := h.s.ListFoundryEventPieces(ctx, &foundryv1.ListFoundryEventPiecesRequest{WorkspaceId: "ws-1", ConnectorId: h.notes})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				t.Fatalf("a list past the turns did not wait: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			cancel()
+			if err := <-done; status.Code(err) != codes.Canceled {
+				t.Fatalf("a list whose caller left = %v", err)
+			}
+			for range held {
+				<-turns
+			}
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		go func() {
-			_, err := h.s.ListFoundryEventPieces(ctx, &foundryv1.ListFoundryEventPiecesRequest{WorkspaceId: "ws-1", ConnectorId: h.notes})
-			done <- err
-		}()
-		select {
-		case err := <-done:
-			t.Fatalf("a fifth list did not wait: %v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-		cancel()
-		if err := <-done; status.Code(err) != codes.Canceled {
-			t.Fatalf("a list whose caller left = %v", err)
-		}
-		<-reading
-		if resp, err := h.list("", 0); err != nil || len(resp.GetPieces()) != 1 || len(reading) != eventPieceLists-1 {
-			t.Fatalf("a list with a turn: %v, %v, %d reading", pieceIDs(resp), err, len(reading))
+		waits(workspace.reading, 1)
+		waits(e.reading, eventPieceLists)
+		if resp, err := h.list("", 0); err != nil || len(resp.GetPieces()) != 1 || len(e.reading) != 0 || len(workspace.reading) != 0 {
+			t.Fatalf("a list with a turn: %v, %v, %d and %d reading", pieceIDs(resp), err, len(e.reading), len(workspace.reading))
 		}
 	})
 }

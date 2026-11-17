@@ -85,12 +85,12 @@ func (r *routeRecorder) GetOntologyGeneration(_ context.Context, req *foundryv1.
 	return &foundryv1.OntologyGenerationResponse{}, nil
 }
 
-// workspaceHit records a workspace route, which names no ontology.
 func (r *routeRecorder) ListFoundryEventPieces(_ context.Context, req *foundryv1.ListFoundryEventPiecesRequest) (*foundryv1.ListFoundryEventPiecesResponse, error) {
 	r.workspaceHit("ListFoundryEventPieces", req.GetWorkspaceId(), req.GetConnectorId()+"/"+req.GetQuery()+"/"+strconv.Itoa(int(req.GetLimit())))
 	return &foundryv1.ListFoundryEventPiecesResponse{}, nil
 }
 
+// workspaceHit records a workspace route, which names no ontology.
 func (r *routeRecorder) workspaceHit(name, workspaceID, id string) {
 	r.got = name + " " + workspaceID + " - " + id
 }

@@ -2791,8 +2791,9 @@ type ListFoundryEventPiecesRequest struct {
 	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	ConnectorId string `protobuf:"bytes,2,opt,name=connector_id,json=connectorId,proto3" json:"connector_id,omitempty"`
 	// Words to find, separated by spaces: only the pieces whose document holds
-	// every one, whatever its case, are listed. At most 200 bytes and 10
-	// words; empty lists every piece.
+	// every one as a substring, whatever its case, in its id, its fields or
+	// its text, are listed. At most 200 bytes and 10 words; empty lists every
+	// piece.
 	Query string `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
 	// At most 50; 0 means 20.
 	Limit int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
@@ -2865,9 +2866,11 @@ type ListFoundryEventPiecesResponse struct {
 
 	// At most limit, and at most 1 MiB of text together (always the newest).
 	Pieces []*FoundryEventSourcePiece `protobuf:"bytes,1,rep,name=pieces,proto3" json:"pieces,omitempty"`
-	// Pieces were left out: more were found than pieces holds, or the source
-	// holds more than one list reads (its 100 newest sends no sync has read,
-	// and 64 MiB of its table). A narrower query finds what a list left out.
+	// Pieces were left out. More were found than pieces holds: a narrower
+	// query finds the rest. Or the source holds more than one list reads,
+	// which no query changes: its 100 newest sends no sync has read (a piece
+	// listed from its table may then be an older send of its id), and the 64
+	// MiB of its table synced last.
 	Truncated bool `protobuf:"varint,2,opt,name=truncated,proto3" json:"truncated,omitempty"`
 }
 
