@@ -1125,12 +1125,18 @@ export function LoadPage({ loadId }: { loadId: string }) {
     source: "upload",
     group: "Documents",
     // A document's extraction is the current load's; another load's
-    // documents are as far as its job got.
-    status: (l.current ? !!d.extraction : j.status === "succeeded")
-      ? "ready"
-      : j.status === "running" && j.phase === "documents"
-        ? "loading"
-        : "pending",
+    // documents are as far as its job got. One the model failed was not
+    // read, nor was one a job that ended without succeeding never reached.
+    status:
+      l.current && d.extraction?.status === "failed"
+        ? "unread"
+        : (l.current ? !!d.extraction : j.status === "succeeded")
+          ? "ready"
+          : j.status === "running" && j.phase === "documents"
+            ? "loading"
+            : !isLiveJob(j) && j.status !== "succeeded"
+              ? "unread"
+              : "pending",
   }));
   const reviews = uploaded.reduce(
     (n, d) => n + (d.extraction?.reviews || 0),
