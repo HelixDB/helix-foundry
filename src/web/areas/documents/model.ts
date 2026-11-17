@@ -277,7 +277,8 @@ const STATES: Partial<
 
 /**
  * What reading a document has come to, from the WFE's `read`. A failure
- * with no message is said in the words of its code.
+ * with no message is said in the words of its code, and what to do: upload
+ * a fixed file, or, for a connection's document, fix it at its source.
  *
  * @example
  * fileRead({ id: "d", status: "uploaded", read: { state: "FOUNDRY_FILE_READ_STATE_READY", rows: "12" } }); // { state: "ready", rows: 12 }
@@ -316,7 +317,12 @@ export function fileRead(d: FoundryDocument): FileRead {
             (/[.!?]$/.test(message) ? "" : ".")
           : code === "too_large"
             ? "It is past a limit of what Foundry reads. Split it into smaller files."
-            : `It isn’t ${formatOf(d.mediaType)?.name || "what its type says"}. Upload a fixed file.`,
+            : `It isn’t ${formatOf(d.mediaType)?.name || "what its type says"}. ${
+                // A connection's (a Drive PDF) is read again when it changes.
+                d.source
+                  ? "Fix it where it is kept, and the next sync reads it again."
+                  : "Upload a fixed file."
+              }`,
       };
     }
     case undefined:

@@ -1536,6 +1536,21 @@ describe("file reads", () => {
       code: "unsupported",
       message: "It isn’t CSV. Upload a fixed file.",
     });
+    // A connection's file (a Drive PDF) is fixed at its source, not uploaded.
+    expect(
+      fileRead({
+        id: "p",
+        status: "uploaded",
+        mediaType: "application/pdf",
+        source: { externalId: "1mockPdf", version: "1|v" },
+        read: { state: "FOUNDRY_FILE_READ_STATE_FAILED" },
+      }),
+    ).toEqual({
+      state: "failed",
+      code: "unsupported",
+      message:
+        "It isn’t PDF. Fix it where it is kept, and the next sync reads it again.",
+    });
     expect(
       fileRead(
         csv({
@@ -1637,11 +1652,11 @@ describe("file reads", () => {
         state: "FOUNDRY_FILE_READ_STATE_FAILED",
         error: {
           code: "unsupported",
-          message: "the PDF is encrypted; upload it without a password",
+          message: "the PDF is encrypted; save it without a password",
         },
       }),
     ).toBe(
-      "Ontologies can’t read it. The PDF is encrypted; upload it without a password.",
+      "Ontologies can’t read it. The PDF is encrypted; save it without a password.",
     );
     // Being read, read, or before its upload completes, readsText says it.
     expect(pdf({ state: "FOUNDRY_FILE_READ_STATE_READING" })).toBeUndefined();

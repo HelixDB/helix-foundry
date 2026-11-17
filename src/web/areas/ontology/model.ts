@@ -3047,11 +3047,14 @@ export function setSourcesText(documents: readonly FoundryDocument[]) {
  * file of a chosen set still being read, is waited for while nothing else
  * is ready, and said in a `note` once something is: a generation started
  * now leaves it out. None chosen of the connectors sends `noConnectors`.
- * `documents` are the uploads: a connector's set holds text only, counted
- * by the set. What `facts` lack counts as gone, whatever `draft` names:
- * it is how an ontology of the user's own never sees the sample company's
- * connector and set (isSampleConnector, isSampleSet), even as every synced
- * connector or in a choice made earlier.
+ * `documents` are the uploads; a connector's set is counted by the set, its
+ * documents as text, since the site doesn't list them. A Google Drive PDFs
+ * set's PDFs are read after their sync (one still being read, or a scan, has
+ * no text yet), so a set of those alone passes here and the WFE refuses the
+ * generation, saying why. What `facts` lack counts as gone, whatever
+ * `draft` names: it is how an ontology of the user's own never sees the
+ * sample company's connector and set (isSampleConnector, isSampleSet), even
+ * as every synced connector or in a choice made earlier.
  *
  * API sources (kind events) are chosen in `eventSources` only, each with
  * its mode: every synced connector, and `connectorIds`, leave them out, and
@@ -3114,6 +3117,7 @@ export function generationSources(
       ...uploads,
       text:
         uploads.text +
+        // A connector's set by its count: its documents aren't listed here.
         sets.reduce((n, s) => n + (s.connector ? s.documents || 0 : 0), 0),
     };
   const [first, ...rest] = picked.map((c) => c.id),

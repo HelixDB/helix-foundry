@@ -519,6 +519,71 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
   });
 });
 
+describe("Google Workspace's PDFs", () => {
+  // The files themselves, read as an uploaded PDF is once the sync writes
+  // them: its text a page at a time, or why it can't be read.
+  it("keeps each PDF the user may download, read by the document worker", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const pdfs = await setOf("pdfs");
+    // The board pack, which its owner keeps viewers from downloading, is left out.
+    expect(pdfs).toMatchObject({
+      name: "PDFs",
+      documents: 3,
+      connector: { connectorId, stream: "pdfs" },
+    });
+    expect(pdfs!.description).toContain("as the file itself");
+    const first = (await page(`setId=${pdfs!.id}`)).documents;
+    const named = (docs: FoundryDocument[], name: string) =>
+      docs.find((d) => d.name === name)!;
+    expect(first.map((d) => d.name).sort()).toEqual([
+      "Globex order form.pdf",
+      "Pricing terms (edited).pdf",
+      "Signed MSA (scan).pdf",
+    ]);
+    const form = named(first, "Globex order form.pdf"),
+      scan = named(first, "Signed MSA (scan).pdf"),
+      edited = named(first, "Pricing terms (edited).pdf");
+    expect(form).toMatchObject({
+      mediaType: "application/pdf",
+      read: { kind: "FOUNDRY_READ_KIND_PDF", state: "FOUNDRY_FILE_READ_STATE_READING" },
+    });
+    // Its bytes are the file; it has no text until it is read.
+    const bytes = await call("GET", `${DOCS}/${form.id}:bytes`);
+    expect(Buffer.from(bytes.body.data, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+    expect((await call("GET", `${DOCS}/${form.id}:content`)).status).not.toBe(200);
+
+    vi.setSystemTime(Date.now() + 2000);
+    await vi.waitFor(async () => {
+      const [f, s] = await byIds([form.id, scan.id]);
+      expect(f!.read?.state).toBe("FOUNDRY_FILE_READ_STATE_READY");
+      expect(s!.read?.state).toBe("FOUNDRY_FILE_READ_STATE_FAILED");
+    });
+    const [read, failed] = await byIds([form.id, scan.id]);
+    expect(read!.read).toMatchObject({ pages: 2 });
+    expect(failed!.read).toMatchObject({
+      error: { code: "unsupported", message: "Scanned PDF: no text to read" },
+    });
+    expect(
+      (await call("GET", `${DOCS}/${form.id}:content`)).body.text,
+    ).toContain("Customer: Globex");
+
+    // Edited at the source: a new document, read again; the rest stay as read.
+    await sync(connectorId);
+    const second = (await page(`setId=${pdfs!.id}`)).documents;
+    const again = named(second, "Pricing terms (edited).pdf");
+    expect(again.id).not.toBe(edited.id);
+    expect(again.read?.state).toBe("FOUNDRY_FILE_READ_STATE_READING");
+    expect(named(second, "Globex order form.pdf")).toMatchObject({
+      id: form.id,
+      read: { state: "FOUNDRY_FILE_READ_STATE_READY" },
+    });
+    const [old] = await byIds([edited.id]);
+    expect(old).toMatchObject({ status: "deleted", read: null });
+  });
+});
+
 describe("a connector's sets and documents", () => {
   it("are the connector's: a person's changes are refused with where to make them", async () => {
     await granola();
