@@ -29,6 +29,10 @@ var (
 		Name: "helix_foundry_snapshots_swept_total",
 		Help: "Replaced snapshots deleted once no live load pinned them.",
 	})
+	rereadsQueued = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "helix_foundry_rereads_queued_total",
+		Help: "Re-reads of current loads' documents the model left unread (a provider's quota or account, or a busy one) queued.",
+	})
 	refreshesQueued = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "helix_foundry_refreshes_queued_total",
 		Help: "Refresh loads queued because a table an ontology's current load reads changed.",

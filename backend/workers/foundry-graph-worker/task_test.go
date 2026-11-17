@@ -266,13 +266,14 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 }
 
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
-// doc-c failed retryably and doc-d already held.
+// doc-c failed retryably (a store write; the model failing one makes a load
+// partial, which unread_test.go covers) and doc-d already held.
 var extracted = []string{
 	`{"event":"extract_started","contract_version":"4.27.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
-	documentEvent("doc-c", `{"kind":"failed","code":"model","model_failure":"unavailable","retryable":true}`, noUsage),
+	documentEvent("doc-c", `{"kind":"failed","code":"store","retryable":true}`, noUsage),
 	documentEvent("doc-d", `{"kind":"already_ingested"}`, noUsage),
 	`{"event":"extract_finished"}`,
 }
@@ -1176,7 +1177,7 @@ func TestLoad(t *testing.T) {
 		if b := h.store.extractions["doc-b"]; b.Status != model.FoundryExtractionDuplicate || *b.DuplicateOf != "doc-a" {
 			t.Fatalf("doc-b = %+v", b)
 		}
-		if c := h.store.extractions["doc-c"]; c.Status != model.FoundryExtractionFailed || c.Error.Code != model.FoundryExtractionModel || !c.Error.Retryable {
+		if c := h.store.extractions["doc-c"]; c.Status != model.FoundryExtractionFailed || c.Error.Code != model.FoundryExtractionStore || !c.Error.Retryable {
 			t.Fatalf("doc-c = %+v", c)
 		}
 		if !h.store.kept["doc-d"] || h.store.kept["doc-a"] {
@@ -1528,6 +1529,30 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("document = %+v", b)
 		}
 		if want := "                           \n\n# Terms\nAcme pays        .\n"; string(staged) != want || len(staged) != len(original) {
+			t.Fatalf("staged %q, want %q", staged, want)
+		}
+	})
+
+	// A WebVTT transcript goes to the agent as plain text, its turns a line
+	// each (transcript.Text), never its cues: the sections and marks it
+	// returns fall on that text, which the load stores.
+	t.Run("sends a WebVTT transcript as plain text, a line per turn", func(t *testing.T) {
+		h := newHarness(t)
+		h.store.pending[1].MediaType = model.FoundryMediaVTT
+		h.bucket.objects[document.Key("ws-1", "doc-b")] = []byte("WEBVTT\n\n1\n00:00:03.120 --> 00:00:05.200\n<v Ada Lovelace>Acme renews.</v>\n\n" +
+			"2\n00:00:05.200 --> 00:00:07.000\n<v Ada Lovelace>For three years.</v>\n")
+		var staged []byte
+		h.agent.extract = func(req string, stream agentv1.Agent_ExtractServer) error {
+			staged, _ = os.ReadFile(filepath.Join(h.workDir, "jobs/job-1/docs/doc-b.txt"))
+			return extractAll(req, stream)
+		}
+		h.run(t, loadJob())
+		_, extracts := h.agent.calls()
+		extract := decodeExtract(t, extracts[0])
+		if b := extract.Documents[1]; b.DocID != "doc-b" || b.MediaType != ontologyagent.MediaPlainText || b.Path != "jobs/job-1/docs/doc-b.txt" {
+			t.Fatalf("document = %+v", b)
+		}
+		if want := "[00:00:03] Ada Lovelace: Acme renews. For three years.\n"; string(staged) != want {
 			t.Fatalf("staged %q, want %q", staged, want)
 		}
 	})
@@ -2027,6 +2052,60 @@ func TestLoadOutcomes(t *testing.T) {
 		}
 	})
 
+	// A new database's gateway turns every query away until it takes the
+	// database on. An attempt it turned away before any of its queries reached
+	// the database left no write to settle: within the database's first
+	// minutes it is tried again in seconds, and given back, even its last.
+	// Past them, or once a write may have landed, it backs off as any failure
+	// does.
+	t.Run("retries soon a new database still starting that nothing reached", func(t *testing.T) {
+		// The proxy sends each refused write again for a third of the Helix
+		// timeout (1 s here), then relays the refusal: the gateway refuses
+		// every resend.
+		refusing := slices.Repeat([]helixgateway.Response{{StatusCode: 503, ContentType: "application/json",
+			Body: []byte(`{"error":"rate_limit_unavailable","msg":"tenant rate limit is unavailable"}`)}}, 20)
+		ran := helixgateway.Response{StatusCode: 200, ContentType: "application/json", Body: []byte(`{}`)}
+		// writing sends the agent's writes through the proxy, and ends the
+		// Ingest as the agent does once the database refuses one.
+		writing := func(writes int) func(string, agentv1.Agent_IngestServer) error {
+			return func(req string, stream agentv1.Agent_IngestServer) error {
+				for range writes {
+					if err := writeThroughProxy(req); err != nil {
+						return ingestEvents(stream, nil, `{"status":"store_failed","error":"`+err.Error()+`"}`)
+					}
+				}
+				return ingestDone(req, stream)
+			}
+		}
+		for name, tc := range map[string]struct {
+			age     time.Duration
+			writes  int
+			answers []helixgateway.Response
+			soon    bool
+		}{
+			"a new database that took nothing":  {time.Minute, 1, refusing, true},
+			"a database past its first minutes": {startingWindow, 1, refusing, false},
+			"a new database a write reached":    {time.Minute, 2, append([]helixgateway.Response{ran}, refusing...), false},
+		} {
+			h := newHarness(t)
+			h.store.ontology.CreatedAt = h.task.now().Add(-tc.age)
+			h.task.runner.cfg.Foundry.Graph.HelixTimeoutSecs = 1
+			h.gateway.answers = tc.answers
+			h.agent.ingest = writing(tc.writes)
+			job := loadJob()
+			job.Attempts = h.task.cfg.MaxAttempts - 1
+			outcome := h.run(t, job)
+			want, uncounted := h.task.now().Add(h.task.cfg.RetryBackoff<<(job.Attempts-1)), false
+			if tc.soon {
+				want, uncounted = h.task.now().Add(startingRetry), true
+			}
+			if outcome.RetryAt == nil || !outcome.RetryAt.Equal(want) || outcome.Uncounted != uncounted ||
+				outcome.Error != "the database refused a write; Helix will retry" {
+				t.Fatalf("%s: outcome = %+v, want a retry at %v, uncounted %v", name, outcome, want, uncounted)
+			}
+		}
+	})
+
 	// A retry after the tables are in skips them; the job records them as loaded.
 	t.Run("keeps the tables loaded across a retry", func(t *testing.T) {
 		h := newHarness(t)
@@ -2492,8 +2571,9 @@ func TestSetAllowance(t *testing.T) {
 				job.Spend.USDMicros = tc.jobSpent
 				outcome := h.run(t, job)
 				requests := h.extractRequests(t)
+				// A budget, not the model, stopped it: it waits for a person.
 				if outcome.Status != model.FoundryGraphJobBudgetExhausted || !strings.Contains(outcome.Error, tc.says) || len(requests) != len(tc.maxUSD) ||
-					!slices.Equal(outcome.HeldSets, tc.held) {
+					!slices.Equal(outcome.HeldSets, tc.held) || outcome.ModelUnread {
 					t.Fatalf("outcome = %+v after %d Extracts", outcome, len(requests))
 				}
 				for i, r := range requests {
@@ -4133,4 +4213,34 @@ func TestGraphJobMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ListFoundryLoadUnread counts the recorded extractions as the store does:
+// read (extracted or duplicate), failed by the model by class, and the
+// pending documents with no extraction as unrecorded.
+func (s *memStore) ListFoundryLoadUnread(_ context.Context, loadIDs []string) (map[string]model.FoundryLoadUnread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := model.FoundryLoadUnread{}
+	for _, e := range s.extractions {
+		switch {
+		case e.Status == model.FoundryExtractionExtracted || e.Status == model.FoundryExtractionDuplicate:
+			u.Read++
+		case e.Status == model.FoundryExtractionFailed && e.Error.Code == model.FoundryExtractionModel:
+			if u.Failed == nil {
+				u.Failed = map[string]int{}
+			}
+			u.Failed[e.Error.ModelFailure]++
+		}
+	}
+	for _, d := range s.pending {
+		if _, ok := s.extractions[d.ID]; !ok {
+			u.Unrecorded++
+		}
+	}
+	out := map[string]model.FoundryLoadUnread{}
+	for _, id := range loadIDs {
+		out[id] = u
+	}
+	return out, nil
 }

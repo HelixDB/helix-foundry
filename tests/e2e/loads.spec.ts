@@ -28,7 +28,7 @@ const O = "/ontology/ont_acme_contracts",
  * current.
  */
 async function twoLoads(page: Page) {
-  await mock.configure({ loadStepMs: 100, documentOutcome: "fail" });
+  await mock.configure({ loadStepMs: 100, documentOutcome: "store_fail" });
   await signIn(page);
   await makeContractsCurrent(page);
   await uploadInData(page, [file("contract.md", CONTRACT)]);
@@ -45,6 +45,43 @@ const loadRow = (page: Page, id: string) =>
   loadsGrid(page)
     .getByRole("row")
     .filter({ has: page.locator(`a[href$="/loads/${id}"]`) });
+
+// The 2026-11-14 outage: the provider's quota ran out and the model read no
+// document. The load fails, saying so and why, never ready with nothing
+// read; once the quota is back, a new load reads them and is ready.
+test("fails a load the model read no document of, and loads again once it can", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 100, documentOutcome: "fail" });
+  await signIn(page);
+  await makeContractsCurrent(page);
+  await uploadInData(page, [file("contract.md", CONTRACT)]);
+  await page.goto(`${O}#loads`);
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Load data" })
+    .first()
+    .click();
+  await page
+    .getByRole("dialog", { name: "Load version 3 into contracts?" })
+    .getByRole("button", { name: "Load" })
+    .click();
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  const alert = page.getByRole("alert").filter({ hasText: "The load failed" });
+  await expect(alert).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Failed").first()).toBeVisible();
+  await expect(alert).toContainText(
+    "None of the load's documents could be read (1 document): the model provider's quota or credit ran out; start a new load to read them.",
+  );
+  await expect(alert.getByRole("button", { name: "Load data" })).toBeVisible();
+  await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
+
+  await mock.configure({ documentOutcome: "succeed" });
+  const ready = await loadVersion3(page);
+  await page.goto(`${O}/loads/${ready}`);
+  await expect(page.getByText("Ready", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/not read \(provider quota\)/)).toHaveCount(0);
+});
 
 test("picks a load: the Explorer, Records, an entity's page and a document's view read it", async ({
   page,

@@ -118,11 +118,12 @@ describe("uploads", () => {
     // One format a media type, and one an extension.
     const types = DOCUMENT_FORMATS.map((f) => f.mediaType),
       extensions = DOCUMENT_FORMATS.flatMap((f) => f.extensions);
-    expect(new Set(types).size).toBe(9);
+    expect(new Set(types).size).toBe(10);
     expect(new Set(extensions).size).toBe(extensions.length);
     expect(FORMAT_NAMES).toBe(
-      "Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF",
+      "Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT",
     );
+    expect(type("Weekly sync.VTT")).toBe("text/vtt");
   });
 
   it("takes text up to 1 MiB and table files and PDFs up to 3 MiB", () => {
@@ -135,12 +136,15 @@ describe("uploads", () => {
       "Text files hold at most 1.0 MiB. Split it into smaller documents.",
     );
     expect(fileProblem({ name: "a.pdf", size: 3_145_728 })).toBeUndefined();
+    expect(fileProblem({ name: "call.vtt", size: 1_048_577 })).toBe(
+      "WebVTT files hold at most 1.0 MiB. Split it into smaller documents.",
+    );
     expect(fileProblem({ name: "a.parquet", size: 3_145_729 })).toBe(
       "Parquet files hold at most 3.0 MiB. Split it into smaller files.",
     );
     expect(fileProblem({ name: "a.csv", size: 0 })).toBe("The file is empty.");
     expect(fileProblem({ name: "deck.docx", size: 10 })).toBe(
-      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded.",
+      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT files can be uploaded.",
     );
   });
 
@@ -159,6 +163,7 @@ describe("uploads", () => {
       "application/x-ndjson": { kind: "table", source: "jsonl" },
       "application/vnd.apache.parquet": { kind: "table", source: "parquet" },
       "application/pdf": { kind: "pdf" },
+      "text/vtt": { kind: "transcript" },
     });
     // A type the page doesn't know, or none, is text with a download.
     expect(documentViewer("image/png")).toEqual({ kind: "unknown" });
@@ -192,6 +197,7 @@ describe("uploads", () => {
       ["JSONL", "Table"],
       ["Parquet", undefined],
       ["PDF", undefined],
+      ["WebVTT", "Transcript"],
     ]);
     expect(renderedLabel({ kind: "unknown" })).toBeUndefined();
   });
@@ -199,7 +205,7 @@ describe("uploads", () => {
   it("says how ontologies read each format", () => {
     expect(
       DOCUMENT_FORMATS.filter((f) => f.kind === "text").map((f) => f.mediaType),
-    ).toEqual(["text/markdown", "text/mdx", "text/plain"]);
+    ).toEqual(["text/markdown", "text/mdx", "text/plain", "text/vtt"]);
     expect(
       DOCUMENT_FORMATS.filter((f) => f.kind === "table").map((f) => f.name),
     ).toEqual(["JSON", "CSV", "TSV", "JSONL", "Parquet"]);
@@ -528,7 +534,7 @@ describe("document states", () => {
     // Any other failure of a PDF is any document's.
     expect(
       failureText(
-        { code: "model", retryable: true },
+        { code: "model", retryable: true, modelFailure: "unsupported" },
         pdf({ state: "FOUNDRY_FILE_READ_STATE_READY" }),
       ),
     ).toBe("The model couldn’t read it. The next load tries again.");
@@ -1359,10 +1365,11 @@ describe("the documents model's examples", () => {
       kindText({ id: "d", mediaType: "text/markdown" }, "General"),
     ).toBeUndefined();
     expect(fileProblem({ name: "deck.docx", size: 10 })).toBe(
-      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded.",
+      "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT files can be uploaded.",
     );
+    // One failed before Foundry kept the class is read again on its own.
     expect(failureText({ code: "model", retryable: true })).toBe(
-      "The model couldn’t read it. The next load tries again.",
+      "The model couldn’t read it. Helix tries again on its own.",
     );
     expect(
       failureText(
@@ -1761,5 +1768,54 @@ describe("name outcomes", () => {
     expect(nameDecisionText("alias")).toBe("A choice made in another document");
     expect(nameDecisionText("override")).toBeUndefined();
     expect(nameDecisionText(undefined)).toBeUndefined();
+  });
+});
+
+// A document the model failed says why, by its failure class, and who
+// reads it again: Helix on its own when the provider is to blame.
+describe("failureText for the model's failures", () => {
+  it("names the provider's quota, account or business", () => {
+    expect(
+      failureText({ code: "model", retryable: true, modelFailure: "quota" }),
+    ).toBe(
+      "The model provider’s quota or credit ran out, so the model couldn’t read it. Helix tries again on its own.",
+    );
+    expect(
+      failureText({
+        code: "model",
+        retryable: true,
+        modelFailure: "rate_limited",
+      }),
+    ).toBe(
+      "The model provider was busy, so the model couldn’t read it. Helix tries again on its own.",
+    );
+    expect(
+      failureText({ code: "model", retryable: true, modelFailure: "auth" }),
+    ).toMatch(/refused the account.*Helix tries again on its own\.$/);
+  });
+  it("leaves other failures to the next load", () => {
+    expect(
+      failureText({
+        code: "model",
+        retryable: true,
+        modelFailure: "context_too_long",
+      }),
+    ).toBe("It was too long for the model to read. The next load tries again.");
+    expect(
+      failureText({
+        code: "model",
+        retryable: true,
+        modelFailure: "unsupported",
+      }),
+    ).toBe("The model couldn’t read it. The next load tries again.");
+    // One failed before Foundry kept the class is read again on its own.
+    expect(failureText({ code: "model", retryable: true })).toBe(
+      "The model couldn’t read it. Helix tries again on its own.",
+    );
+    expect(
+      failureText({ code: "store", retryable: true, modelFailure: "quota" }),
+    ).toBe(
+      "The database couldn’t store what was read. The next load tries again.",
+    );
   });
 });

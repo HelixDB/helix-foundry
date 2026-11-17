@@ -81,7 +81,7 @@ export const mock = {
       | "collides"
       | "not_asked";
     loadOutcome?: "succeed" | "fail" | "sources_changed" | "budget_exhausted";
-    documentOutcome?: "succeed" | "fail";
+    documentOutcome?: "succeed" | "fail" | "store_fail";
     // Seeds a variant of a customer's name linked to that customer this way,
     // with the link's review (off by default).
     documentLinked?: "adjudicated" | "legal_form" | "part_name" | "own_name";

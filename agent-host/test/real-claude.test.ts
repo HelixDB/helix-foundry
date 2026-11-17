@@ -1,8 +1,8 @@
 // The isolation the helper promises, checked against the real Claude Code
 // it pins (the Agent SDK's bundled CLI, or any `claude` REAL_CLAUDE names),
 // not a stand-in: what the model is offered and what the CLI runs. The CLI
-// talks to a stand-in for Anthropic's API (ANTHROPIC_BASE_URL, with a key
-// a wrapper adds, since the helper drops the person's), which records each
+// talks to a stand-in for Anthropic's API (ANTHROPIC_BASE_URL, signed in by
+// the person's own ANTHROPIC_API_KEY, which the helper passes on), which records each
 // request and plays the model: it asks for Bash, Read and Foundry's tool at
 // once, then answers. The person's own configuration is planted in HOME (an
 // MCP server, hooks, permissions that allow Bash) to show none of it
@@ -14,7 +14,7 @@
 // that.
 
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +29,7 @@ import { claimPath, turn } from "./fake-foundry.ts";
 const REAL = process.env.REAL_CLAUDE;
 const MARKER = "You are the Assistant in Helix Foundry, under test.";
 
-type Req = { path: string; auth: string; body: any };
+type Req = { path: string; auth: string; key: string; body: any };
 
 async function read(req: IncomingMessage): Promise<any> {
   let text = "";
@@ -101,7 +101,12 @@ class World {
     this.server = createServer(async (req, res) => {
       const body = await read(req);
       const path = (req.url ?? "").split("?")[0]!;
-      this.calls.push({ path, auth: req.headers.authorization ?? "", body });
+      this.calls.push({
+        path,
+        auth: req.headers.authorization ?? "",
+        key: String(req.headers["x-api-key"] ?? ""),
+        body,
+      });
       const json = (status: number, out: unknown) => {
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(out));
@@ -252,17 +257,13 @@ describe("the real Claude Code", { skip: !REAL && "set REAL_CLAUDE" }, () => {
         },
       }),
     );
-    // The key goes in a wrapper: the helper never passes the person's on.
-    const wrapper = join(dir, "claude");
-    await writeFile(
-      wrapper,
-      `#!/bin/sh\nANTHROPIC_API_KEY=sk-ant-test exec "${REAL}" "$@"\n`,
-    );
-    await chmod(wrapper, 0o755);
+    // The person's own key: Claude Code signs in with it, as it would
+    // anywhere, and no other sign-in is planted.
     const env = {
       PATH: process.env.PATH,
       HOME: dir,
       FOUNDRY_AGENT_HOST_STATE: join(dir, "state"),
+      ANTHROPIC_API_KEY: "sk-ant-test",
       ANTHROPIC_BASE_URL: world.url,
       DISABLE_TELEMETRY: "1",
       DISABLE_ERROR_REPORTING: "1",
@@ -270,7 +271,7 @@ describe("the real Claude Code", { skip: !REAL && "set REAL_CLAUDE" }, () => {
     };
     outcome = await runTurn(turn({ system: MARKER }), {
       foundry: new Foundry(world.url, "hxh_token"),
-      clis: [claudeCli(wrapper, env)],
+      clis: [claudeCli(REAL!, env)],
       version: VERSION,
       concurrency: 1,
       env,
@@ -285,6 +286,12 @@ describe("the real Claude Code", { skip: !REAL && "set REAL_CLAUDE" }, () => {
       JSON.stringify(world.calls.map((c) => c.path)),
     );
     assert.ok(world.turns.length >= 2, "the model was asked twice");
+  });
+
+  it("signs in with the person's own key, passed on as it is", () => {
+    const model = world.calls.filter((c) => c.path.startsWith("/v1/messages"));
+    assert.ok(model.length > 0);
+    for (const c of model) assert.equal(c.key, "sk-ant-test");
   });
 
   it("offers the model Foundry's tools alone", () => {
@@ -336,8 +343,11 @@ describe("the real Claude Code", { skip: !REAL && "set REAL_CLAUDE" }, () => {
     await assert.rejects(access(join(dir, "hooked")), "no hook of theirs ran");
   });
 
-  it("is told Foundry's system prompt, and sends the model's text", () => {
-    assert.ok(JSON.stringify(world.turns[0].system).includes(MARKER));
+  it("is told Claude Code's own system prompt with Foundry's after it, and sends the model's text", () => {
+    const system = JSON.stringify(world.turns[0].system);
+    const own = system.indexOf("You are Claude Code");
+    assert.ok(own >= 0, "Claude Code's own prompt is kept");
+    assert.ok(system.indexOf(MARKER) > own, "Foundry's is appended to it");
     const finals = world.calls
       .filter((c) => c.path === claimPath("text") && c.body.final)
       .map((c) => c.body);

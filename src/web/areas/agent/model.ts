@@ -1747,7 +1747,7 @@ const VIEWS: {
     does:
       d.runtime === "api"
         ? "New threads run on the workspace’s AI model and count toward its Founder budget. Threads already started keep where they run."
-        : `New threads run on ${RUNTIMES[d.runtime].on} through the helper on your computer, at no cost to the workspace. Threads already started keep where they run.`,
+        : `New threads run on ${RUNTIMES[d.runtime].cli} through the helper on your computer, billed to the account it’s signed in to instead of the workspace’s Founder budget. Threads already started keep where they run.`,
     ...opt(
       "caution",
       d.runtime !== "api" && !d.online

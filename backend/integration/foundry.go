@@ -390,6 +390,16 @@ type FoundryLoadOutput struct {
 	FinishedAt       string  `json:"finished_at,omitempty"`
 	USDMicros        int64   `json:"usd_micros"`
 	IngestViolations *uint64 `json:"ingest_violations,omitempty"`
+	// Unread is its documents the model failed; absent when it failed none.
+	Unread *FoundryLoadUnreadOutput `json:"unread,omitempty" jsonschema:"Documents the model failed to read: absent when it failed none. They are not in the graph (no names or facts of them), so a load with unread documents is not complete: say how many went unread and why. A ready or partial load with them reads as ready, N documents not read (reason). A load whose every document the model failed is failed, its load job's error saying so."`
+}
+
+// FoundryLoadUnreadOutput is a load's documents the model failed.
+type FoundryLoadUnreadOutput struct {
+	Documents    int32  `json:"documents" jsonschema:"How many documents went unread because the model failed them."`
+	ModelFailure string `json:"model_failure,omitempty" jsonschema:"How the model failed most of them: quota, rate_limited, unavailable, timeout, auth, permission, not_found, unsupported, context_too_long and so on; absent when it wasn't recorded."`
+	Reason       string `json:"reason" jsonschema:"A few words for why: provider quota, provider account, provider busy, too long for the model, model declined, model error, or model failed."`
+	RereadAt     string `json:"reread_at,omitempty" jsonschema:"When Helix reads them again on its own (RFC 3339), for the current load whose provider's quota, account or business is to blame: retried 15 minutes after the job that left them, then doubling up to every 6 hours, for about a week. Absent when the next job into the load or a new load reads them."`
 }
 
 // FoundryJobOutput is one job of a load: the load job that writes it, an extract that adds
@@ -588,7 +598,7 @@ type FoundryExtractionNameOutput struct {
 // FoundryFileReadOutput is how ontologies read a document and what reading
 // it has come to.
 type FoundryFileReadOutput struct {
-	Kind         string `json:"kind" jsonschema:"How ontologies read the document: text (Markdown, MDX and plain text, extracted through routes as they are), table (a CSV, TSV, JSON, JSONL or Parquet file, read once at upload as a table of its own that mappings name by the document's id; it counts with synced tables toward the 50 tables a generation covers, and its cells are not extracted) or pdf (read once at upload to its text, which loads extract through routes and generations read as text)."`
+	Kind         string `json:"kind" jsonschema:"How ontologies read the document: text (Markdown, MDX and plain text, extracted through routes as they are, and WebVTT transcripts, extracted as their turns, a line each), table (a CSV, TSV, JSON, JSONL or Parquet file, read once at upload as a table of its own that mappings name by the document's id; it counts with synced tables toward the 50 tables a generation covers, and its cells are not extracted) or pdf (read once at upload to its text, which loads extract through routes and generations read as text)."`
 	State        string `json:"state" jsonschema:"ready (ontologies can read it: text, or a file whose read succeeded), reading (being read, or waiting to be: a generation started now leaves it out, and a load holding a PDF waits and reads it once the read ends) or failed (it can't be read: error_code and error_message say why, and a load records a failed PDF with the same code; upload a fixed file)."`
 	Rows         *int64 `json:"rows,omitempty" jsonschema:"A table file's rows, once read."`
 	Pages        *int32 `json:"pages,omitempty" jsonschema:"A PDF's pages, once read."`
@@ -2116,8 +2126,17 @@ func (s *Service) FoundryLoad(workspaceID, ontologyID string, load *foundryv1.Fo
 	return FoundryLoadOutput{
 		ID: load.GetId(), URL: s.FoundryLink(workspaceID, "ontology", ontologyID, "loads", load.GetId()), VersionID: load.GetVersionId(), Version: load.GetVersion(), Status: load.GetStatus(), Current: load.GetCurrent(),
 		CreatedAt: protoTimestamp(load.GetCreatedAt()), FinishedAt: protoTimestamp(load.GetFinishedAt()),
-		USDMicros: load.GetUsdMicros(), IngestViolations: load.IngestViolations,
+		USDMicros: load.GetUsdMicros(), IngestViolations: load.IngestViolations, Unread: foundryLoadUnread(load.GetUnread()),
 	}
+}
+
+// foundryLoadUnread is what the model left unread of a load, nil when nothing.
+func foundryLoadUnread(u *foundryv1.FoundryLoadUnread) *FoundryLoadUnreadOutput {
+	if u.GetDocuments() == 0 {
+		return nil
+	}
+	return &FoundryLoadUnreadOutput{Documents: u.GetDocuments(), ModelFailure: u.GetModelFailure(), Reason: u.GetReason(),
+		RereadAt: protoTimestamp(u.GetRereadAt())}
 }
 
 func (s *Service) FoundryGeneration(workspaceID, ontologyID string, gen *foundryv1.OntologyGeneration) FoundryGenerationOutput {
