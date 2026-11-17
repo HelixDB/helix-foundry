@@ -1,5 +1,6 @@
 // Package foundrydocumentworker reads each Foundry table file and PDF once,
-// when its upload completes, so loads and generations read a table file as
+// when its upload completes or a connector's sync publishes it (Google
+// Drive's PDFs), so loads and generations read a table file as
 // a table of its own and a PDF as its text (foundry_document_reads,
 // document/read). It runs as a second task of the
 // foundry-sync-worker role, which already reads untrusted files in a pod

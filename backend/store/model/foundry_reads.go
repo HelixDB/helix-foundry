@@ -167,9 +167,11 @@ func (d *FoundryDocument) TextKey() (string, bool) {
 // FoundryFileReadWake is what a PDF's read hands the ontologies whose loads
 // hold the document once it ends, as an upload's completion does
 // (FoundryDocumentFanOut): an id per extract it queues, and the month's
-// budget. Each extract is requested by the person who uploaded the PDF, so
-// it draws on a person's cap (FoundryGraphBudget.CapFor), as the upload's
-// own extract would have.
+// budget. An uploaded PDF's extract is requested by the person who uploaded
+// it, so it draws on a person's cap (FoundryGraphBudget.CapFor), as the
+// upload's own extract would have. A connector's PDF (Google Drive's) has no
+// uploader, so its extract is no one's work (RequestedByUserID nil): it draws
+// on the system share of the month's budget.
 type FoundryFileReadWake struct {
 	NewJobID func() string
 	Budget   FoundryGraphBudget

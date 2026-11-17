@@ -367,6 +367,7 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   ).toHaveCount(5);
   await expect(set(page, "Docs")).toContainText("14 documents");
   await expect(set(page, "Transcripts")).toContainText("4 documents");
+  await expect(set(page, "PDFs")).toContainText("3 documents");
 
   // An edit starts with the key blank and keeps the stored one when it is
   // left blank.
@@ -400,6 +401,7 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   const docs = await openInTree(page, "Google Workspace", 5, "Docs", [
     "Docs",
     "Transcripts",
+    "PDFs",
   ]);
   await expect(docs.locator(":scope > .dt-row .dt-count")).toHaveText("14");
   await expect(docs.getByRole("link")).toHaveCount(14);
@@ -433,6 +435,26 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
   await expect(turns.getByRole("listitem").first()).toHaveText(
     "00:00:02Ada Lovelace: Globex wants a three year renewal starting in January.",
   );
+  // Its PDFs are the files, read as an uploaded PDF is: a text layer's
+  // pages, or why a scan can't be read.
+  const pdfs = folder(page, "PDFs");
+  await pdfs.locator(":scope > .dt-row").click();
+  await expect(pdfs).toHaveAttribute("aria-expanded", "true");
+  await expect(pdfs.getByRole("link")).toHaveCount(3);
+  await pdfs.getByRole("link", { name: "Globex order form.pdf" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Globex order form.pdf" }),
+  ).toBeVisible();
+  const pdfText = page.getByLabel("Document text");
+  await expect(pdfText).toContainText("Customer: Globex", { timeout: 10_000 });
+  await expect(
+    pdfText.getByRole("separator", { name: "Page 2" }),
+  ).toBeVisible();
+  await pdfs.getByRole("link", { name: "Signed MSA (scan).pdf" }).click();
+  await expect(
+    page.getByText("Ontologies can’t read it", { exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Scanned PDF: no text to read.")).toBeVisible();
   for (const body of bodies) expect(body).not.toContain("MIIEe2eGoogleKey");
   expect(await page.content()).not.toContain("MIIEe2eGoogleKey");
 });

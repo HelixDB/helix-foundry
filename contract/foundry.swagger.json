@@ -10238,7 +10238,7 @@
         "FOUNDRY_FILE_READ_STATE_FAILED"
       ],
       "default": "FOUNDRY_FILE_READ_STATE_UNSPECIFIED",
-      "description": "FoundryFileReadState is what reading a document has come to.\n\n - FOUNDRY_FILE_READ_STATE_READY: Ontologies can read it: text, or a file whose read succeeded (a PDF's\ntext is then on :content).\n - FOUNDRY_FILE_READ_STATE_READING: Being read, or waiting to be (retrying says when after a failure). A\ngeneration started now leaves it out; a load waits for a PDF, and reads\nit once its read ends.\n - FOUNDRY_FILE_READ_STATE_FAILED: It can't be read: error says why, and a load records the PDF failed\nwith the same code. Upload a fixed file."
+      "description": "FoundryFileReadState is what reading a document has come to.\n\n - FOUNDRY_FILE_READ_STATE_READY: Ontologies can read it: text, or a file whose read succeeded (a PDF's\ntext is then on :content).\n - FOUNDRY_FILE_READ_STATE_READING: Being read, or waiting to be (retrying says when after a failure). A\ngeneration started now leaves it out; a load waits for a PDF, and reads\nit once its read ends.\n - FOUNDRY_FILE_READ_STATE_FAILED: It can't be read: error says why, and a load records the PDF failed\nwith the same code. Upload a fixed file, or fix a connection's at its\nsource for its next sync to read again."
     },
     "v1FoundryGraphJob": {
       "type": "object",

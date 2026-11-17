@@ -54,6 +54,7 @@ import {
   currentLoadId,
   currentLoadVersionId,
   documentArrived,
+  type Arrival,
 } from "./loads";
 import { aiRefusal } from "./ai";
 import { advanceSyncs, connectionKind, connectionName } from "./data";
@@ -878,7 +879,7 @@ const settle = (workspaceId: string) =>
  * no load: none reads it so. A PDF whose read hasn't finished joins them
  * (READING), and they read it once it has (wakeReads).
  */
-function fanOut(d: StoredDocument): DocumentRead[] {
+function fanOut(d: StoredDocument, by?: Arrival): DocumentRead[] {
   const kind = FORMATS[d.mediaType].kind;
   if (kind === "table") return [];
   const reading = kind === "pdf" && !readOf(d);
@@ -894,6 +895,7 @@ function fanOut(d: StoredDocument): DocumentRead[] {
         d.setId,
         !knobs.ontologyDatabaseHidden,
         reading,
+        by,
       );
       return outcome ? [{ ontologyId: o.id, outcome }] : [];
     });
@@ -902,8 +904,9 @@ function fanOut(d: StoredDocument): DocumentRead[] {
 /**
  * Has every ontology that reads a PDF's set read it once its read is done,
  * as the WFE's document worker wakes the loads that hold it when it
- * finishes. The mock runs jobs when they are next looked at, so
- * ./loads.ts's advanceLoads wakes them first.
+ * finishes: as the work of the person who uploaded it, or of no one for a
+ * connector's (Google Drive's). The mock runs jobs when they are next
+ * looked at, so ./loads.ts's advanceLoads wakes them first.
  */
 export function wakeReads() {
   for (const id of [...waking]) {
@@ -911,8 +914,32 @@ export function wakeReads() {
     // Woken already, by a call within this one, or still being read.
     if (!waking.has(id) || (d?.status === "uploaded" && !readOf(d))) continue;
     waking.delete(id);
-    if (d?.status === "uploaded") fanOut(d);
+    if (d?.status === "uploaded") fanOut(d, d.source ? "sync" : "person");
   }
+}
+
+/**
+ * Starts the read of a connector's new PDF, as the WFE queues it when the
+ * sync publishes it: the worker reads it within `documentReadMs`, and its
+ * set's readers read it once that is done (wakeReads). The read runs
+ * without blocking the sync, as the fixtures' do, and is forgotten if the
+ * document is gone by then.
+ */
+function readConnectorPdf(d: StoredDocument, bytes: Buffer) {
+  const at = Date.now() + (knobs.documentReadMs ?? READ_MS);
+  void readPdfText(bytes).then((result) => {
+    if (documents.get(d.id) === d && d.status === "uploaded")
+      reads.set(d.id, { at, result });
+  });
+  waking.add(d.id);
+}
+
+/** A connector's document is gone: its bytes and its read with it. */
+function removeSourceDocument(d: StoredDocument) {
+  d.status = "deleted";
+  contents.delete(d.id);
+  reads.delete(d.id);
+  waking.delete(d.id);
 }
 
 // ---------------------------------------------------------------- For ./data.ts
@@ -944,14 +971,16 @@ function documentName(title: string, externalId: string) {
  * version is kept, and in a keepNewest stream takes the offered time, so a
  * piece sent again as it was moves up in place; a new version with the same
  * text changes it in place; new text is a new document that replaces it;
- * one no longer kept is removed (deleted). A stream turned off is emptied,
- * and its set kept. A paused set (allowanceOf) takes nothing from a sync no
- * person started (`byPerson`): it adds, changes and removes nothing, and
- * the next one with room, or a person's, catches up, since every sync
- * offers the newest. Every ontology whose live or current load reads the
- * set reads each document added, with the trust a refresh has, as no one's
- * work; one of a set with an allowance never joins a load a person's job is
- * writing, and waits for the extract its end owes.
+ * one no longer kept is removed (deleted), with its read. A new PDF (Google
+ * Drive's) is read as an upload is (readConnectorPdf): its set's readers
+ * hold it while it is read, and read it once that is done. A stream turned
+ * off is emptied, and its set kept. A paused set (allowanceOf) takes
+ * nothing from a sync no person started (`byPerson`): it adds, changes
+ * and removes nothing, and the next one with room, or a person's, catches
+ * up, since every sync offers the newest. Every ontology whose live or
+ * current load reads the set reads each document added, with the trust a
+ * refresh has, as no one's work; one of a set with an allowance never joins
+ * a load a person's job is writing, and waits for the extract its end owes.
  */
 export function writeConnectorDocuments(
   workspaceId: string,
@@ -1007,7 +1036,9 @@ export function writeConnectorDocuments(
         if (stream.keepNewest) was.source.at = doc.at;
         continue;
       }
-      const bytes = Buffer.from(doc.text),
+      const bytes = Buffer.isBuffer(doc.text)
+          ? doc.text
+          : Buffer.from(doc.text),
         source = {
           externalId: doc.externalId,
           version: doc.version,
@@ -1019,10 +1050,7 @@ export function writeConnectorDocuments(
         Object.assign(was, { name, source });
         continue;
       }
-      if (was) {
-        was.status = "deleted";
-        contents.delete(was.id);
-      }
+      if (was) removeSourceDocument(was);
       const d: StoredDocument = {
         id: id("doc"),
         workspaceId,
@@ -1041,10 +1069,7 @@ export function writeConnectorDocuments(
       added.push(d);
     }
     for (const [externalId, d] of held)
-      if (!kept.has(externalId)) {
-        d.status = "deleted";
-        contents.delete(d.id);
-      }
+      if (!kept.has(externalId)) removeSourceDocument(d);
     const readers = workspaceOntologies(workspaceId).sort(
       (a, b) =>
         a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
@@ -1052,9 +1077,13 @@ export function writeConnectorDocuments(
     // No one's work, whoever started the sync: a set with an allowance's
     // never joins a person's load.
     const by = allowance ? "allowance" : "sync";
-    for (const d of added)
+    for (const d of added) {
+      // A PDF is read as an upload is: its loads wait for that (READING).
+      const pdf = FORMATS[d.mediaType].kind === "pdf";
+      if (pdf) readConnectorPdf(d, contents.get(d.id)!);
       for (const o of readers)
-        documentArrived(o.id, d.id, setId, true, false, by);
+        documentArrived(o.id, d.id, setId, true, pdf, by);
+    }
   }
 }
 
@@ -1063,10 +1092,7 @@ export function dropConnectorDocuments(connectorId: string) {
   for (const s of [...sets.values()])
     if (s.connector?.connectorId === connectorId) {
       for (const d of documents.values())
-        if (d.setId === s.id && live(d)) {
-          d.status = "deleted";
-          contents.delete(d.id);
-        }
+        if (d.setId === s.id && live(d)) removeSourceDocument(d);
       sets.delete(s.id);
     }
 }

@@ -171,7 +171,8 @@ func (s *mysqlDB) DeleteWorkspaceConnectors(ctx context.Context, workspaceID str
 // The caller holds the workspace's live ontologies, then the connector, FOR
 // UPDATE; this locks its sets, documents and tables after them:
 //   - its sets are deleted, and so is each of their live documents, whose
-//     prefix waits for the sweep (a purge row each, ListFoundryDocumentPurges);
+//     prefix waits for the sweep (a purge row each, ListFoundryDocumentPurges),
+//     with its read, if any;
 //   - each table's snapshot waits for the sweep as a replaced one does
 //     (ListReplacedSnapshots), sparing it while a live load job pins it,
 //     and the table goes;
@@ -219,6 +220,10 @@ WHERE connector_id=? AND workspace_id=? AND live_key=1 ORDER BY id FOR UPDATE`, 
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_document_purges (document_id, workspace_id)
 SELECT id, workspace_id FROM foundry_documents WHERE set_id IN (`+in+`) AND status='uploaded'`, toAnySlice(sets)...); err != nil {
 			return nil, nil, fmt.Errorf("purge connector %s documents: %w", id, err)
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE r FROM foundry_document_reads r JOIN foundry_documents d ON d.id=r.document_id
+WHERE d.set_id IN (`+in+`) AND d.status='uploaded'`, toAnySlice(sets)...); err != nil {
+			return nil, nil, fmt.Errorf("delete connector %s documents' reads: %w", id, err)
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_documents SET status='deleted', deleted_at=NOW(6)
 WHERE set_id IN (`+in+`) AND status='uploaded'`, toAnySlice(sets)...); err != nil {

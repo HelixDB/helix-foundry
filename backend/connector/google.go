@@ -31,6 +31,7 @@ import (
 	"golang.org/x/oauth2/jwt"
 	"golang.org/x/time/rate"
 
+	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/transcript"
 )
 
@@ -58,9 +59,9 @@ const (
 	// 10 MB as it is asked, slower than a page of a list, and one download
 	// of a transcript.
 	googleExportTimeout = 2 * time.Minute
-	// googleExportFailures is how many Docs and transcripts in a row Drive
-	// may fail to export or download, each skipped, before the read fails:
-	// that many is Drive failing, not the files.
+	// googleExportFailures is how many Docs, transcripts and PDFs in a row
+	// Drive may fail to export or download, each skipped, before the read
+	// fails: that many is Drive failing, not the files.
 	googleExportFailures = 3
 	// googleTranscriptType is the type Drive gives a WebVTT file.
 	googleTranscriptType = "text/vtt"
@@ -69,6 +70,12 @@ const (
 	// under it, and the syncer keeps a document's first
 	// foundry.documents.max_bytes.
 	googleTranscriptMaxBytes = 10 << 20
+	// googlePDFType is the type Drive gives a PDF.
+	googlePDFType = "application/pdf"
+	// googlePDFMaxBytes is the largest PDF downloaded: the most
+	// foundry.documents.max_pdf_bytes may be, past which the syncer drops a
+	// PDF, since a PDF is never cut.
+	googlePDFMaxBytes = config.MaxDocumentBytes
 )
 
 var (
@@ -81,7 +88,7 @@ var (
 
 var googleDocsSkipped = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "foundry_connector_google_docs_skipped_total",
-	Help: "Google Docs and transcripts a sync left as their sets hold them because Drive failed to export or download them; the next sync tries again.",
+	Help: "Google Docs, transcripts and PDFs a sync left as their sets hold them because Drive failed to export or download them; the next sync tries again.",
 })
 
 // googleLimits are the reasons Google gives a 403 or 429 for a rate limit or
@@ -146,6 +153,14 @@ var googleTranscriptsStream = Stream{Name: "transcripts", Table: "files", Title:
 	Description: "Each WebVTT transcript (.vtt file) of a meeting or call that the connection's user can open and download in " +
 		"Drive, as its recording exported it: a note of its file name, owner, last modified time and file id, then its cues, " +
 		"which are read as one line per turn with its start, its speaker when the file names them, and the words said."}
+
+// googlePDFsStream is every PDF in the files table that the user may
+// download, of at most googlePDFMaxBytes: the file itself, whose text the
+// document worker reads once, as it reads an uploaded PDF's.
+var googlePDFsStream = Stream{Name: "pdfs", Table: "files", Title: "PDFs", Format: PDF,
+	Description: "Each PDF of at most 3 MiB that the connection's user can open and download in Drive, as the file itself: " +
+		"its text is read once, page by page, as an uploaded PDF's is (up to 150 pages). A scan with no text layer, or an " +
+		"encrypted or damaged PDF, is kept but has no text to read."}
 
 var (
 	// errUnreadable is an API the connection can't read; its refusal's
@@ -241,9 +256,9 @@ func (k *googleKind) Prepare(src Source) (json.RawMessage, error) {
 	return json.Marshal(s)
 }
 
-// Streams are the Docs and the transcripts, always.
+// Streams are the Docs, the transcripts and the PDFs, always.
 func (k *googleKind) Streams(Source) []Stream {
-	return []Stream{googleDocsStream, googleTranscriptsStream}
+	return []Stream{googleDocsStream, googleTranscriptsStream, googlePDFsStream}
 }
 
 // Discover exchanges the key for each API's token and lists one item of
@@ -763,13 +778,14 @@ func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 }
 
 // googleDoc is a listed file that is a document of stream: a Google Doc
-// (googleDocsStream) or a transcript (googleTranscriptsStream). It is what
-// the document is made of besides the file's text, the time that orders it,
-// and its version. A withheld file is one its owner keeps viewers from
-// downloading, and so exporting, a transcript over
-// googleTranscriptMaxBytes, or, in a change read, a file the Transcripts
-// stream holds that is no transcript now (googleNoTranscript): it can't be
-// a document, and has no time.
+// (googleDocsStream), a transcript (googleTranscriptsStream) or a PDF
+// (googlePDFsStream). It is what the document is made of besides the file's
+// bytes, the time that orders it, and its version. A withheld file is one
+// its owner keeps viewers from downloading, and so exporting, a transcript
+// over googleTranscriptMaxBytes, a PDF listed with no size or over
+// googlePDFMaxBytes, or, in a change read, a file the Transcripts or PDFs
+// stream holds that is no longer of its kind (googleNotOfStream): it can't
+// be a document, and has no time.
 type googleDoc struct {
 	stream                         string
 	id, name, owner, link, version string
@@ -777,10 +793,11 @@ type googleDoc struct {
 	withheld                       bool
 }
 
-// googleNoTranscript is the version a change read gives a file the
-// Transcripts stream holds that is no transcript now, withheld so that it
-// loses its document: no transcript's version (googleFile's, from 1|).
-const googleNoTranscript = "0|no-transcript"
+// googleNotOfStream is the version a change read gives a file the
+// Transcripts or PDFs stream holds that is no transcript or PDF now,
+// withheld so that it loses its document: no document's version
+// (googleFile's, from 1|).
+const googleNotOfStream = "0|not-of-stream"
 
 // googleTranscript reports a listed file that is a WebVTT transcript:
 // Drive's type for one, or a name ending .vtt on a file that is no Google
@@ -792,9 +809,9 @@ func googleTranscript(f map[string]any) bool {
 		strings.EqualFold(path.Ext(name), ".vtt") && !strings.HasPrefix(mimeType, "application/vnd.google-apps.")
 }
 
-// googleFile is a listed file's row and, for a Doc or a transcript, its
-// document's parts; nil for any other file. One the user may download must
-// be listed with its modifiedTime, which orders its document.
+// googleFile is a listed file's row and, for a Doc, a transcript or a PDF,
+// its document's parts; nil for any other file. One the user may download
+// must be listed with its modifiedTime, which orders its document.
 func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error) {
 	owner, _ := firstOf(f["owners"]).(map[string]any)
 	modifier, _ := f["lastModifyingUser"].(map[string]any)
@@ -812,6 +829,8 @@ func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error)
 	switch {
 	case f["mimeType"] == googleDocType:
 		doc.stream = googleDocsStream.Name
+	case f["mimeType"] == googlePDFType:
+		doc.stream = googlePDFsStream.Name
 	case googleTranscript(f):
 		doc.stream = googleTranscriptsStream.Name
 	default:
@@ -821,22 +840,25 @@ func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error)
 	doc.name, _ = f["name"].(string)
 	doc.owner, _ = row["owner_email"].(string)
 	doc.link, _ = f["webViewLink"].(string)
-	// The version is a render revision, the Doc's modified time and Drive's
+	// The version is a render revision, the file's modified time and Drive's
 	// version of it, then a digest of what the document shows beside the
-	// export, which may change without either: an owner's email renamed.
+	// file's bytes, which may change without either: an owner's email
+	// renamed. A PDF shows none of them in its bytes, so a rename changes
+	// its document in place, and keeps its read.
 	version, _ := f["version"].(string)
 	shown := sha256.Sum256([]byte(doc.name + "\x00" + doc.owner + "\x00" + doc.link))
 	doc.version = "1|" + raw + "|" + version + "|" + hex.EncodeToString(shown[:8])
 	listed, _ := f["size"].(string)
 	sizeBytes, _ := strconv.ParseInt(listed, 10, 64)
 	if capabilities, _ := f["capabilities"].(map[string]any); capabilities["canDownload"] == false ||
-		doc.stream == googleTranscriptsStream.Name && sizeBytes > googleTranscriptMaxBytes {
+		doc.stream == googleTranscriptsStream.Name && sizeBytes > googleTranscriptMaxBytes ||
+		doc.stream == googlePDFsStream.Name && (sizeBytes < 1 || sizeBytes > googlePDFMaxBytes) {
 		doc.withheld = true
 		return row, doc, nil
 	}
 	modified, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		what := map[string]string{googleDocsStream.Name: "Doc", googleTranscriptsStream.Name: "transcript"}[doc.stream]
+		what := map[string]string{googleDocsStream.Name: "Doc", googleTranscriptsStream.Name: "transcript", googlePDFsStream.Name: "PDF"}[doc.stream]
 		return row, nil, fmt.Errorf("google /drive/v3/files: %s %s is listed without its modifiedTime", what, id)
 	}
 	doc.modified = modified
@@ -850,7 +872,7 @@ func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error)
 // user in many shared drives, on every attempt, so each is listed alone. A
 // shared drive whose first page is refused, one the user left since the
 // drives were listed, is skipped. Once the listing is whole, it offers each
-// Doc's and transcript's document, newest first (googleExporter). A
+// Doc's, transcript's and PDF's document, newest first (googleExporter). A
 // withheld one is not offered, so the read, always in full, removes what
 // its stream holds of it.
 func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWriter) error {
@@ -910,13 +932,13 @@ func (c *googleClient) drives(ctx context.Context) ([]string, error) {
 	return drives, err
 }
 
-// googleExporter offers a read's Docs and transcripts to their documents,
-// exports the Docs they want (export) and downloads the transcripts
-// (download): an unchanged one costs nothing. One Drive refuses to export
-// or download now is dropped, as is a .vtt file that holds no WebVTT. One
-// Drive fails to give is skipped and counted, keeping what the stream holds
-// of it until a later sync gets it, unless googleExportFailures fail in a
-// row.
+// googleExporter offers a read's Docs, transcripts and PDFs to their
+// documents, exports the Docs they want (export) and downloads the
+// transcripts and PDFs (download): an unchanged one costs nothing. One
+// Drive refuses to export or download now is dropped, as is a .vtt file
+// that holds no WebVTT. One Drive fails to give is skipped and counted,
+// keeping what the stream holds of it until a later sync gets it, unless
+// googleExportFailures fail in a row.
 type googleExporter struct {
 	c      *googleClient
 	docs   DocumentWriter
@@ -932,8 +954,12 @@ func (e *googleExporter) offer(ctx context.Context, doc googleDoc) error {
 		return nil
 	}
 	read := e.docText
-	if doc.stream == googleTranscriptsStream.Name {
+	switch doc.stream {
+	case googleTranscriptsStream.Name:
 		read = e.transcriptText
+	case googlePDFsStream.Name:
+		// The file as Drive holds it: the syncer drops one over its cap.
+		read = func(ctx context.Context, doc googleDoc) ([]byte, error) { return e.c.download(ctx, doc.id) }
 	}
 	text, err := read(ctx, doc)
 	if errors.Is(err, errUnreachable) {

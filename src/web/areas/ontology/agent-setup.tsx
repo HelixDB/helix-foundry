@@ -88,7 +88,8 @@ export function AgentSetup({
             id: f.set.id,
             name: setLabel(f.set),
             description: f.set.description,
-            // A connector's set holds text only, none of it in the uploads.
+            // A connector's set is counted by the set: its documents (text,
+            // or a Drive PDFs set's PDFs, read or not) aren't among the uploads.
             ...(f.set.connector
               ? { documents: f.set.documents || 0, names: [], files: [] }
               : promptDocuments(f.documents)),

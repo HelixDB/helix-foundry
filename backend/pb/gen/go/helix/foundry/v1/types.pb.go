@@ -671,7 +671,8 @@ const (
 	// it once its read ends.
 	FoundryFileReadState_FOUNDRY_FILE_READ_STATE_READING FoundryFileReadState = 2
 	// It can't be read: error says why, and a load records the PDF failed
-	// with the same code. Upload a fixed file.
+	// with the same code. Upload a fixed file, or fix a connection's at its
+	// source for its next sync to read again.
 	FoundryFileReadState_FOUNDRY_FILE_READ_STATE_FAILED FoundryFileReadState = 3
 )
 

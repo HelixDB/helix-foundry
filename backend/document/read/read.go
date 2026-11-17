@@ -1,4 +1,5 @@
-// Package read reads a Foundry document once, at upload, and stores what it
+// Package read reads a Foundry document once, at upload (or, for a PDF a
+// connector's sync writes, when the sync publishes it), and stores what it
 // gave beside it, where loads and generations find it: what a table file
 // holds, as rows the ontology engine reads. The foundry-document-worker
 // claims each read and records its outcome; a Reader does one kind.

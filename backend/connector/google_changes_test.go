@@ -12,11 +12,11 @@ import (
 	"time"
 )
 
-// googleDocs is a DocumentWriter that holds a version of some Docs and,
-// as the syncer does, wants a Doc unless it holds that version or this
+// googleDocs is a DocumentWriter that holds a version of some documents and,
+// as the syncer does, wants one unless its stream holds that version or this
 // read offered it already. It records each offer, Put and Drop.
 type googleDocs struct {
-	held   map[string]string
+	held   map[string]string // by "stream id"
 	offers []string
 	puts   []Document
 	drops  []string
@@ -28,8 +28,8 @@ func (d *googleDocs) Want(stream, id, version string) bool {
 	if d.seen == nil {
 		d.seen = map[string]bool{}
 	}
-	wanted := !d.seen[id] && d.held[id] != version
-	d.seen[id] = true
+	wanted := !d.seen[stream+" "+id] && d.held[stream+" "+id] != version
+	d.seen[stream+" "+id] = true
 	return wanted
 }
 
@@ -43,8 +43,8 @@ func (d *googleDocs) Drop(_, id string) error {
 	return nil
 }
 
-func (d *googleDocs) Held(_, id string) (string, bool) {
-	version, ok := d.held[id]
+func (d *googleDocs) Held(stream, id string) (string, bool) {
+	version, ok := d.held[stream+" "+id]
 	return version, ok
 }
 
@@ -401,7 +401,7 @@ func TestGoogleChanges(t *testing.T) {
 			routes["/drive/v3/files/"+id+"/export"] = func(*http.Request) (int, string) { return http.StatusOK, "## " + id + "\n\nEdited." }
 		}
 		w := &googleWorkspace{routes: routes}
-		got, next := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"doc1": "1|2026-10-20T15:30:00.250Z|42|old"})
+		got, next := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"docs doc1": "1|2026-10-20T15:30:00.250Z|42|old"})
 		want := []string{"upsert files doc1", "delete files sheet1", "delete files fold1", "upsert files doc4", "upsert files pdf1",
 			"upsert files doc5", "upsert files pdf1", "delete files deck1", "delete files doc5"}
 		if !slices.Equal(got.log, want) || len(got.resets) != 0 {
@@ -505,7 +505,7 @@ func TestGoogleChanges(t *testing.T) {
 		w := &googleWorkspace{routes: routes}
 		// doc1 is held at an older version, doc2 at the one listed, which a
 		// full read leaves out, and doc3 not at all.
-		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"doc1": "1|old", "doc2": doc2.version})
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"docs doc1": "1|old", "docs doc2": doc2.version})
 		if fmt.Sprint(got.drops) != "[doc1]" || len(got.offers) != 2 || len(got.puts) != 0 || len(w.requested("/drive/v3/files/")) != 0 ||
 			len(got.rows["files"]) != 3 {
 			t.Fatalf("drops = %v, offers = %v, exports = %v", got.drops, got.offers, w.requested("/drive/v3/files/"))
@@ -522,7 +522,7 @@ func TestGoogleChanges(t *testing.T) {
 			return http.StatusOK, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Ada>Edited.\n"
 		}
 		w := &googleWorkspace{routes: routes}
-		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"call1": "1|old", "call2": "1|old"})
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"transcripts call1": "1|old", "transcripts call2": "1|old"})
 		if fmt.Sprint(got.log) != "[upsert files call1 upsert files call2]" || fmt.Sprint(got.drops) != "[call2]" || len(got.puts) != 1 ||
 			!strings.HasPrefix(got.puts[0].Version, "1|2026-11-03T10:00:00Z|6|") ||
 			string(got.puts[0].Text) != "WEBVTT\n\nNOTE\nFile call1\nOwner: ada@acme.com\nLast modified: 2026-11-03 10:00 UTC\nFile id: call1\n\n"+
@@ -542,10 +542,61 @@ func TestGoogleChanges(t *testing.T) {
 			"":     {"100": `{"changes":[{"fileId":"call3","file":` + renamed + `},{"fileId":"notes","file":` + notes + `}],"newStartPageToken":"101"}`},
 			"drv1": {"200": `{"newStartPageToken":"201"}`}})
 		w := &googleWorkspace{routes: routes}
-		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"call3": "1|old"})
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"transcripts call3": "1|old"})
 		if fmt.Sprint(got.log) != "[upsert files call3 upsert files notes]" || fmt.Sprint(got.drops) != "[call3]" || len(got.puts) != 0 ||
-			fmt.Sprint(got.offers) != "[transcripts call3 "+googleNoTranscript+"]" || len(w.requested("/drive/v3/files/")) != 0 {
+			fmt.Sprint(got.offers) != "[transcripts call3 "+googleNotOfStream+"]" || len(w.requested("/drive/v3/files/")) != 0 {
 			t.Fatalf("log = %v, drops = %v, offers = %v, puts = %+v", got.log, got.drops, got.offers, got.puts)
+		}
+	})
+	t.Run("downloads a PDF's new version, and drops one refused or grown too large to keep", func(t *testing.T) {
+		routes := unchanged()
+		pdf := func(id, version, extra string) string {
+			return googleChangeFile(id, "application/pdf", "2026-11-0"+version+"T10:00:00Z", version, extra)
+		}
+		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			"": {"100": `{"changes":[{"fileId":"pdf1","file":` + pdf("pdf1", "6", `,"size":"12"`) + `},` +
+				`{"fileId":"pdf2","file":` + pdf("pdf2", "5", `,"size":"3145729"`) + `},` +
+				`{"fileId":"pdf3","file":` + pdf("pdf3", "4", `,"size":"12","capabilities":{"canDownload":false}`) + `},` +
+				`{"fileId":"pdf4","file":` + pdf("pdf4", "3", `,"size":"12"`) + `}],"newStartPageToken":"101"}`},
+			"drv1": {"200": `{"newStartPageToken":"201"}`}})
+		routes["/drive/v3/files/pdf1"] = func(*http.Request) (int, string) { return http.StatusOK, "%PDF-1.7\n\xff new" }
+		routes["/drive/v3/files/pdf4"] = googleFailure(http.StatusForbidden, "The user has not granted the app read access to the file.",
+			"cannotDownloadFile")
+		w := &googleWorkspace{routes: routes}
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor,
+			map[string]string{"pdfs pdf1": "1|old", "pdfs pdf2": "1|old", "pdfs pdf3": "1|old", "pdfs pdf4": "1|old"})
+		if fmt.Sprint(got.drops) != "[pdf4 pdf2 pdf3]" || len(got.puts) != 1 || got.puts[0].ExternalID != "pdf1" ||
+			!strings.HasPrefix(got.puts[0].Version, "1|2026-11-06T10:00:00Z|6|") || string(got.puts[0].Text) != "%PDF-1.7\n\xff new" {
+			t.Fatalf("drops = %v, puts = %+v", got.drops, got.puts)
+		}
+		if asked := w.requested("/drive/v3/files/"); fmt.Sprint(asked) != "[/drive/v3/files/pdf1?alt=media&supportsAllDrives=true "+
+			"/drive/v3/files/pdf4?alt=media&supportsAllDrives=true]" {
+			t.Fatalf("downloads = %v", asked)
+		}
+	})
+	t.Run("moves a file that changed kind from the stream that held it", func(t *testing.T) {
+		routes := unchanged()
+		// pdf1 was a PDF and is a transcript now; call1 was a transcript and is a PDF now.
+		vtt := googleChangeFile("pdf1", "text/vtt", "2026-11-05T10:00:00Z", "4", `,"size":"40"`)
+		pdf := googleChangeFile("call1", "application/pdf", "2026-11-04T10:00:00Z", "3", `,"size":"12"`)
+		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			"":     {"100": `{"changes":[{"fileId":"pdf1","file":` + vtt + `},{"fileId":"call1","file":` + pdf + `}],"newStartPageToken":"101"}`},
+			"drv1": {"200": `{"newStartPageToken":"201"}`}})
+		routes["/drive/v3/files/pdf1"] = func(*http.Request) (int, string) {
+			return http.StatusOK, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Ada>Now a call.\n"
+		}
+		routes["/drive/v3/files/call1"] = func(*http.Request) (int, string) { return http.StatusOK, "%PDF-1.7\n\xff" }
+		w := &googleWorkspace{routes: routes}
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"pdfs pdf1": "1|old", "transcripts call1": "1|old"})
+		if fmt.Sprint(got.drops) != "[call1 pdf1]" || len(got.puts) != 2 || got.puts[0].ExternalID != "pdf1" ||
+			got.puts[1].ExternalID != "call1" {
+			t.Fatalf("drops = %v, offers = %v, puts = %+v", got.drops, got.offers, got.puts)
+		}
+		// Newest first, then the removals, which have no time.
+		want := "[transcripts pdf1 " + got.puts[0].Version + " pdfs call1 " + got.puts[1].Version + " transcripts call1 " + googleNotOfStream +
+			" pdfs pdf1 " + googleNotOfStream + "]"
+		if fmt.Sprint(got.offers) != want {
+			t.Fatalf("offers = %v, want %s", got.offers, want)
 		}
 	})
 	t.Run("skips a changed Doc Drive fails to export, as a full read does", func(t *testing.T) {

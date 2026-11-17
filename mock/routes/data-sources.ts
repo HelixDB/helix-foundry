@@ -15,6 +15,7 @@ import type {
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { columnsOf, textFieldProblem } from "../event-pieces";
+import { textPdf } from "../pdf-text";
 import { PEOPLE, PEOPLE_COLUMNS } from "../fixtures/sales-graph";
 import { config, onReset } from "../state";
 import { layout, type Listed } from "./data-files";
@@ -66,7 +67,12 @@ import { layout, type Listed } from "./data-files";
 //   four channels) into Conversations, a Notion sync its 60 pages with a
 //   body into Pages, and a Google Workspace sync its 14 Docs into Docs and
 //   its 4 meeting transcripts (.vtt files in Drive, as WebVTT with
-//   google.go's note of where each is) into Transcripts.
+//   google.go's note of where each is) into Transcripts, and 3 of its 4
+//   PDFs into PDFs, as the files themselves, which the document worker
+//   reads as it reads an upload: an order form, pricing terms edited before
+//   every sync (a new version each time, so each sync reads it again), and
+//   a scan with no text, whose read fails. The fourth, a board pack its
+//   owner keeps viewers from downloading, is left out.
 // - S3 (Pro): every bucket holds the plan's V1 fixture folder (./data-files.ts
 //   lays it out as the WFE does): tables api, customers, events, orders and
 //   products, in eu-west-2, with notes.xlsx and an archived archive/old.csv
@@ -1432,6 +1438,47 @@ const googleTranscripts = [
   };
 });
 
+// The PDFs in Drive, newest first: pages of text naming Acme's Stripe
+// customers, a scan with none, and one its owner keeps viewers from
+// downloading, which google.go withholds, so it is never a document. The
+// pricing terms are edited before every sync: their modified time is the
+// sync's, and their text says so.
+const googlePdfs = [
+  {
+    name: "Globex order form.pdf",
+    pages: [
+      [
+        "Order form",
+        "Customer: Globex",
+        "Term: three years from 1 January 2027.",
+      ],
+      ["Signed by Ada Lovelace for Acme."],
+    ],
+  },
+  {
+    name: "Pricing terms (edited).pdf",
+    pages: [["Pricing terms", "Initech pays annually in advance."]],
+  },
+  { name: "Signed MSA (scan).pdf", pages: [[]] },
+  {
+    name: "Board pack.pdf",
+    pages: [["Board pack", "Revenue by customer."]],
+    withheld: true,
+  },
+].map((p, i) => {
+  const id = `1mockPdf${String(i + 1).padStart(4, "0")}aBcDeFgHiJkLmNoPq`;
+  return {
+    ...p,
+    id,
+    link: `https://drive.google.com/file/d/${id}/view?usp=drivesdk`,
+    owner: "ada@example.com",
+    modifiedAt: new Date(
+      Date.parse("2026-11-05T12:00:00.000Z") - i * 53 * 3_600_000,
+    ).toISOString(),
+    driveVersion: String(7 + i),
+  };
+});
+
 // ---------------------------------------------------------------- Documents
 
 /**
@@ -1444,14 +1491,17 @@ export type MockStream = {
   table: string;
   title: string;
   description: string;
-  mediaType: "text/markdown" | "text/plain" | "text/vtt";
+  mediaType: "text/markdown" | "text/plain" | "text/vtt" | "application/pdf";
   // connector.KeepNewest(n): the set never holds more than the newest n by
   // their time, at every sync, and a document offered again with the same
   // text and a newer time moves up in place. Left out, the set keeps
   // foundry.documents.max_per_stream, as a sync of everything trims it.
   keepNewest?: number;
 };
-/** The text of one row of a stream's table, as the source has it now. */
+/**
+ * The body of one row of a stream's table, as the source has it now: text,
+ * or a PDF stream's file (connector.Document.Text).
+ */
 export type MockSourceDocument = {
   externalId: string;
   version: string;
@@ -1459,7 +1509,7 @@ export type MockSourceDocument = {
   at: string;
   title: string;
   url: string;
-  text: string;
+  text: string | Buffer;
 };
 
 const granolaStreams: MockStream[] = [
@@ -1557,6 +1607,16 @@ const googleTranscriptStream: MockStream = {
     "which are read as one line per turn with its start, its speaker when the file names them, and the words said.",
   mediaType: "text/vtt",
 };
+const googlePdfStream: MockStream = {
+  name: "pdfs",
+  table: "files",
+  title: "PDFs",
+  description:
+    "Each PDF of at most 3 MiB that the connection's user can open and download in Drive, as the file itself: " +
+    "its text is read once, page by page, as an uploaded PDF's is (up to 150 pages). A scan with no text layer, or an " +
+    "encrypted or damaged PDF, is kept but has no text to read.",
+  mediaType: "application/pdf",
+};
 
 const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
 /** The first `digits` hex digits of `text`'s SHA-256. */
@@ -1636,8 +1696,9 @@ function slackDays(src: Source, syncedAt: string) {
  * source, as the kinds write it: a Granola note's "1|" and updated_at (an
  * edited one's is the sync's time), a channel day's "2|" and hashes of its
  * messages and of the names they show, a Notion page's "2|", last edit and
- * week of its weekly re-read, and a Doc's "1|", modified time, Drive's
- * version and a hash of its name, owner and link.
+ * week of its weekly re-read, and a Drive file's (a Doc, a transcript or a
+ * PDF) "1|", modified time, Drive's version and a hash of its name, owner
+ * and link. A PDF's body is the file itself.
  */
 export function documentStreams(
   src: Source,
@@ -1794,6 +1855,30 @@ export function documentStreams(
             ]),
           ].join("\n"),
         })),
+      },
+      {
+        stream: googlePdfStream,
+        documents: googlePdfs
+          .filter((p) => !p.withheld)
+          .map((p) => {
+            const edited = p.name.includes("edited"),
+              at = edited ? syncedAt : p.modifiedAt;
+            return {
+              externalId: p.id,
+              // As a Doc's: "1|", the file's modified time, Drive's version
+              // and a hash of its name, owner and link.
+              version: `1|${at}|${p.driveVersion}|${sha(`${p.name}\0${p.owner}\0${p.link}`, 16)}`,
+              at,
+              title: p.name,
+              url: p.link,
+              // The file as Drive holds it.
+              text: textPdf(
+                edited
+                  ? p.pages.map((page) => [...page, `Edited at ${at}.`])
+                  : p.pages,
+              ),
+            };
+          }),
       },
     ];
   if (!("granola" in s)) return [];
