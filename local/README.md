@@ -187,7 +187,7 @@ Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute
 
 ## The Assistant on your Claude or ChatGPT subscription
 
-Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, on your Claude or ChatGPT subscription, at no cost to the install: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
+Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, counting against your own Claude or ChatGPT plan's limits instead of the install's provider: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
 
 1. In Foundry, Settings › AI models, choose your Claude subscription or your ChatGPT subscription (Codex). Codex runs with your own Codex setup (its MCP servers and plugins), so choosing it the first time says what it runs with, and you confirm that once. Then Pair a helper shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
 

@@ -80,8 +80,9 @@ beforeEach(async () => {
     FAKE_CLAUDE_SCENARIO: "answer",
     // No Codex is found here unless a test names one.
     FOUNDRY_CODEX_PATH: join(dir, "no-codex"),
-    // A key in the person's shell never reaches the CLI: it would bill an API account.
-    ANTHROPIC_API_KEY: "sk-ant-should-not-pass",
+    // A key in the person's shell reaches the CLI as it is: Claude Code
+    // chooses its own sign-in, and the helper restricts none of its methods.
+    ANTHROPIC_API_KEY: "sk-ant-theirs",
   };
 });
 
@@ -258,16 +259,21 @@ describe("a turn on Claude Code", () => {
       "the turn's token is never in the CLI's argv",
     );
     assert.ok(!start.argv.some((a: string) => a.startsWith("--resume")));
-    assert.equal(start.env.ANTHROPIC_API_KEY, null);
+    assert.equal(start.env.ANTHROPIC_API_KEY, "sk-ant-theirs");
     assert.equal(start.env.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
     assert.equal(start.cwd, join(dir, "state", "threads", "ws-1", "thread-1"));
     assert.deepEqual(start.cwdEntries, [], "it runs in an empty directory");
 
     const init = entries.find((e) => e.in?.request?.subtype === "initialize");
-    assert.deepEqual(
+    assert.equal(
       init.in.request.systemPrompt,
-      ["You are the Assistant in Helix Foundry."],
-      "Foundry's system prompt, not Claude Code's",
+      undefined,
+      "Claude Code's own system prompt is kept",
+    );
+    assert.equal(
+      init.in.request.appendSystemPrompt,
+      "You are the Assistant in Helix Foundry.",
+      "Foundry's is appended to it",
     );
     const set = entries.find(
       (e) => e.in?.request?.subtype === "mcp_set_servers",

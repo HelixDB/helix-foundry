@@ -1,10 +1,16 @@
 // One turn on the Claude Code the person signed in to, as t3code drives it
-// (ClaudeAdapterV2): the Agent SDK's query() runs their own `claude`
-// executable (pathToClaudeCodeExecutable), which signs in as it always does
-// (the macOS Keychain, ~/.claude/.credentials.json or
-// CLAUDE_CODE_OAUTH_TOKEN), so its subscription pays and no key is asked
-// for. The helper keeps HOME (and CLAUDE_CONFIG_DIR, when set) as they are,
-// so the Keychain stays reachable.
+// (ClaudeAdapterV2): the Agent SDK's query() runs their own, unmodified
+// `claude` executable (pathToClaudeCodeExecutable), which signs in as it
+// always does, by whichever method the person set up (the macOS Keychain,
+// ~/.claude/.credentials.json, CLAUDE_CODE_OAUTH_TOKEN, or their own
+// ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN, which the helper passes on as
+// they are), and bills that account. The helper keeps HOME (and
+// CLAUDE_CONFIG_DIR, when set) as they are, so the Keychain stays
+// reachable. It never reads, keeps or forwards a credential: Anthropic's
+// terms for running Claude Code in a product
+// (code.claude.com/docs/en/legal-and-compliance) ask that no built-in
+// sign-in method be removed or restricted, and that each person's usage be
+// their own.
 //
 // What the CLI may do is Foundry's tools alone:
 //   - no built-in tool (tools: []), so no shell, file or web tool exists;
@@ -16,7 +22,8 @@
 //     (settingSources: [], and hooks off);
 //   - allowedTools mcp__foundry__* in dontAsk mode, and canUseTool denying
 //     anything else, should the CLI ever ask;
-//   - Foundry's system prompt in place of Claude Code's;
+//   - Claude Code's own system prompt (the claude_code preset), with
+//     Foundry's instructions appended, as t3code appends its own;
 //   - an empty working directory of the thread's, at most max_steps model
 //     calls, and the thread's session resumed.
 
@@ -47,14 +54,20 @@ export const CLAUDE_SESSIONS: Sessions = {
 /** The tools a turn's CLI may call: Foundry's, by its MCP server's name. */
 export const FOUNDRY_TOOLS = "mcp__foundry__";
 
-/** Environment the CLI never gets: a key would bill an API account, not the subscription. */
-const DROPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
-
-/** The CLI's environment: the helper's, less any API key, with the person's other MCP sources and IDE off. */
+/**
+ * The CLI's environment: the helper's as it is, sign-in included, with the
+ * person's other MCP sources and IDE off.
+ *
+ * @example
+ * cliEnv({ ANTHROPIC_API_KEY: "sk-ant-…", HOME: "/home/ada" }).ANTHROPIC_API_KEY;
+ * // "sk-ant-…": the person's own key bills their own API account
+ */
 export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env))
-    if (v !== undefined && !DROPPED_ENV.includes(k)) out[k] = v;
+  const out = Object.fromEntries(
+    Object.entries(env).filter(
+      (e): e is [string, string] => e[1] !== undefined,
+    ),
+  );
   return {
     ...out,
     ENABLE_CLAUDEAI_MCP_SERVERS: "false",
@@ -89,7 +102,11 @@ export function claudeOptions(
       name.startsWith(FOUNDRY_TOOLS)
         ? { behavior: "allow", updatedInput: input }
         : { behavior: "deny", message: "Only Foundry's tools run here." },
-    systemPrompt: turn.system,
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: turn.system,
+    },
     maxTurns: turn.max_steps,
     includePartialMessages: true,
     persistSession: true,
