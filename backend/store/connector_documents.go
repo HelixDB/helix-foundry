@@ -122,6 +122,9 @@ func (s *mysqlDB) PublishConnectorDocuments(ctx context.Context, p model.Connect
 		return nil, fmt.Errorf("publish connector documents: adds need the sweep's grace and a whole fan-out")
 	}
 	added := make([]string, len(p.Add))
+	// The added documents the document worker reads (Drive's PDFs), so a
+	// publish of text alone costs no read query.
+	var read []string
 	// 14 values a document: its own 12, then the sync's cause, read below.
 	rows := make([]any, 0, 14*len(p.Add))
 	for i, d := range p.Add {
@@ -129,6 +132,9 @@ func (s *mysqlDB) PublishConnectorDocuments(ctx context.Context, p model.Connect
 			return nil, fmt.Errorf("publish connector documents: %s is not a connector's document of set %s", d.ID, p.SetID)
 		}
 		added[i] = d.ID
+		if k := d.MediaType.ReadKind(); k == model.FoundryReadTable || k == model.FoundryReadPDF {
+			read = append(read, d.ID)
+		}
 		rows = append(rows, d.ID, d.WorkspaceID, d.SetID, d.Source.ExternalID, d.Source.Version, d.Source.At.UTC(), d.Source.URL,
 			d.Name, string(d.MediaType), d.SizeBytes, d.SHA256, d.S3Key, nil, nil)
 	}
@@ -187,7 +193,7 @@ WHERE document_id IN (`+idPlaceholders(len(added))+`) AND workspace_id=? AND cre
 				return fmt.Errorf("insert connector documents: %w", err)
 			}
 			// A PDF is read as an upload is, by the document worker.
-			if err := tx.queueFoundryFileRead(ctx, added); err != nil {
+			if err := tx.queueFoundryFileRead(ctx, read); err != nil {
 				return fmt.Errorf("queue connector documents' reads: %w", err)
 			}
 		}
