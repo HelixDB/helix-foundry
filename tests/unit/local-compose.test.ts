@@ -481,13 +481,26 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
 // answers on the pod's loopback.
 describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
   it("runs the foundry image, FOUNDRY_IMAGE's when set", () => {
-    expect(composed({}).services.foundry.image).toBe(
-      "ghcr.io/helixdb/foundry:0.1.3",
+    expect(composed({}).services.foundry.image).toMatch(
+      /^ghcr\.io\/helixdb\/foundry:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/,
     );
     expect(
       composed({ FOUNDRY_IMAGE: "ghcr.io/helixdb/foundry:1.2.3" }).services
         .foundry.image,
     ).toBe("ghcr.io/helixdb/foundry:1.2.3");
+  });
+
+  // An override is used as given, a plain tag too: tests/stack/run.sh runs
+  // helix-foundry/{site,foundry}:local this way.
+  it("runs every other release image's override as given", () => {
+    const { services } = composed({
+      FOUNDRY_SITE_IMAGE: "helix-foundry/site:local",
+      FOUNDRY_AGENT_IMAGE: "helix-foundry/agent:local",
+      FOUNDRY_HELIX_IMAGE: "helix-foundry/helix:local",
+    });
+    expect(services.site.image).toBe("helix-foundry/site:local");
+    expect(services["ontology-agent"].image).toBe("helix-foundry/agent:local");
+    expect(services.helix.image).toBe("helix-foundry/helix:local");
   });
 
   it("passes the secrets directory, the API keys and the AI default, nothing else", () => {
@@ -587,6 +600,16 @@ describe.skipIf(!compose)("local/compose.yaml's ollama profile", () => {
     FOUNDRY_AI_BASE_URL: "http://127.0.0.1:11434",
     FOUNDRY_AI_MODEL: "qwen3.5:4b",
   };
+
+  // Every image, Helix's releases and the others, is pinned by its tag and
+  // digest: a tag alone could be pushed again under a running install.
+  it("pins every service's image by tag and digest", () => {
+    for (const [name, service] of Object.entries(composed(OLLAMA).services)) {
+      expect(service.image, name).toMatch(
+        /^(?:[^@\s]*\/)?[^/:@\s]+:[^/:@\s]+@sha256:[0-9a-f]{64}$/,
+      );
+    }
+  });
 
   it("is off unless .env turns it on", () => {
     const services = Object.keys(composed({}).services);
