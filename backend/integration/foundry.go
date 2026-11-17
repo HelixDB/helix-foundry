@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -886,6 +887,8 @@ type FoundryQuestionOutput struct {
 	USDMicros  int64  `json:"usd_micros"`
 	CreatedAt  string `json:"created_at"`
 	FinishedAt string `json:"finished_at,omitempty"`
+	// view is what ask's and get_question's view reads besides (appView), never the agent.
+	view questionView
 }
 
 // AddFoundryTools registers the Foundry tools the identity may discover. A user browses with
@@ -1009,14 +1012,17 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		readGraph.InputSchema = withItems(schemaFor[ReadFoundryGraphInput](), "reads", 1, ontologyagent.MaxReads)
 		addFoundryTool(s, server, identity, readGraph, s.ReadFoundryGraph)
 		no := false
+		addFoundryApps(server)
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryAsk,
 			Description: "Answer a question about a business from its Foundry ontology, with every claim citing the entities, facts, rows or document quotes it read: " +
 				"use it, in plain language, for questions about the user's customers, accounts, people, deals, documents or anything else their connected data holds. " +
 				"Waits up to 25 seconds; until the question is done, call " + toolFoundryGetQuestion + ". Each question counts against the workspace's hourly limit and monthly budget.",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
+			Meta:        answerApp,
 		}, s.AskFoundryQuestion)
-		addFoundryTool(s, server, identity, tool(toolFoundryGetQuestion,
-			"Get a question asked of a Foundry ontology, waiting up to 25 seconds for it to finish."), s.GetFoundryQuestion)
+		getQuestion := tool(toolFoundryGetQuestion, "Get a question asked of a Foundry ontology, waiting up to 25 seconds for it to finish.")
+		getQuestion.Meta = answerApp
+		addFoundryTool(s, server, identity, getQuestion, s.GetFoundryQuestion)
 		addFoundryTool(s, server, identity, tool(toolFoundryListQuestions,
 			"List the questions asked of a Foundry ontology, or of one thread, newest first and without their answers, with the workspace's question budget."), s.ListFoundryQuestions)
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryCancelQuestion,
@@ -1054,6 +1060,20 @@ func addFoundryTool[In, Out any](
 	input, _ := t.InputSchema.(*jsonschema.Schema)
 	t.InputSchema = notNullable(cmp.Or(input, schemaFor[In]()))
 	t.Title = cmp.Or(t.Title, toolTitles[t.Name])
+	// No view calls a tool: a host with MCP Apps refuses a view's call to a tool whose visibility
+	// leaves out "app", so a script in a view, even one an answer smuggled in, can neither act
+	// through the host nor read records to send off in a link it opens. Only the agent calls them
+	// (apps.go); a view that needs one opts it in.
+	ui := map[string]any{}
+	if shown, ok := t.Meta["ui"].(map[string]any); ok {
+		maps.Copy(ui, shown)
+	}
+	ui["visibility"] = []string{"model"}
+	t.Meta = maps.Clone(t.Meta)
+	if t.Meta == nil {
+		t.Meta = mcp.Meta{}
+	}
+	t.Meta["ui"] = ui
 	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 		// The SDK checked the arguments and read them through float64s, which round a large integer
 		// (in a read's filter, say). Read them again, each number as written.
@@ -1069,6 +1089,12 @@ func addFoundryTool[In, Out any](
 		var out Out
 		if value != nil {
 			out = value.(Out)
+		}
+		if viewed, ok := any(out).(viewOutput); ok && result != nil {
+			if result.Meta == nil {
+				result.Meta = mcp.Meta{}
+			}
+			result.Meta[appMetaKey] = viewed.appView()
 		}
 		return result, out, err
 	})
@@ -1559,7 +1585,9 @@ func (s *Service) AskFoundryQuestion(
 	if err != nil {
 		return FoundryQuestionOutput{}, 0, FoundryError(err)
 	}
-	return FoundryQuestion(question), 1, nil
+	out := FoundryQuestion(question)
+	out.view = s.questionView(input.WorkspaceID, input.OntologyID, question)
+	return out, 1, nil
 }
 
 func (s *Service) GetFoundryQuestion(
@@ -1584,7 +1612,9 @@ func (s *Service) GetFoundryQuestion(
 	if err != nil {
 		return FoundryQuestionOutput{}, 0, FoundryError(err)
 	}
-	return FoundryQuestion(question), 1, nil
+	out := FoundryQuestion(question)
+	out.view = s.questionView(input.WorkspaceID, input.OntologyID, question)
+	return out, 1, nil
 }
 
 // WaitForQuestion waits for the question to be done.
