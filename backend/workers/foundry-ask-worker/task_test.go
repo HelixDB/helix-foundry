@@ -765,7 +765,7 @@ func TestAnswer(t *testing.T) {
 		for reason, want := range map[ontologyagent.AskFailure]string{
 			ontologyagent.AskModelFailed: "provider is busy", ontologyagent.AskModelRefused: "declined",
 			ontologyagent.AskModelTimeout: "provider stopped responding",
-			ontologyagent.AskNoAnswer: "without an answer", ontologyagent.AskLoadUnknown: "no longer in the database",
+			ontologyagent.AskNoAnswer:     "without an answer", ontologyagent.AskLoadUnknown: "no longer in the database",
 			ontologyagent.AskLoadMismatch: "another version", ontologyagent.AskStoreFailed: "graph could not be read",
 		} {
 			h := newHarness(t)
