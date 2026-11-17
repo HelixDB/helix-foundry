@@ -51,8 +51,8 @@ type foundryStore struct {
 	extractions map[string]map[string]*foundrymodel.FoundryDocumentExtraction
 	// unread answers ListFoundryLoadUnread for a load in place of counting.
 	unread map[string]foundrymodel.FoundryLoadUnread
-	loads       []*foundrymodel.FoundryLoad
-	jobs        []*foundrymodel.FoundryGraphJob
+	loads  []*foundrymodel.FoundryLoad
+	jobs   []*foundrymodel.FoundryGraphJob
 	// deletesQueued are the delete job ids the store was handed.
 	deletesQueued []string
 	spent         int64
