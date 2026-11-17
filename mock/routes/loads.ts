@@ -152,7 +152,9 @@ import { sourceId } from "./ontology-agent";
 // phase takes `loadStepMs` (one step per document). Test knobs through POST /__mock/config: `loadOutcome` "fail"
 // (the ingest fails), "sources_changed" (the tables were re-synced while the
 // load ran) or "budget_exhausted" (the spending cap stops it after one
-// document), `documentOutcome` "fail" (reading a document fails),
+// document), `documentOutcome` "fail" (the model fails every document on
+// the provider's quota: the load fails, none read) or "store_fail" (the
+// database fails to store each, retryably: the load is ready),
 // `documentUnmatched` (a sentence stating a relationship no link covers,
 // such as "supplies", is an "unmatched" review), `documentLinked` (a name no
 // row holds exactly links to its first candidate that way, "adjudicated",
@@ -188,7 +190,7 @@ type Outcome = "succeed" | "fail" | "sources_changed" | "budget_exhausted";
 type Knobs = {
   loadStepMs?: number;
   loadOutcome?: Outcome;
-  documentOutcome?: "succeed" | "fail";
+  documentOutcome?: "succeed" | "fail" | "store_fail";
   // A name no row holds exactly links to its first candidate this way, with
   // that link's review.
   documentLinked?: UndoableLink;
@@ -345,7 +347,7 @@ type StoredJob = {
   plan: {
     stepMs: number;
     outcome: Outcome;
-    documentOutcome: "succeed" | "fail";
+    documentOutcome: "succeed" | "fail" | "store_fail";
     deleteOutcome: "succeed" | "fail";
   };
 };
@@ -1601,11 +1603,15 @@ function read(j: StoredJob, documentId: string, at: string) {
     });
     return;
   }
-  if (j.plan.documentOutcome === "fail") {
-    // As on 2026-11-14: the provider's quota ran out, and every call fails.
+  if (j.plan.documentOutcome !== "succeed") {
+    // "fail" as on 2026-11-14: the provider's quota ran out, and every call
+    // fails. "store_fail": the database refused what was read.
     setExtraction(j.loadId, doc.id, {
       status: "failed",
-      error: { code: "model", retryable: true, modelFailure: "quota" },
+      error:
+        j.plan.documentOutcome === "fail"
+          ? { code: "model", retryable: true, modelFailure: "quota" }
+          : { code: "store", retryable: true },
       ...empty,
       usdMicros: "0",
       finishedAt: at,
