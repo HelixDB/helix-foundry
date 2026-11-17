@@ -935,7 +935,7 @@ function readConnectorPdf(d: StoredDocument, bytes: Buffer) {
 }
 
 /** A connector's document is gone: its bytes and its read with it. */
-function forget(d: StoredDocument) {
+function removeSourceDocument(d: StoredDocument) {
   d.status = "deleted";
   contents.delete(d.id);
   reads.delete(d.id);
@@ -1048,7 +1048,7 @@ export function writeConnectorDocuments(
         Object.assign(was, { name, source });
         continue;
       }
-      if (was) forget(was);
+      if (was) removeSourceDocument(was);
       const d: StoredDocument = {
         id: id("doc"),
         workspaceId,
@@ -1066,7 +1066,8 @@ export function writeConnectorDocuments(
       contents.set(d.id, bytes);
       added.push(d);
     }
-    for (const [externalId, d] of held) if (!kept.has(externalId)) forget(d);
+    for (const [externalId, d] of held)
+      if (!kept.has(externalId)) removeSourceDocument(d);
     const readers = workspaceOntologies(workspaceId).sort(
       (a, b) =>
         a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
@@ -1089,7 +1090,7 @@ export function dropConnectorDocuments(connectorId: string) {
   for (const s of [...sets.values()])
     if (s.connector?.connectorId === connectorId) {
       for (const d of documents.values())
-        if (d.setId === s.id && live(d)) forget(d);
+        if (d.setId === s.id && live(d)) removeSourceDocument(d);
       sets.delete(s.id);
     }
 }
