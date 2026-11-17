@@ -599,6 +599,13 @@ button.wf-card:hover {
   border-radius: var(--hf-radius);
   background: var(--hf-sunken);
 }
+.wf-runs-hint {
+  margin: 0;
+  padding: var(--hf-space-15) var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
 .wf-runs-none {
   margin: 0;
   padding: var(--hf-space-3) var(--hf-space-2);

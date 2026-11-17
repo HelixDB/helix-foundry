@@ -108,15 +108,17 @@ type FoundryWorkflowRunOutput struct {
 	StartedAt  string                              `json:"started_at"`
 	FinishedAt string                              `json:"finished_at,omitempty"`
 	Counts     *foundryv1.FoundryWorkflowRunCounts `json:"counts"`
-	Assessment *FoundryWorkflowAssessmentOutput    `json:"assessment,omitempty" jsonschema:"Its assessment, once it finished: how much what it read made its answer."`
-	// AutomationRunID is the workflow's run it records, for a run Foundry started.
-	AutomationRunID string `json:"workflow_run_id,omitempty" jsonschema:"The workflow run it records, for a run Foundry started (its use case's workflow names the workflow)."`
+	Assessment *FoundryWorkflowAssessmentOutput    `json:"assessment,omitempty" jsonschema:"Its assessment, once it finished: how much what it read made its answer. A run that made no call to the ontology has none: it isn't assessed."`
+	// AutomationRunID is the workflow's (the backend's automation's) run it records, for a run
+	// Foundry started: never a use_case_run_id, so it is named apart from one.
+	AutomationRunID string `json:"from_workflow_run_id,omitempty" jsonschema:"For a run Foundry started: the workflow run it records (helix_foundry_get_workflow_run's run_id; its use case's workflow names the workflow). Not a use_case_run_id: this run's own id is id."`
 	Next            string `json:"next,omitempty"`
 }
 
 // FoundryWorkflowAssessmentOutput is a run's assessment by the ontology agent.
 type FoundryWorkflowAssessmentOutput struct {
-	// Status is queued, running, done, failed or skipped (the month's budget spent).
+	// Status is queued, running, done, failed or skipped (the month's budget
+	// spent, or a run queued before ones without a call went unassessed).
 	Status  string `json:"status"`
 	Verdict string `json:"verdict,omitempty" jsonschema:"Once done: essential, helpful, marginal, unused or misleading."`
 	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
@@ -180,7 +182,8 @@ func (s *Service) addFoundryWorkflowTools(server *mcp.Server, identity *Identity
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.StartFoundryWorkflowRun)
 	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolFoundryFinishUseCaseRun,
-		Description: "Finish a run of a Foundry use case with the agent's final answer, and its initial request if the run was started without it. A finished run records nothing more. Finishing again with the same answer is no error.",
+		Description: "Finish a run of a Foundry use case with the agent's final answer, and its initial request if the run was started without it. A finished run records nothing more. Finishing again with the same answer is no error. " +
+			"A run that made calls with its id is assessed for how much the ontology helped; one that made none isn't, and counts apart as not using the ontology.",
 		Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.FinishFoundryWorkflowRun)
 	addFoundryTool(s, server, identity, tool(toolFoundryGetUseCaseRun,

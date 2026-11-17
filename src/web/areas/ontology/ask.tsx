@@ -61,6 +61,7 @@ import {
   useReadsPart,
 } from "../explore/graph-reader";
 import { PartNote } from "../explore/part-note";
+import type { Naming } from "../explore/naming";
 import { useNaming } from "../explore/use-naming";
 import {
   AiRefusal,
@@ -233,7 +234,7 @@ export function AskPage() {
   );
   if (access === "none")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <NotShared />
@@ -244,7 +245,7 @@ export function AskPage() {
   // to name (a grantee isn't sent it).
   if (!ontology.tenantId && access === "database")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <EmptyState
@@ -257,7 +258,7 @@ export function AskPage() {
     );
   if (view.kind === "threads")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={PAGE}>{picker}</ChatBar>
         <div className="ak-scroll">
           <AskThreads />
@@ -284,7 +285,7 @@ export function AskPage() {
     );
   if (selection.choice.kind === "none" && !selection.pending)
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar
           title={PAGE}
           onBack={threads.length > 0 ? () => setThread("") : undefined}
@@ -297,7 +298,7 @@ export function AskPage() {
       </div>
     );
   return (
-    <div className="ak-chat ag-dots">
+    <div className="ak-chat">
       <ChatBar onBack={threads.length > 0 ? () => setThread("") : undefined}>
         {picker}
       </ChatBar>
@@ -440,7 +441,7 @@ export function ThreadView({
   }, [shown]);
   if (!first || !last)
     return (
-      <div className="ak-chat ag-dots" aria-busy={list.isPending || undefined}>
+      <div className="ak-chat" aria-busy={list.isPending || undefined}>
         <ChatBar
           title={list.isPending ? title : undefined}
           tag={tag}
@@ -473,7 +474,7 @@ export function ThreadView({
       </div>
     );
   return (
-    <div className="ak-chat ag-dots">
+    <div className="ak-chat">
       <ChatBar title={first.question || "Thread"} tag={tag} onBack={onBack}>
         {picker}
       </ChatBar>
@@ -581,13 +582,15 @@ function useStream(q: FoundryQuestion): AskStream {
  * the names the pages of `cited` give them, by refKey, read in the
  * background with one lookup in the question's load. Entity names and
  * result labels come from its steps and `named` (knownOf: `name`,
- * `result`), which the caller adds.
+ * `result`), which the caller adds. `naming` is the load's version's, which
+ * heads its visuals' columns.
  */
 function useCitations(
   q: FoundryQuestion,
   cited: readonly EntityRef[],
 ): Omit<CitationContext, "name" | "result"> & {
   named: ReadonlyMap<string, string>;
+  naming: Naming;
 } {
   const { id: ws } = useWorkspace(),
     { id: o, ontology } = useOntology(),
@@ -613,6 +616,7 @@ function useCitations(
   const sources = useSources();
   return {
     named: names.data ?? new Map(),
+    naming,
     ontologyId: o,
     loadId,
     ...(access === "grants" ? { shared: true as const } : {}),
@@ -789,7 +793,7 @@ export function QuestionCard({
   const citations = view.kind === "answered" ? view.result.citations : [];
   // The cited entities are named as their pages name them, once near the
   // view: a long thread doesn't read the names of every answer it holds.
-  const { named, ...links } = useCitations(
+  const { named, naming, ...links } = useCitations(
     q,
     seen ? citedEntities(citations) : [],
   );
@@ -1123,6 +1127,7 @@ export function QuestionCard({
                                   output={record.output}
                                   query={record.query}
                                   href={entityHref}
+                                  naming={naming}
                                   untitled
                                 />
                               ) : reading ? (
@@ -1159,6 +1164,7 @@ export function QuestionCard({
             budget={budget}
             showStep={showStep}
             entityHref={entityHref}
+            naming={naming}
             reading={reading}
           />
         </div>
@@ -1175,6 +1181,7 @@ function Outcome({
   budget,
   showStep,
   entityHref,
+  naming,
   reading,
 }: {
   q: FoundryQuestion;
@@ -1183,6 +1190,7 @@ function Outcome({
   budget?: QuestionBudget | null;
   showStep: (evidence: string) => void;
   entityHref: (r: EntityRef) => string | undefined;
+  naming: Naming;
   reading: boolean;
 }) {
   const { id: o } = useOntology(),
@@ -1272,6 +1280,7 @@ function Outcome({
           ctx={ctx}
           showStep={showStep}
           entityHref={entityHref}
+          naming={naming}
           reading={reading}
         />
       );
@@ -1290,6 +1299,7 @@ function Answer({
   ctx,
   showStep,
   entityHref,
+  naming,
   reading,
 }: {
   q: FoundryQuestion;
@@ -1297,6 +1307,7 @@ function Answer({
   ctx: CitationContext;
   showStep: (evidence: string) => void;
   entityHref: (r: EntityRef) => string | undefined;
+  naming: Naming;
   reading: boolean;
 }) {
   const result = view.result;
@@ -1389,6 +1400,7 @@ function Answer({
                 query={d.query}
                 hint={visual}
                 href={entityHref}
+                naming={naming}
                 onShowQuery={() => showStep(visual.evidence_id)}
                 actions={
                   <PinVisual

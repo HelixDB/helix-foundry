@@ -251,12 +251,16 @@ test("walks a new install through the sample company, from its database to Ask",
   // Once loaded, the tour asks the draft's first question itself.
   await expect(
     steps.getByRole("article", {
-      name: "Question: Who are each account's people, and what role does each play?",
+      name: "Question: Which roles do our contacts play, and how many hold each?",
     }),
   ).toBeVisible({ timeout: 60_000 });
   await page.getByRole("link", { name: "Ask your own question" }).click();
+  // Founder's page offers the draft's questions as cards.
   await expect(
-    page.getByRole("group", { name: "Suggested questions" }),
+    page
+      .getByRole("tabpanel", { name: "Questions" })
+      .locator(".fd-card-prompt")
+      .first(),
   ).toBeVisible();
 
   // Acme Corp's database is a connection in Data, like any other, and every
@@ -691,7 +695,7 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   await expect(ollama).toBeChecked();
   await expect(
     page.getByRole("group", { name: "Where AI runs" }).getByRole("radio"),
-  ).toHaveCount(6);
+  ).toHaveCount(7);
   await expect(page.getByRole("combobox", { name: "Server" })).toContainText(
     "Bundled",
   );

@@ -66,7 +66,7 @@ export function Outline({
   const byId = new Map(spec.nodes.map((n) => [n.id, n]));
   const title = (id: string) => {
     const n = byId.get(id);
-    return n ? stepTitle(n, names, email) : id;
+    return n ? stepTitle(n, names, email, "brief") : id;
   };
   // A step another names, cut short.
   const short = (id: string) => {

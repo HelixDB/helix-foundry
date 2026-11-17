@@ -248,7 +248,7 @@ export function RunSteps({
             >
               <Icon size={14} aria-hidden />
               <span className="au-run-step-title">
-                {stepTitle(n, names, email)}
+                {stepTitle(n, names, email, "brief")}
               </span>
               <StatusBadge
                 size="sm"

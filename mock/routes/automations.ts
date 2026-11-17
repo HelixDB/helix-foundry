@@ -1602,14 +1602,13 @@ export const automationRoutes: MockRoute[] = [
       renameAutomationWorkflows(a.id, a.name);
       a.revision += 1;
       if (has("specJson") && canonicalJson(spec) !== canonicalJson(a.spec)) {
+        // The same steps laid out anew keep the spec revision approved, as
+        // the WFE's store does (LayoutOnly): what was approved runs as it was.
         const layoutOnly = sameSteps(a.spec, spec);
         a.spec = spec;
-        a.specRevision += 1;
-        if (layoutOnly) {
-          if (a.approvedSpecRevision === a.specRevision - 1)
-            a.approvedSpecRevision = a.specRevision;
-        } else
+        if (!layoutOnly)
           Object.assign(a, {
+            specRevision: a.specRevision + 1,
             status: "needs_approval",
             pausedReason: null,
             pausedByUserId: "",

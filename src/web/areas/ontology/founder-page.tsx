@@ -13,7 +13,7 @@ import {
   Transcript,
   useThreadRuntime,
 } from "../agent/dock";
-import { agentRefusal, threadKey } from "../agent/model";
+import { threadKey } from "../agent/model";
 import { agentQueries } from "../agent/queries";
 import { useReadAccess, useReadsPart } from "../explore/graph-reader";
 import { PartNote } from "../explore/part-note";
@@ -63,7 +63,7 @@ export function FounderPage() {
   const load =
     selection.choice.kind === "load" ? selection.choice.load : undefined;
   const threads = useQuery(agentQueries.threads(ws));
-  const list = threads.data?.threads;
+  const list = threads.data === "off" ? undefined : threads.data?.threads;
   // The thread the dock holds, which the page opens without `?chat=`.
   const [stored, setStored] = useState(() => readStorage(threadKey(ws)));
   useEffect(() => setStored(readStorage(threadKey(ws))), [ws]);
@@ -145,8 +145,7 @@ export function FounderPage() {
     setSeed((s) => ({ text: "", n: s.n + 1 }));
     if (id !== chat) go({ chat: id });
   };
-  if (agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED")
-    return <AskPage />;
+  if (threads.data === "off") return <AskPage />;
   const picker = (
     <>
       <OntologyPicker ontologyId={o} to={paths.ask} />
@@ -167,7 +166,7 @@ export function FounderPage() {
   // ask about, so no composer, whichever view the link names.
   if (access === "none")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar
           title={view.kind === "analyst" ? "Earlier question" : "Founder"}
         >
@@ -203,7 +202,7 @@ export function FounderPage() {
 
   if (view.kind === "threads")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title="Founder">{picker}</ChatBar>
         <div className="ak-scroll">
           <FounderThreads />
@@ -213,7 +212,7 @@ export function FounderPage() {
 
   if (view.kind === "chat")
     return (
-      <div className="ak-chat ag-dots">
+      <div className="ak-chat">
         <ChatBar title={thread.data?.thread.title || "Thread"} onBack={back}>
           {picker}
         </ChatBar>
@@ -251,7 +250,7 @@ export function FounderPage() {
   const nothing = selection.choice.kind === "none" && !selection.pending;
   const name = ontologyName(ontology);
   return (
-    <div className="ak-chat ag-dots">
+    <div className="ak-chat">
       <ChatBar onBack={back}>{picker}</ChatBar>
       <div className="ak-scroll">
         <div className="ak-start fd-start" data-replay-block>

@@ -140,6 +140,9 @@ func (p *prober) probe(ctx context.Context, c *model.FoundryAIConfig) (model.Fou
 			return cantRun("open the key", ai.ErrKeyUnreadable)
 		}
 	}
+	request := p.deployment.ProbeRequest(c.ID, settings, p.cfg.Timeout)
+	// The kind the agent calls: Cohere's is an OpenAI-compatible server.
+	served := string(request.Endpoint.Provider.Kind())
 	infoCtx, cancelInfo := context.WithTimeout(ctx, config.AskReadyWait)
 	info, err := p.agent.Info(infoCtx)
 	cancelInfo()
@@ -148,10 +151,9 @@ func (p *prober) probe(ctx context.Context, c *model.FoundryAIConfig) (model.Fou
 		return cantRun("reach the ontology agent", err)
 	case info.GetContractVersion() != ontologyagent.ContractVersion:
 		return cantRun("check the ontology agent", fmt.Errorf("it speaks contract %s, not %s", info.GetContractVersion(), ontologyagent.ContractVersion))
-	case !slices.Contains(info.GetProviders(), c.Kind):
-		return cantRun("check the ontology agent", fmt.Errorf("%w: %s", ai.ErrNotServed, c.Kind))
+	case !slices.Contains(info.GetProviders(), served):
+		return cantRun("check the ontology agent", fmt.Errorf("%w: %s", ai.ErrNotServed, served))
 	}
-	request := p.deployment.ProbeRequest(c.ID, settings, p.cfg.Timeout)
 	body, err := json.Marshal(request)
 	if err != nil {
 		return cantRun("write the probe", err)

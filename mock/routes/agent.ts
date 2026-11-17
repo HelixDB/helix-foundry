@@ -100,6 +100,7 @@ import {
   dashboardRoutes,
   publicLinks,
   storedDashboard,
+  workspacePublicLinks,
 } from "./dashboards";
 import { connectionName, dataRoutes, workspaceConnectors } from "./data";
 import { databaseRoutes, tenantGraph } from "./databases";
@@ -2889,7 +2890,24 @@ function onDashboard(
       ...read,
       said(
         () =>
-          "Public links aren't available here, so I can't publish this dashboard.",
+          "Public links aren't available here, so I can't publish this dashboard. To share it with your workspace, send its link: everyone who opens it reads it as themselves.",
+      ),
+    ];
+  const m = membership(a.ws, a.userId);
+  if (ask.operation === "publish_dashboard" && (isReply(m) || !manages(m)))
+    return [
+      ...read,
+      said(
+        () =>
+          "Only an owner or admin can make a public link. To share it with your workspace, send its link: everyone who opens it reads it as themselves.",
+      ),
+    ];
+  if (ask.operation === "publish_dashboard" && !workspacePublicLinks(a.ws))
+    return [
+      ...read,
+      said(
+        () =>
+          "An owner turned public links off for this workspace, so I can't publish this dashboard. To share it with your workspace, send its link instead.",
       ),
     ];
   if (ask.operation === "unpublish_dashboard" && !d.published)

@@ -43,7 +43,7 @@ describe("next.config.ts", () => {
 
   it.each([
     { name: "dev", appEnv: "dev", mode: undefined, on: "1" },
-    { name: "prod", appEnv: " Prod ", mode: undefined, on: "" },
+    { name: "prod", appEnv: " Prod ", mode: undefined, on: "1" },
     { name: "the mock", appEnv: "mock", mode: undefined, on: "1" },
     {
       name: "an unset app env (e2e)",

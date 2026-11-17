@@ -19,12 +19,14 @@ import type { Status } from "../../kit";
 import {
   actionText,
   edgesOutOf,
+  longText,
   nodeText,
   parseSpec,
   type Kind,
   type Names,
   type StepState,
   type Template,
+  type TextLength,
   TEMPLATES,
 } from "./model";
 import { automationPaths as paths } from "./paths";
@@ -91,32 +93,43 @@ export const nodeIcon = (n: AutomationNode): LucideIcon =>
     ? CalendarClock
     : KIND_ICONS[n.kind];
 
-/** A step in words, as a heading: its first letter upper case. */
+/**
+ * A step in words, as a heading: its first letter upper case. Brief, its
+ * instruction or subject is cut to a line (model.ts brief()).
+ */
 export const stepTitle = (
   n: AutomationNode,
   names: Names,
   email: boolean,
+  length: TextLength = "full",
 ): string => {
-  const t = nodeText(n, names, email);
+  const t = nodeText(n, names, email, length);
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
 /**
  * The steps as they run unattended, in the order a run takes them: each in
- * words, a Founder step with what it may do without asking (else that
- * anything it prepares waits for its owner), a condition with where its
- * yes and no lead. What an owner approves.
+ * a line (its instruction or subject cut short, model.ts brief()), the
+ * whole of a longer one in a block of its own that opens (`showAll` opens
+ * them all at first: what an owner approves), a Founder step with what it
+ * may do without asking (else that anything it prepares waits for its
+ * owner), a condition with where its yes and no lead. With `onSelect`, a
+ * step's line opens it.
  */
 export function StepsPreview({
   spec,
   names,
   email,
   label = "Steps",
+  showAll = false,
+  onSelect,
 }: {
   spec: AutomationSpec;
   names: Names;
   email: boolean;
   label?: string;
+  showAll?: boolean;
+  onSelect?: (id: string) => void;
 }) {
   const read = parseSpec(spec);
   const order = read.ok ? read.order : spec.nodes.map((n) => n.id);
@@ -125,11 +138,13 @@ export function StepsPreview({
     <ol className="au-preview" aria-label={label}>
       {order.map((id) => {
         const n = byId.get(id)!,
-          Icon = nodeIcon(n);
+          Icon = nodeIcon(n),
+          title = stepTitle(n, names, email, "brief"),
+          whole = longText(n);
         const leads = (branch: "true" | "false") => {
           const to = edgesOutOf(spec, n.id).find((e) => e.branch === branch);
           const next = to && byId.get(to.to);
-          return next ? stepTitle(next, names, email) : "stop";
+          return next ? stepTitle(next, names, email, "brief") : "stop";
         };
         return (
           <li key={id} className="au-preview-step">
@@ -137,9 +152,28 @@ export function StepsPreview({
               <Icon size={14} />
             </span>
             <div className="au-preview-body">
-              <span className="au-preview-title">
-                {stepTitle(n, names, email)}
-              </span>
+              {onSelect ? (
+                <button
+                  type="button"
+                  className="au-preview-title au-preview-open"
+                  title="Open this step"
+                  onClick={() => onSelect(id)}
+                >
+                  {title}
+                </button>
+              ) : (
+                <span className="au-preview-title">{title}</span>
+              )}
+              {whole && (
+                <details className="au-preview-full" open={showAll}>
+                  <summary>
+                    {n.kind === "assistant"
+                      ? "Its whole instruction"
+                      : "Its whole subject"}
+                  </summary>
+                  <p>{whole}</p>
+                </details>
+              )}
               {n.kind === "assistant" &&
                 (n.config.allow?.length ? (
                   <span className="au-preview-note">

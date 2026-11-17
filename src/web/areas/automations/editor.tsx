@@ -15,6 +15,7 @@ import {
 } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
   ChevronRight,
   CircleStop,
   ListTree,
@@ -54,11 +55,14 @@ import {
   here,
   incomplete,
   parseSpec,
+  placeNodes,
+  placesOf,
   removeStep,
   stepStates,
   tidy,
   triggerOf,
   type Kind,
+  type Places,
   type StepState,
   type TemplateId,
 } from "./model";
@@ -71,6 +75,7 @@ import {
   keepAutomation,
   pauseAutomation,
   runAutomation,
+  saveLayout,
   updateAutomation,
   useNames,
 } from "./queries";
@@ -99,13 +104,19 @@ import { RunHead, SettingsPanel, Summary } from "./summary";
 // holds its name, description, time zone, approval and deletion. A new one
 // from a template (or from scratch) is a draft on the same page until its
 // first save. On a phone the canvas only shows the steps, the inspector is
-// a sheet, and the outline edits them.
+// a sheet, and the outline edits them. Where its steps are drawn is no
+// change to them: moving steps on the canvas (or Tidy) saves on its own,
+// apart from the draft, and keeps its approval (saveLayout).
 
 const AutomationCanvas = lazy(() => import("./canvas"));
 
 const TABS = ["editor", "runs", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const INSPECTOR = "foundry.automations.inspector";
+/** Steps moved on the canvas save this long after the last move. */
+const LAYOUT_SAVE_MS = 800;
+/** "Layout saved" shows this long. */
+const LAYOUT_SAVED_MS = 2500;
 
 /** /automations/:id and /automations/:id/runs/:runId. */
 export function AutomationPage() {
@@ -353,6 +364,89 @@ function Editor({
     setBase(undefined);
   };
 
+  // Steps moved on the canvas and not saved yet: drawn there at once, over
+  // the draft and the steps as saved, and saved on their own LAYOUT_SAVE_MS
+  // after the last move (and at once when the page goes), one save at a
+  // time, onto the automation as saved: never the draft's other changes,
+  // which wait for Review and save. A draft takes the places too, so its
+  // save keeps them.
+  const [moved, setMoved] = useState<Places>({}),
+    [layout, setLayout] = useState<"saving" | "saved" | undefined>(),
+    movedNow = useRef(moved),
+    saving = useRef<Promise<unknown>>(Promise.resolve()),
+    mounted = useRef(true);
+  const saveMoved = () => {
+    const places = movedNow.current;
+    if (!a || !Object.keys(places).length) return;
+    if (mounted.current) setLayout("saving");
+    saving.current = saving.current
+      .then(() => saveLayout(qc, ws, a.id, places))
+      .then(
+        (done) => {
+          if (!mounted.current) return;
+          // What it sent is saved; what moved since waits for the next.
+          setMoved((m) =>
+            Object.fromEntries(
+              Object.entries(m).filter(([id, p]) => places[id] !== p),
+            ),
+          );
+          // A draft from the revision the places went onto goes on from the
+          // automation they made: nothing else changed it meanwhile.
+          if (done)
+            setBase((b) =>
+              b && b.revision === done.onto ? done.automation : b,
+            );
+          setLayout("saved");
+        },
+        (e: unknown) => {
+          if (!mounted.current) return;
+          setLayout(undefined);
+          setError(
+            `Couldn’t save where its steps are: ${asSentence((e as Error).message)}`,
+          );
+        },
+      );
+  };
+  useEffect(() => {
+    movedNow.current = moved;
+    if (!Object.keys(moved).length) return;
+    const t = setTimeout(saveMoved, LAYOUT_SAVE_MS);
+    return () => clearTimeout(t);
+  }, [moved]);
+  useEffect(() => {
+    if (layout !== "saved") return;
+    const t = setTimeout(() => setLayout(undefined), LAYOUT_SAVED_MS);
+    return () => clearTimeout(t);
+  }, [layout]);
+  // Leaving before the save is due saves at once.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      saveMoved();
+    };
+  }, []);
+  const move = (places: Places) => {
+    if (!current) return;
+    // A new one is all draft.
+    if (!a) return setSpec(placeNodes(current.spec, places));
+    const at = placesOf(shownSpecOf(current.spec, moved)),
+      changed = Object.fromEntries(
+        Object.entries(places).filter(
+          ([id, p]) => at[id] && (at[id].x !== p.x || at[id].y !== p.y),
+        ),
+      );
+    if (!Object.keys(changed).length) return;
+    if (draft)
+      setDraft((d) => d && { ...d, spec: placeNodes(d.spec, changed) });
+    setMoved((m) => ({ ...m, ...changed }));
+  };
+  // The steps as they stand, where the canvas draws them.
+  const placed = useMemo(
+    () => current && shownSpecOf(current.spec, moved),
+    [current, moved],
+  );
+
   const [selected, setSelected] = useState<string | undefined>(
     () => start?.spec.nodes.find((n) => incomplete(n))?.id,
   );
@@ -447,23 +541,28 @@ function Editor({
       ? runId && ran?.ok
         ? ran.spec
         : (saved?.spec ?? current.spec)
-      : current.spec;
+      : (placed ?? current.spec);
   const canEditSteps = editable && tab === "editor";
   const node = shownSpec.nodes.find((n) => n.id === selected);
 
   // Before a save: every step complete, the graph one a run can take, a name.
   const named = (id: string) => {
     const n = current.spec.nodes.find((x) => x.id === id);
-    return n ? `“${stepTitle(n, lists.names, email)}”` : id;
+    return n ? `“${stepTitle(n, lists.names, email, "brief")}”` : id;
   };
   const read = parseSpec(current.spec, named);
-  // Compared as a save sends it: trimmed, and written as the WFE writes it.
+  // Compared as a save sends it: trimmed, and written as the WFE writes it,
+  // its steps where the automation has them (moving them saves on its own).
+  const before = a && parseSpec((base ?? a).specJson || "");
   const dirty =
     !!draft &&
     (!a ||
       !!changesOf(base ?? a, {
         ...draft,
-        spec: read.ok ? read.spec : draft.spec,
+        spec: placeNodes(
+          read.ok ? read.spec : draft.spec,
+          before?.ok ? placesOf(before.spec) : {},
+        ),
       }));
   const missing = current.spec.nodes.flatMap((n) => {
     const why = incomplete(n);
@@ -597,6 +696,18 @@ function Editor({
         ]}
       />
       <div className="au-top-tools">
+        {a && (
+          <span className="au-layout-saved" role="status">
+            {layout === "saving" ? (
+              "Saving layout…"
+            ) : layout === "saved" ? (
+              <>
+                <Check size={13} aria-hidden />
+                Layout saved
+              </>
+            ) : null}
+          </span>
+        )}
         {(dirty || !a) && (
           <span className="au-unsaved">
             {a && <span className="au-muted">Unsaved changes</span>}
@@ -828,8 +939,9 @@ function Editor({
           {...(canEditSteps &&
             !phone && {
               onChange: setSpec,
+              onMove: move,
               onAdd: add,
-              onTidy: () => setSpec(tidy(current.spec)),
+              onTidy: () => move(placesOf(tidy(current.spec))),
             })}
           label={
             states
@@ -915,6 +1027,10 @@ function Editor({
     </div>
   );
 }
+
+/** The steps with those moved on the canvas where they were moved to. */
+const shownSpecOf = (spec: AutomationSpec, moved: Places) =>
+  Object.keys(moved).length ? placeNodes(spec, moved) : spec;
 
 /** The selected step: its settings (read only unless its owner edits the steps), and in a run, what it did. */
 function StepPanel({

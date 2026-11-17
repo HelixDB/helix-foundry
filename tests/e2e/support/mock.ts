@@ -166,6 +166,8 @@ export const mock = {
     automationSuggestionsAi?: boolean;
     // false: no public dashboard links, as a stamp with them turned off.
     dashboardsPublic?: boolean;
+    // Dashboards' public links read their expiry this many days from now.
+    dashboardClockDays?: number;
     // false: the WFE has no foundry-connector role, so S3 offers keys only.
     s3RoleAccess?: boolean;
     // Another writer comes first on each of the next n data-layout PUTs.

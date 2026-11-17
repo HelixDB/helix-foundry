@@ -255,6 +255,7 @@ type ReadStore interface {
 	GetFoundryDashboardByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryDashboard, error)
 	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
 	GetSharedFoundryDashboard(ctx context.Context, tokenSHA256 string) (*model.FoundryDashboardShare, error)
+	GetFoundryDashboardSettings(ctx context.Context, workspaceID string) (model.FoundryDashboardSettings, error)
 
 	// Automations and their runs (foundry_automations.go)
 	GetFoundryAutomation(ctx context.Context, workspaceID, id string) (*model.FoundryAutomation, error)
@@ -512,8 +513,10 @@ type Store interface {
 		u model.FoundryDashboardUpdate) error
 	SetFoundryDashboardPinned(ctx context.Context, workspaceID, id, userID string, expected int64, pinned bool, maxPinned int) error
 	DeleteFoundryDashboard(ctx context.Context, workspaceID, id string, editor model.FoundryDashboardEditor) error
-	PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare) (*model.FoundryDashboardShare, error)
+	PublishFoundryDashboard(ctx context.Context, share *model.FoundryDashboardShare, expiry model.FoundryDashboardLinkExpiry) (
+		*model.FoundryDashboardShare, error)
 	UnpublishFoundryDashboard(ctx context.Context, workspaceID, id string) error
+	SetFoundryDashboardSettings(ctx context.Context, workspaceID, userID string, publicLinks bool) error
 
 	// Automations: people's edits, approvals and runs by hand, and the
 	// foundry-automation-worker's fires and runs (foundry_automations.go)

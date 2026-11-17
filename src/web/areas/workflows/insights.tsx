@@ -280,18 +280,19 @@ function metricDetail(
   switch (metric) {
     case "runs": {
       const calls = callsPerRun(t);
-      return `${formatNumber(t?.open || 0)} open · ${formatNumber(assessed)} assessed${calls === undefined ? "" : ` · ${calls.toFixed(1)} calls a run`}`;
+      const silent = t?.neverCalled || 0;
+      return `${formatNumber(t?.open || 0)} open · ${formatNumber(assessed)} assessed${silent ? ` · ${formatNumber(silent)} didn’t use the ontology` : ""}${calls === undefined ? "" : ` · ${calls.toFixed(1)} calls a run`}`;
     }
     case "helped":
       return few
-        ? `assessed ${assessed === 1 ? "run" : "runs"}, too few for a rate`
-        : `of ${plural(assessed, "assessed run")}`;
+        ? `assessed ${assessed === 1 ? "run" : "runs"} that called it, too few for a rate`
+        : `of ${plural(assessed, "assessed run")} that called it`;
     case "backed":
       return few
         ? "claims backed by what agents read"
         : `of ${plural(claimsOf(t), "claim")}, backed by what agents read`;
     case "misleading":
-      return `${plural(t?.claimsContradicted || 0, "claim")} contradicted · ${plural(verdictRuns(t, "unused"), "run")} never used it`;
+      return `${plural(t?.claimsContradicted || 0, "claim")} contradicted · ${plural(verdictRuns(t, "unused"), "run")} used nothing it read`;
   }
 }
 
@@ -402,13 +403,21 @@ export function TrendPanel({
   if (metric === "runs") {
     // Runs a day, stacked by verdict: how many, and how the ontology did.
     const days = (data.series || []).map(verdictDay);
-    const keys = [...VERDICTS, "pending"].filter((k) =>
+    const keys = [...VERDICTS, "not_called", "pending"].filter((k) =>
       days.some((d) => Number(d[k]) > 0),
     );
     const color = (k: string) =>
-      k === "pending" ? "var(--hf-border-strong)" : `var(--hf-verdict-${k})`;
+      k === "pending"
+        ? "var(--hf-border-strong)"
+        : k === "not_called"
+          ? "var(--hf-muted)"
+          : `var(--hf-verdict-${k})`;
     const name = (k: string) =>
-      k === "pending" ? "Not assessed yet" : VERDICT_LABELS[k as Verdict].label;
+      k === "pending"
+        ? "Not assessed yet"
+        : k === "not_called"
+          ? "Didn’t use the ontology"
+          : VERDICT_LABELS[k as Verdict].label;
     return (
       <Panel
         title="Runs a day, by how much the ontology helped"

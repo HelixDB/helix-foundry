@@ -335,6 +335,23 @@ describe("messages", () => {
       "global.anthropic.claude-sonnet-5-5",
     ],
     [
+      "Cohere",
+      {
+        provider: { cohere: {} },
+        models: Object.fromEntries(
+          ["draft", "ask", "extract", "verify"].map((r) => [
+            r,
+            {
+              name: "command-a-03-2025",
+              rates: { inputUsdPerMtok: "2.5", outputUsdPerMtok: "10" },
+            },
+          ]),
+        ),
+        apiKey: "sentinelCohereKey0123456789abcdefWXYZ",
+      },
+      "command-a-03-2025",
+    ],
+    [
       "a custom server",
       {
         provider: {

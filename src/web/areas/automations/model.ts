@@ -900,12 +900,65 @@ export const KIND_HEADS: Record<Kind, string> = {
   notify: "Email",
 };
 
+/** The most characters (graphemes) a brief text keeps before its ellipsis. */
+export const BRIEF_MAX = 80;
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * A long text (a Founder step's instruction, an email's subject) cut to read
+ * in a line: its whitespace collapsed, then its first sentence when that is
+ * at most `max` characters, else its first `max` characters, back to the
+ * last space when one falls in the last quarter, with an ellipsis. A
+ * sentence ends at `.`, `!`, `?` or `…` (and any closing quote or bracket)
+ * before a space or the end. Characters are graphemes: an emoji or an
+ * accented letter is never cut in two.
+ *
+ * @example
+ * brief("Summarise the week. Then list anything unusual."); // "Summarise the week."
+ * brief("a ".repeat(60), 10); // "a a a a a…"
+ * brief("  Short  one  "); // "Short one"
+ */
+export function brief(text: string, max = BRIEF_MAX): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const end = /[.!?…]["'”’)\]]*(?= |$)/.exec(flat);
+  const first = end ? flat.slice(0, end.index + end[0].length) : flat;
+  const chars = [...graphemes.segment(first)].map((g) => g.segment);
+  if (chars.length <= max) return first;
+  const cut = chars.slice(0, max).join(""),
+    space = cut.lastIndexOf(" ");
+  return (
+    (space >= max * 0.75 ? cut.slice(0, space) : cut).replace(
+      /[\s,;:.\-–—]+$/,
+      "",
+    ) + "…"
+  );
+}
+
+/**
+ * How long a step's own text reads: `full` as written (a step's inspector,
+ * the canvas's cards, which clamp it), `brief` cut to a line (brief()):
+ * summaries, lists and a step another names.
+ */
+export type TextLength = "full" | "brief";
+
 /**
  * A step in words, as a sentence's clause reads it (no capital, no stop).
  * `email` is whether a notify step emails here (false on a local build,
- * where it only notes the run).
+ * where it only notes the run); `length` how much of its instruction or
+ * subject it quotes.
+ *
+ * @example
+ * nodeText({ id: "ask", kind: "assistant", config: { instruction: "Sum up the week. Keep it short." }, position: { x: 0, y: 0 } }, NO_NAMES, true, "brief");
+ * // "ask Founder: “Sum up the week.”"
  */
-export function nodeText(n: AutomationNode, names: Names, email: boolean) {
+export function nodeText(
+  n: AutomationNode,
+  names: Names,
+  email: boolean,
+  length: TextLength = "full",
+) {
+  const quote = (s: string) => `“${length === "brief" ? brief(s) : s}”`;
   switch (n.kind) {
     case "trigger":
       return n.config.kind === "manual"
@@ -913,7 +966,7 @@ export function nodeText(n: AutomationNode, names: Names, email: boolean) {
         : `when ${triggerText(n.config, names)}`;
     case "assistant":
       return n.config.instruction.trim()
-        ? `ask Founder: “${n.config.instruction}”`
+        ? `ask Founder: ${quote(n.config.instruction)}`
         : "ask Founder";
     case "action":
       return actionText(n.config, names);
@@ -921,21 +974,37 @@ export function nodeText(n: AutomationNode, names: Names, email: boolean) {
       return `if ${conditionText(n.config)}`;
     case "notify":
       return email
-        ? n.config.message
-          ? `email you “${n.config.message}”`
+        ? n.config.message.trim()
+          ? `email you ${quote(n.config.message)}`
           : "email you what it found"
         : "note what it found in the run (this Foundry sends no email)";
   }
 }
 
 /**
- * The automation as one sentence: its trigger, then its steps in the order
- * a run takes them (until they can be read, top down as the canvas has
- * them); a step a condition's false branch leads to says "otherwise".
+ * Whether a step's own text (a Founder step's instruction, an email's
+ * subject) reads shorter brief than in full: then a list offers it whole.
+ */
+export const longText = (n: AutomationNode): string | undefined => {
+  const text =
+    n.kind === "assistant"
+      ? n.config.instruction
+      : n.kind === "notify"
+        ? n.config.message
+        : "";
+  return text.trim() && brief(text) !== text.trim() ? text.trim() : undefined;
+};
+
+/**
+ * The automation as one short sentence: its trigger, then its steps in the
+ * order a run takes them (until they can be read, top down as the canvas
+ * has them), each Founder step's instruction and email's subject cut to a
+ * line (brief()); a step a condition's false branch leads to says
+ * "otherwise". The steps in full are each step's own (StepsPreview).
  *
  * @example
  * sentence(spec, names, true);
- * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask Founder: “…”, then email you what it found."
+ * // "Every Monday at 09:00 UTC, sync “Stripe”, then ask Founder: “Sum up the week.”, then email you what it found."
  */
 export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
   const read = parseSpec(spec);
@@ -961,7 +1030,7 @@ export function sentence(spec: AutomationSpec, names: Names, email: boolean) {
     steps.reduce((text, n, i) => {
       const otherwise = edgesInto(spec, n.id).some((e) => e.branch === "false"),
         after = i > 0 && steps[i - 1]!.kind === "condition" ? ", " : ", then ";
-      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email)}`;
+      return `${text}${i === 0 ? ", " : after}${otherwise ? "otherwise " : ""}${nodeText(n, names, email, "brief")}`;
     }, head) + "."
   );
 }
@@ -1141,6 +1210,9 @@ export type ShownSuggestions =
       chips: readonly AutomationSuggestion[];
       // Founder is writing better ones: these are replaced.
       generating: boolean;
+      // Read for the chosen ontology (written by Founder or the backend's
+      // fallback from its questions), or the fixed ones, for none.
+      source: "ontology" | "fixed";
     };
 
 /**
@@ -1152,7 +1224,8 @@ export type ShownSuggestions =
  * keeps what was read before (`data`), so the chips don't flicker.
  *
  * @example
- * shownSuggestions({ ontology: false, pending: false, failed: false }).kind; // "chips"
+ * shownSuggestions({ ontology: false, pending: false, failed: false }); // { kind: "chips", chips: AUTOMATION_SUGGESTIONS, generating: false, source: "fixed" }
+ * shownSuggestions({ ontology: true, pending: false, failed: false, data: { suggestions: [{ title: "A", prompt: "p" }] } }); // { kind: "chips", chips: [{ title: "A", prompt: "p", icon: "report" }], generating: false, source: "ontology" }
  * shownSuggestions({ ontology: true, pending: true, failed: false }); // { kind: "loading", generating: false }
  */
 export function shownSuggestions(q: {
@@ -1165,12 +1238,14 @@ export function shownSuggestions(q: {
     kind: "chips",
     chips: AUTOMATION_SUGGESTIONS,
     generating: false,
+    source: "fixed",
   } as const;
   if (!q.ontology || (q.failed && !q.data)) return fixed;
   if (q.pending) return { kind: "loading", generating: false };
   const chips = readSuggestions(q.data),
     generating = q.data?.generating === true;
-  if (chips.length) return { kind: "chips", chips, generating };
+  if (chips.length)
+    return { kind: "chips", chips, generating, source: "ontology" };
   return generating ? { kind: "loading", generating } : fixed;
 }
 
@@ -1812,29 +1887,79 @@ export function tidy(spec: AutomationSpec): AutomationSpec {
   };
 }
 
+/** A place on the canvas. */
+export type Place = { x: number; y: number };
+/** Places on the canvas by node id. */
+export type Places = Readonly<Record<string, Place>>;
+
+const clampPlace = (v: number) =>
+  Math.round(Math.max(-LIMITS.position, Math.min(LIMITS.position, v)));
+
+/**
+ * The spec with its nodes moved to `places` (each rounded and kept within
+ * the canvas); a node `places` doesn't name stays, an id the spec lacks is
+ * left out. Only places change: the steps run as they did (sameSteps).
+ *
+ * @example
+ * placeNodes(spec, { tell: { x: 12.6, y: 40 }, gone: { x: 0, y: 0 } });
+ * // spec, with "tell" at { x: 13, y: 40 }
+ */
+export const placeNodes = (
+  spec: AutomationSpec,
+  places: Places,
+): AutomationSpec => ({
+  ...spec,
+  nodes: spec.nodes.map((n) => {
+    const p = places[n.id];
+    return p
+      ? { ...n, position: { x: clampPlace(p.x), y: clampPlace(p.y) } }
+      : n;
+  }),
+});
+
 /** The spec with a node moved on the canvas. */
 export const moveNode = (
   spec: AutomationSpec,
   id: string,
-  position: { x: number; y: number },
-): AutomationSpec => ({
-  ...spec,
-  nodes: spec.nodes.map((n) =>
-    n.id === id
-      ? {
-          ...n,
-          position: {
-            x: Math.round(
-              Math.max(-LIMITS.position, Math.min(LIMITS.position, position.x)),
-            ),
-            y: Math.round(
-              Math.max(-LIMITS.position, Math.min(LIMITS.position, position.y)),
-            ),
-          },
-        }
-      : n,
-  ),
-});
+  position: Place,
+): AutomationSpec => placeNodes(spec, { [id]: position });
+
+/** Each node's place, by id. */
+export const placesOf = (spec: AutomationSpec): Places =>
+  Object.fromEntries(spec.nodes.map((n) => [n.id, n.position]));
+
+/** A side of a step's card, where an edge leaves or arrives. */
+export type Side = "top" | "right" | "bottom" | "left";
+/** A card on the canvas: its top left corner and its size. */
+export type Box = Place & { width: number; height: number };
+
+/**
+ * Where an edge between two cards leaves and arrives: the sides that face
+ * each other. Side by side (apart across, by more than they are apart down)
+ * it goes from the side facing the other to the opposite one; otherwise
+ * (as tidy() lays steps out, a branch's two steps included) bottom to top,
+ * or top to bottom for a step above the one before it.
+ *
+ * @example
+ * edgeSides({ x: 0, y: 0, width: 248, height: 80 }, { x: 320, y: 10, width: 248, height: 80 });
+ * // { source: "right", target: "left" }
+ * edgeSides({ x: 0, y: 0, width: 248, height: 80 }, { x: 140, y: 150, width: 248, height: 80 });
+ * // { source: "bottom", target: "top" }
+ */
+export function edgeSides(from: Box, to: Box): { source: Side; target: Side } {
+  const dx = to.x + to.width / 2 - (from.x + from.width / 2),
+    dy = to.y + to.height / 2 - (from.y + from.height / 2);
+  // The gaps between the cards across and down (negative where they overlap).
+  const across = Math.abs(dx) - (from.width + to.width) / 2,
+    down = Math.abs(dy) - (from.height + to.height) / 2;
+  if (across > 0 && across > down)
+    return dx > 0
+      ? { source: "right", target: "left" }
+      : { source: "left", target: "right" };
+  return dy >= 0
+    ? { source: "bottom", target: "top" }
+    : { source: "top", target: "bottom" };
+}
 
 /** A trigger of another kind, keeping what it can of the one before (its zone). */
 export function triggerOfKind(
@@ -2040,6 +2165,11 @@ const HELPED = new Set(["essential", "helpful"]);
  *   impactText({ ontologyId: "o", runs: "4", finishedRuns: "4",
  *     verdicts: [{ verdict: "essential", runs: "2" }, { verdict: "unused", runs: "1" }] })
  *   // "Helped 2 of the 3 runs assessed."
+ *
+ * Runs that read or asked nothing of it aren't assessed: they are said apart.
+ *
+ *   impactText({ ontologyId: "o", runs: "2", finishedRuns: "2", neverCalledRuns: "2" })
+ *   // "2 runs used it without reading or asking it anything, so none is assessed."
  */
 export function impactText(o: FoundryAutomationOntology): string {
   if (o.untracked === "workflows_full")
@@ -2049,12 +2179,18 @@ export function impactText(o: FoundryAutomationOntology): string {
     helped = (o.verdicts || [])
       .filter((v) => HELPED.has(v.verdict))
       .reduce((n, v) => n + Number(v.runs || 0), 0);
+  const silent = Number(o.neverCalledRuns || 0);
+  const apart = silent
+    ? ` ${silent === 1 ? "One run" : `${silent.toLocaleString("en-US")} runs`} read or asked it nothing, so ${silent === 1 ? "isn’t" : "aren’t"} assessed.`
+    : "";
   if (!runs) return "No run has used it yet: its first is recorded here.";
+  if (!assessed && silent === runs)
+    return `${runs === 1 ? "One run" : `${runs.toLocaleString("en-US")} runs`} used it without reading or asking it anything, so none is assessed.`;
   if (!assessed)
     return runs === 1
       ? "One run used it; it isn’t assessed yet."
-      : `${runs.toLocaleString("en-US")} runs used it; none is assessed yet.`;
-  return `Helped ${helped.toLocaleString("en-US")} of the ${assessed === 1 ? "run" : `${assessed.toLocaleString("en-US")} runs`} assessed.`;
+      : `${runs.toLocaleString("en-US")} runs used it; none is assessed yet.${apart}`;
+  return `Helped ${helped.toLocaleString("en-US")} of the ${assessed === 1 ? "run" : `${assessed.toLocaleString("en-US")} runs`} assessed.${apart}`;
 }
 
 /** Where a run's assessment of an ontology stands, for its tag: a verdict once done. */
@@ -2074,6 +2210,11 @@ export type RunImpact =
 export function runImpact(o: FoundryAutomationRunOntology): RunImpact {
   if (o.status !== "finished")
     return { kind: "open", text: "Recording while the run goes" };
+  if (o.neverCalled)
+    return {
+      kind: "unassessed",
+      text: "Not assessed: it read or asked nothing of the ontology",
+    };
   switch (o.assessmentStatus) {
     case "done":
       return o.verdict

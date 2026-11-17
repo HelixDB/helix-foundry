@@ -3,12 +3,14 @@ import type {
   AskResult,
   AskVisual,
   OntologyQuery,
+  QueryExpr,
   QueryOutput,
   VisualKind,
 } from "../../../shared/wfe";
 import { formatNumber, plural } from "../../kit/util";
-import { AGGREGATE_FN, queryNames, queryText } from "./ask-model";
+import { AGGREGATE_FN, exprText, queryNames, queryText } from "./ask-model";
 import { isRecord } from "../../../shared/json";
+import { NO_NAMING, type Naming } from "../explore/naming";
 
 // How Ask draws a query's recorded output (contract 3.11.0): helix-foundry's
 // Analyst approach, read from the output's shape rather than from anything
@@ -232,9 +234,53 @@ function noteOf(shown: number, total: number, noun: string, cut?: string) {
 }
 
 /**
+ * How a visual heads a query's columns, in words: a position by its type
+ * (a type at more than one position gets its position: "Customer (2)"),
+ * its entity or its names prop (`name`, or one the version's `names` lists)
+ * by the type alone, and any other prop after the type, its underscores
+ * spaces ("Invoice amount due"). `entityShown`: the entity's own column is
+ * in the table too, so its names prop keeps the prop ("Customer name"),
+ * never a second "Customer". Only headings change: columns keep their
+ * place and their cells.
+ *
+ * @example
+ * const heading = columnHeadings({
+ *   start: { type: "Invoice" },
+ *   steps: [{ via: "billed_to", dir: "out", to: "Customer" }],
+ *   return: { count: {} },
+ * });
+ * heading({ at: 1, prop: "name" }); // "Customer"
+ * heading({ at: 1, prop: "name" }, true); // "Customer name"
+ * heading({ at: 0, prop: "amount_due" }); // "Invoice amount due"
+ * heading({ at: 0 }); // "Invoice"
+ */
+export function columnHeadings(q: OntologyQuery, naming: Naming = NO_NAMING) {
+  const { at } = queryNames(q);
+  const types = [q.start.type, ...(q.steps || []).map((s) => s.to)];
+  const words = (s: string) => s.replace(/_/g, " ");
+  const where = (i: number) => at(i).replace(/@(\d+)$/, " ($1)");
+  return (
+    c: { at: number; prop?: string | null; expr?: QueryExpr | null },
+    entityShown = false,
+  ): string => {
+    if (c.expr) return `${where(c.at)}: ${words(exprText(c.expr))}`;
+    if (!c.prop) return where(c.at);
+    const t = types[c.at];
+    const names =
+      t === undefined
+        ? false
+        : c.prop === "name" || !!naming.types.get(t)?.names.includes(c.prop);
+    return names && !entityShown
+      ? where(c.at)
+      : `${where(c.at)} ${words(c.prop)}`;
+  };
+}
+
+/**
  * How to show a query's output, by its shape and the visual's `kind` hint
  * (left out, the shape decides; one the shape doesn't suit is a table),
- * titled by the visual or, without a title, by what the query returns.
+ * titled by the visual or, without a title, by what the query returns, its
+ * columns headed by columnHeadings with `naming`, the version's.
  *
  * - count, aggregate: a figure;
  * - groups (group_count, grouped_aggregate): bars, most first as the
@@ -257,6 +303,7 @@ function noteOf(shown: number, total: number, noun: string, cut?: string) {
  * );
  * plan.kind; // "chart"
  * plan.kind === "chart" && plan.chart.points; // [{ label: "paid", value: 40 }, { label: "No status", value: 3 }]
+ * plan.kind === "chart" && plan.chart.label; // "Invoice status"
  * plan.title; // "Count by Invoice.status"
  * visualPlan({ kind: "count", count: 12 }, { start: { type: "Invoice" }, return: { count: {} } }, { kind: "bar" }).kind; // "table"
  */
@@ -264,8 +311,9 @@ export function visualPlan(
   output: QueryOutput,
   query: OntologyQuery,
   hint: { kind?: VisualKind | null; title?: string | null } = {},
+  naming: Naming = NO_NAMING,
 ): VisualPlan {
-  const { col } = queryNames(query);
+  const col = columnHeadings(query, naming);
   const text = queryText(query);
   const r = query.return;
   const cut = output.cut || undefined;
@@ -279,8 +327,9 @@ export function visualPlan(
         output.kind === "count" ? output.count : (output.value ?? null);
       const detail =
         output.kind === "aggregate"
-          ? `Over ${plural(output.values, "value")}`
+          ? overValues(output.values, output.skipped)
           : "";
+      const skipped = output.kind === "aggregate" && !!output.skipped;
       const cell = cellOf(value);
       if (fits("figure"))
         return { kind: "figure", title, note: cut ?? "", value: cell, detail };
@@ -290,15 +339,28 @@ export function visualPlan(
         note: cut ?? "",
         table: {
           columns: [
-            { label: text.returns, numeric: true },
+            {
+              // What it measures, its columns headed as a table's.
+              label:
+                "aggregate" in r
+                  ? `${AGGREGATE_FN[r.aggregate.fn]} of ${col(r.aggregate)}`
+                  : "count" in r
+                    ? `Count of distinct ${col({ at: r.count.distinct_at ?? query.steps?.length ?? 0 })}`
+                    : text.returns,
+              numeric: true,
+            },
             ...(output.kind === "aggregate"
               ? [{ label: "Values", numeric: true }]
               : []),
+            ...(skipped ? [{ label: "Skipped", numeric: true }] : []),
           ],
           rows: [
             [
               cell,
               ...(output.kind === "aggregate" ? [cellOf(output.values)] : []),
+              ...(output.kind === "aggregate" && skipped
+                ? [cellOf(output.skipped)]
+                : []),
             ],
           ],
         },
@@ -314,7 +376,7 @@ export function visualPlan(
             ? r.aggregate.group_by
             : undefined;
       const label = by ? col(by) : "Value",
-        none = by ? `No ${by.prop}` : "None";
+        none = by ? `No ${by.prop.replace(/_/g, " ")}` : "None";
       const measure =
         output.kind === "group_count"
           ? "Count"
@@ -331,6 +393,8 @@ export function visualPlan(
       const measures = output.groups.map((g) =>
         cellOf("count" in g ? g.count : g.aggregate),
       );
+      // A computed measure's groups say how many entities had none of it.
+      const skipped = output.groups.some((g) => "skipped" in g && !!g.skipped);
       const table: VisualTable = {
         columns: [
           {
@@ -348,11 +412,13 @@ export function visualPlan(
           ...(output.kind === "grouped_aggregate"
             ? [{ label: "Values", numeric: true }]
             : []),
+          ...(skipped ? [{ label: "Skipped", numeric: true }] : []),
         ],
         rows: output.groups.map((g, i) => [
           values[i]!,
           measures[i]!,
           ...("values" in g ? [cellOf(g.values)] : []),
+          ...(skipped ? [cellOf("skipped" in g ? (g.skipped ?? 0) : 0)] : []),
         ]),
       };
       // A line has a point per date: the entities without one are in its
@@ -367,7 +433,7 @@ export function visualPlan(
               label: v.kind === "none" ? none : cellText(v),
               value: m.value,
               ...("values" in g
-                ? { detail: `Over ${plural(g.values, "value")}` }
+                ? { detail: overValues(g.values, g.skipped) }
                 : {}),
             },
           ];
@@ -403,15 +469,22 @@ export function visualPlan(
         columns.length,
         ...output.rows.map((row) => row.cells.length),
       );
+      // A column with neither a prop nor a computed number is its entity.
       const rows = output.rows.map((row) =>
         Array.from({ length: width }, (_, i) =>
-          cellOf(row.cells[i], !columns[i]?.prop),
+          cellOf(row.cells[i], !columns[i]?.prop && !columns[i]?.expr),
         ),
       );
       const cells = (i: number) => rows.map((row) => row[i]!);
+      // A position whose entity has a column of its own.
+      const entities = new Set(
+        columns.filter((c) => !c.prop && !c.expr).map((c) => c.at),
+      );
       const table: VisualTable = {
         columns: Array.from({ length: width }, (_, i) => ({
-          label: columns[i] ? col(columns[i]) : `Column ${i + 1}`,
+          label: columns[i]
+            ? col(columns[i], entities.has(columns[i].at))
+            : `Column ${i + 1}`,
           numeric: numeric(cells(i)),
         })),
         rows,
@@ -475,6 +548,21 @@ export function visualPlan(
       return { kind: "table", title, note, table };
     }
   }
+}
+
+/**
+ * What an aggregate is over: its values, and the entities a computed
+ * measure had none of, when any.
+ *
+ * @example
+ * overValues(3); // "Over 3 values"
+ * overValues(2, 1); // "Over 2 values · 1 without one, skipped"
+ */
+export function overValues(values: number, skipped?: number): string {
+  return (
+    `Over ${plural(values, "value")}` +
+    (skipped ? ` · ${skipped} without one, skipped` : "")
+  );
 }
 
 /** A visual the page can draw: its query, and the output it shows. */

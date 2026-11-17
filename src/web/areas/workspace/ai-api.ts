@@ -155,6 +155,14 @@ export const PROVIDERS: Record<FoundryAiProviderKind, ProviderCopy> = {
     agent: "bedrock",
     keyPlaceholder: "A long-term Bedrock API key, ABSK…",
   },
+  // The agent calls Cohere as an OpenAI-compatible server, at COHERE_BASE_URL.
+  FOUNDRY_AI_KIND_COHERE: {
+    title: "Cohere",
+    label: "Cohere",
+    logo: "/providers/cohere.svg",
+    agent: "openai_compatible",
+    keyPlaceholder: "A production API key",
+  },
   FOUNDRY_AI_KIND_OLLAMA: {
     title: "Ollama",
     label: "Ollama",
@@ -274,6 +282,8 @@ export function disclosure(
       return "Sent to Anthropic under your API key.";
     case "FOUNDRY_AI_KIND_OPENAI":
       return "Sent to OpenAI under your API key, with response storage off.";
+    case "FOUNDRY_AI_KIND_COHERE":
+      return "Sent to Cohere under your API key.";
     case "FOUNDRY_AI_KIND_AZURE_OPENAI": {
       const host = hostOf(provider.azureOpenai?.endpoint);
       return host
@@ -398,6 +408,22 @@ export const PROBE_DETAIL_COPY: Record<AgentProbeDetail, string> = {
   unpriced: "Helix has no price for it, so nothing was sent.",
   none: "",
 };
+
+// ---------------------------------------------------------------- Cohere
+
+/**
+ * Cohere's Compatibility API, which the agent and the Assistant call as an
+ * OpenAI-compatible server through Chat Completions (the WFE's
+ * ai.CohereBaseURL): the endpoint its models' ids name.
+ */
+export const COHERE_BASE_URL = "https://api.cohere.ai/compatibility/v1";
+
+/**
+ * The model Cohere's card starts every task on: its Command model that
+ * calls tools and answers in a JSON schema at a production key's full rate
+ * (newer ones are capped until Cohere's sales lift it).
+ */
+export const COHERE_MODEL = "command-a-03-2025";
 
 // ---------------------------------------------------------------- Ollama
 
@@ -965,6 +991,7 @@ const PROVIDER_FIELD: Record<FoundryAiProviderKind, keyof FoundryAiProvider> = {
   FOUNDRY_AI_KIND_OPENAI: "openai",
   FOUNDRY_AI_KIND_AZURE_OPENAI: "azureOpenai",
   FOUNDRY_AI_KIND_BEDROCK: "bedrock",
+  FOUNDRY_AI_KIND_COHERE: "cohere",
   FOUNDRY_AI_KIND_OLLAMA: "ollama",
   FOUNDRY_AI_KIND_OPENAI_COMPATIBLE: "openaiCompatible",
 };
@@ -1107,7 +1134,7 @@ const REGION = /^[a-z]{2}(-[a-z]+)+-\d+$/;
 /**
  * Why a kind's endpoint can't be saved here, or undefined when it can.
  * `value` is the Azure endpoint, the Bedrock region, or the Ollama or
- * custom server's base URL; Claude and OpenAI take none. Hosted, a server
+ * custom server's base URL; Claude, OpenAI and Cohere take none. Hosted, a server
  * must be https on a public host; a local install allows http and private
  * addresses. An Ollama server's is its own address, not its API's.
  *
@@ -1125,6 +1152,7 @@ export function endpointProblem(
   switch (kind) {
     case "FOUNDRY_AI_KIND_ANTHROPIC":
     case "FOUNDRY_AI_KIND_OPENAI":
+    case "FOUNDRY_AI_KIND_COHERE":
       return undefined;
     case "FOUNDRY_AI_KIND_AZURE_OPENAI":
       return azureEndpoint(value)
@@ -1327,9 +1355,9 @@ export type Choice = {
  * Whether saving `next` with the key left blank keeps the setting's key,
  * as the WFE decides (ai.CanReuseKey): only while the setting still holds
  * one, and only where it belongs to the endpoint the calls go to. A Claude,
- * OpenAI or Bedrock key belongs to the account, whatever the models; an
- * Azure key to its resource and draft deployment; a custom server's to its
- * URL; Ollama takes none.
+ * OpenAI, Bedrock or Cohere key belongs to the account, whatever the
+ * models; an Azure key to its resource and draft deployment; a custom
+ * server's to its URL; Ollama takes none.
  *
  * @example
  * canReuseKey({ id: "c", hasKey: true, provider: { anthropic: {} } }, { kind: "FOUNDRY_AI_KIND_ANTHROPIC", provider: { anthropic: {} }, models: { draft: "x", ask: "x", extract: "x", verify: "x" } }); // true
@@ -1344,6 +1372,7 @@ export function canReuseKey(
     case "FOUNDRY_AI_KIND_ANTHROPIC":
     case "FOUNDRY_AI_KIND_OPENAI":
     case "FOUNDRY_AI_KIND_BEDROCK":
+    case "FOUNDRY_AI_KIND_COHERE":
       return providerKind(was) === next.kind;
     case "FOUNDRY_AI_KIND_AZURE_OPENAI": {
       const before = azureEndpoint(was?.azureOpenai?.endpoint || ""),
@@ -1378,18 +1407,20 @@ export type Readers = {
 /**
  * The endpoint a provider's model ids name, as the WFE stores it: an Azure
  * resource's (its origin is in azure:{h8}/…) or a custom server's base URL
- * (compatible:{h8}/…); undefined for a kind whose ids name only the model,
+ * (compatible:{h8}/…), Cohere's being COHERE_BASE_URL, as the agent calls
+ * it; undefined for a kind whose ids name only the model,
  * and for the default, whose endpoint the WFE doesn't say. So a custom or
  * Azure default counts as another endpoint than any the workspace names.
  *
  * @example
  * idEndpoint({ openaiCompatible: { baseUrl: "https://LLM.example.com/v1/" } }); // "https://llm.example.com/v1"
  * idEndpoint({ azureOpenai: { endpoint: "https://acme.openai.azure.com" } }); // "https://acme.openai.azure.com/openai/v1"
+ * idEndpoint({ cohere: {} }); // "https://api.cohere.ai/compatibility/v1"
  * idEndpoint({ anthropic: {} }); // undefined
  */
 export const idEndpoint = (p?: FoundryAiProvider) =>
   azureEndpoint(p?.azureOpenai?.endpoint || "") ??
-  baseUrl(p?.openaiCompatible?.baseUrl || "");
+  baseUrl(p?.openaiCompatible?.baseUrl || (p?.cohere ? COHERE_BASE_URL : ""));
 
 /**
  * Whether documents are read again after a switch: the agent keeps what

@@ -408,9 +408,10 @@ func (e *eventSends) drop(ctx context.Context, key string) {
 // counted, by its outcome and by the front end it came through (via: the MCP,
 // the HTTP door or another), never with its pieces' content.
 //
-// With workflow_run_id, the send is recorded, with its pieces' ids, under that
-// open run of a workflow of the source's workspace (trackedRun, checked
-// before the send), once however often its client token replays it.
+// With workflow_run_id (the MCP's use_case_run_id), the send is recorded,
+// with its pieces' ids, under that open run of a use case of the source's
+// workspace (a workflow in the RPCs' names; trackedRun, checked before the
+// send), once however often its client token replays it.
 func (s *Service) SendFoundryEvents(ctx context.Context, req *foundryv1.SendFoundryEventsRequest) (*foundryv1.SendFoundryEventsResponse, error) {
 	run, err := s.trackedRun(ctx, req.GetWorkspaceId(), "", req.GetWorkflowRunId())
 	if err != nil {

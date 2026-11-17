@@ -382,6 +382,7 @@ var kindToProto = map[ai.Kind]foundryv1.FoundryAIKind{
 	ai.KindBedrock:     foundryv1.FoundryAIKind_FOUNDRY_AI_KIND_BEDROCK,
 	ai.KindOllama:      foundryv1.FoundryAIKind_FOUNDRY_AI_KIND_OLLAMA,
 	ai.KindCompatible:  foundryv1.FoundryAIKind_FOUNDRY_AI_KIND_OPENAI_COMPATIBLE,
+	ai.KindCohere:      foundryv1.FoundryAIKind_FOUNDRY_AI_KIND_COHERE,
 }
 
 var keyRuleToProto = map[ai.KeyRule]foundryv1.FoundryAIKey{
@@ -423,6 +424,8 @@ func providerFromProto(p *foundryv1.FoundryAIProvider) (ai.Provider, error) {
 		return ai.AzureOpenAI{Endpoint: strings.TrimSpace(k.AzureOpenai.GetEndpoint())}, nil
 	case *foundryv1.FoundryAIProvider_Bedrock:
 		return ai.Bedrock{Region: strings.TrimSpace(k.Bedrock.GetRegion()), FIPS: k.Bedrock.GetFips()}, nil
+	case *foundryv1.FoundryAIProvider_Cohere:
+		return ai.Cohere{}, nil
 	case *foundryv1.FoundryAIProvider_Ollama:
 		window := k.Ollama.GetContextTokens()
 		if window == 0 {
@@ -458,6 +461,8 @@ func providerToProto(p ai.Provider) *foundryv1.FoundryAIProvider {
 		return &foundryv1.FoundryAIProvider{Kind: &foundryv1.FoundryAIProvider_AzureOpenai{AzureOpenai: &foundryv1.FoundryAIAzureOpenAI{Endpoint: p.Endpoint}}}
 	case ai.Bedrock:
 		return &foundryv1.FoundryAIProvider{Kind: &foundryv1.FoundryAIProvider_Bedrock{Bedrock: &foundryv1.FoundryAIBedrock{Region: p.Region, Fips: p.FIPS}}}
+	case ai.Cohere:
+		return &foundryv1.FoundryAIProvider{Kind: &foundryv1.FoundryAIProvider_Cohere{Cohere: &foundryv1.FoundryAICohere{}}}
 	case ai.Ollama:
 		return &foundryv1.FoundryAIProvider{Kind: &foundryv1.FoundryAIProvider_Ollama{Ollama: &foundryv1.FoundryAIOllama{
 			BaseUrl: p.BaseURL, ContextTokens: p.ContextTokens,

@@ -304,7 +304,9 @@ export const VERDICT_LABELS: Record<
   essential: { label: "Essential", tone: "success" },
   helpful: { label: "Helpful", tone: "success" },
   marginal: { label: "Marginal", tone: "neutral" },
-  unused: { label: "Unused", tone: "warning" },
+  // It called the ontology, but the answer uses nothing it returned: a run
+  // that never called it isn't assessed (neverCalled).
+  unused: { label: "Not used", tone: "neutral" },
   misleading: { label: "Misleading", tone: "danger" },
 };
 
@@ -392,14 +394,16 @@ export function assessmentOf(json: string | undefined): Assessment | null {
  * A use case's verdicts in words, the most first by the verdicts' order.
  *
  *   verdictsText([{ verdict: "helpful", runs: "3" }, { verdict: "unused", runs: "1" }])
- *   // "3 helpful · 1 unused"
+ *   // "3 helpful · 1 not used"
  */
 export function verdictsText(
   counts: { verdict: string; runs?: string }[] | undefined,
 ): string {
   return VERDICTS.flatMap((v) => {
     const n = Number(counts?.find((c) => c.verdict === v)?.runs || 0);
-    return n > 0 ? [`${formatCount(n)} ${v}`] : [];
+    return n > 0
+      ? [`${formatCount(n)} ${VERDICT_LABELS[v].label.toLowerCase()}`]
+      : [];
   }).join(" · ");
 }
 
@@ -444,7 +448,10 @@ const num = (v?: number | string) => Number(v || 0);
 const share = (part: number, whole: number) =>
   whole > 0 ? part / whole : undefined;
 
-/** The runs the ontology helped (essential or helpful), of those assessed. */
+/**
+ * The runs the ontology helped (essential or helpful), of those assessed:
+ * a run that never called it is in neither.
+ */
 export const helpedShare = (t?: Totals) =>
   share(num(t?.helped), num(t?.assessed));
 
@@ -578,6 +585,7 @@ function addTotals(a: Totals | undefined, b: Totals | undefined): Totals {
     "assessed",
     "helped",
     "used",
+    "neverCalled",
     "claimsSupported",
     "claimsUnsupported",
     "claimsContradicted",
@@ -628,13 +636,26 @@ export const insightSeries = (
 /** The days a rate's trend reads each day over: a week, in a window long enough. */
 export const rollingDays = (windowDays: number) => (windowDays >= 30 ? 7 : 1);
 
-/** A day's runs by verdict, and those not assessed yet, for the runs chart. */
+/**
+ * A day's runs by verdict, those that never called the ontology, and those
+ * not assessed yet, for the runs chart.
+ *
+ *     verdictDay({ date: "d", totals: { runs: 4, assessed: 1, neverCalled: 2,
+ *       verdicts: [{ verdict: "helpful", runs: "1" }] } })
+ *     // { date: "d", essential: 0, helpful: 1, marginal: 0, unused: 0,
+ *     //   misleading: 0, not_called: 2, pending: 1 }
+ */
 export function verdictDay(d: FoundryWorkflowInsightDay) {
   const out: Record<string, number | string> = { date: d.date || "" };
   for (const v of VERDICTS) out[v] = verdictRuns(d.totals, v);
-  out.pending = Math.max(0, num(d.totals?.runs) - num(d.totals?.assessed));
+  out.not_called = num(d.totals?.neverCalled);
+  out.pending = notAssessed(d.totals);
   return out;
 }
+
+/** A window's runs not assessed yet: open, or finished after a call and not assessed. */
+export const notAssessed = (t?: Totals) =>
+  Math.max(0, num(t?.runs) - num(t?.assessed) - num(t?.neverCalled));
 
 /** A window's verdicts in scale order, with their share of assessed runs. */
 export function verdictParts(t?: Totals) {
@@ -662,17 +683,17 @@ const STEPS: {
 }[] = [
   { key: "started", label: "Started", why: "" },
   { key: "finished", label: "Finished", why: "still open" },
+  { key: "used", label: "Called the ontology", why: "didn’t call it" },
   { key: "assessed", label: "Assessed", why: "not assessed yet" },
-  { key: "used", label: "Used the ontology", why: "never called it" },
   { key: "helped", label: "Ontology helped", why: "it didn’t help" },
 ];
 
 /**
  * Where a window's runs went, step by step.
  *
- *     funnelSteps({ started: 10, finished: 8, assessed: 8, used: 6, helped: 5 })[3]
- *     // { key: "used", label: "Used the ontology", runs: 6, share: 0.6,
- *     //   left: { runs: 2, share: 0.25, why: "never called it" } }
+ *     funnelSteps({ started: 10, finished: 8, used: 6, assessed: 6, helped: 5 })[2]
+ *     // { key: "used", label: "Called the ontology", runs: 6, share: 0.6,
+ *     //   left: { runs: 2, share: 0.25, why: "didn’t call it" } }
  */
 export function funnelSteps(f?: FoundryWorkflowInsightFunnel): FunnelStep[] {
   const started = num(f?.started);
@@ -699,15 +720,15 @@ export function funnelSteps(f?: FoundryWorkflowInsightFunnel): FunnelStep[] {
  * Where a window's runs went as one sentence, when none left on the way;
  * undefined when some did (the steps say where) or there were none.
  *
- *     funnelText({ started: 2, finished: 2, assessed: 2, used: 2, helped: 2 })
- *     // "Every run finished, was assessed and used the ontology, and the ontology helped."
+ *     funnelText({ started: 2, finished: 2, used: 2, assessed: 2, helped: 2 })
+ *     // "Every run finished, called the ontology and was assessed, and the ontology helped."
  */
 export function funnelText(
   f?: FoundryWorkflowInsightFunnel,
 ): string | undefined {
   const steps = funnelSteps(f);
   if (!steps[0]?.runs || steps.some((s) => (s.left?.runs || 0) > 0)) return;
-  return `${steps[0].runs === 1 ? "The run" : "Every run"} finished, was assessed and used the ontology, and the ontology helped.`;
+  return `${steps[0].runs === 1 ? "The run" : "Every run"} finished, called the ontology and was assessed, and the ontology helped.`;
 }
 
 /** A gap kind as the pages say it. */
@@ -804,6 +825,7 @@ export const RUN_FILTERS = {
   helped: "Helped",
   not_helped: "Didn’t help",
   misleading: "Misleading",
+  not_called: "Didn’t use the ontology",
   pending: "Not assessed",
 } as const;
 export type RunFilter = keyof typeof RUN_FILTERS;
@@ -812,11 +834,25 @@ export const isRunFilter = (v: unknown): v is RunFilter =>
   typeof v === "string" && Object.hasOwn(RUN_FILTERS, v);
 
 /**
- * The filter a run falls under besides All: helped (essential, helpful),
- * didn't help (marginal, unused), misleading, or not assessed (open, queued,
- * failed or skipped).
+ * Whether a run finished without a call to the ontology: it isn't assessed,
+ * and one assessed before such runs went unassessed counts as never called.
+ * The agent didn't use the ontology for the request, or didn't pass the
+ * run's id on its calls. An open run may still call it.
+ *
+ *     neverCalled({ id: "r", status: "finished", counts: {} }) // true
+ *     neverCalled({ id: "r", status: "open", counts: {} }) // false
+ */
+export const neverCalled = (r: FoundryWorkflowRun) =>
+  r.status === "finished" && !num(r.counts?.accesses);
+
+/**
+ * The filter a run falls under besides All: didn't use the ontology
+ * (finished without a call, whatever an old assessment of it said), helped
+ * (essential, helpful), didn't help (marginal, unused), misleading, or not
+ * assessed (open, queued, failed or skipped).
  */
 export function runBucket(r: FoundryWorkflowRun): Exclude<RunFilter, "all"> {
+  if (neverCalled(r)) return "not_called";
   const a = r.assessment;
   if (a?.status !== "done" || !isVerdict(a.verdict)) return "pending";
   if (a.verdict === "essential" || a.verdict === "helpful") return "helped";
@@ -869,7 +905,9 @@ export function runShown(r: FoundryWorkflowRun, q: RunQuery): boolean {
   }
   if (q.filter !== "all" && runBucket(r) !== q.filter) return false;
   if (!q.issue) return true;
-  const a = assessmentOf(r.assessment?.assessmentJson);
+  // A run that never called the ontology named no gap, whatever an old
+  // assessment of it said.
+  const a = neverCalled(r) ? null : assessmentOf(r.assessment?.assessmentJson);
   return (
     !!a &&
     [...a.gaps.map((g) => g.what), ...a.suggestions].some(

@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/helixdb/helix-foundry/backend/automation/suggest"
+	"github.com/helixdb/helix-foundry/backend/ontologyagent"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -417,6 +419,25 @@ func TestQuestionsLimit(t *testing.T) {
 	assert.Equal(t, []string{"Q1?", "Q2?", "Q3?", "Q4?"}, suggest.Questions(def, 4))
 	assert.Len(t, suggest.Questions(def, suggest.MaxQuestions), suggest.MaxQuestions)
 	assert.Empty(t, suggest.Questions(map[string]any{}, 4))
+}
+
+// The sample's suggested questions, the first of which its tour asks by itself: each is answered
+// whole by a count, a group or a few rows, never a list of every account's records.
+func TestSampleQuestions(t *testing.T) {
+	sources := map[string]string{}
+	for _, table := range sample.Tables {
+		sources[table] = ontologyagent.TableSourceID("conn-acme", table)
+	}
+	raw, err := sample.Draft(sample.Acme, sources, "set-acme")
+	require.NoError(t, err)
+	var def map[string]any
+	require.NoError(t, json.Unmarshal(raw, &def))
+	assert.Equal(t, []string{
+		"Which roles do our contacts play, and how many hold each?",
+		"How much do active subscriptions on each plan bring in each month?",
+		"Which invoices are overdue, which accounts owe them, and how much?",
+		"Which support tickets aren't solved yet, for which accounts, and who raised them?",
+	}, suggest.Questions(def, 4))
 }
 
 func TestNaturalCompareOrdersDigitsByValue(t *testing.T) {

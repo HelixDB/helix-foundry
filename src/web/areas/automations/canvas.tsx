@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BackgroundVariant,
+  ConnectionMode,
   Handle,
   MarkerType,
   Position,
@@ -40,11 +41,14 @@ import {
   LIMITS,
   cannotConnect,
   connect,
+  edgeSides,
   incomplete,
-  moveNode,
   removeSelection,
+  type Box,
   type Kind,
   type Names,
+  type Places,
+  type Side,
   type StepState,
 } from "./model";
 import { KIND_ICONS, STEP_STATUS, nodeIcon, stepTitle } from "./parts";
@@ -53,9 +57,12 @@ import { KIND_ICONS, STEP_STATUS, nodeIcon, stepTitle } from "./parts";
 // so the rest of the app never carries it: its steps as cards, top to
 // bottom, joined by their edges (a condition's labelled When met and
 // Otherwise). It fills the automation's page under its bar. Editable, its
-// person drags steps, joins them from a step's lower handle to another's
-// upper one, and selects one to change it in the inspector; read only (a
+// person drags steps (onMove: where they are drawn, which saves on its own),
+// joins them from a handle on any side of a step to any side of another,
+// and selects one to change it in the inspector; read only (a
 // run's colours, a member's view, a phone) it pans, zooms and selects. A
+// An edge leaves and arrives by the sides its steps face (model.ts
+// edgeSides), so steps side by side join straight across. A
 // toolbar floats at its foot: the zoom, fit, pan or select, and, editable,
 // Add step (A) and Tidy. Its colours are the kit's tokens
 // (automations.css); the outline (outline.tsx) is the same graph for
@@ -84,9 +91,16 @@ const StepCard = memo(function StepCard({
         selected && "is-selected",
       )}
     >
-      {node.kind !== "trigger" && (
-        <Handle type="target" position={Position.Top} />
-      )}
+      {/* A handle on each side, each where joins leave and arrive (the
+          flow's loose connection mode): an edge picks its sides. */}
+      {SIDES.map((side) => (
+        <Handle
+          key={side}
+          id={side}
+          type="source"
+          position={SIDE_POSITIONS[side]}
+        />
+      ))}
       <div className="au-node-head">
         <span className="au-node-icon" aria-hidden>
           <Icon size={13} />
@@ -106,11 +120,20 @@ const StepCard = memo(function StepCard({
           {problem}
         </p>
       )}
-      <Handle type="source" position={Position.Bottom} />
     </div>
   );
 });
 const NODE_TYPES = { step: StepCard };
+
+const SIDES: readonly Side[] = ["top", "right", "bottom", "left"];
+const SIDE_POSITIONS: Record<Side, Position> = {
+  top: Position.Top,
+  right: Position.Right,
+  bottom: Position.Bottom,
+  left: Position.Left,
+};
+// A card's size until the canvas has measured it (automations.css .au-node).
+const CARD = { width: 248, height: 84 };
 
 const ADDABLE: Exclude<Kind, "trigger">[] = [
   "assistant",
@@ -129,9 +152,13 @@ export type CanvasProps = {
   states?: ReadonlyMap<string, StepState>;
   selected?: string;
   onSelect?: (id: string | undefined) => void;
-  // Set, the person edits the graph: every change comes back as a new spec.
-  // A join the graph can't take (model.ts cannotConnect) isn't offered.
+  // Set, the person edits the graph: every change to its steps comes back as
+  // a new spec. A join the graph can't take (model.ts cannotConnect) isn't
+  // offered.
   onChange?: (spec: AutomationSpec) => void;
+  // Set with onChange: steps dragged to new places (every step a drag
+  // moved), apart from changes to the steps.
+  onMove?: (places: Places) => void;
   // Set with onChange: Add step's kinds, after the selected step.
   onAdd?: (kind: Exclude<Kind, "trigger">) => void;
   // Set with onChange: the steps laid out anew (model.ts tidy).
@@ -310,6 +337,7 @@ function Canvas({
   selected,
   onSelect,
   onChange,
+  onMove,
   onAdd,
   onTidy,
   label,
@@ -327,7 +355,7 @@ function Canvas({
         position: n.position,
         selected: n.id === selected,
         deletable: editable && n.kind !== "trigger",
-        ariaLabel: `${KIND_HEADS[n.kind]}: ${stepTitle(n, names, email)}`,
+        ariaLabel: `${KIND_HEADS[n.kind]}: ${stepTitle(n, names, email, "brief")}`,
         data: {
           node: n,
           title: stepTitle(n, names, email),
@@ -337,32 +365,62 @@ function Canvas({
       })),
     [spec, names, email, states, selected, editable],
   );
-  // Dragging moves the canvas's own copy; the spec takes the place it ends at.
+  // Dragging moves the canvas's own copy; the spec takes the place it ends
+  // at. A spec that comes in mid-drag (a save of an earlier move landing)
+  // waits for its end, so the step under the pointer never jumps back.
   const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>(derived);
-  useEffect(() => setNodes(derived), [derived, setNodes]);
+  const dragging = useRef(false);
+  useEffect(() => {
+    if (!dragging.current) setNodes(derived);
+  }, [derived, setNodes]);
+  // Each edge by the sides its steps face, where the canvas has them now (a
+  // drag redraws them as it goes).
+  const boxes = useMemo(
+    () =>
+      new Map<string, Box>(
+        nodes.map((n) => [
+          n.id,
+          {
+            ...n.position,
+            width: n.measured?.width ?? CARD.width,
+            height: n.measured?.height ?? CARD.height,
+          },
+        ]),
+      ),
+    [nodes],
+  );
   const edges = useMemo<Edge[]>(
     () =>
-      spec.edges.map((e) => ({
-        id: `${e.from}->${e.to}`,
-        source: e.from,
-        target: e.to,
-        deletable: editable,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-        className: cx(
-          "au-edge",
-          e.branch && `au-edge--${e.branch}`,
-          states?.get(e.from) === "succeeded" &&
-            states?.get(e.to) !== "waiting" &&
-            states?.get(e.to) !== "skipped" &&
-            "is-taken",
-        ),
-        ...(e.branch && {
-          label: e.branch === "true" ? "When met" : "Otherwise",
-          labelBgPadding: [6, 3] as [number, number],
-          labelBgBorderRadius: 4,
-        }),
-      })),
-    [spec, states, editable],
+      spec.edges.map((e) => {
+        const from = boxes.get(e.from),
+          to = boxes.get(e.to),
+          sides = from && to ? edgeSides(from, to) : undefined;
+        return {
+          id: `${e.from}->${e.to}`,
+          source: e.from,
+          target: e.to,
+          ...(sides && {
+            sourceHandle: sides.source,
+            targetHandle: sides.target,
+          }),
+          deletable: editable,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+          className: cx(
+            "au-edge",
+            e.branch && `au-edge--${e.branch}`,
+            states?.get(e.from) === "succeeded" &&
+              states?.get(e.to) !== "waiting" &&
+              states?.get(e.to) !== "skipped" &&
+              "is-taken",
+          ),
+          ...(e.branch && {
+            label: e.branch === "true" ? "When met" : "Otherwise",
+            labelBgPadding: [6, 3] as [number, number],
+            labelBgBorderRadius: 4,
+          }),
+        };
+      }),
+    [spec, states, editable, boxes],
   );
   const select = mode === "select";
   return (
@@ -382,6 +440,7 @@ function Canvas({
         maxZoom={1.5}
         nodesDraggable={editable}
         nodesConnectable={editable}
+        connectionMode={ConnectionMode.Loose}
         elementsSelectable={!!onSelect}
         // Select: a drag on the pane selects, the wheel or two fingers pan;
         // pan: a drag on the pane moves it.
@@ -393,7 +452,15 @@ function Canvas({
         onNodesChange={onNodesChange}
         onNodeClick={(_, n) => onSelect?.(n.id)}
         onPaneClick={() => onSelect?.(undefined)}
-        onNodeDragStop={(_, n) => onChange?.(moveNode(spec, n.id, n.position))}
+        onNodeDragStart={() => {
+          dragging.current = true;
+        }}
+        onNodeDragStop={(_, _node, moved) => {
+          dragging.current = false;
+          if (onMove)
+            onMove(Object.fromEntries(moved.map((n) => [n.id, n.position])));
+          else setNodes(derived);
+        }}
         onConnect={(c) => onChange?.(connect(spec, c.source, c.target))}
         isValidConnection={(c) =>
           editable && !cannotConnect(spec, c.source, c.target)

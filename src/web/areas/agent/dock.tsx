@@ -161,7 +161,8 @@ export function AgentDock({
   const title =
     (threadId && thread.data?.thread.title) ||
     (threadId ? "Thread" : "New thread");
-  const disabled = agentRefusal(threads.error) === "FOUNDRY_AGENT_DISABLED";
+  const disabled = threads.data === "off",
+    list = threads.data === "off" ? undefined : threads.data?.threads;
   const where = useThreadRuntime(threadId, thread.data);
   return (
     <div className="ag-dock" data-replay-block>
@@ -182,11 +183,11 @@ export function AgentDock({
           <MenuItem icon={MessageSquarePlus} onSelect={() => open("")}>
             New thread
           </MenuItem>
-          {!!threads.data?.threads?.length && (
+          {!!list?.length && (
             <>
               <MenuSeparator />
               <MenuLabel>Threads</MenuLabel>
-              {threads.data.threads.map((t) => (
+              {list.map((t) => (
                 <MenuItem
                   key={t.id}
                   checked={t.id === threadId}
@@ -301,12 +302,17 @@ export function useThreadRuntime(
     enabled: LOCAL && role === "owner",
     retry: false,
     refetchInterval: (q) =>
-      q.state.data && threadRuntime(runtimeNow, q.state.data).state !== "ready"
+      q.state.data &&
+      q.state.data !== "off" &&
+      threadRuntime(runtimeNow, q.state.data).state !== "ready"
         ? RUNTIME_POLL_MS
         : false,
   });
   return !threadId || thread
-    ? threadRuntime(runtimeNow, setting.data)
+    ? threadRuntime(
+        runtimeNow,
+        setting.data === "off" ? undefined : setting.data,
+      )
     : undefined;
 }
 
@@ -403,6 +409,14 @@ export function Transcript({
     body = useRef<HTMLDivElement>(null),
     stick = useRef(true),
     lastTop = useRef(0),
+    // Its height at the last scroll, and when its reader last moved it
+    // (wheel, touch, keys, a pointer): a move up is the reader's when they
+    // just moved it, or when nothing changed size since (find in page, a
+    // screen reader, the scrollbar). The browser moves it up too, clamping
+    // it while a step's content is swapped (an answer moving under a later
+    // step), and that is no reading up.
+    lastHeight = useRef(0),
+    readerAt = useRef(-Infinity),
     turnsSeen = useRef(0);
   const threadId = data?.thread.id,
     turns = data?.turns?.length ?? 0;
@@ -413,6 +427,7 @@ export function Transcript({
     // Another thread opens at its end, wherever the last one was read.
     stick.current = true;
     lastTop.current = 0;
+    lastHeight.current = 0;
     const follow = () => {
       if (stick.current) el.scrollTop = el.scrollHeight;
     };
@@ -439,6 +454,9 @@ export function Transcript({
     () => new Map((data?.actions || []).map((a) => [a.id, a])),
     [data?.actions],
   );
+  const reading = () => {
+    readerAt.current = performance.now();
+  };
   return (
     <div
       ref={log}
@@ -446,6 +464,10 @@ export function Transcript({
       role="log"
       aria-label="Conversation"
       tabIndex={0}
+      onWheel={reading}
+      onTouchMove={reading}
+      onPointerDown={reading}
+      onKeyDown={reading}
       onScroll={(e) => {
         const el = e.currentTarget;
         // At the end it follows again; it stops only when its reader moves
@@ -453,8 +475,14 @@ export function Transcript({
         // scroll's event can come after they grew, short of the new end.
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 48)
           stick.current = true;
-        else if (el.scrollTop < lastTop.current) stick.current = false;
+        else if (
+          el.scrollTop < lastTop.current &&
+          (el.scrollHeight === lastHeight.current ||
+            performance.now() - readerAt.current < 1000)
+        )
+          stick.current = false;
         lastTop.current = el.scrollTop;
+        lastHeight.current = el.scrollHeight;
       }}
     >
       <div ref={body} className="ag-log-body">
@@ -1106,7 +1134,9 @@ function PlainText({
  * it runs, and while the setting's tool check failed (its turns would fail
  * at once, each a message of the hour's), saying why; Stop ends the live
  * turn. A page that holds a conversation gives its own `placeholder` and
- * may start it with `initialText` (a suggestion's prompt); a new
+ * may start it with `initialText` (a suggestion's prompt) and `about`, the
+ * ontology that suggestion was written for, which joins the page context
+ * where the page names none (a new workflow's page), on the chip too; a new
  * conversation's box starts taller (`minRows`) than a reply's. A grantee's
  * Founder only reads and asks about what its grants cover, so its default
  * says so, and the workspace's AI setting (which it can't read) isn't read.
@@ -1120,6 +1150,7 @@ export function Composer({
   onNavigate,
   placeholder,
   initialText = "",
+  about,
   minRows = 2,
 }: {
   // The open thread; empty for a new one. `thread` once it is read.
@@ -1134,12 +1165,14 @@ export function Composer({
   onNavigate?: () => void;
   placeholder?: string;
   initialText?: string;
+  // An ontology id.
+  about?: string;
   minRows?: number;
 }) {
   const { id: ws, role, grantee } = useWorkspace(),
     location = useLocation(),
     qc = useQueryClient();
-  const page = pageContext(location.pathname, location.search),
+  const page = pageContext(location.pathname, location.search, about),
     pageKey = page
       ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}/${page.newAutomation ? "new" : ""}`
       : "";
@@ -1392,7 +1425,11 @@ export function PromptInput({
   return <textarea {...rest} ref={inputRef} rows={minRows} value={value} />;
 }
 
-/** "Looking at: <ontology> / <load>" or "<dashboard>", named from what the app has read. */
+/**
+ * "Looking at: <ontology> / <load>" or "<dashboard>", or "Making a new
+ * workflow" (for an ontology, a suggestion's), named from what the app has
+ * read.
+ */
 function PageChip({
   context,
   onDrop,
@@ -1401,7 +1438,7 @@ function PageChip({
   onDrop: () => void;
 }): ReactNode {
   const { id: ws } = useWorkspace();
-  if (context.newAutomation)
+  if (context.newAutomation && !context.ontologyId)
     return (
       <span className="ag-chip">
         <Tag>Making a new workflow</Tag>
@@ -1455,10 +1492,13 @@ function NamedChip({
   return (
     <span className="ag-chip">
       <Tag>
-        Looking at: {name}
-        {context.loadId
-          ? ` / ${load ? `${loadVersion(load)} load` : "a load"}`
-          : ""}
+        {context.newAutomation
+          ? `Making a new workflow for ${name}`
+          : `Looking at: ${name}${
+              context.loadId
+                ? ` / ${load ? `${loadVersion(load)} load` : "a load"}`
+                : ""
+            }`}
       </Tag>
       <DropChip onDrop={onDrop} />
     </span>

@@ -810,9 +810,9 @@ ORDER BY checked_at IS NOT NULL, checked_at, id LIMIT ?`, every.Microseconds(), 
 // becomes visible later with an earlier end time. Rows a fire passes without
 // a run (another outcome, a load that failed) move the cursor all the same.
 //
-// A sync or a load an automation's run started comes with that run
-// (FoundryAutomationEnded.Cause), read by its primary key, so the trigger can
-// tell work its own automation set off.
+// A sync or a load an automation's run started, or a document a sync it
+// started wrote, comes with that run (FoundryAutomationEnded.Cause), read by
+// its primary key, so the trigger can tell work its own automation set off.
 func (s *mysqlDB) FindFoundryAutomationEnded(ctx context.Context, a *model.FoundryAutomation, settle time.Duration, limit int) ([]model.FoundryAutomationEnded, error) {
 	if a.Status != model.FoundryAutomationActive || a.Cursor == nil || a.TriggerTarget == nil {
 		return nil, fmt.Errorf("foundry automation %s watches nothing", a.ID)
@@ -834,7 +834,7 @@ WHERE w.ontology_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.finished_
 		q = `SELECT w.finished_at, w.id, w.status, NULL, ` + causeless + ` FROM foundry_ontology_generations w
 WHERE w.ontology_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.status IN ('succeeded', 'failed') AND JSON_EXTRACT(w.input, '$.revise') IS NULL`
 	case "document_arrived":
-		q = `SELECT w.uploaded_at AS finished_at, w.id, w.status, NULL, ` + causeless + ` FROM foundry_documents w
+		q = `SELECT w.uploaded_at AS finished_at, w.id, w.status, NULL, ` + caused + ` FROM foundry_documents w` + byRun + `
 WHERE w.set_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.status='uploaded' AND w.uploaded_at IS NOT NULL`
 	default:
 		return nil, fmt.Errorf("foundry automation %s: no ended work of trigger %q", a.ID, a.TriggerKind)

@@ -98,13 +98,16 @@ func automationRefusal(workspaceID string, err error) (error, bool) {
 	if !errors.As(err, &r) {
 		return nil, false
 	}
-	switch r.Reason {
-	case foundrymodel.FoundryAutomationNotOwner, foundrymodel.FoundryAutomationNotAllowed:
-		return status.Error(codes.PermissionDenied, r.Detail), true
-	case foundrymodel.FoundryAutomationRunsPerDay:
+	if r.Reason == foundrymodel.FoundryAutomationRunsPerDay {
 		return status.Error(codes.ResourceExhausted, r.Detail), true
 	}
+	// Not the owner's (or a manager's) is FAILED_PRECONDITION, saying who
+	// may, never PERMISSION_DENIED, which agents read as not found: every
+	// person of the workspace lists its workflows, and the store refuses
+	// only one it found there.
 	reason := map[foundrymodel.FoundryAutomationRefusalReason]string{
+		foundrymodel.FoundryAutomationNotOwner:   "FOUNDRY_AUTOMATION_NOT_OWNER",
+		foundrymodel.FoundryAutomationNotAllowed: "FOUNDRY_AUTOMATION_NOT_ALLOWED",
 		foundrymodel.FoundryAutomationChanged:    "FOUNDRY_AUTOMATION_CHANGED",
 		foundrymodel.FoundryAutomationLimit:      "FOUNDRY_AUTOMATION_LIMIT",
 		foundrymodel.FoundryAutomationUnapproved: "FOUNDRY_AUTOMATION_UNAPPROVED",
@@ -136,6 +139,8 @@ func (s *Service) automationSpec(ctx context.Context, workspaceID, raw string) (
 		return automation.Spec{}, nil, status.Error(codes.InvalidArgument, "spec_json: "+err.Error())
 	}
 	targets := spec.Targets()
+	// owners are the connectors whose syncs write the sets it names.
+	owners := map[string]string{}
 	for _, check := range []struct {
 		ids  []string
 		what string
@@ -149,7 +154,13 @@ func (s *Service) automationSpec(ctx context.Context, workspaceID, raw string) (
 			}
 			return err
 		}},
-		{targets.Sets, "document set", func(id string) error { _, err := s.deps.DB.GetFoundryDocumentSet(ctx, workspaceID, id); return err }},
+		{targets.Sets, "document set", func(id string) error {
+			set, err := s.deps.DB.GetFoundryDocumentSet(ctx, workspaceID, id)
+			if err == nil && set.Owner != nil {
+				owners[id] = set.Owner.ConnectorID
+			}
+			return err
+		}},
 		{targets.Dashboards, "dashboard", func(id string) error { _, err := s.deps.DB.GetFoundryDashboard(ctx, workspaceID, id); return err }},
 	} {
 		for _, target := range check.ids {
@@ -158,6 +169,25 @@ func (s *Service) automationSpec(ctx context.Context, workspaceID, raw string) (
 				return automation.Spec{}, nil, status.Errorf(codes.InvalidArgument, "spec_json names the %s %s, which this workspace hasn't", check.what, target)
 			case err != nil:
 				return automation.Spec{}, nil, status.Errorf(codes.Internal, "read the %s %s: %v", check.what, target, err)
+			}
+		}
+	}
+	// A sync of the connector whose documents its trigger waits on would
+	// start another run each time it ran, as ParseSpec refuses for syncs and
+	// loads; only here is the set's connector known. The worker skips what a
+	// sync another workflow started on its runs' behalf wrote all the same.
+	if arrived, ok := spec.Trigger().(automation.DocumentArrived); ok && owners[arrived.SetID] != "" {
+		for _, n := range spec.Nodes() {
+			var actions []automation.Action
+			switch c := n.Config.(type) {
+			case automation.ActionNode:
+				actions = []automation.Action{c.Action}
+			case automation.AssistantNode:
+				actions = c.Allow
+			}
+			if slices.Contains(actions, automation.Action(automation.SyncConnector{ConnectorID: owners[arrived.SetID]})) {
+				return automation.Spec{}, nil, status.Errorf(codes.InvalidArgument,
+					"spec_json: node %s syncs the connector whose documents its trigger waits on, so each run would start another: start it on a schedule instead", n.ID)
 			}
 		}
 	}
@@ -351,7 +381,7 @@ func automationOntologiesToProto(ontologies []foundrymodel.FoundryAutomationOnto
 		switch t := o.Tracking.(type) {
 		case foundrymodel.FoundryAutomationTracked:
 			w := t.Workflow
-			p.WorkflowId, p.Runs, p.FinishedRuns, p.Verdicts = w.ID, w.Runs, w.FinishedRuns, verdictCountsToProto(t.Verdicts)
+			p.WorkflowId, p.Runs, p.FinishedRuns, p.NeverCalledRuns, p.Verdicts = w.ID, w.Runs, w.FinishedRuns, w.NeverCalledRuns, verdictCountsToProto(t.Verdicts)
 			if w.LastRunAt != nil {
 				p.LastRunAt = timestamppb.New(*w.LastRunAt)
 			}
@@ -679,7 +709,10 @@ func (s *Service) GetFoundryAutomationRun(ctx context.Context, req *foundryv1.Ge
 	for _, o := range ontologies {
 		p := &foundryv1.FoundryAutomationRunOntology{OntologyId: o.OntologyID, OntologyName: o.OntologyName, WorkflowId: o.Run.WorkflowID,
 			WorkflowRunId: o.Run.ID, Status: string(o.Run.Status())}
-		if o.Assessment != nil {
+		// One that never called it shows no assessment, as any workflow
+		// run (foundryWorkflowRunToProto).
+		p.NeverCalled = o.Run.Finished != nil && o.Run.Counts.Accesses == 0
+		if o.Assessment != nil && !p.NeverCalled {
 			p.AssessmentStatus, p.Verdict = string(o.Assessment.Status), o.Assessment.Verdict
 		}
 		out.Ontologies = append(out.Ontologies, p)

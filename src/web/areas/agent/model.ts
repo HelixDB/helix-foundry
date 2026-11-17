@@ -108,20 +108,33 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
  * What the person is looking at, from the URL: an ontology's pages, its
  * Explorer or Analyst, and the load they read (a load's page, or `?load=`),
  * a dashboard, or the page that starts a new workflow. Ids only, never
- * names; null anywhere else.
+ * names; null anywhere else. `about`, the ontology a suggestion picked there
+ * was written for, names the ontology where the page names neither an
+ * ontology nor a dashboard (the new workflow's page; anywhere else
+ * Founder's suggestions show, the page's ontology is theirs).
  *
  * @example
  * pageContext("/ontology/ont_1/loads/load_2", ""); // { ontologyId: "ont_1", loadId: "load_2" }
  * pageContext("/explore/ont_1/records", "?load=load_3"); // { ontologyId: "ont_1", loadId: "load_3" }
  * pageContext("/dashboards/dash_1", ""); // { dashboardId: "dash_1" }
  * pageContext("/workflows/new", "?thread=thr_1"); // { newAutomation: true }
+ * pageContext("/workflows/new", "", "ont_1"); // { newAutomation: true, ontologyId: "ont_1" }
+ * pageContext("/ask/ont_1", "", "ont_2"); // { ontologyId: "ont_1" }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
 export function pageContext(
   pathname: string,
   search: string,
+  about?: string,
 ): AgentPageContext | null {
+  const page = urlContext(pathname, search);
+  return about && ID.test(about) && !page?.ontologyId && !page?.dashboardId
+    ? { ...page, ontologyId: about }
+    : page;
+}
+
+function urlContext(pathname: string, search: string): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
   if (section === "workflows")
     return ontologyId === "new" && sub === undefined
@@ -1243,8 +1256,11 @@ const DISPLAYS: {
       : undefined;
   },
   publish_dashboard: (d) => {
-    const dashboard = dashboardRef(d.dashboard);
-    return dashboard ? { dashboard } : undefined;
+    const dashboard = dashboardRef(d.dashboard),
+      days = num(d.expires_in_days);
+    return dashboard
+      ? { dashboard, ...opt("expires_in_days", days) }
+      : undefined;
   },
   unpublish_dashboard: (d) => {
     const dashboard = dashboardRef(d.dashboard);
@@ -1808,8 +1824,21 @@ const VIEWS: {
     title: d.dashboard.published
       ? `Refresh the public snapshot of ${quoted(d.dashboard)}`
       : `Publish the dashboard ${quoted(d.dashboard)} at a public link`,
-    facts: [{ label: "Dashboard", value: dashboardText(d.dashboard) }],
-    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
+    facts: [
+      { label: "Dashboard", value: dashboardText(d.dashboard) },
+      {
+        label: "Link ends",
+        value:
+          d.expires_in_days === undefined
+            ? d.dashboard.published
+              ? "As it is set now"
+              : "Never"
+            : d.expires_in_days === 0
+              ? "Never"
+              : `${d.expires_in_days} days after publishing`,
+      },
+    ],
+    does: "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in, until it is published again. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder. To share it inside the workspace, its own page’s link is enough.",
     caution: "Anyone who has the link sees this data.",
     run: "Publish",
     target: nameOf(d.dashboard),

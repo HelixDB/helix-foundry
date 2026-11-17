@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -25,9 +26,10 @@ import (
 // Assess, on the workspace's question model, of a finished run's request,
 // the calls it recorded (a question's answer read from its row, a send's
 // source and an upload's document named) and its answer, against the
-// ontology version the run read. An assessment is skipped once the
-// workspace's month of them is spent; a failure a retry may fix is tried
-// again, up to max_attempts.
+// ontology version the run read. An assessment of a run that made no call
+// to the ontology is skipped at $0, as is one once the workspace's month of
+// them is spent; a failure a retry may fix is tried again, up to
+// max_attempts.
 
 // assessPerTick bounds the assessments one tick runs, so a backlog shares
 // the worker's time with the next tick's checks.
@@ -122,14 +124,24 @@ func (a *assessor) run(ctx context.Context, claimed *model.FoundryWorkflowAssess
 	}
 }
 
-// attempt runs one attempt: skipped when the month's budget can't cover it,
-// else the agent's Assess of the run.
+// attempt runs one attempt: skipped when the run made no call to the
+// ontology or the month's budget can't cover it, else the agent's Assess of
+// the run.
 func (a *assessor) attempt(ctx context.Context, claimed *model.FoundryWorkflowAssessment) model.FoundryWorkflowAssessmentOutcome {
 	if claimed.Attempts > a.cfg.MaxAttempts {
 		// Its earlier attempts' workers stopped before storing what came of
 		// them, as many times as a failure gets.
 		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentFailed,
 			Error: "the assessment kept stopping before it finished"}
+	}
+	request, err := a.request(ctx, claimed)
+	if err != nil {
+		return a.retry(claimed, 0, "the run couldn't be read; Helix will retry")
+	}
+	if len(request.Calls) == 0 {
+		// Queued before a run that made no call stopped being queued: there
+		// is nothing of the ontology to assess, so it costs nothing.
+		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentSkipped, Error: model.FoundryWorkflowNeverCalled}
 	}
 	spent, err := a.db.SumFoundryWorkflowAssessmentSpend(ctx, claimed.WorkspaceID, a.month(a.now()))
 	if err != nil {
@@ -138,10 +150,6 @@ func (a *assessor) attempt(ctx context.Context, claimed *model.FoundryWorkflowAs
 	if spent+a.cfg.MaxMicros() > a.cfg.MonthlyMicros() {
 		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentSkipped,
 			Error: fmt.Sprintf("this workspace's $%.2f of run assessments for the month is spent", a.cfg.MonthlyUSD)}
-	}
-	request, err := a.request(ctx, claimed)
-	if err != nil {
-		return a.retry(claimed, 0, "the run couldn't be read; Helix will retry")
 	}
 	info, err := a.agent.Info(ctx)
 	if err != nil {
@@ -208,9 +216,14 @@ func (a *assessor) waitForAgent(why string) model.FoundryWorkflowAssessmentOutco
 }
 
 // retry queues the assessment again after retry_backoff, or fails it once
-// it has had max_attempts, saying why.
+// it has had max_attempts, saying why: then without the promise of a retry
+// why ends in, saying Helix stopped.
 func (a *assessor) retry(claimed *model.FoundryWorkflowAssessment, spent int64, why string) model.FoundryWorkflowAssessmentOutcome {
 	if claimed.Attempts >= a.cfg.MaxAttempts {
+		for _, promise := range []string{", and Helix will retry", "; Helix will retry"} {
+			why = strings.TrimSuffix(why, promise)
+		}
+		why = fmt.Sprintf("%s; Helix stopped after %d attempts", why, a.cfg.MaxAttempts)
 		return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentFailed, Error: why, USDMicros: spent}
 	}
 	return model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentQueued, Error: why, USDMicros: spent,

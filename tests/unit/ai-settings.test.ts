@@ -36,7 +36,7 @@ const ROLE_MODELS = (name: string) => ({
 
 describe("every kind and failure the contracts declare", () => {
   it("has a card, a mark or a text card, and a disclosure line", () => {
-    expect(KINDS).toHaveLength(6);
+    expect(KINDS).toHaveLength(7);
     expect(Object.keys(AI.PROVIDERS).sort()).toEqual([...KINDS].sort());
     expect(AI.PROVIDER_KINDS.sort()).toEqual([...KINDS].sort());
     for (const kind of KINDS) {
@@ -44,10 +44,11 @@ describe("every kind and failure the contracts declare", () => {
       expect(AI.PROVIDERS[kind].label).not.toBe("");
       expect(AI.disclosure(kind)).toMatch(/\.$/);
     }
-    // The agent's kinds, which its catalog rows and Ask events name.
-    expect(KINDS.map((k) => AI.PROVIDERS[k].agent).sort()).toEqual(
-      constants("ask_event", "ProviderKind").sort(),
-    );
+    // The agent's kinds, which its catalog rows and Ask events name: every
+    // one a card's, Cohere's being an OpenAI-compatible server's.
+    expect(
+      [...new Set(KINDS.map((k) => AI.PROVIDERS[k].agent))].sort(),
+    ).toEqual(constants("ask_event", "ProviderKind").sort());
   });
 
   it("has copy for each model failure and probe detail", () => {
@@ -383,6 +384,114 @@ describe("a custom OpenAI-compatible server", () => {
     expect(AI.pickPriceText(COMPAT, { name: "m", free: {} })).toBe(
       "No cost counted",
     );
+  });
+});
+
+describe("Cohere", () => {
+  const COHERE = "FOUNDRY_AI_KIND_COHERE";
+  const RATES = { inputUsdPerMtok: "2.5", outputUsdPerMtok: "10" };
+
+  it("is called at the WFE's Compatibility API address", () => {
+    // The backend's ai.CohereBaseURL, which its model ids name.
+    const go = readFileSync(
+      new URL("../../backend/ai/settings.go", import.meta.url),
+      "utf8",
+    );
+    expect(go).toContain(`CohereBaseURL = "${AI.COHERE_BASE_URL}"`);
+  });
+
+  it("is called as an OpenAI-compatible server at its Compatibility API", () => {
+    expect(AI.providerKind({ cohere: {} })).toBe(COHERE);
+    expect(AI.PROVIDERS[COHERE].agent).toBe("openai_compatible");
+    expect(AI.idEndpoint({ cohere: {} })).toBe(
+      "https://api.cohere.ai/compatibility/v1",
+    );
+    expect(AI.endpointProblem(COHERE, "", false)).toBeUndefined();
+    expect(AI.disclosure(COHERE)).toBe("Sent to Cohere under your API key.");
+    expect(AI.runsOn(COHERE, false)).toBe("Cohere, with your API key");
+  });
+
+  it("prices its models only at the owner's rates", () => {
+    expect(AI.pricedModels(COHERE)).toEqual([]);
+    const name = AI.COHERE_MODEL;
+    expect(AI.modelProblem(COHERE, { name, rates: RATES })).toBeUndefined();
+    expect(AI.modelProblem(COHERE, { name, table: {} })).toBe(
+      `Helix has no price for ${name}; enter its prices.`,
+    );
+    expect(AI.modelProblem(COHERE, { name, free: {} })).toBe(
+      "Enter its prices.",
+    );
+    expect(AI.modelProblem(COHERE, { name, rates: {} })).toBe(
+      "Enter prices in dollars per million tokens, with at most three decimals.",
+    );
+    expect(AI.pickPriceText(COHERE, { name, rates: RATES })).toBe(
+      "$2.5 in, $10 out per million tokens",
+    );
+  });
+
+  it("keeps a key across Cohere's models, and for Cohere alone", () => {
+    const models = ROLE_MODELS(AI.COHERE_MODEL);
+    const saved = (provider: wfe.FoundryAiProvider) =>
+      ({ id: "c", hasKey: true, provider }) as wfe.FoundryAiConfig;
+    const cohere: AI.Choice = {
+      kind: COHERE,
+      provider: { cohere: {} },
+      models,
+    };
+    expect(AI.canReuseKey(saved({ cohere: {} }), cohere)).toBe(true);
+    expect(
+      AI.canReuseKey(saved({ cohere: {} }), {
+        ...cohere,
+        models: ROLE_MODELS("command-a-plus-05-2026"),
+      }),
+    ).toBe(true);
+    const atCohere: wfe.FoundryAiProvider = {
+      openaiCompatible: { baseUrl: AI.COHERE_BASE_URL },
+    };
+    expect(AI.canReuseKey(saved(atCohere), cohere)).toBe(false);
+    expect(
+      AI.canReuseKey(saved({ cohere: {} }), {
+        kind: "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE",
+        provider: atCohere,
+        models,
+      }),
+    ).toBe(false);
+  });
+
+  it("reads documents again only for another endpoint or reading models", () => {
+    const readers = (provider: wfe.FoundryAiProvider, model: string) => ({
+      agent: "openai_compatible" as const,
+      endpoint: AI.idEndpoint(provider),
+      extract: model,
+      verify: model,
+    });
+    const cohere = readers({ cohere: {} }, AI.COHERE_MODEL);
+    // The agent names a model by its endpoint, which a custom server at
+    // Cohere's address shares.
+    expect(
+      AI.documentsReread(
+        cohere,
+        readers(
+          { openaiCompatible: { baseUrl: AI.COHERE_BASE_URL } },
+          AI.COHERE_MODEL,
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      AI.documentsReread(
+        cohere,
+        readers(
+          { openaiCompatible: { baseUrl: "https://llm.example.com/v1" } },
+          AI.COHERE_MODEL,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      AI.documentsReread(
+        cohere,
+        readers({ cohere: {} }, "command-a-plus-05-2026"),
+      ),
+    ).toBe(true);
   });
 });
 

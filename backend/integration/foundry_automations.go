@@ -27,7 +27,7 @@ const (
 
 // automationSpecDoc says what a spec is, for the tools' and the operations' descriptions.
 const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": [{"from", "to", "branch"}]}, at most 50 nodes and 100 edges. ` +
-	`A node is {"id": 1 to 32 lowercase letters, digits, - or _, "kind", "config", "position": {"x", "y"} (where the canvas draws it)}. ` +
+	`A node is {"id": 1 to 32 lowercase letters, digits, - or _, starting with a letter or digit, "kind", "config", "position": {"x", "y"} (where the canvas draws it)}. ` +
 	`Exactly one node is the trigger, with no edge in; every other node is reached from it, with no cycle. Kinds and their configs: ` +
 	`trigger {"kind": "schedule", "every": "hour", "minute": 0-59, "time_zone"} | {"kind": "schedule", "every": "day", "at": "HH:MM", "time_zone"} | ` +
 	`{"kind": "schedule", "every": "week", "weekday": "monday" … "sunday", "at": "HH:MM", "time_zone"} (an IANA zone, such as Europe/London: the person's) | ` +
@@ -39,7 +39,9 @@ const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": 
 	`condition {"check": "answer", "equals": "yes" | "no"} (of the Founder step before it, which ends by reporting a yes or no) | ` +
 	`{"check": "count", "op": "at_least" | "at_most" | "equals", "value"} (of the documents that arrived, the rows a sync wrote, or a Founder step's reported count), ` +
 	`with exactly one edge in and its out edges each "branch": "true" or "false"; notify {"message": at most 500 characters}: emails the owner, with what the Founder steps before it said. ` +
-	`A step runs once every step before it ended and one of its edges in was taken; a failure stops the steps after it.`
+	`A step runs once every step before it ended and one of its edges in was taken; a failure stops the steps after it. ` +
+	`A step may not sync or load what its trigger waits on (a sync_finished trigger's connector, a load_ready trigger's ontology, or the connector whose syncs write a document_arrived trigger's set): each run would start another. ` +
+	`A trigger skips work its own workflow started (a sync, a load, or documents a sync it started wrote), directly or through other workflows, and work past a chain of 3 workflows, recording the run skipped and why.`
 
 type FoundryAutomationInput struct {
 	WorkspaceID  string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`
@@ -102,6 +104,8 @@ type FoundryAutomationWorkflowOutput struct {
 	WorkflowID   string `json:"use_case_id,omitempty"`
 	Runs         int64  `json:"runs"`
 	FinishedRuns int64  `json:"finished_runs"`
+	// NeverCalledRuns are finished runs that recorded no read or question of it: they aren't assessed.
+	NeverCalledRuns int64 `json:"never_called_runs"`
 	// Verdicts counts their done assessments by verdict.
 	Verdicts map[string]int64 `json:"verdicts"`
 	// Gaps are what the ontology lacked, as the newest assessed run named it: in a get only.
@@ -119,6 +123,7 @@ type FoundryAutomationRunWorkflowOutput struct {
 	Status           string `json:"status"`
 	AssessmentStatus string `json:"assessment_status,omitempty"`
 	Verdict          string `json:"verdict,omitempty" jsonschema:"Once assessed: essential, helpful, marginal, unused or misleading."`
+	NeverCalled      bool   `json:"never_called,omitempty" jsonschema:"The use case run finished without a read or question of the ontology, so it isn't assessed."`
 }
 
 // FoundryAutomationRunOutput is a run as the tools return it.
@@ -273,7 +278,7 @@ func (s *Service) FoundryAutomation(workspaceID string, a *foundryv1.FoundryAuto
 	out.Workflows = []FoundryAutomationWorkflowOutput{}
 	for _, o := range a.GetOntologies() {
 		w := FoundryAutomationWorkflowOutput{OntologyID: o.GetOntologyId(), OntologyName: o.GetOntologyName(), WorkflowID: o.GetWorkflowId(),
-			Runs: o.GetRuns(), FinishedRuns: o.GetFinishedRuns(), Verdicts: map[string]int64{}, Gaps: o.GetGaps(), Untracked: o.GetUntracked()}
+			Runs: o.GetRuns(), FinishedRuns: o.GetFinishedRuns(), NeverCalledRuns: o.GetNeverCalledRuns(), Verdicts: map[string]int64{}, Gaps: o.GetGaps(), Untracked: o.GetUntracked()}
 		for _, v := range o.GetVerdicts() {
 			w.Verdicts[v.GetVerdict()] = v.GetRuns()
 		}
@@ -302,7 +307,7 @@ func (s *Service) FoundryAutomationRun(workspaceID string, r *foundryv1.FoundryA
 	for _, o := range r.GetOntologies() {
 		out.Workflows = append(out.Workflows, FoundryAutomationRunWorkflowOutput{OntologyID: o.GetOntologyId(), OntologyName: o.GetOntologyName(),
 			WorkflowID: o.GetWorkflowId(), WorkflowRunID: o.GetWorkflowRunId(), Status: o.GetStatus(), AssessmentStatus: o.GetAssessmentStatus(),
-			Verdict: o.GetVerdict()})
+			Verdict: o.GetVerdict(), NeverCalled: o.GetNeverCalled()})
 	}
 	return out
 }

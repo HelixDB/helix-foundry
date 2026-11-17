@@ -42,10 +42,16 @@ import (
 //   - Owners and admins change and delete any, and pin them in every
 //     member's sidebar: what the whole workspace is shown is theirs to
 //     choose, so a pinned dashboard is theirs to change.
+//   - A dashboard's page in Foundry is how it is shared inside the workspace:
+//     every member who opens it reads it as themselves, as above.
 //   - Owners and admins publish a dashboard's snapshot at a public link, read
-//     as themselves, and unpublish it: a link shows data to anyone, outside
-//     the workspace's own access, which only they decide. Hosted only, with
-//     foundry.dashboards.public_enabled (config.PublicDashboards).
+//     as themselves, for people outside the workspace, and unpublish it: a
+//     link shows data to anyone, outside the workspace's own access, which
+//     only they decide. A link may expire (7, 30 or 90 days), and is then
+//     served as an unpublished one. Hosted only, with
+//     foundry.dashboards.public_enabled (config.PublicDashboards), and while
+//     the workspace's owners keep public links on (FoundryDashboardSettings):
+//     off, no link of the workspace is served or published.
 
 const (
 	// maxDashboards is the most dashboards a workspace keeps, so a list is
@@ -68,8 +74,9 @@ var shareTokenPattern = regexp.MustCompile(`^hxd_[A-Za-z0-9_-]{43}$`)
 // dashboardCaller is who calls a dashboard's route.
 type dashboardCaller struct {
 	userID string
-	// manager is an owner or admin of the workspace.
+	// manager is an owner or admin of the workspace; owner, an owner.
 	manager bool
+	owner   bool
 	// grantee is a caller source grants admitted: it sees the pinned
 	// dashboards only, and the access rules deny it every change.
 	grantee bool
@@ -100,6 +107,7 @@ func (s *Service) dashboardCallerOf(ctx context.Context, workspaceID string) (da
 			return dashboardCaller{}, status.Errorf(codes.Unavailable, "read your role: %v", err)
 		}
 		c.manager = m.Role == ports.RoleOwner || m.Role == ports.RoleAdmin
+		c.owner = m.Role == ports.RoleOwner
 	}
 	return c, nil
 }
@@ -130,11 +138,16 @@ func dashboardRefusal(workspaceID string, err error) (error, bool) {
 	}
 	switch r.Reason {
 	case foundrymodel.FoundryDashboardNotEditable:
-		return status.Error(codes.PermissionDenied, r.Detail), true
+		// FAILED_PRECONDITION saying who may, never PERMISSION_DENIED, which
+		// agents read as not found: callers refuse it only of a dashboard the
+		// caller sees (visibleDashboard).
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_NOT_EDITABLE", r.Detail), true
 	case foundrymodel.FoundryDashboardChanged:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_CHANGED", r.Detail), true
 	case foundrymodel.FoundryDashboardUnreadable:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_TILE_FAILED", r.Detail), true
+	case foundrymodel.FoundryDashboardExpired:
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_LINK_EXPIRED", r.Detail), true
 	default:
 		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_LIMIT", r.Detail), true
 	}
@@ -162,7 +175,90 @@ func (s *Service) dashboardResponse(ctx context.Context, c dashboardCaller, work
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.FoundryDashboardResponse{Dashboard: s.dashboardToProto(d, c)}, nil
+	settings, err := s.dashboardSettings(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return &foundryv1.FoundryDashboardResponse{Dashboard: s.dashboardToProto(d, c, settings, time.Now())}, nil
+}
+
+// dashboardSettings are the workspace's dashboard settings, read only where
+// the host offers public links: elsewhere they change nothing, and read as
+// the default.
+func (s *Service) dashboardSettings(ctx context.Context, workspaceID string) (foundrymodel.FoundryDashboardSettings, error) {
+	if !s.deps.Cfg.PublicDashboards() {
+		return foundrymodel.FoundryDashboardSettings{WorkspaceID: workspaceID, PublicLinks: true}, nil
+	}
+	settings, err := s.deps.DB.GetFoundryDashboardSettings(ctx, workspaceID)
+	if err != nil {
+		return foundrymodel.FoundryDashboardSettings{}, status.Errorf(codes.Internal, "read the dashboard settings: %v", err)
+	}
+	return settings, nil
+}
+
+// publishBlock is why c may not publish a dashboard of a workspace with
+// settings; UNSPECIFIED when they may. The host comes first: where it offers
+// no public links, no one is told to ask an owner or admin.
+func (s *Service) publishBlock(c dashboardCaller, settings foundrymodel.FoundryDashboardSettings) foundryv1.FoundryDashboardPublishBlock {
+	switch {
+	case !s.deps.Cfg.PublicDashboards():
+		return foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE
+	case c.grantee || !c.manager:
+		return foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY
+	case !settings.PublicLinks:
+		return foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF
+	}
+	return foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED
+}
+
+// publishRefusal is the refusal of a publish blocked for block (none for
+// UNSPECIFIED), with its reason.
+func publishRefusal(workspaceID string, block foundryv1.FoundryDashboardPublishBlock) error {
+	switch block {
+	case foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNAVAILABLE:
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_PUBLIC_UNAVAILABLE", "public dashboard links aren't available here")
+	case foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_ADMIN_ONLY:
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY",
+			"only an owner or admin makes a public link: share the dashboard's page in Foundry with the workspace instead")
+	case foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_WORKSPACE_OFF:
+		return foundryPrecondition(workspaceID, "FOUNDRY_DASHBOARD_PUBLIC_OFF", "an owner turned public dashboard links off for this workspace")
+	}
+	return nil
+}
+
+// shareStatus is whether share shows its snapshot at now, for a workspace
+// with settings: the host, then the workspace's switch, then its expiry.
+func (s *Service) shareStatus(share *foundrymodel.FoundryDashboardShare, settings foundrymodel.FoundryDashboardSettings, now time.Time) foundryv1.FoundryDashboardShareStatus {
+	switch {
+	case !s.deps.Cfg.PublicDashboards():
+		return foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_UNAVAILABLE
+	case !settings.PublicLinks:
+		return foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_WORKSPACE_OFF
+	case share.Expired(now):
+		return foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_EXPIRED
+	}
+	return foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE
+}
+
+// linkExpiry is what expiry asks of a publish at now.
+func linkExpiry(expiry foundryv1.FoundryDashboardLinkExpiry, now time.Time) (foundrymodel.FoundryDashboardLinkExpiry, error) {
+	days := 0
+	switch expiry {
+	case foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_UNSPECIFIED:
+		return foundrymodel.FoundryDashboardLinkExpiry{Keep: true}, nil
+	case foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_NEVER:
+		return foundrymodel.FoundryDashboardLinkExpiry{}, nil
+	case foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_7:
+		days = 7
+	case foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_30:
+		days = 30
+	case foundryv1.FoundryDashboardLinkExpiry_FOUNDRY_DASHBOARD_LINK_EXPIRY_DAYS_90:
+		days = 90
+	default:
+		return foundrymodel.FoundryDashboardLinkExpiry{}, status.Error(codes.InvalidArgument, "expiry is never, 7, 30 or 90 days")
+	}
+	at := now.Add(time.Duration(days) * 24 * time.Hour)
+	return foundrymodel.FoundryDashboardLinkExpiry{At: &at}, nil
 }
 
 func (s *Service) ListFoundryDashboards(ctx context.Context, req *foundryv1.ListFoundryDashboardsRequest) (*foundryv1.ListFoundryDashboardsResponse, error) {
@@ -174,9 +270,14 @@ func (s *Service) ListFoundryDashboards(ctx context.Context, req *foundryv1.List
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list dashboards: %v", err)
 	}
+	settings, err := s.dashboardSettings(ctx, req.GetWorkspaceId())
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
 	out := &foundryv1.ListFoundryDashboardsResponse{CanCreate: !c.grantee, Dashboards: make([]*foundryv1.FoundryDashboard, 0, len(list))}
 	for _, d := range list {
-		out.Dashboards = append(out.Dashboards, s.dashboardToProto(d, c))
+		out.Dashboards = append(out.Dashboards, s.dashboardToProto(d, c, settings, now))
 	}
 	return out, nil
 }
@@ -366,8 +467,9 @@ func (s *Service) DeleteFoundryDashboard(ctx context.Context, req *foundryv1.Del
 	if err != nil {
 		return nil, err
 	}
-	if req.GetId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+	// One a grantee doesn't see is not found, never refused as not theirs.
+	if _, err := s.visibleDashboard(ctx, c, ws, req.GetId()); err != nil {
+		return nil, err
 	}
 	err = s.deps.DB.DeleteFoundryDashboard(ctx, ws, req.GetId(), c.editor())
 	if refused, ok := dashboardRefusal(ws, err); ok {
@@ -389,7 +491,7 @@ func (s *Service) PinFoundryDashboard(ctx context.Context, req *foundryv1.PinFou
 		return nil, err
 	}
 	if !c.manager {
-		return nil, status.Error(codes.PermissionDenied, "only an owner or admin pins a dashboard for the workspace")
+		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARD_NOT_EDITABLE", "only an owner or admin pins a dashboard for the workspace")
 	}
 	if req.GetId() == "" || req.GetExpectedRevision() < 1 {
 		return nil, status.Error(codes.InvalidArgument, "id and expected_revision are required")
@@ -568,32 +670,42 @@ func (s *Service) PreviewFoundryDashboardTile(ctx context.Context, req *foundryv
 
 // PublishFoundryDashboard reads every tile as the caller, an owner or admin,
 // and keeps the outputs as the dashboard's public snapshot at its link:
-//  1. public links must be on (config.PublicDashboards), and the dashboard at
-//     the revision the caller saw, with a tile;
+//  1. public links must be on, on the host (config.PublicDashboards) and for
+//     the workspace (FoundryDashboardSettings), and the dashboard at the
+//     revision the caller saw, with a tile;
 //  2. each tile is read as ReadFoundryGraph reads it for the caller, who must
 //     be able to query each ontology's database; a tile without an answer
 //     refuses the whole publish, naming it and why;
 //  3. the snapshot (dashboard.NewSnapshot) holds no workspace's, ontology's,
 //     load's or person's id, and is bounded in size;
-//  4. a dashboard published already keeps its link; the first publish makes
-//     one, a token of 256 random bits whose SHA-256 is what a request is
-//     looked up by, sealed with the connectors' keyring so owners and admins
-//     are shown it again.
+//  4. a dashboard published already keeps its link, unless it expired; the
+//     first publish makes one, a token of 256 random bits whose SHA-256 is
+//     what a request is looked up by, sealed with the connectors' keyring so
+//     owners and admins are shown it again;
+//  5. the link ends as req's expiry says, from now; unset, a live link keeps
+//     its own and a new one never ends.
 func (s *Service) PublishFoundryDashboard(ctx context.Context, req *foundryv1.PublishFoundryDashboardRequest) (*foundryv1.FoundryDashboardResponse, error) {
 	ws := req.GetWorkspaceId()
 	c, err := s.dashboardCallerOf(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
+	settings, err := s.dashboardSettings(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	if refused := publishRefusal(ws, s.publishBlock(c, settings)); refused != nil {
+		return nil, refused
+	}
 	switch {
-	case !c.manager:
-		return nil, status.Error(codes.PermissionDenied, "only an owner or admin publishes a dashboard")
-	case !s.deps.Cfg.PublicDashboards():
-		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARDS_PUBLIC_OFF", "public dashboard links aren't available here")
 	case s.deps.ConnectorKeys == nil:
 		return nil, status.Error(codes.Unavailable, "public dashboard links can't be kept on this host")
 	case req.GetExpectedRevision() < 1:
 		return nil, status.Error(codes.InvalidArgument, "expected_revision is required")
+	}
+	expiry, err := linkExpiry(req.GetExpiry(), time.Now())
+	if err != nil {
+		return nil, err
 	}
 	d, err := s.visibleDashboard(ctx, c, ws, req.GetId())
 	if err != nil {
@@ -681,7 +793,7 @@ func (s *Service) PublishFoundryDashboard(ctx context.Context, req *foundryv1.Pu
 	_, err = s.deps.DB.PublishFoundryDashboard(ctx, &foundrymodel.FoundryDashboardShare{
 		DashboardID: d.ID, WorkspaceID: ws, TokenSHA256: hashToken(token), TokenSealed: sealed, TokenKeyID: keyID, Snapshot: snapshot,
 		SpecRevision: d.Revision, OntologyIDs: ontologyIDs, PublishedByUserID: c.userID,
-	})
+	}, expiry)
 	if refused, ok := dashboardRefusal(ws, err); ok {
 		return nil, refused
 	}
@@ -725,7 +837,7 @@ func (s *Service) UnpublishFoundryDashboard(ctx context.Context, req *foundryv1.
 		return nil, err
 	}
 	if !c.manager {
-		return nil, status.Error(codes.PermissionDenied, "only an owner or admin unpublishes a dashboard")
+		return nil, foundryPrecondition(ws, "FOUNDRY_DASHBOARD_PUBLIC_ADMIN_ONLY", "only an owner or admin ends a dashboard's public link")
 	}
 	d, err := s.visibleDashboard(ctx, c, ws, req.GetId())
 	if err != nil {
@@ -739,8 +851,9 @@ func (s *Service) UnpublishFoundryDashboard(ctx context.Context, req *foundryv1.
 }
 
 // GetSharedFoundryDashboard serves a public snapshot to Foundry's door, by
-// its link token's SHA-256. Wherever public links are off, every link is
-// NotFound, as is a token of no snapshot.
+// its link token's SHA-256. Wherever public links are off, on the host or
+// for the link's workspace, every link is NotFound, as is an expired link
+// and a token of no snapshot.
 func (s *Service) GetSharedFoundryDashboard(ctx context.Context, req *foundryv1.GetSharedFoundryDashboardRequest) (
 	*foundryv1.GetSharedFoundryDashboardResponse, error) {
 	a := actor(ctx)
@@ -761,27 +874,87 @@ func (s *Service) GetSharedFoundryDashboard(ctx context.Context, req *foundryv1.
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the shared dashboard: %v", err)
 	}
+	settings, err := s.deps.DB.GetFoundryDashboardSettings(ctx, share.WorkspaceID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the dashboard settings: %v", err)
+	}
+	if s.shareStatus(share, settings, time.Now()) != foundryv1.FoundryDashboardShareStatus_FOUNDRY_DASHBOARD_SHARE_STATUS_LIVE {
+		return nil, status.Error(codes.NotFound, "no dashboard is shared at this link")
+	}
 	return &foundryv1.GetSharedFoundryDashboardResponse{SnapshotJson: string(share.Snapshot)}, nil
 }
 
-// dashboardToProto is d as c sees it: what c may do with it, and its link's
-// token only for an owner or admin.
-func (s *Service) dashboardToProto(d *foundrymodel.FoundryDashboard, c dashboardCaller) *foundryv1.FoundryDashboard {
+// GetFoundryDashboardSettings returns the workspace's dashboard settings, to
+// any member (never a grantee, whom the access rules refuse).
+func (s *Service) GetFoundryDashboardSettings(ctx context.Context, req *foundryv1.GetFoundryDashboardSettingsRequest) (
+	*foundryv1.FoundryDashboardSettingsResponse, error) {
+	c, err := s.dashboardCallerOf(ctx, req.GetWorkspaceId())
+	if err != nil {
+		return nil, err
+	}
+	return s.dashboardSettingsResponse(ctx, c, req.GetWorkspaceId())
+}
+
+// UpdateFoundryDashboardSettings turns the workspace's public dashboard links
+// on or off: owners only. It takes effect at once wherever a link is served
+// or published, as both read the setting.
+func (s *Service) UpdateFoundryDashboardSettings(ctx context.Context, req *foundryv1.UpdateFoundryDashboardSettingsRequest) (
+	*foundryv1.FoundryDashboardSettingsResponse, error) {
+	ws := req.GetWorkspaceId()
+	c, err := s.dashboardCallerOf(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	if c.grantee || !c.owner {
+		return nil, status.Error(codes.PermissionDenied, "only an owner turns public dashboard links on or off")
+	}
+	if err := s.deps.DB.SetFoundryDashboardSettings(ctx, ws, c.userID, req.GetPublicLinks()); err != nil {
+		return nil, status.Errorf(codes.Internal, "save the dashboard settings: %v", err)
+	}
+	return s.dashboardSettingsResponse(ctx, c, ws)
+}
+
+// dashboardSettingsResponse reads the workspace's dashboard settings as c
+// sees them.
+func (s *Service) dashboardSettingsResponse(ctx context.Context, c dashboardCaller, workspaceID string) (*foundryv1.FoundryDashboardSettingsResponse, error) {
+	settings, err := s.deps.DB.GetFoundryDashboardSettings(ctx, workspaceID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the dashboard settings: %v", err)
+	}
+	out := &foundryv1.FoundryDashboardSettings{PublicLinks: settings.PublicLinks, Available: s.deps.Cfg.PublicDashboards(),
+		CanChange: !c.grantee && c.owner, UpdatedByUserId: settings.UpdatedByUserID}
+	if settings.UpdatedAt != nil {
+		out.UpdatedAt = timestamppb.New(*settings.UpdatedAt)
+	}
+	return &foundryv1.FoundryDashboardSettingsResponse{Settings: out}, nil
+}
+
+// dashboardToProto is d of a workspace with settings, as c sees it at now:
+// what c may do with it, and its link's token only for an owner or admin,
+// while the link hasn't expired.
+func (s *Service) dashboardToProto(d *foundrymodel.FoundryDashboard, c dashboardCaller, settings foundrymodel.FoundryDashboardSettings,
+	now time.Time) *foundryv1.FoundryDashboard {
+	block := s.publishBlock(c, settings)
 	out := &foundryv1.FoundryDashboard{
 		Id: d.ID, Name: d.Name, Description: d.Description, SpecJson: string(d.Spec), Revision: d.Revision, CreatedByUserId: d.CreatedByUserID,
 		UpdatedByUserId: d.UpdatedByUserID, Pinned: d.PinnedAt != nil, CreatedAt: timestamppb.New(d.CreatedAt), UpdatedAt: timestamppb.New(d.UpdatedAt),
-		CanEdit: c.mayEdit(d), CanPin: !c.grantee && c.manager, CanPublish: !c.grantee && c.manager && s.deps.Cfg.PublicDashboards(),
-		CanDelete: c.mayDelete(d), CanUnpublish: !c.grantee && c.manager && d.Share != nil,
+		CanEdit: c.mayEdit(d), CanPin: !c.grantee && c.manager, CanPublish: block == foundryv1.FoundryDashboardPublishBlock_FOUNDRY_DASHBOARD_PUBLISH_BLOCK_UNSPECIFIED,
+		CanDelete: c.mayDelete(d), CanUnpublish: !c.grantee && c.manager && d.Share != nil, PublishBlock: block,
 	}
 	if d.PinnedAt != nil && d.PinnedByUserID != nil {
 		out.PinnedAt, out.PinnedByUserId = timestamppb.New(*d.PinnedAt), *d.PinnedByUserID
 	}
 	if share := d.Share; share != nil {
 		out.Share = &foundryv1.FoundryDashboardShare{SpecRevision: share.SpecRevision, PublishedAt: timestamppb.New(share.PublishedAt),
-			FirstPublishedAt: timestamppb.New(share.FirstPublishedAt), PublishedByUserId: share.PublishedByUserID}
-		if out.CanPin && s.deps.ConnectorKeys != nil {
+			FirstPublishedAt: timestamppb.New(share.FirstPublishedAt), PublishedByUserId: share.PublishedByUserID,
+			Status: s.shareStatus(share, settings, now)}
+		if share.ExpiresAt != nil {
+			out.Share.ExpiresAt = timestamppb.New(*share.ExpiresAt)
+		}
+		if out.CanPin && s.deps.ConnectorKeys != nil && !share.Expired(now) {
 			// A token that can't be opened (its key retired) is left out:
-			// unpublishing and publishing again makes a new link.
+			// unpublishing and publishing again makes a new link. So is an
+			// expired one, which no publish revives.
 			if token, err := s.deps.ConnectorKeys.Open(share.TokenSealed, share.TokenKeyID, shareTokenContext+d.ID); err == nil &&
 				shareTokenPattern.Match(token) {
 				out.Share.Token = string(token)

@@ -1266,6 +1266,105 @@ describe("the query renderer", () => {
     ).toBe("Rows: position 3");
   });
 
+  it("reads and parses a number computed from two props (contract 4.26.0)", () => {
+    const tickets: OntologyQuery = {
+      start: { type: "Ticket" },
+      return: {
+        aggregate: {
+          fn: "avg",
+          at: 0,
+          expr: { days_between: ["opened_at", "closed_at"] },
+          group_by: { at: 0, prop: "priority" },
+          limit: 20,
+        },
+      },
+    };
+    expect(contractErrors("read_request#/$defs/Query", tickets)).toEqual([]);
+    expect(queryText(tickets).returns).toBe(
+      "Average of Ticket: days from opened_at to closed_at by Ticket.priority",
+    );
+    expect(parseQuery(tickets)?.return).toEqual(tickets.return);
+    // The slowest deals: a computed column and order, as the engine echoes
+    // them (a column's `prop` written null beside its `expr`).
+    const slowest = {
+      start: { type: "Deal" },
+      return: {
+        rows: {
+          columns: [
+            { at: 0, prop: null },
+            { at: 0, prop: null, expr: { diff: ["closed_on", "opened_on"] } },
+            { at: 0, prop: null, expr: { ratio: ["won", "quoted"] } },
+          ],
+          order_by: {
+            at: 0,
+            expr: { days_between: ["opened_on", "closed_on"] },
+            desc: true,
+          },
+          limit: 10,
+        },
+      },
+    };
+    expect(contractErrors("read_request#/$defs/Query", slowest)).toEqual([]);
+    const parsed = parseQuery(slowest);
+    expect(parsed?.return).toEqual({
+      rows: {
+        columns: [
+          { at: 0 },
+          { at: 0, expr: { diff: ["closed_on", "opened_on"] } },
+          { at: 0, expr: { ratio: ["won", "quoted"] } },
+        ],
+        order_by: {
+          at: 0,
+          expr: { days_between: ["opened_on", "closed_on"] },
+          desc: true,
+        },
+        limit: 10,
+      },
+    });
+    expect(queryText(parsed!).returns).toBe(
+      "Rows: Deal, Deal: closed_on − opened_on, Deal: won ÷ quoted · sorted by Deal: days from opened_on to closed_on, highest first · at most 10",
+    );
+    // An expression the engine doesn't have, of other than two props, or
+    // beside a prop, is no query; so is an aggregate of neither.
+    for (const bad of [
+      { aggregate: { fn: "avg", at: 0, expr: { product: ["a", "b"] } } },
+      { aggregate: { fn: "avg", at: 0, expr: { ratio: ["a"] } } },
+      { aggregate: { fn: "avg", at: 0, expr: { ratio: ["a", 2] } } },
+      {
+        aggregate: {
+          fn: "avg",
+          at: 0,
+          expr: { diff: ["a", "b"], ratio: ["a", "b"] },
+        },
+      },
+      {
+        aggregate: { fn: "avg", at: 0, prop: "a", expr: { diff: ["a", "b"] } },
+      },
+      { aggregate: { fn: "avg", at: 0 } },
+      { rows: { columns: [{ at: 0, expr: { sum: ["a", "b"] } }] } },
+      { rows: { columns: [{ at: 0, prop: "a", expr: { diff: ["a", "b"] } }] } },
+    ]) {
+      const q = { start: { type: "A" }, return: bad };
+      expect(parseQuery(q), JSON.stringify(bad)).toBe(undefined);
+      expect(
+        contractErrors("read_request#/$defs/Query", q).length,
+        JSON.stringify(bad),
+      ).toBeGreaterThan(0);
+    }
+    // An order of a malformed expression is no order.
+    expect(
+      parseQuery({
+        start: { type: "A" },
+        return: {
+          rows: {
+            columns: [{ at: 0 }],
+            order_by: { at: 0, expr: { diff: "a" } },
+          },
+        },
+      })?.return,
+    ).toEqual({ rows: { columns: [{ at: 0 }], order_by: null } });
+  });
+
   it("parses typed queries and refuses what isn't one", () => {
     expect(contractErrors("read_request#/$defs/Query", INVOICES)).toEqual([]);
     expect(parseQuery(INVOICES)).toEqual(INVOICES);
@@ -2027,33 +2126,49 @@ describe("questions and threads", () => {
       error: "The model declined to answer.",
       result: failure,
     });
-    // Helix's Claude's model failures read as they did before contract
-    // 4.0.0 split them out of model_failed: the WFE's lowercase words for
-    // each say it is unavailable.
-    const house = "the model could not be reached; ask again";
-    for (const reason of [
-      "model_failed",
-      "model_auth",
-      "model_permission",
-      "model_not_found",
-      "model_rate_limited",
-      "model_quota",
-      "model_unsupported",
-      "model_truncated",
-      "model_malformed",
-      "model_timeout",
+    // Helix's Claude's model failures say what failed, in the WFE's
+    // lowercase words made a sentence: a provider still busy, a request it
+    // rejected (Helix's bug), Helix's model account.
+    for (const [reason, house, shown] of [
+      [
+        "model_failed",
+        "the model provider is busy; try again in a minute",
+        "The model provider is busy; try again in a minute.",
+      ],
+      [
+        "model_rate_limited",
+        "the model provider is busy; try again in a minute",
+        "The model provider is busy; try again in a minute.",
+      ],
+      [
+        "model_unsupported",
+        "Helix sent the model a request it rejected. That's a bug in Helix, not your question; on-call has been told",
+        "Helix sent the model a request it rejected. That's a bug in Helix, not your question; on-call has been told.",
+      ],
+      [
+        "model_quota",
+        "Helix's model account can't take questions right now; on-call has been told, so try again later",
+        "Helix's model account can't take questions right now; on-call has been told, so try again later.",
+      ],
     ] as const) {
       const r = { ...failure, reason };
       expect(
         questionView(
           q({ status: "failed", error: house, resultJson: JSON.stringify(r) }),
         ),
-      ).toEqual({
-        kind: "failed",
-        error: "The model couldn’t be reached, after retries.",
-        result: r,
-      });
+      ).toEqual({ kind: "failed", error: shown, result: r });
     }
+    // With no words of the WFE's, the reason's own text.
+    const quiet = { ...failure, reason: "model_timeout" } as const;
+    expect(
+      questionView(
+        q({ status: "failed", error: "", resultJson: JSON.stringify(quiet) }),
+      ),
+    ).toEqual({
+      kind: "failed",
+      error: "The model couldn’t be reached, after retries.",
+      result: quiet,
+    });
     // A workspace's own provider's are the WFE's full sentences, shown as
     // written: they name the provider, and may start with a model's name.
     const auth = { ...failure, reason: "model_auth" } as const;

@@ -285,7 +285,9 @@ export type AnalyticsEvents = {
   // description), deleted, pinned and unpinned, given an Analyst answer's
   // visual (reading the current load or the question's), published (the
   // first time, or again for a new snapshot), unpublished, its public link
-  // copied, or why a call was refused. Never a name, a title or a query.
+  // copied, its in-app link copied (from its page or its card in the
+  // library), public links turned on or off for the workspace, or why a
+  // call was refused. Never a name, a title or a query.
   dashboard_created: { from: "analyst" };
   dashboard_edited: { tiles: boolean };
   dashboard_deleted: undefined;
@@ -295,6 +297,8 @@ export type AnalyticsEvents = {
   dashboard_published: { first: boolean };
   dashboard_unpublished: undefined;
   dashboard_link_copied: undefined;
+  dashboard_workspace_link_copied: { from: "page" | "card" };
+  dashboard_public_links_set: { on: boolean };
   dashboard_refused: { action: DashboardAction; reason: Refusal };
 
   // Workflows (src/web/areas/automations; the events keep their automation_

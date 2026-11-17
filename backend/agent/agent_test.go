@@ -682,6 +682,11 @@ func (b *backend) DeleteFoundryDashboard(_ context.Context, r *foundryv1.DeleteF
 	return &emptypb.Empty{}, nil
 }
 
+func (b *backend) GetFoundryDashboard(_ context.Context, r *foundryv1.GetFoundryDashboardRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryDashboardResponse, error) {
+	return &foundryv1.FoundryDashboardResponse{Dashboard: &foundryv1.FoundryDashboard{Id: r.GetId(), CanPublish: true}}, nil
+}
+
 func (b *backend) PublishFoundryDashboard(_ context.Context, r *foundryv1.PublishFoundryDashboardRequest, _ ...grpc.CallOption) (
 	*foundryv1.FoundryDashboardResponse, error) {
 	b.published = append(b.published, r.GetExpectedRevision())
