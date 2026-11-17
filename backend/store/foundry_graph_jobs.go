@@ -211,7 +211,7 @@ var extractionUpsert = func() string {
 		set = append(set, fmt.Sprintf("%[1]s=IF(%[2]s, %[1]s+VALUES(%[1]s), VALUES(%[1]s))", c, failedAgain))
 	}
 	return " ON DUPLICATE KEY UPDATE " + strings.Join(set, ", ") + `, job_id=VALUES(job_id), status=VALUES(status),
-  duplicate_of=VALUES(duplicate_of), error_code=VALUES(error_code), error_retryable=VALUES(error_retryable),
+  duplicate_of=VALUES(duplicate_of), error_code=VALUES(error_code), error_retryable=VALUES(error_retryable), model_failure=VALUES(model_failure),
   artifact_key=COALESCE(VALUES(artifact_key), artifact_key), names=VALUES(names), finished_at=VALUES(finished_at)`
 }()
 
@@ -308,10 +308,12 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 		if !holds {
 			return fmt.Errorf("foundry graph job %s writes load %s, which document %s did not join", jobID, loadID, e.DocumentID)
 		}
-		var code any
-		var retryable any
+		var code, retryable, modelFailure any
 		if e.Error != nil {
 			code, retryable = string(e.Error.Code), e.Error.Retryable
+			if e.Error.ModelFailure != "" {
+				modelFailure = e.Error.ModelFailure
+			}
 		}
 		c := e.Counts
 		names, err := foundryDocumentNamesJSON(e.Names)
@@ -342,7 +344,7 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			// the facts, as several reviews can hold one claim. A commit that
 			// landed and failed to say so counted nothing.
 			ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
- SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=facts+?,
+ SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, model_failure=NULL, sections=GREATEST(sections, ?), facts=facts+?,
   reviews=GREATEST(reviews-?, 0), resolved_carried=resolved_carried+?, usd_micros=usd_micros+?, input_tokens=input_tokens+?,
   output_tokens=output_tokens+?, artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
  WHERE load_id=? AND document_id=? AND status='failed'`,
@@ -378,10 +380,10 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			verb, onDuplicate = "INSERT IGNORE", ""
 		}
 		if _, err := tx.db.ExecContext(ctx, verb+` INTO foundry_load_extractions
-  (load_id, document_id, ontology_id, workspace_id, job_id, status, duplicate_of, error_code, error_retryable, sections, entities,
+  (load_id, document_id, ontology_id, workspace_id, job_id, status, duplicate_of, error_code, error_retryable, model_failure, sections, entities,
    mentions, facts, reviews, unresolved, rejected, usd_micros, input_tokens, output_tokens, artifact_key, attributes, attribute_reviews, prop_conflicts, created, identifiers_unverified, attributes_over_entries, resolved_user, resolved_adjudicated, resolved_identifier, resolved_name, resolved_alias, resolved_created, resolved_carried, names, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), NOW(6))`+onDuplicate,
-			loadID, e.DocumentID, ontologyID, workspaceID, jobID, string(e.Status), e.DuplicateOf, code, retryable, c.Sections,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), NOW(6))`+onDuplicate,
+			loadID, e.DocumentID, ontologyID, workspaceID, jobID, string(e.Status), e.DuplicateOf, code, retryable, modelFailure, c.Sections,
 			c.Entities, c.Mentions, c.Facts, c.Reviews, c.Unresolved, c.Rejected, e.USDMicros, e.InputTokens, e.OutputTokens,
 			e.ArtifactKey, c.Attributes, c.AttributeReviews, c.PropConflicts, c.Created, c.IdentifiersUnverified, c.AttributesOverEntries, c.ResolvedUser, c.ResolvedAdjudicated, c.ResolvedIdentifier, c.ResolvedName, c.ResolvedAlias, c.ResolvedCreated, c.ResolvedCarried, names,
 		); err != nil {
@@ -528,7 +530,7 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 				return err
 			}
 		}
-		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets); err != nil {
+		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets, outcome.ModelUnread); err != nil {
 			return err
 		}
 		// A resend sends only what its load holds: uploads that came during
@@ -584,10 +586,14 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 // end of the same job, merged meanwhile, changes nothing; its People
 // enrichment step, if still preparing or queued, ends with it. held are the
 // sets with an allowance the job's budget stop left unfinished
-// (FoundryGraphJobOutcome.HeldSets). The caller holds the ontology's lock.
+// (FoundryGraphJobOutcome.HeldSets); modelUnread says the model, not a
+// budget, left documents unread (FoundryGraphJobOutcome.ModelUnread). The
+// caller holds the ontology's lock.
 func (s *mysqlDB) endFoundryLoadWork(ctx context.Context, o *model.FoundryOntology, job *model.FoundryGraphJob, status model.FoundryGraphJobStatus,
-	ingestDone bool, held []string) error {
+	ingestDone bool, held []string, modelUnread bool) error {
 	switch job.Kind {
+	case model.FoundryGraphJobExtract:
+		return s.completeFoundryLoad(ctx, job.LoadID, status)
 	case model.FoundryGraphJobApply:
 		// What the apply brought the load's tables up to is what it pinned.
 		if !ingestDone {
@@ -596,8 +602,10 @@ func (s *mysqlDB) endFoundryLoadWork(ctx context.Context, o *model.FoundryOntolo
 		if err := s.recordFoundryLoadSources(ctx, job.LoadID, job.Sources); err != nil {
 			return err
 		}
-		_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET applied_at=NOW(6) WHERE id=?`, job.LoadID)
-		return err
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET applied_at=NOW(6) WHERE id=?`, job.LoadID); err != nil {
+			return err
+		}
+		return s.completeFoundryLoad(ctx, job.LoadID, status)
 	case model.FoundryGraphJobLoad:
 		// No attempt comes back to a step its job left preparing or queued:
 		// it ends with the job (cancelled if consent was withdrawn), so the
@@ -636,7 +644,12 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 		refresh := origin == string(model.FoundryLoadByRefresh)
 		// A refresh replaces only the load it refreshed.
 		refreshesCurrent := refresh && replaced != nil && refreshes.Valid && *replaced == refreshes.String
-		becomesCurrent := load == model.FoundryLoadReady || replaced == nil
+		// A load a person started that the model left documents unread of
+		// (modelUnread) is the version they asked for: it replaces the
+		// current load as a ready one would, and, current, has those
+		// documents read again on its own (QueueFoundryReread). One a spent
+		// budget stopped waits for a person, as before.
+		becomesCurrent := load == model.FoundryLoadReady || replaced == nil || load == model.FoundryLoadPartial && modelUnread && !refresh
 		if load == model.FoundryLoadPartial && refreshesCurrent {
 			// A partial refresh (one whose budget ran out) replaces the load it
 			// refreshed once it holds what that load held: it recorded every

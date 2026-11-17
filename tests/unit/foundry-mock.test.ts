@@ -2287,14 +2287,24 @@ describe("mock documents and loads", () => {
       error:
         "the tables were synced again while this load was written; start a new load",
     });
+    // Every document failed on the model's quota: the load failed, saying
+    // so, never ready with nothing read.
     Object.assign(config, { loadOutcome: "succeed", documentOutcome: "fail" });
-    expect((await load("b")).status).toBe("ready");
-    expect(
-      (await call("GET", `${O}/documents`)).body.documents[0].extraction,
-    ).toMatchObject({
+    const unread = await load("b");
+    expect(unread).toMatchObject({
       status: "failed",
-      error: { code: "model", retryable: true },
+      unread: { documents: 1, modelFailure: "quota", reason: "provider quota" },
     });
+    expect(unread.unread.rereadAt).toBeNull();
+    expect(unread.jobs[0]).toMatchObject({
+      status: "failed",
+      error:
+        "none of the load's documents could be read (1 document): the model provider's quota or credit ran out; start a new load to read them",
+    });
+    // A failed load is no one's current load, so the ontology's documents
+    // say nothing of it; its unread above carries the class each row keeps.
+    Object.assign(config, { documentOutcome: "succeed" });
+    expect(await load("b2")).toMatchObject({ status: "ready", current: true });
     Object.assign(config, {
       loadOutcome: "budget_exhausted",
       documentOutcome: "succeed",

@@ -37,7 +37,13 @@ import { AgentSetup } from "./agent-setup";
 import { QuestionCard } from "./ask";
 import { askSuggestions } from "./ask-model";
 import { createDatabase, createProject, databasesQuery } from "./databases-api";
-import { agentGraph, newDatabase, readAgentBundle, slugify } from "./model";
+import {
+  agentGraph,
+  loadUnreadText,
+  newDatabase,
+  readAgentBundle,
+  slugify,
+} from "./model";
 import { ProgressBar, useLoadJobProgress } from "./job-progress";
 import { Callout, FlowStep } from "./parts";
 import {
@@ -753,9 +759,13 @@ export function SampleTour() {
         >
           <p className="on-muted">
             {load?.status === "failed"
-              ? "The load failed."
+              ? // Its load job's error says why: every document the model
+                // failed among them.
+                job?.error
+                ? `The load failed: ${sentence(job.error)}`
+                : "The load failed."
               : loaded
-                ? `Loaded: ${rows ? `${formatNumber(rows)} rows` : "Acme Corp’s rows"} are records now, each linked to its account, subscription or contact. ${unread ? `${read} of ${SAMPLE.documents.length} documents were read; ${unread} couldn’t be.` : read ? `${plural(read, "document")} read.` : ""}`
+                ? `Loaded: ${rows ? `${formatNumber(rows)} rows` : "Acme Corp’s rows"} are records now, each linked to its account, subscription or contact. ${loadUnreadText(load) ?? (unread ? `${read} of ${SAMPLE.documents.length} documents were read; ${unread} couldn’t be.` : read ? `${plural(read, "document")} read.` : "")}`
                 : job?.phase === "documents"
                   ? `Reading the documents with AI: ${job.progress?.documentsDone ?? 0} of ${job.progress?.documentsTotal ?? SAMPLE.documents.length}…`
                   : job?.phase === "ingest"

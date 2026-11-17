@@ -626,6 +626,29 @@ export function dropExtractions(loadId: string) {
  * left and the names matched to no one record, which are among the
  * reviews. `routed` says whether the load's version reads a set.
  */
+/**
+ * What a load's documents came to when the model failed some, as the WFE's
+ * ListFoundryLoadUnread counts them: those read (extracted or duplicate),
+ * those the model failed by class ("" when none was recorded), and its
+ * uploaded members with no extraction.
+ */
+export function loadModelReads(loadId: string) {
+  let read = 0,
+    unrecorded = 0;
+  const failed = new Map<string, number>();
+  for (const [documentId] of members.get(loadId) || []) {
+    if (documents.get(documentId)?.status !== "uploaded") continue;
+    const x = extractions.get(readKey(loadId, documentId));
+    if (!x) unrecorded++;
+    else if (x.status === "extracted" || x.status === "duplicate") read++;
+    else if (x.status === "failed" && x.error?.code === "model") {
+      const f = x.error.modelFailure || "";
+      failed.set(f, (failed.get(f) || 0) + 1);
+    }
+  }
+  return { read, failed, unrecorded };
+}
+
 export function loadDocumentSets(
   loadId: string,
   routed: (setId: string) => boolean,

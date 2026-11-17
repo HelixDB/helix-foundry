@@ -386,6 +386,16 @@ type FoundryLoadOutput struct {
 	FinishedAt       string  `json:"finished_at,omitempty"`
 	USDMicros        int64   `json:"usd_micros"`
 	IngestViolations *uint64 `json:"ingest_violations,omitempty"`
+	// Unread is its documents the model failed; absent when it failed none.
+	Unread *FoundryLoadUnreadOutput `json:"unread,omitempty" jsonschema:"Documents the model failed to read: absent when it failed none. They are not in the graph (no names or facts of them), so a load with unread documents is not complete: say how many went unread and why. A ready or partial load with them reads as ready, N documents not read (reason). A load whose every document the model failed is failed, its load job's error saying so."`
+}
+
+// FoundryLoadUnreadOutput is a load's documents the model failed.
+type FoundryLoadUnreadOutput struct {
+	Documents    int32  `json:"documents" jsonschema:"How many documents went unread because the model failed them."`
+	ModelFailure string `json:"model_failure,omitempty" jsonschema:"How the model failed most of them: quota, rate_limited, unavailable, timeout, auth, permission, not_found, unsupported, context_too_long and so on; absent when it wasn't recorded."`
+	Reason       string `json:"reason" jsonschema:"A few words for why: provider quota, provider account, provider busy, too long for the model, model declined, model error, or model failed."`
+	RereadAt     string `json:"reread_at,omitempty" jsonschema:"When Helix reads them again on its own (RFC 3339), for the current load whose provider's quota, account or business is to blame: retried 15 minutes after the job that left them, then doubling up to every 6 hours, for about a week. Absent when the next job into the load or a new load reads them."`
 }
 
 // FoundryJobOutput is one job of a load: the load job that writes it, an extract that adds
@@ -2103,8 +2113,17 @@ func (s *Service) FoundryLoad(workspaceID, ontologyID string, load *foundryv1.Fo
 	return FoundryLoadOutput{
 		ID: load.GetId(), URL: s.FoundryLink(workspaceID, "ontology", ontologyID, "loads", load.GetId()), VersionID: load.GetVersionId(), Version: load.GetVersion(), Status: load.GetStatus(), Current: load.GetCurrent(),
 		CreatedAt: protoTimestamp(load.GetCreatedAt()), FinishedAt: protoTimestamp(load.GetFinishedAt()),
-		USDMicros: load.GetUsdMicros(), IngestViolations: load.IngestViolations,
+		USDMicros: load.GetUsdMicros(), IngestViolations: load.IngestViolations, Unread: foundryLoadUnread(load.GetUnread()),
 	}
+}
+
+// foundryLoadUnread is what the model left unread of a load, nil when nothing.
+func foundryLoadUnread(u *foundryv1.FoundryLoadUnread) *FoundryLoadUnreadOutput {
+	if u.GetDocuments() == 0 {
+		return nil
+	}
+	return &FoundryLoadUnreadOutput{Documents: u.GetDocuments(), ModelFailure: u.GetModelFailure(), Reason: u.GetReason(),
+		RereadAt: protoTimestamp(u.GetRereadAt())}
 }
 
 func (s *Service) FoundryGeneration(workspaceID, ontologyID string, gen *foundryv1.OntologyGeneration) FoundryGenerationOutput {

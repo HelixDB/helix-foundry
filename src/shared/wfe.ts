@@ -1769,6 +1769,10 @@ export type ExtractionError = {
   code?: "too_large" | "unsupported" | "model" | "store";
   // The next load tries again.
   retryable?: boolean;
+  // How the model failed it, when code is model: quota, rate_limited,
+  // unavailable, timeout, auth, ... (AgentModelFailure). Unset for every
+  // other code, and for a failure recorded before Foundry kept the class.
+  modelFailure?: string;
 };
 
 /** v1FoundryDocumentExtraction: what an ontology's current load read from it. */
@@ -2293,6 +2297,26 @@ export type FoundryLoad = {
   // Foundry recorded a load's documents, and for a grantee. A few seconds
   // old at most while a job of the load runs.
   documentSets?: FoundryLoadDocumentSet[];
+  // Its documents the model failed to read; unset when it failed none.
+  unread?: FoundryLoadUnread | null;
+};
+
+/**
+ * v1FoundryLoadUnread: a load's documents the model failed. None of their
+ * names or facts are in the load, so it is never complete with them: a
+ * ready or partial load reads "ready, N documents not read (reason)".
+ */
+export type FoundryLoadUnread = {
+  // How many: those the model failed, and once no job writes the load,
+  // those no job reached.
+  documents?: number;
+  // The model failure class most of them failed with; unset when unknown.
+  modelFailure?: string;
+  // A few words for why: "provider quota", "provider busy", ...
+  reason?: string;
+  // When Helix reads them again on its own; unset when the next job into
+  // the load or a new load reads them.
+  rereadAt?: string | null;
 };
 
 /**

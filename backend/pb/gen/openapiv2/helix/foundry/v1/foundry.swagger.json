@@ -10164,6 +10164,10 @@
         "retryable": {
           "type": "boolean",
           "description": "Whether a later load may succeed."
+        },
+        "modelFailure": {
+          "type": "string",
+          "description": "How the model failed, when code is model: the model failure class\n(quota, rate_limited, unavailable, timeout, auth, permission, not_found,\ncontext_too_long, unsupported, truncated, malformed, refused, ...).\nEmpty for every other code, and for a model failure recorded before\nFoundry kept the class."
         }
       }
     },
@@ -10500,6 +10504,10 @@
             "$ref": "#/definitions/v1FoundryLoadDocumentSet"
           },
           "description": "What it made of its documents, by document set: one entry per set it\nholds documents of, by set id. Only GetFoundryLoad fills it: a load in a\nlist has none, nor has the load another call answers with. Empty too\nfor a load that holds no documents, for one made before Foundry\nrecorded which documents a load holds, and for a grantee, who may not\nsee every set. While a job of the load runs, the counts may be a few\nseconds old."
+        },
+        "unread": {
+          "$ref": "#/definitions/v1FoundryLoadUnread",
+          "description": "Its documents the model left unread: unset when the model failed none.\nA ready or partial load with them reads \"ready, N documents not read\n(reason)\"; a failed load whose every document the model failed says so\nin its load job's error."
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
@@ -10712,6 +10720,30 @@
         }
       },
       "description": "FoundryLoadSource is the snapshot of one synced table a load holds."
+    },
+    "v1FoundryLoadUnread": {
+      "type": "object",
+      "properties": {
+        "documents": {
+          "type": "integer",
+          "format": "int32",
+          "description": "How many: those the model failed, and, once no job writes the load,\nthose no job recorded (a run the model stopped leaves them)."
+        },
+        "modelFailure": {
+          "type": "string",
+          "description": "The model failure class most of them failed with (quota,\nrate_limited, unavailable, ...); empty when most were recorded before\nFoundry kept the class."
+        },
+        "reason": {
+          "type": "string",
+          "description": "A few words for it: provider quota, provider account, provider busy,\ntoo long for the model, model declined, model error, or model failed\nwhen its class wasn't kept."
+        },
+        "rereadAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When Helix reads them again on its own: set for the current load whose\nfailures pass (a provider's quota or account, or a busy provider) while\nre-reads go on, 15 minutes after the job that left them, then doubling\nup to 6 hours, for about a week. Unset when a person or the next job\ninto the load reads them; a re-read may start up to a minute after."
+        }
+      },
+      "description": "FoundryLoadUnread is a load's documents the model failed: never read, so\nthe load holds none of their names or facts, and never counted as read."
     },
     "v1FoundryOllamaModel": {
       "type": "object",

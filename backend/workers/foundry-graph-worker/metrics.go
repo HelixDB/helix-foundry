@@ -108,3 +108,10 @@ var resendsRefused = promauto.NewCounterVec(prometheus.CounterOpts{
 		"not_replayed (the saved extraction didn't replay at no cost), document_gone, document_unread, document_failed or " +
 		"too_large (the document with its decisions is more than one Extract takes).",
 }, []string{"reason"})
+
+// documentsUnread counts the documents load jobs ended with unread because
+// the model failed them, by the class most failed with (ai.UnreadFailure).
+var documentsUnread = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_documents_unread_total",
+	Help: "Documents a load job ended with unread because the model failed, by model failure class.",
+}, []string{"model_failure"})

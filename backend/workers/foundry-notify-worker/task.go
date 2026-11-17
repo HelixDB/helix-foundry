@@ -451,7 +451,11 @@ func (t *Task) ontologyReady(ctx context.Context, n *model.FoundryNotification) 
 	case model.FoundryLoadReady:
 		return loadReady(start, ask, overview), "", nil
 	case model.FoundryLoadPartial:
-		return loadPartial(start, ask, overview), "", nil
+		why := ""
+		if job.Error != nil {
+			why = *job.Error
+		}
+		return loadPartial(start, why, ask, overview), "", nil
 	case model.FoundryLoadFailed:
 		failure := ""
 		if job.Error != nil {

@@ -615,6 +615,33 @@ const failures: Record<NonNullable<ExtractionError["code"]>, string> = {
   model: "The model couldn’t read it.",
   store: "The database couldn’t store what was read.",
 };
+// Why the model couldn't read a document, by its failure class
+// (ExtractionError.modelFailure); any other class is "The model couldn’t
+// read it." Helix reads again on its own what the provider's quota, account
+// or a busy provider left unread.
+const modelFailures: Record<string, string> = {
+  quota:
+    "The model provider’s quota or credit ran out, so the model couldn’t read it.",
+  auth: "The model provider refused the account, so the model couldn’t read it.",
+  permission:
+    "The model provider refused the account, so the model couldn’t read it.",
+  not_found:
+    "The model provider refused the model, so the model couldn’t read it.",
+  unavailable: "The model provider was busy, so the model couldn’t read it.",
+  rate_limited: "The model provider was busy, so the model couldn’t read it.",
+  timeout: "The model provider was busy, so the model couldn’t read it.",
+  context_too_long: "It was too long for the model to read.",
+  truncated: "It was too long for the model to read.",
+};
+const rereads = new Set([
+  "quota",
+  "auth",
+  "permission",
+  "not_found",
+  "unavailable",
+  "rate_limited",
+  "timeout",
+]);
 /**
  * Why reading a document failed, in a sentence, and whether a load retries
  * it. A load records a PDF whose text couldn't be read with its read's code
@@ -622,7 +649,8 @@ const failures: Record<NonNullable<ExtractionError["code"]>, string> = {
  * before its text was read (an older load) is read by the next load.
  *
  * @example
- * failureText({ code: "model", retryable: true }); // "The model couldn’t read it. The next load tries again."
+ * failureText({ code: "model", retryable: true, modelFailure: "context_too_long" }); // "It was too long for the model to read. The next load tries again."
+ * failureText({ code: "model", retryable: true, modelFailure: "quota" }); // "The model provider’s quota or credit ran out, so the model couldn’t read it. Helix tries again on its own."
  * failureText(
  *   { code: "unsupported" },
  *   { id: "d", status: "uploaded", mediaType: "application/pdf", read: { state: "FOUNDRY_FILE_READ_STATE_FAILED", error: { message: "Scanned PDF: no text to read." } } },
@@ -640,8 +668,16 @@ export function failureText(
         : read.state === "ready"
           ? "Its text wasn’t read when this load ran. The next load reads it."
           : "Foundry couldn’t read its text."
-      : failures[error?.code || "model"] || failures.model;
-  return error?.retryable ? `${why} The next load tries again.` : why;
+      : error?.code === "model" && error.modelFailure
+        ? modelFailures[error.modelFailure] || failures.model
+        : failures[error?.code || "model"] || failures.model;
+  if (!error?.retryable) return why;
+  // One whose class wasn't kept (failed before Foundry kept it) is read
+  // again as the passing ones are.
+  return error.code === "model" &&
+    (!error.modelFailure || rereads.has(error.modelFailure))
+    ? `${why} Helix tries again on its own.`
+    : `${why} The next load tries again.`;
 }
 
 const isLive = (j?: GraphJob | null) =>

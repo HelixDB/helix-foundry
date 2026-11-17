@@ -59,6 +59,7 @@ type store interface {
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
+	ListFoundryLoadUnread(ctx context.Context, loadIDs []string) (map[string]model.FoundryLoadUnread, error)
 	ListRemovedFoundryDocuments(ctx context.Context, loadID string) ([]string, error)
 	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	DeleteFoundryDocument(ctx context.Context, workspaceID, id string) error
@@ -116,6 +117,10 @@ type failure struct {
 	Budget    bool
 	Uncounted bool
 	Internal  bool
+	// Model is a budget stop for the model: the workspace's own provider
+	// refused its key, account or models (ai.DocumentFailure), so every
+	// document after would fail the same way.
+	Model bool
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
 	// TooLarge is an Extract that was never sent, as it is past what one
@@ -380,10 +385,58 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 	extractStart := r.now()
 	err = r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
 	r.timeStep("extract", extractStart)
+	if job.Kind == model.FoundryGraphJobLoad {
+		err = r.unread(ctx, job, err)
+	}
 	if err == nil && job.Kind == model.FoundryGraphJobLoad && job.Origin == model.FoundryLoadByRefresh {
 		r.compareRebuild(ctx, job, def, binding, target, ontologyVersion)
 	}
 	return a, err
+}
+
+// unread ends a load job whose documents the model left unread as they
+// make the load: failed when the model read none of them, else partial
+// (FoundryGraphJobOutcome.ModelUnread: a person's replaces the current load,
+// a refresh only once it holds what that load held), its message saying how
+// many went unread and why (ai.UnreadMessage). A
+// document the model failed is never counted as read: no names or facts of
+// it are in the load. err is how the job's extract ended: nil, or a stop
+// for the model (failure.Model), whose own words (the workspace's provider
+// refusing its key or quota) it keeps; any other ending is returned as it
+// is.
+func (r *runner) unread(ctx context.Context, job *model.FoundryGraphJob, err error) error {
+	var stop *failure
+	if err != nil && (!errors.As(err, &stop) || !stop.Model) {
+		return err
+	}
+	counts, cerr := r.db.ListFoundryLoadUnread(ctx, []string{job.LoadID})
+	if cerr != nil {
+		return retry("could not count the load's documents; Helix will retry", cerr)
+	}
+	u := counts[job.LoadID]
+	if u.Failures() == 0 {
+		return err
+	}
+	// A run the model stopped never sent the rest: they went unread for the
+	// same reason. A run that went on sent every document it had, so what it
+	// never recorded came since, and the next job reads it (extract_owed).
+	unread, class := u.Failures(), ai.UnreadFailure(u.Failed)
+	if stop != nil {
+		unread += u.Unrecorded
+	}
+	cause := fmt.Errorf("the model left %d of the load's documents unread (%s), %d read", unread, class, u.Read)
+	message := ai.UnreadMessage(unread, u.Read, class)
+	if stop != nil {
+		message = stop.Message
+		if u.Read == 0 {
+			message = "None of the load's documents could be read. " + stop.Message
+		}
+	}
+	documentsUnread.WithLabelValues(string(class)).Add(float64(unread))
+	if u.Read == 0 {
+		return &failure{Message: message, Permanent: true, Err: cause}
+	}
+	return &failure{Message: message, Budget: true, Model: true, Err: cause}
 }
 
 // compareRebuild compares a refresh load with the load it replaces when
@@ -861,6 +914,26 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	pending, err := r.db.ListPendingFoundryDocuments(ctx, job.LoadID)
 	if err != nil {
 		return retry("could not list the documents; Helix will retry", err)
+	}
+	// A re-read Foundry queued on its own (store.QueueFoundryReread) sends
+	// what a failure that passes left unread (ai.Rereads), and what no job
+	// recorded: a document the model failed for good (too long, refused)
+	// would be paid for again on every re-read, for nothing. The next job
+	// anything else queues sends it.
+	if job.ClientToken != nil && strings.HasPrefix(*job.ClientToken, model.FoundryRereadToken) && len(pending) > 0 {
+		ids := make([]string, len(pending))
+		for i, d := range pending {
+			ids[i] = d.ID
+		}
+		rows, err := r.db.ListFoundryDocumentExtractions(ctx, job.LoadID, ids)
+		if err != nil {
+			return retry("could not read the documents' extractions; Helix will retry", err)
+		}
+		pending = slices.DeleteFunc(slices.Clone(pending), func(d *model.FoundryDocument) bool {
+			e, ok := rows[d.ID]
+			return ok && (e.Error == nil || e.Error.Code != model.FoundryExtractionModel ||
+				!ai.Rereads(ontologyagent.ModelFailure(e.Error.ModelFailure)))
+		})
 	}
 	removed, err := r.db.ListRemovedFoundryDocuments(ctx, job.LoadID)
 	if err != nil {
@@ -2031,6 +2104,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		extraction.Status = model.FoundryExtractionFailed
 		extraction.Error = &model.FoundryExtractionError{
 			Code: model.FoundryExtractionErrorCode(event.Outcome.Code), Retryable: event.Outcome.Retryable,
+			ModelFailure: string(event.Outcome.ModelFailure),
 		}
 	}
 	keep := event.Outcome.Kind == ontologyagent.OutcomeAlreadyIngested
@@ -2063,7 +2137,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		c, stop := ai.DocumentFailure(resolved, f)
 		if stop {
 			// Ends the load as partial, as a spent budget does: what is in stays.
-			return &failure{Budget: true, Message: c.Message, Err: cause}
+			return &failure{Budget: true, Model: true, Message: c.Message, Err: cause}
 		}
 		c.Logged(ctx, cause)
 	}

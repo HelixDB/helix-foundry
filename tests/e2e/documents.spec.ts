@@ -420,7 +420,7 @@ test("shows an MDX document as written, with what a load read marked inside its 
 test("says nothing was read from a document a load couldn't read", async ({
   page,
 }) => {
-  await mock.configure({ documentOutcome: "fail" });
+  await mock.configure({ documentOutcome: "store_fail" });
   await signIn(page);
   await uploadInData(page, [file("notes.md", "# Notes\n\nGlobex renewed.\n")]);
   await makeContractsCurrent(page);

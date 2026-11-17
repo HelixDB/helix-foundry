@@ -599,6 +599,11 @@ type FoundryExtractionError struct {
 	Code FoundryExtractionErrorCode
 	// Retryable means a later load may succeed: the next one sends it again.
 	Retryable bool
+	// ModelFailure is how the model failed a document of code model: the
+	// engine's model failure class (quota, rate_limited, unavailable, ...).
+	// Empty for every other code, and for a model failure recorded before
+	// Foundry kept the class.
+	ModelFailure string
 }
 
 // FoundryExtractionCounts are what one document put in the database.
@@ -1018,6 +1023,13 @@ type FoundryGraphJobOutcome struct {
 	// recorded, those deleted since included, and is deleted otherwise
 	// (FinishFoundryGraphJob). Any other job ignores them.
 	HeldSets []string
+	// ModelUnread, only with Status budget_exhausted, means the model left
+	// documents unread, not a budget: a workspace's own provider refused its
+	// key or quota, or the model failed documents the run sent. A load job's
+	// partial load a person started then replaces the current load, as a
+	// ready one would, so they are read again (QueueFoundryReread); one a
+	// budget stopped waits for a person.
+	ModelUnread bool
 	// Next is what an ended job may queue after it; a retry ignores it.
 	Next FoundryGraphNext
 }

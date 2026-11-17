@@ -150,10 +150,17 @@ func loadReady(start, ask, overview string) message {
 	}}
 }
 
-// loadPartial is a first draft's email once its load stopped at the month's budget.
-func loadPartial(start, ask, overview string) message {
+// loadPartial is a first draft's email once its load left some documents
+// unread, as why (its job's error) says: the month's budget spent, or the
+// model failing them. Without why, it was the budget, as a partial load
+// always was before the model's failures made one.
+func loadPartial(start, why, ask, overview string) message {
+	first := start + " is loaded, though the load stopped at this month's budget, so some of its documents weren't read."
+	if why = sentence(why); why != "" {
+		first = start + " is loaded, though not all of its documents were read: " + why
+	}
 	return message{subject: start + " is ready to ask", paragraphs: []paragraph{
-		{Text: start + " is loaded, though the load stopped at this month's budget, so some of its documents weren't read."},
+		{Text: first},
 		{Text: "Ask it a question:", Link: ask},
 		{Text: "See the load:", Link: overview},
 	}}

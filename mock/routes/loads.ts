@@ -87,6 +87,7 @@ import {
   countWithdraw,
   loadDocuments,
   setExtraction,
+  loadModelReads,
   spentAllowance,
   wakeReads,
 } from "./documents";
@@ -151,7 +152,9 @@ import { sourceId } from "./ontology-agent";
 // phase takes `loadStepMs` (one step per document). Test knobs through POST /__mock/config: `loadOutcome` "fail"
 // (the ingest fails), "sources_changed" (the tables were re-synced while the
 // load ran) or "budget_exhausted" (the spending cap stops it after one
-// document), `documentOutcome` "fail" (reading a document fails),
+// document), `documentOutcome` "fail" (the model fails every document on
+// the provider's quota: the load fails, none read) or "store_fail" (the
+// database fails to store each, retryably: the load is ready),
 // `documentUnmatched` (a sentence stating a relationship no link covers,
 // such as "supplies", is an "unmatched" review), `documentLinked` (a name no
 // row holds exactly links to its first candidate that way, "adjudicated",
@@ -187,7 +190,7 @@ type Outcome = "succeed" | "fail" | "sources_changed" | "budget_exhausted";
 type Knobs = {
   loadStepMs?: number;
   loadOutcome?: Outcome;
-  documentOutcome?: "succeed" | "fail";
+  documentOutcome?: "succeed" | "fail" | "store_fail";
   // A name no row holds exactly links to its first candidate this way, with
   // that link's review.
   documentLinked?: UndoableLink;
@@ -344,7 +347,7 @@ type StoredJob = {
   plan: {
     stepMs: number;
     outcome: Outcome;
-    documentOutcome: "succeed" | "fail";
+    documentOutcome: "succeed" | "fail" | "store_fail";
     deleteOutcome: "succeed" | "fail";
   };
 };
@@ -1600,10 +1603,15 @@ function read(j: StoredJob, documentId: string, at: string) {
     });
     return;
   }
-  if (j.plan.documentOutcome === "fail") {
+  if (j.plan.documentOutcome !== "succeed") {
+    // "fail" as on 2026-11-14: the provider's quota ran out, and every call
+    // fails. "store_fail": the database refused what was read.
     setExtraction(j.loadId, doc.id, {
       status: "failed",
-      error: { code: "model", retryable: true },
+      error:
+        j.plan.documentOutcome === "fail"
+          ? { code: "model", retryable: true, modelFailure: "quota" }
+          : { code: "store", retryable: true },
       ...empty,
       usdMicros: "0",
       finishedAt: at,
@@ -1814,8 +1822,31 @@ function rulesOf(
   );
 }
 
-/** Ends a job: its load's status, retention, and what runs next. */
+/**
+ * Ends a job: its load's status, retention, and what runs next. A load job
+ * the model left documents unread of ends partial, or failed when it read
+ * none, saying how many and why, as the graph worker's does.
+ */
 function finish(j: StoredJob, status: JobStatus, at: number, error = "") {
+  // A load the model left documents unread of: a person's replaces the
+  // current load (FoundryGraphJobOutcome.ModelUnread).
+  let modelUnread = false;
+  if (j.kind === "load" && status === "succeeded") {
+    const u = loadModelReads(j.loadId);
+    const n = [...u.failed.values()].reduce((n, c) => n + c, 0);
+    if (n) {
+      const f = unreadFailure(u.failed),
+        why = unreadWhy(f);
+      modelUnread = true;
+      if (u.read === 0) {
+        status = "failed";
+        error = `none of the load's documents could be read (${n} ${n === 1 ? "document" : "documents"}): ${why}; start a new load to read them`;
+      } else {
+        status = "budget_exhausted";
+        error = `${n} ${n === 1 ? "document wasn't" : "documents weren't"} read: ${why}; ${REREADS.has(f) ? "Helix reads them again on its own while the load is current" : "the next load reads them"}`;
+      }
+    }
+  }
   Object.assign(j, { status, error, finishedAt: iso(at) });
   // What it wrote is swept: the load's violation records come up to date.
   if (j.kind !== "delete" && status !== "failed") {
@@ -1830,7 +1861,7 @@ function finish(j: StoredJob, status: JobStatus, at: number, error = "") {
       state.current.set(j.ontologyId, l.id);
     } else if (status === "budget_exhausted") {
       l.status = "partial";
-      if (!loadById(currentLoadId(j.ontologyId) || ""))
+      if (modelUnread || !loadById(currentLoadId(j.ontologyId) || ""))
         state.current.set(j.ontologyId, l.id);
     } else l.status = "failed";
   }
@@ -2161,9 +2192,90 @@ const toJob = (j: StoredJob): GraphJob => ({
 
 // As the WFE: the newest 20 jobs, with the count and spend of every job.
 export const LISTED_JOBS = 20;
+// The few words for a model failure class, as the WFE's ai.UnreadReason.
+const UNREAD_REASONS: Record<string, string> = {
+  quota: "provider quota",
+  auth: "provider account",
+  permission: "provider account",
+  not_found: "provider account",
+  private_host: "provider account",
+  model_changed: "provider account",
+  unavailable: "provider busy",
+  rate_limited: "provider busy",
+  timeout: "provider busy",
+  context_too_long: "too long for the model",
+  truncated: "too long for the model",
+  refused: "model declined",
+  "": "model failed",
+};
+const unreadReason = (f: string) => UNREAD_REASONS[f] ?? "model error";
+// Why, as the WFE's ai.UnreadMessage says it.
+const unreadWhy = (f: string) =>
+  ({
+    "provider quota": "the model provider's quota or credit ran out",
+    "provider account": "the model provider refused the account or its models",
+    "provider busy": "the model provider was busy",
+    "too long for the model": "they were too long for the model",
+    "model declined": "the model declined them",
+    "model error": "the model rejected the request",
+  })[unreadReason(f)] || "the model failed";
+// The class a load's unread documents are told by, as the WFE's
+// ai.UnreadFailure: the most common of those Helix re-reads (ai.Rereads),
+// else the most common; a tie to the first by name.
+const REREADS = new Set([
+  "",
+  "quota",
+  "auth",
+  "permission",
+  "not_found",
+  "unavailable",
+  "rate_limited",
+  "timeout",
+]);
+const unreadFailure = (failed: Map<string, number>) =>
+  [...failed].sort(
+    (a, b) =>
+      Number(REREADS.has(b[0])) - Number(REREADS.has(a[0])) ||
+      b[1] - a[1] ||
+      a[0].localeCompare(b[0]),
+  )[0]?.[0] || "";
+
+/**
+ * A load's documents the model left unread, as the WFE answers it: none
+ * when it failed none; with a re-read 15 minutes after the load ended for a
+ * current ready or partial load whose provider is to blame.
+ */
+function loadUnread(l: StoredLoad, current: boolean) {
+  const u = loadModelReads(l.id);
+  const failed = [...u.failed.values()].reduce((n, c) => n + c, 0);
+  if (!failed) return undefined;
+  const live = state.jobs.some(
+    (j) =>
+      j.loadId === l.id && (j.status === "queued" || j.status === "running"),
+  );
+  const f = unreadFailure(u.failed),
+    reason = unreadReason(f);
+  const passes = [...u.failed.keys()].some((c) => REREADS.has(c));
+  return {
+    documents: failed + (live ? 0 : u.unrecorded),
+    modelFailure: f,
+    reason,
+    rereadAt:
+      passes &&
+      current &&
+      !live &&
+      l.finishedAt &&
+      (l.status === "ready" || l.status === "partial")
+        ? iso(Date.parse(l.finishedAt) + 15 * 60_000)
+        : null,
+  };
+}
+
 const toLoad = (l: StoredLoad): FoundryLoad => {
   const jobs = state.jobs.filter((j) => j.loadId === l.id);
+  const current = currentLoadId(l.ontologyId) === l.id;
   return {
+    unread: loadUnread(l, current),
     id: l.id,
     versionId: l.versionId,
     version: versionName(l),

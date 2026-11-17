@@ -110,7 +110,9 @@ const loadBadges: Record<JobStatus, { status: Status; label: string }> = {
   queued: { status: "queued", label: "Queued" },
   running: { status: "running", label: "Loading" },
   succeeded: { status: "succeeded", label: "Loaded" },
-  budget_exhausted: { status: "stale", label: "Stopped at the cap" },
+  // Stopped before reading every document: a spending cap, the owner's
+  // provider refusing its key or quota, or the model leaving some unread.
+  budget_exhausted: { status: "stale", label: "Stopped early" },
   failed: { status: "failed", label: "Failed" },
   cancelled: { status: "canceled", label: "Cancelled" },
 };

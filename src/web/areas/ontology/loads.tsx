@@ -81,6 +81,7 @@ import {
   loadRetry,
   loadDocumentPlan,
   loadDocumentTotals,
+  loadUnreadText,
   loadDocumentsOutcome,
   loadDocumentsText,
   loadSetsLine,
@@ -237,9 +238,11 @@ export function LoadButton({
       documents.data || [],
       scope,
       bundle.routes.ok ? bundle.routes.value : [],
+      // A document the current load failed to read was not read: reading it
+      // again is paid for.
       new Set(
         (read.data?.documents || [])
-          .filter((d) => d.extraction)
+          .filter((d) => d.extraction && d.extraction.status !== "failed")
           .map((d) => d.id),
       ),
       ids,
@@ -251,7 +254,10 @@ export function LoadButton({
           id: s.id,
           documents: s.documents || 0,
           read: (read.data?.documents || []).filter(
-            (d) => d.extraction && d.setId === s.id,
+            (d) =>
+              d.extraction &&
+              d.extraction.status !== "failed" &&
+              d.setId === s.id,
           ).length,
         })),
     );
@@ -1116,18 +1122,31 @@ export function LoadPage({ loadId }: { loadId: string }) {
   const uploaded = (documents.data?.documents || []).filter(
     (d) => d.status === "uploaded",
   );
+  // What the load made of every document it holds, as the WFE counted it: a
+  // job's progress counts a document it only stored as done.
+  const totals = loadDocumentTotals(l);
   const docItems: FeedItem[] = uploaded.map((d) => ({
     id: d.id,
     name: d.name || d.id,
     source: "upload",
     group: "Documents",
     // A document's extraction is the current load's; another load's
-    // documents are as far as its job got.
-    status: (l.current ? !!d.extraction : j.status === "succeeded")
-      ? "ready"
-      : j.status === "running" && j.phase === "documents"
-        ? "loading"
-        : "pending",
+    // documents are as far as its job got. While a job reads documents,
+    // those it hasn't recorded are loading. Once no job is live, one the
+    // model failed was not read; of another load, whose documents' rows the
+    // page doesn't have, every one is unread only when it read none.
+    status:
+      l.current && d.extraction && d.extraction.status !== "failed"
+        ? "ready"
+        : !l.current && j.status === "succeeded"
+          ? "ready"
+          : j.status === "running" && j.phase === "documents"
+            ? "loading"
+            : isLiveJob(j)
+              ? "pending"
+              : l.current || totals?.read === 0
+                ? "unread"
+                : "ended",
   }));
   const reviews = uploaded.reduce(
     (n, d) => n + (d.extraction?.reviews || 0),
@@ -1139,9 +1158,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
   );
   const retry = loadRetry(j, ontology.createdAt, now);
   const loadBadgeShown = loadBadge(l);
-  // What the load made of every document it holds, as the WFE counted it: a
-  // job's progress counts a document it only stored as done.
-  const totals = loadDocumentTotals(l);
+  const unread = loadUnreadText(l, now);
   return (
     <Page>
       <PageHeader
@@ -1263,7 +1280,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
               )
             }
             action={
-              changed &&
+              (changed || (l.unread?.documents ?? 0) > 0) &&
               version.data?.version?.isCurrent && (
                 <LoadButton
                   version={version.data.version}
@@ -1274,7 +1291,24 @@ export function LoadPage({ loadId }: { loadId: string }) {
             }
           />
         )}
-        {j.status === "budget_exhausted" && (
+        {unread && (
+          <Callout
+            icon={TriangleAlert}
+            title={loadBadge(l).label}
+            text={unread}
+            action={
+              l.current && (
+                <ButtonLink
+                  size="sm"
+                  to={paths.ontologyConnections(o, "failed")}
+                >
+                  See what wasn’t read
+                </ButtonLink>
+              )
+            }
+          />
+        )}
+        {j.status === "budget_exhausted" && !unread && (
           <Callout
             icon={CircleGauge}
             tone="muted"
@@ -1282,7 +1316,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
             text={budgetStopText(j)}
           />
         )}
-        {j.status === "succeeded" && (
+        {j.status === "succeeded" && !unread && (
           <Callout
             icon={CircleCheck}
             tone="muted"
