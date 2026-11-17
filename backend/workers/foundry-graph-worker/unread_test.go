@@ -1,6 +1,7 @@
 package foundrygraphworker
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,8 +50,8 @@ func TestUnreadDocuments(t *testing.T) {
 	// them again.
 	t.Run("leaves a load partial when the model failed some documents", func(t *testing.T) {
 		for failure, want := range map[string]string{
-			"quota":       "2 documents weren't read: the model provider's quota or credit ran out; Helix reads them again on its own",
-			"unavailable": "2 documents weren't read: the model provider was busy; Helix reads them again on its own",
+			"quota":       "2 documents weren't read: the model provider's quota or credit ran out; Helix reads them again on its own while the load is current",
+			"unavailable": "2 documents weren't read: the model provider was busy; Helix reads them again on its own while the load is current",
 			"unsupported": "2 documents weren't read: the model rejected the request; the next load reads them",
 		} {
 			h := newHarness(t)
@@ -70,7 +71,7 @@ func TestUnreadDocuments(t *testing.T) {
 		h.agent.extract = extractModelFailing(h, "rate_limited", "doc-c")
 		outcome := h.run(t, loadJob())
 		if outcome.Status != model.FoundryGraphJobBudgetExhausted ||
-			outcome.Error != "1 document wasn't read: the model provider was busy; Helix reads them again on its own" {
+			outcome.Error != "1 document wasn't read: the model provider was busy; Helix reads them again on its own while the load is current" {
 			t.Fatalf("outcome = %+v", outcome)
 		}
 	})
@@ -126,6 +127,40 @@ func TestUnreadDocuments(t *testing.T) {
 		h.agent.extract = extractModelFailing(h, "quota", "doc-a", "doc-b", "doc-c", "doc-d")
 		if outcome := h.run(t, extractJob()); outcome.Status != model.FoundryGraphJobSucceeded {
 			t.Fatalf("outcome = %+v", outcome)
+		}
+	})
+
+	// A re-read sends what a passing failure left unread and what no job
+	// recorded, never a document the model failed for good.
+	t.Run("re-reads only what a passing failure left unread", func(t *testing.T) {
+		h := newHarness(t)
+		failed := func(f string) *model.FoundryDocumentExtraction {
+			return &model.FoundryDocumentExtraction{Status: model.FoundryExtractionFailed,
+				Error: &model.FoundryExtractionError{Code: model.FoundryExtractionModel, Retryable: true, ModelFailure: f}}
+		}
+		h.store.prior = map[string]map[string]*model.FoundryDocumentExtraction{"load-0": {
+			"doc-a": failed("quota"), "doc-b": failed("context_too_long"), "doc-c": failed(""),
+			"doc-d": {Status: model.FoundryExtractionFailed, Error: &model.FoundryExtractionError{Code: model.FoundryExtractionStore, Retryable: true}},
+		}}
+		h.agent.extract = extractModelFailing(h, "quota")
+		job := extractJob()
+		token := model.FoundryRereadToken + job.ID
+		job.ClientToken = &token
+		if outcome := h.run(t, job); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+		requests := h.extractRequests(t)
+		if len(requests) != 1 || !slices.Equal(docIDs(requests[0]), []string{"doc-a", "doc-c"}) {
+			t.Fatalf("sent %v", requests)
+		}
+
+		// Any other job sends every document the load waits for.
+		h = newHarness(t)
+		h.store.prior = map[string]map[string]*model.FoundryDocumentExtraction{"load-0": {"doc-b": failed("context_too_long")}}
+		h.agent.extract = extractModelFailing(h, "quota")
+		h.run(t, extractJob())
+		if requests := h.extractRequests(t); len(requests) != 1 || len(docIDs(requests[0])) != 4 {
+			t.Fatalf("sent %v", requests)
 		}
 	})
 }

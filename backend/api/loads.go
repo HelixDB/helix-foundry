@@ -133,9 +133,13 @@ func (s *Service) ListFoundryLoads(ctx context.Context, req *foundryv1.ListFound
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "count loads' unread documents: %v", err)
 	}
+	rereads, err := s.foundryRereads(ctx, o, unread)
+	if err != nil {
+		return nil, err
+	}
 	resp := &foundryv1.ListFoundryLoadsResponse{}
 	for _, l := range loads {
-		resp.Loads = append(resp.Loads, foundryLoadToProto(l, o, jobs[l.ID], steps[l.ID], sources[l.ID], unread[l.ID]))
+		resp.Loads = append(resp.Loads, foundryLoadToProto(l, o, jobs[l.ID], steps[l.ID], sources[l.ID], unread[l.ID], rereads))
 	}
 	return resp, nil
 }
@@ -281,14 +285,46 @@ func (s *Service) foundryLoadResponse(ctx context.Context, o *foundrymodel.Found
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "count the load's unread documents: %v", err)
 	}
-	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID], unread[load.ID])}, nil
+	rereads, err := s.foundryRereads(ctx, o, unread)
+	if err != nil {
+		return nil, err
+	}
+	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID], unread[load.ID],
+		rereads)}, nil
+}
+
+// foundryRereads reports whether Helix may queue a re-read of o's current
+// load now, as the sync worker's QueueFoundryReread would: no job of the
+// ontology is live, and the month has budget for work no one started. Read
+// only when the current load, among unread, has documents the model failed.
+func (s *Service) foundryRereads(ctx context.Context, o *foundrymodel.FoundryOntology, unread map[string]foundrymodel.FoundryLoadUnread) (bool, error) {
+	if o.CurrentLoadID == nil || unread[*o.CurrentLoadID].Failures() == 0 {
+		return false, nil
+	}
+	budget := s.deps.Cfg.Foundry.Graph.MonthBudget(time.Now())
+	spent, err := s.deps.DB.SumFoundryGraphJobSpend(ctx, o.WorkspaceID, budget.Since)
+	if err != nil {
+		return false, status.Errorf(codes.Internal, "sum graph spend: %v", err)
+	}
+	if spent >= budget.CapFor(nil) {
+		return false, nil
+	}
+	_, err = s.deps.DB.GetActiveFoundryGraphJob(ctx, o.ID)
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return true, nil
+	case err != nil:
+		return false, status.Errorf(codes.Internal, "get live job: %v", err)
+	}
+	return false, nil
 }
 
 // foundryLoadToProto is a load with its newest jobs, the snapshots it holds,
-// its documents the model left unread and, when its version enriches
-// people, its step (nil otherwise).
+// its documents the model left unread (rereads: whether Helix may re-read
+// them now, foundryRereads) and, when its version enriches people, its step
+// (nil otherwise).
 func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOntology, jobs foundrymodel.FoundryLoadJobs, step *foundrymodel.FoundryLoadEnrichment,
-	sources []foundrymodel.FoundryLoadSource, unread foundrymodel.FoundryLoadUnread) *foundryv1.FoundryLoad {
+	sources []foundrymodel.FoundryLoadSource, unread foundrymodel.FoundryLoadUnread, rereads bool) *foundryv1.FoundryLoad {
 	out := &foundryv1.FoundryLoad{
 		Id: l.ID, VersionId: l.VersionID, Version: l.OntologyVersion(), Status: string(l.Status),
 		Current: o.CurrentLoadID != nil && *o.CurrentLoadID == l.ID, CreatedAt: timestamppb.New(l.CreatedAt),
@@ -313,16 +349,17 @@ func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOnto
 	if step != nil {
 		out.Enrichment = foundryLoadEnrichmentToProto(step)
 	}
-	out.Unread = foundryLoadUnreadToProto(l, out.Current, unread)
+	out.Unread = foundryLoadUnreadToProto(l, out.Current && rereads, unread)
 	return out
 }
 
 // foundryLoadUnreadToProto is what the model left unread of load l, nil when
-// it failed none, with when Helix reads them again on its own: only into the
-// current load, ready or partial, while one of them failed for a reason
-// that passes (ai.Rereads), as store.QueueFoundryReread decides.
-func foundryLoadUnreadToProto(l *foundrymodel.FoundryLoad, current bool, u foundrymodel.FoundryLoadUnread) *foundryv1.FoundryLoadUnread {
-	n := u.Documents()
+// it failed none, with when Helix reads them again on its own: only when it
+// may (rereads: the current load, no job live, budget left), ready or
+// partial, while one of them failed for a reason that passes (ai.Rereads),
+// as store.QueueFoundryReread decides.
+func foundryLoadUnreadToProto(l *foundrymodel.FoundryLoad, rereads bool, u foundrymodel.FoundryLoadUnread) *foundryv1.FoundryLoadUnread {
+	n := u.Failures()
 	if n == 0 {
 		return nil
 	}
@@ -332,7 +369,7 @@ func foundryLoadUnreadToProto(l *foundrymodel.FoundryLoad, current bool, u found
 	for class := range u.Failed {
 		passes = passes || ai.Rereads(ontologyagent.ModelFailure(class))
 	}
-	if at, ok := u.RereadAt(); ok && passes && current && l.Status.Servable() {
+	if at, ok := u.RereadAt(); ok && passes && rereads && l.Status.Servable() {
 		out.RereadAt = timestamppb.New(at)
 	}
 	return out

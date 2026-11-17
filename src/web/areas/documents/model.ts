@@ -649,7 +649,7 @@ const rereads = new Set([
  * before its text was read (an older load) is read by the next load.
  *
  * @example
- * failureText({ code: "model", retryable: true }); // "The model couldn’t read it. The next load tries again."
+ * failureText({ code: "model", retryable: true, modelFailure: "context_too_long" }); // "It was too long for the model to read. The next load tries again."
  * failureText({ code: "model", retryable: true, modelFailure: "quota" }); // "The model provider’s quota or credit ran out, so the model couldn’t read it. Helix tries again on its own."
  * failureText(
  *   { code: "unsupported" },
@@ -672,7 +672,10 @@ export function failureText(
         ? modelFailures[error.modelFailure] || failures.model
         : failures[error?.code || "model"] || failures.model;
   if (!error?.retryable) return why;
-  return error.code === "model" && rereads.has(error.modelFailure || "")
+  // One whose class wasn't kept (failed before Foundry kept it) is read
+  // again as the passing ones are.
+  return error.code === "model" &&
+    (!error.modelFailure || rereads.has(error.modelFailure))
     ? `${why} Helix tries again on its own.`
     : `${why} The next load tries again.`;
 }

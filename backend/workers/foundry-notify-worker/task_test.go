@@ -343,13 +343,13 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
 				box, n := firstDraft("Billing", model.OntologyGenerationSucceeded)
 				box.loaded(model.FoundryLoadPartial,
-					"2 documents weren't read: the model provider's quota or credit ran out; Helix reads them again on its own")
+					"2 documents weren't read: the model provider's quota or credit ran out; Helix reads them again on its own while the load is current")
 				return box, n
 			},
 			subject: "Billing is ready to ask",
 			text: []string{
 				"Billing is loaded, though not all of its documents were read: 2 documents weren't read: the model provider's quota or " +
-					"credit ran out; Helix reads them again on its own.",
+					"credit ran out; Helix reads them again on its own while the load is current.",
 				"Ask it a question: " + ask, "See the load: " + overview,
 			},
 			links: []string{ask, overview},

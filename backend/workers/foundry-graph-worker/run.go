@@ -391,8 +391,13 @@ func (r *runner) unread(ctx context.Context, job *model.FoundryGraphJob, err err
 	if u.Failures() == 0 {
 		return err
 	}
-	// The job is live, so Documents would leave out what it never recorded.
-	unread, class := u.Failures()+u.Unrecorded, ai.UnreadFailure(u.Failed)
+	// A run the model stopped never sent the rest: they went unread for the
+	// same reason. A run that went on sent every document it had, so what it
+	// never recorded came since, and the next job reads it (extract_owed).
+	unread, class := u.Failures(), ai.UnreadFailure(u.Failed)
+	if stop != nil {
+		unread += u.Unrecorded
+	}
 	cause := fmt.Errorf("the model left %d of the load's documents unread (%s), %d read", unread, class, u.Read)
 	message := ai.UnreadMessage(unread, u.Read, class)
 	if stop != nil {
@@ -878,6 +883,26 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	pending, err := r.db.ListPendingFoundryDocuments(ctx, job.LoadID)
 	if err != nil {
 		return retry("could not list the documents; Helix will retry", err)
+	}
+	// A re-read Foundry queued on its own (store.QueueFoundryReread) sends
+	// what a failure that passes left unread (ai.Rereads), and what no job
+	// recorded: a document the model failed for good (too long, refused)
+	// would be paid for again on every re-read, for nothing. The next job
+	// anything else queues sends it.
+	if job.ClientToken != nil && strings.HasPrefix(*job.ClientToken, model.FoundryRereadToken) && len(pending) > 0 {
+		ids := make([]string, len(pending))
+		for i, d := range pending {
+			ids[i] = d.ID
+		}
+		rows, err := r.db.ListFoundryDocumentExtractions(ctx, job.LoadID, ids)
+		if err != nil {
+			return retry("could not read the documents' extractions; Helix will retry", err)
+		}
+		pending = slices.DeleteFunc(slices.Clone(pending), func(d *model.FoundryDocument) bool {
+			e, ok := rows[d.ID]
+			return ok && (e.Error == nil || e.Error.Code != model.FoundryExtractionModel ||
+				!ai.Rereads(ontologyagent.ModelFailure(e.Error.ModelFailure)))
+		})
 	}
 	removed, err := r.db.ListRemovedFoundryDocuments(ctx, job.LoadID)
 	if err != nil {

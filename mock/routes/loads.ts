@@ -2188,6 +2188,8 @@ const UNREAD_REASONS: Record<string, string> = {
   auth: "provider account",
   permission: "provider account",
   not_found: "provider account",
+  private_host: "provider account",
+  model_changed: "provider account",
   unavailable: "provider busy",
   rate_limited: "provider busy",
   timeout: "provider busy",
@@ -2202,10 +2204,26 @@ const unreadWhy = (f: string) =>
     "provider quota": "the model provider's quota or credit ran out",
     "provider busy": "the model provider was busy",
   })[unreadReason(f)] || "the model failed";
-// The class most failed with, as the WFE's ai.UnreadFailure.
+// The class a load's unread documents are told by, as the WFE's
+// ai.UnreadFailure: the most common of those Helix re-reads (ai.Rereads),
+// else the most common; a tie to the first by name.
+const REREADS = new Set([
+  "",
+  "quota",
+  "auth",
+  "permission",
+  "not_found",
+  "unavailable",
+  "rate_limited",
+  "timeout",
+]);
 const unreadFailure = (failed: Map<string, number>) =>
-  [...failed].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ||
-  "";
+  [...failed].sort(
+    (a, b) =>
+      Number(REREADS.has(b[0])) - Number(REREADS.has(a[0])) ||
+      b[1] - a[1] ||
+      a[0].localeCompare(b[0]),
+  )[0]?.[0] || "";
 
 /**
  * A load's documents the model left unread, as the WFE answers it: none
@@ -2222,13 +2240,9 @@ function loadUnread(l: StoredLoad, current: boolean) {
   );
   const f = unreadFailure(u.failed),
     reason = unreadReason(f);
-  const passes = [
-    "provider quota",
-    "provider account",
-    "provider busy",
-  ].includes(reason);
+  const passes = [...u.failed.keys()].some((c) => REREADS.has(c));
   return {
-    documents: failed + (live ? 0 : u.unrecorded),
+    documents: failed,
     modelFailure: f,
     reason,
     rereadAt:

@@ -254,7 +254,10 @@ export function LoadButton({
           id: s.id,
           documents: s.documents || 0,
           read: (read.data?.documents || []).filter(
-            (d) => d.extraction && d.setId === s.id,
+            (d) =>
+              d.extraction &&
+              d.extraction.status !== "failed" &&
+              d.setId === s.id,
           ).length,
         })),
     );
@@ -1309,7 +1312,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
             text={budgetStopText(j)}
           />
         )}
-        {j.status === "succeeded" && (
+        {j.status === "succeeded" && !unread && (
           <Callout
             icon={CircleCheck}
             tone="muted"

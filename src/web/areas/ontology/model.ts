@@ -2331,8 +2331,11 @@ export function jobBadge(
               ? "Applied"
               : "Loaded",
       };
+    // Stopped before reading every document: a spending cap, the owner's
+    // provider refusing its key or quota, or the model leaving some unread.
+    // The load says which.
     case "budget_exhausted":
-      return { status: "stale", label: "Stopped at the cap" };
+      return { status: "stale", label: "Stopped early" };
     case "failed":
       return { status: "failed", label: "Failed" };
     case "cancelled":

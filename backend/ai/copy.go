@@ -291,19 +291,19 @@ func UnreadReason(f ontologyagent.ModelFailure) string {
 	return "model error"
 }
 
-// UnreadFailure is the class most of failed's documents failed with, failed
-// counting them by class; a tie goes to the class Foundry reads again on its
-// own (Rereads), then to the first in name order, so it never depends on map
-// order. "" when failed is empty, or most were recorded before Foundry kept
-// the class.
+// UnreadFailure is the class a load's unread documents are told by, failed
+// counting them by class: the most common of those Foundry reads again on
+// its own (Rereads), when any is, so the reason agrees with the re-read the
+// load shows; else the most common. A tie goes to the first in name order,
+// so it never depends on map order. "" when failed is empty, or the class
+// chosen was recorded before Foundry kept it.
 func UnreadFailure(failed map[string]int) ontologyagent.ModelFailure {
 	var best string
-	n := -1
+	n, passes := -1, false
 	for _, f := range slices.Sorted(maps.Keys(failed)) {
-		c := failed[f]
-		better := c > n || c == n && Rereads(ontologyagent.ModelFailure(f)) && !Rereads(ontologyagent.ModelFailure(best))
-		if better {
-			best, n = f, c
+		c, p := failed[f], Rereads(ontologyagent.ModelFailure(f))
+		if p && !passes || p == passes && c > n {
+			best, n, passes = f, c, p
 		}
 	}
 	return ontologyagent.ModelFailure(best)
@@ -333,7 +333,7 @@ func UnreadMessage(unread, read int, f ontologyagent.ModelFailure) string {
 	}
 	then := "the next load reads them"
 	if Rereads(f) {
-		then = "Helix reads them again on its own"
+		then = "Helix reads them again on its own while the load is current"
 	}
 	return fmt.Sprintf("%d %s %s read: %s; %s", unread, docs, were, why, then)
 }

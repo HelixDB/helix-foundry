@@ -19,9 +19,9 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			t.Fatalf("unread = %v", got)
 		}
 	})
-	t.Run("counts failed and unrecorded documents, with the reason and the re-read", func(t *testing.T) {
+	t.Run("counts the documents the model failed, with the reason and the re-read", func(t *testing.T) {
 		got := foundryLoadUnreadToProto(partial, true, quota)
-		if got.GetDocuments() != 3 || got.GetModelFailure() != "quota" || got.GetReason() != "provider quota" ||
+		if got.GetDocuments() != 2 || got.GetModelFailure() != "quota" || got.GetReason() != "provider quota" ||
 			!got.GetRereadAt().AsTime().Equal(ended.Add(15*time.Minute)) {
 			t.Fatalf("unread = %v", got)
 		}
@@ -37,7 +37,7 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			t.Fatalf("reread at = %v", got.GetRereadAt().AsTime())
 		}
 		u.Rereads = foundrymodel.FoundryRereadLimit
-		if got := foundryLoadUnreadToProto(ready, true, u); got.GetRereadAt() != nil || got.GetDocuments() != 3 {
+		if got := foundryLoadUnreadToProto(ready, true, u); got.GetRereadAt() != nil || got.GetDocuments() != 2 {
 			t.Fatalf("past the limit: %v", got)
 		}
 	})
@@ -47,9 +47,9 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			current bool
 			u       foundrymodel.FoundryLoadUnread
 		}{
-			"not current": {ready, false, quota},
-			"failed":      {failed, true, quota},
-			"a job live":  {ready, true, foundrymodel.FoundryLoadUnread{Failed: map[string]int{"quota": 1}, Live: true, LastEnd: &ended}},
+			"not current, or a job live, or no budget": {ready, false, quota},
+			"failed":     {failed, true, quota},
+			"a job live": {ready, true, foundrymodel.FoundryLoadUnread{Failed: map[string]int{"quota": 1}, Live: true, LastEnd: &ended}},
 			"the model rejected the request": {ready, true,
 				foundrymodel.FoundryLoadUnread{Failed: map[string]int{"unsupported": 2}, LastEnd: &ended}},
 		} {
@@ -58,8 +58,8 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			}
 		}
 	})
-	t.Run("leaves out unrecorded documents while a job writes the load", func(t *testing.T) {
-		u := foundrymodel.FoundryLoadUnread{Failed: map[string]int{"rate_limited": 1}, Unrecorded: 5, Live: true}
+	t.Run("leaves out documents no job recorded, which wait for reasons of their own", func(t *testing.T) {
+		u := foundrymodel.FoundryLoadUnread{Failed: map[string]int{"rate_limited": 1}, Unrecorded: 5}
 		if got := foundryLoadUnreadToProto(ready, true, u); got.GetDocuments() != 1 || got.GetReason() != "provider busy" {
 			t.Fatalf("unread = %v", got)
 		}

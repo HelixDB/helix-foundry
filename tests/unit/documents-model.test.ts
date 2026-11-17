@@ -528,7 +528,7 @@ describe("document states", () => {
     // Any other failure of a PDF is any document's.
     expect(
       failureText(
-        { code: "model", retryable: true },
+        { code: "model", retryable: true, modelFailure: "unsupported" },
         pdf({ state: "FOUNDRY_FILE_READ_STATE_READY" }),
       ),
     ).toBe("The model couldn’t read it. The next load tries again.");
@@ -1361,8 +1361,9 @@ describe("the documents model's examples", () => {
     expect(fileProblem({ name: "deck.docx", size: 10 })).toBe(
       "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded.",
     );
+    // One failed before Foundry kept the class is read again on its own.
     expect(failureText({ code: "model", retryable: true })).toBe(
-      "The model couldn’t read it. The next load tries again.",
+      "The model couldn’t read it. Helix tries again on its own.",
     );
     expect(
       failureText(
@@ -1801,8 +1802,9 @@ describe("failureText for the model's failures", () => {
         modelFailure: "unsupported",
       }),
     ).toBe("The model couldn’t read it. The next load tries again.");
+    // One failed before Foundry kept the class is read again on its own.
     expect(failureText({ code: "model", retryable: true })).toBe(
-      "The model couldn’t read it. The next load tries again.",
+      "The model couldn’t read it. Helix tries again on its own.",
     );
     expect(
       failureText({ code: "store", retryable: true, modelFailure: "quota" }),

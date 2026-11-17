@@ -114,12 +114,15 @@ func (s *mysqlDB) ListFoundryRereads(ctx context.Context, classes []string, afte
 	if len(classes) == 0 {
 		return nil, nil
 	}
+	// The loads holding such rows come from their own index
+	// (foundry_load_extractions_failed_idx), so a poll reads the failures,
+	// not every document of every current load.
 	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryOntologyColumns+` FROM foundry_ontologies
 WHERE deleted_at IS NULL AND id > ?
-  AND EXISTS (SELECT 1 FROM foundry_loads l JOIN foundry_load_extractions e ON e.load_id=l.id
-              WHERE l.id=foundry_ontologies.current_load_id AND l.status IN ('ready', 'partial')
-                AND e.status='failed' AND e.error_code='model' AND e.error_retryable
-                AND (e.model_failure IS NULL OR e.model_failure IN (`+idPlaceholders(len(classes))+`)))
+  AND current_load_id IN (SELECT e.load_id FROM foundry_load_extractions e
+                          WHERE e.status='failed' AND e.error_code='model' AND e.error_retryable
+                            AND (e.model_failure IS NULL OR e.model_failure IN (`+idPlaceholders(len(classes))+`)))
+  AND EXISTS (SELECT 1 FROM foundry_loads l WHERE l.id=foundry_ontologies.current_load_id AND l.status IN ('ready', 'partial'))
   AND NOT EXISTS (SELECT 1 FROM foundry_load_jobs j WHERE j.ontology_id=foundry_ontologies.id AND j.active_key IS NOT NULL)
 ORDER BY id LIMIT ?`, append(append([]any{afterID}, toAnySlice(classes)...), limit)...)
 	if err != nil {
@@ -143,8 +146,26 @@ func (s *mysqlDB) QueueFoundryReread(ctx context.Context, workspaceID, ontologyI
 	if len(classes) == 0 {
 		return false, nil
 	}
+	// Not yet due, or past the limit, as most polls find a load: said
+	// without the ontology's lock, which uploads and job ends take.
+	var current sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT current_load_id FROM foundry_ontologies WHERE id=? AND workspace_id=? AND deleted_at IS NULL`,
+		ontologyID, workspaceID).Scan(&current); err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	if !current.Valid {
+		return false, nil
+	}
+	var due model.FoundryLoadUnread
+	var err error
+	if due.Live, due.Rereads, due.LastEnd, err = s.foundryRereads(ctx, current.String); err != nil {
+		return false, err
+	}
+	if at, ok := due.RereadAt(); !ok || at.After(now) {
+		return false, nil
+	}
 	queued := false
-	err := s.WithTx(ctx, func(txDB Store) error {
+	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, ontologyID)
 		if err != nil || o.CurrentLoadID == nil {

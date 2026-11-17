@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -103,7 +104,7 @@ func TestFoundryLoadUnread(t *testing.T) {
 		assert.Equal(t, map[string]int{"quota": 1, "": 1}, u.Failed)
 		assert.Equal(t, 1, u.Unrecorded)
 		assert.True(t, u.Live, "the load job is running")
-		assert.Equal(t, 2, u.Documents(), "while a job writes the load, what it hasn't reached isn't unread")
+		assert.Equal(t, 2, u.Failures(), "what no job reached waits for a reason of its own")
 		assert.Nil(t, u.LastEnd)
 		assert.Equal(t, model.FoundryLoadUnread{}, got[id26("FJ-none")])
 
@@ -114,7 +115,8 @@ func TestFoundryLoadUnread(t *testing.T) {
 		require.NoError(t, err)
 		u = got[loadID]
 		assert.False(t, u.Live)
-		assert.Equal(t, 3, u.Documents())
+		assert.Equal(t, 2, u.Failures())
+		assert.Equal(t, 1, u.Unrecorded)
 		require.NotNil(t, u.LastEnd)
 		assert.Equal(t, 0, u.Rereads)
 		assert.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, loadID))
@@ -199,7 +201,7 @@ func TestFoundryLoadUnread(t *testing.T) {
 		assert.NotContains(t, ids(owed), f.ontology.ID)
 		got, err = f.db.ListFoundryLoadUnread(ctx, []string{loadID})
 		require.NoError(t, err)
-		assert.Equal(t, 0, got[loadID].Documents())
+		assert.Equal(t, 0, got[loadID].Failures())
 	})
 
 	// A failure that doesn't pass on its own (the model rejected the
@@ -227,6 +229,64 @@ func TestFoundryLoadUnread(t *testing.T) {
 		owed, err = g.db.ListFoundryRereads(ctx, rereadClasses, "", 100)
 		require.NoError(t, err)
 		assert.NotContains(t, ids(owed), g.ontology.ID)
+	})
+
+	// A person's new load the model left documents unread of replaces the
+	// current load, as a ready one would, so its documents are re-read; one a
+	// spent budget stopped doesn't.
+	t.Run("makes a person's load the model left documents of current", func(t *testing.T) {
+		f := newFoundryFixture(t, "LU7")
+		a, b := f.uploaded(t, "LU7-a"), f.uploaded(t, "LU7-b")
+		first := f.load(t, "L1")
+		f.loaded(t, "w1", a, b)
+		require.Equal(t, first, *f.ontologyNow(t).CurrentLoadID)
+
+		budget := f.load(t, "L2")
+		f.finish(t, "w1", "LU7-2", model.FoundryGraphJobBudgetExhausted, a)
+		assert.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, budget))
+		assert.Equal(t, first, *f.ontologyNow(t).CurrentLoadID, "a budget stop waits for a person")
+
+		unread := f.load(t, "L3")
+		job := f.claimed(t, "w1", unread)
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", extracted(a), false))
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", modelFailed(b, "rate_limited"), false))
+		_, err := f.db.FinishFoundryGraphJob(ctx, job.ID, "w1", model.FoundryGraphJobOutcome{
+			Status: model.FoundryGraphJobBudgetExhausted, IngestDone: true, Next: next("LU7-3")})
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, unread))
+		assert.Equal(t, unread, *f.ontologyNow(t).CurrentLoadID)
+		owed, err := f.db.ListFoundryRereads(ctx, rereadClasses, "", 100)
+		require.NoError(t, err)
+		assert.Contains(t, ids(owed), f.ontology.ID)
+	})
+
+	// Not yet due, a re-read is refused without the ontology's lock; so is one
+	// past the limit.
+	t.Run("refuses a re-read not yet due, or past the limit", func(t *testing.T) {
+		f, loadID, _ := unreadLoad(t, "LU8", model.FoundryGraphJobBudgetExhausted, func(f foundryFixture, job *model.FoundryGraphJob, docs map[string]string) {
+			for _, e := range []*model.FoundryDocumentExtraction{
+				extracted(docs["a"]), extracted(docs["c"]), extracted(docs["d"]), modelFailed(docs["b"], "quota"),
+			} {
+				require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", e, false))
+			}
+		})
+		ws, o := f.ontology.WorkspaceID, f.ontology.ID
+		for i := range model.FoundryRereadLimit {
+			queued, err := f.db.QueueFoundryReread(ctx, ws, o, rereadClasses, &model.FoundryGraphJob{ID: id26(fmt.Sprintf("FRR-LU8-%02d-", i))},
+				noBudget, time.Now().Add(7*time.Hour))
+			require.NoError(t, err)
+			require.True(t, queued, "re-read %d", i)
+			job := f.claimed(t, "w2", id26(fmt.Sprintf("FRR-LU8-%02d-", i)))
+			f.ended(t, "w2", job.ID, model.FoundryGraphJobSucceeded, next(fmt.Sprintf("LU8-%d", i)))
+		}
+		got, err := f.db.ListFoundryLoadUnread(ctx, []string{loadID})
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryRereadLimit, got[loadID].Rereads)
+		queued, err := f.db.QueueFoundryReread(ctx, ws, o, rereadClasses, &model.FoundryGraphJob{ID: id26("FRR-LU8-x")}, noBudget,
+			time.Now().Add(30*24*time.Hour))
+		require.NoError(t, err)
+		assert.False(t, queued, "past the limit")
+		assert.Nil(t, f.liveJob(t))
 	})
 
 	t.Run("lists nothing for no classes", func(t *testing.T) {

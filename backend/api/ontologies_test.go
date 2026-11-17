@@ -1985,6 +1985,53 @@ func TestFoundryLoadRPCs(t *testing.T) {
 	// of its version reads added nothing to the graph. Twelve sets of ten
 	// documents, two of them routed: the ten unrouted sets are told apart
 	// from the routed ones whether or not their documents were reached yet.
+	// A load the model left documents unread of says so in the list and
+	// alone, with when Helix reads them again: never while a job of the
+	// ontology is live or the month's budget for work no one started is
+	// spent, when the sync worker queues none.
+	t.Run("says what the model left unread, and a re-read only when one can be queued", func(t *testing.T) {
+		s, store, _ := foundryService(t)
+		store.versions = append(store.versions, draft("done"))
+		created, err := load(s, "v-done", "load-u")
+		if err != nil {
+			t.Fatal(err)
+		}
+		loadID := created.GetLoad().GetId()
+		ended(store, loadID, foundrymodel.FoundryLoadPartial, true)
+		finished := time.Now().Add(-time.Hour)
+		store.load(loadID).FinishedAt = &finished
+		store.unread = map[string]foundrymodel.FoundryLoadUnread{loadID: {Read: 6, Failed: map[string]int{"quota": 3}, LastEnd: &finished}}
+		get := func() *foundryv1.FoundryLoad {
+			t.Helper()
+			got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listed, err := s.ListFoundryLoads(ctx, &foundryv1.ListFoundryLoadsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(listed.GetLoads()[0].GetUnread(), got.GetLoad().GetUnread()) {
+				t.Fatalf("listed %v, alone %v", listed.GetLoads()[0].GetUnread(), got.GetLoad().GetUnread())
+			}
+			return got.GetLoad()
+		}
+		u := get().GetUnread()
+		if u.GetDocuments() != 3 || u.GetReason() != "provider quota" || !u.GetRereadAt().AsTime().Equal(finished.Add(15*time.Minute)) {
+			t.Fatalf("unread = %v", u)
+		}
+		store.spent = 1 << 40
+		if u := get().GetUnread(); u.GetDocuments() != 3 || u.GetRereadAt() != nil {
+			t.Fatalf("with the month spent: %v", u)
+		}
+		store.spent = 0
+		store.jobs = append(store.jobs, &foundrymodel.FoundryGraphJob{ID: "j-live", OntologyID: "ont-1", LoadID: "other",
+			Status: foundrymodel.FoundryGraphJobRunning})
+		if u := get().GetUnread(); u.GetRereadAt() != nil {
+			t.Fatalf("with a job live: %v", u)
+		}
+	})
+
 	t.Run("counts what a load made of its documents by set", func(t *testing.T) {
 		s, store, _ := foundryService(t)
 		v := draft("done")
@@ -2333,7 +2380,7 @@ func TestFoundryOntologyRefreshSetting(t *testing.T) {
 // The loads list tells a refresh from a load someone started.
 func TestFoundryLoadOrigin(t *testing.T) {
 	load := &foundrymodel.FoundryLoad{ID: "l1", Version: 2, Status: foundrymodel.FoundryLoadReady, Origin: foundrymodel.FoundryLoadByRefresh, CreatedAt: time.Now()}
-	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil, foundrymodel.FoundryLoadUnread{}).GetOrigin(); got != "refresh" {
+	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil, foundrymodel.FoundryLoadUnread{}, false).GetOrigin(); got != "refresh" {
 		t.Fatalf("origin = %q", got)
 	}
 }

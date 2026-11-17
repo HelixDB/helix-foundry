@@ -643,6 +643,17 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 		// A refresh replaces only the load it refreshed.
 		refreshesCurrent := refresh && replaced != nil && refreshes.Valid && *replaced == refreshes.String
 		becomesCurrent := load == model.FoundryLoadReady || replaced == nil
+		if load == model.FoundryLoadPartial && !refresh && !becomesCurrent {
+			// A load a person started that the model left documents unread
+			// of is the version they asked for: it replaces the current load
+			// as a ready one would, and, current, has those documents read
+			// again on its own (QueueFoundryReread). One a spent budget
+			// stopped waits for a person, as before.
+			if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_extractions
+WHERE load_id=? AND status='failed' AND error_code='model')`, job.LoadID).Scan(&becomesCurrent); err != nil {
+				return err
+			}
+		}
 		if load == model.FoundryLoadPartial && refreshesCurrent {
 			// A partial refresh (one whose budget ran out) replaces the load it
 			// refreshed once it holds what that load held: it recorded every

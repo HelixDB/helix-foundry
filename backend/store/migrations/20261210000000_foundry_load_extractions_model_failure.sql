@@ -8,16 +8,20 @@
 --
 -- One nullable column and a check that holds of every existing row (all are
 -- NULL): nothing here changes or deletes a row, and an older binary neither
--- reads nor writes it.
+-- reads nor writes it. The index finds the loads holding model failures
+-- (store.ListFoundryRereads, every sync worker poll) by those rows alone,
+-- however many documents the loads hold.
 --
 -- Rollback. A deploy request carries schema only and a rollback restores the
 -- binary, not the schema, so the column stays. The Down is for a local
 -- database.
 ALTER TABLE foundry_load_extractions
   ADD COLUMN model_failure VARCHAR(24) NULL AFTER error_retryable,
-  ADD CONSTRAINT foundry_load_extractions_model_failure_chk CHECK (model_failure IS NULL OR error_code = 'model');
+  ADD CONSTRAINT foundry_load_extractions_model_failure_chk CHECK (model_failure IS NULL OR error_code = 'model'),
+  ADD INDEX foundry_load_extractions_failed_idx (status, error_code, load_id);
 
 -- +goose Down
 ALTER TABLE foundry_load_extractions
+  DROP INDEX foundry_load_extractions_failed_idx,
   DROP CHECK foundry_load_extractions_model_failure_chk,
   DROP COLUMN model_failure;

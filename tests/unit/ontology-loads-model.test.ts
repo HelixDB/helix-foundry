@@ -181,7 +181,7 @@ describe("loads", () => {
     });
     expect(jobBadge(job({ status: "budget_exhausted" }))).toEqual({
       status: "stale",
-      label: "Stopped at the cap",
+      label: "Stopped early",
     });
     expect(jobBadge(job({ status: "failed" }))).toEqual({
       status: "failed",
