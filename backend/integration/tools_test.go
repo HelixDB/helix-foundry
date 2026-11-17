@@ -118,6 +118,7 @@ func TestEntryToolsSayWhatTheyAreFor(t *testing.T) {
 		toolFoundryAsk:            "Answer a question about a business from its Foundry ontology, with every claim citing",
 		toolFoundryReadGraph:      "Look up exact records in a business's Foundry ontology:",
 		toolFoundrySendPieces:     "Remember something for later in a business's Foundry ontology:",
+		toolFoundryRecall:         "Recall what was remembered in a business's Foundry API source:",
 	} {
 		assert.True(t, strings.HasPrefix(tools[name], lead), name)
 	}
@@ -199,6 +200,85 @@ func TestListConnectorsReadsBatchesOnlyOnAHostWithAPISources(t *testing.T) {
 		assert.NotContains(t, authorized, "ListFoundryEventBatches")
 		assert.Zero(t, b.batches)
 		assert.Nil(t, out.Connectors[1].EventSource)
+	}
+}
+
+// piecesBackend answers a list of an API source's pieces, keeping the request.
+type piecesBackend struct {
+	foundryv1.FoundryServiceClient
+	req *foundryv1.ListFoundryEventPiecesRequest
+	err error
+}
+
+func (b *piecesBackend) ListFoundryEventPieces(_ context.Context, req *foundryv1.ListFoundryEventPiecesRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryEventPiecesResponse, error) {
+	b.req = req
+	if b.err != nil {
+		return nil, b.err
+	}
+	return &foundryv1.ListFoundryEventPiecesResponse{Truncated: true, Pieces: []*foundryv1.FoundryEventSourcePiece{
+		{Id: "n-2", ReceivedAt: timestamppb.New(time.Date(2026, 11, 17, 9, 30, 0, 0, time.UTC)), Title: "Short emails", Text: "# Short emails\n\n- Piece: n-2\n\nShort emails"},
+		{Id: "n-1", ReceivedAt: timestamppb.New(time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)), Title: "Long emails", Text: "# Long emails\n", Synced: true},
+	}}, nil
+}
+
+// Recall is a user's read of a Workspace's API source: the registry's check of the backend's
+// list, which takes the query and the limit as given.
+func TestRecallListsAnAPISourcesPieces(t *testing.T) {
+	b := &piecesBackend{}
+	var authorized []string
+	var grant Grant
+	identity := &Identity{Authorize: func(_ context.Context, _ any, g Grant, methods ...string) error {
+		authorized, grant = methods, g
+		return nil
+	}}
+	s := &Service{Foundry: b, Events: true}
+	call := &Call{}
+	out, count, err := s.RecallFoundryPieces(context.Background(), identity, call, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1", Query: "emails", Limit: 5})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ListFoundryEventPieces"}, authorized)
+	assert.Equal(t, foundryUserOnly, grant)
+	assert.Equal(t, "connector", call.ResourceKind)
+	assert.Equal(t, "source-1", call.ResourceID)
+	assert.True(t, proto.Equal(&foundryv1.ListFoundryEventPiecesRequest{WorkspaceId: "workspace-1", ConnectorId: "source-1", Query: "emails", Limit: 5}, b.req))
+	assert.Equal(t, 2, count)
+	assert.Equal(t, RecallOutput{ContentTrust: contentTrustUntrusted, EventSourceID: "source-1", Truncated: true, Pieces: []RecalledPieceOutput{
+		{ID: "n-2", ReceivedAt: "2026-11-17T09:30:00Z", Title: "Short emails", Text: "# Short emails\n\n- Piece: n-2\n\nShort emails"},
+		{ID: "n-1", ReceivedAt: "2026-11-16T09:30:00Z", Title: "Long emails", Text: "# Long emails\n", Synced: true},
+	}}, out)
+
+	// An id that is no id never reaches the backend, and a denial is the registry's.
+	b.req = nil
+	_, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "not an id"})
+	require.ErrorIs(t, err, errCodeInvalidArguments)
+	identity.Authorize = func(context.Context, any, Grant, ...string) error { return errCodeNotFound }
+	_, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.ErrorIs(t, err, errCodeNotFound)
+	assert.Nil(t, b.req)
+
+	// The backend's refusal of a source with no text field reaches the agent in its words.
+	identity.Authorize = func(context.Context, any, Grant, ...string) error { return nil }
+	b.err = status.Error(codes.FailedPrecondition, "this API source has no text field")
+	_, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.ErrorContains(t, err, "this API source has no text field")
+}
+
+// Recall reads a Workspace's API source, so only a user who may browse the Workspace gets it,
+// on a host with API sources: never a service key, a send token or an agent registration.
+func TestRecallIsAUsersOnAHostWithAPISources(t *testing.T) {
+	sendToken := &Identity{EventSource: &EventSourceIdentity{WorkspaceID: "workspace-1", ConnectorID: "source-1"}, HasPermission: func(Permission) bool { return false }}
+	serviceKey := &Identity{ServiceKey: true, WorkspaceID: "workspace-1", HasPermission: func(Permission) bool { return true }}
+	for name, tc := range map[string]struct {
+		s        *Service
+		identity *Identity
+		want     bool
+	}{
+		"a user on a host with API sources": {&Service{FoundryURL: "https://foundry.example", Events: true}, everyTool(), true},
+		"a user on a host without them":     {&Service{FoundryURL: "https://foundry.example"}, everyTool(), false},
+		"a service key":                     {&Service{FoundryURL: "https://foundry.example", Events: true}, serviceKey, false},
+		"a send token":                      {&Service{FoundryURL: "https://foundry.example", Events: true}, sendToken, false},
+	} {
+		_, listed := listedTools(t, tc.s, tc.identity)[toolFoundryRecall]
+		assert.Equal(t, tc.want, listed, name)
 	}
 }
 

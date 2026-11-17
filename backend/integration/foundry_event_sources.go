@@ -25,6 +25,11 @@ import (
 // create_event_source give each source's URL as send_url, and the send tool says where it is.
 const toolFoundrySendPieces = "helix_foundry_send_pieces"
 
+// toolFoundryRecall reads back what was sent to an API source, by words or the newest: a user's
+// read of a Workspace's connector, so no service key or send token gets it (a send token only
+// sends).
+const toolFoundryRecall = "helix_foundry_recall"
+
 // eventSourceTable is an event source's one table: the newest piece of each id.
 const eventSourceTable = "events"
 
@@ -189,6 +194,58 @@ func (s *Service) SendFoundryPieces(
 		Next: "Pieces reach the source's table at its next sync, about a minute away; ontologies that map it see them at their next refresh.",
 	}
 	return out, int(batch.GetPieces()), nil
+}
+
+type RecallInput struct {
+	WorkspaceID   string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`
+	EventSourceID string `json:"event_source_id" jsonschema:"The API source: a connector of kind events that has a text field."`
+	Query         string `json:"query,omitempty" jsonschema:"Words to find, separated by spaces: only the notes holding every one, whatever its case, are returned. At most 200 bytes and 10 words. Leave it out for the newest notes."`
+	Limit         int32  `json:"limit,omitempty" jsonschema:"The most notes to return: at most 50, and 20 when left out."`
+}
+
+// RecalledPieceOutput is a piece as the document its source's sync makes of it. Its title and
+// text come from whoever sent it, so they are data.
+type RecalledPieceOutput struct {
+	ID         string `json:"id" jsonschema:"The piece's id in its source: a send with the same id replaces it."`
+	ReceivedAt string `json:"received_at"`
+	Title      string `json:"title"`
+	Text       string `json:"text" jsonschema:"The note as Markdown: its fields, then its text."`
+	Synced     bool   `json:"synced" jsonschema:"False while it waits for the source's next sync, about a minute after it was sent: no ontology has read it yet."`
+}
+
+type RecallOutput struct {
+	ContentTrust  string                `json:"content_trust"`
+	EventSourceID string                `json:"event_source_id"`
+	Pieces        []RecalledPieceOutput `json:"pieces" jsonschema:"Newest first, each id once, as its newest send has it."`
+	Truncated     bool                  `json:"truncated" jsonschema:"True when notes were left out: more were found than limit or 1 MiB of text holds, or the source holds more than one call reads. Ask again with words that narrow it."`
+}
+
+// RecallFoundryPieces lists an API source's pieces, the newest or those holding the query's
+// words, for a user the registry lets read the Workspace's source. The backend checks the query
+// and the limit, and that the source is the Workspace's and has a text field.
+func (s *Service) RecallFoundryPieces(
+	ctx context.Context, identity *Identity, call *Call, input RecallInput,
+) (RecallOutput, int, error) {
+	call.ResourceKind, call.ResourceID = "connector", input.EventSourceID
+	if !ValidIDs([]string{input.WorkspaceID, input.EventSourceID}) {
+		return RecallOutput{}, 0, errCodeInvalidArguments
+	}
+	req := &foundryv1.ListFoundryEventPiecesRequest{WorkspaceId: input.WorkspaceID, ConnectorId: input.EventSourceID, Query: input.Query, Limit: input.Limit}
+	if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "ListFoundryEventPieces"); err != nil {
+		return RecallOutput{}, 0, err
+	}
+	response, err := s.Foundry.ListFoundryEventPieces(ctx, req)
+	if err != nil {
+		return RecallOutput{}, 0, FoundryError(err)
+	}
+	out := RecallOutput{
+		ContentTrust: contentTrustUntrusted, EventSourceID: input.EventSourceID, Truncated: response.GetTruncated(),
+		Pieces: make([]RecalledPieceOutput, len(response.GetPieces())),
+	}
+	for i, p := range response.GetPieces() {
+		out.Pieces[i] = RecalledPieceOutput{ID: p.GetId(), ReceivedAt: protoTimestamp(p.GetReceivedAt()), Title: p.GetTitle(), Text: p.GetText(), Synced: p.GetSynced()}
+	}
+	return out, len(out.Pieces), nil
 }
 
 func EventSourceFields(fields []*foundryv1.EventSourceField) []EventSourceFieldOutput {
