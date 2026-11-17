@@ -512,8 +512,23 @@ describe("mock questions", () => {
     // Stored as the canonical EntityRef the worker sends the engine.
     expect(q.focusJson).toBe('{"type":"Customer","id":"cus_GLOBEX01"}');
     expect(
-      contractErrors("ask_request#/$defs/EntityRef", JSON.parse(q.focusJson)),
+      contractErrors(
+        "ask_request#/$defs/EntityLookup",
+        JSON.parse(q.focusJson),
+      ),
     ).toEqual([]);
+    // By its key's plain value or a name, the type optional (contract 4.27.0).
+    for (const [focusJson, stored] of [
+      [
+        '{"key": "cus_GLOBEX01", "type": "Customer"}',
+        '{"type":"Customer","key":"cus_GLOBEX01"}',
+      ],
+      ['{"name": "Globex"}', '{"name":"Globex"}'],
+    ]) {
+      const asked = (await ask({ focusJson, clientToken: focusJson })).body
+        .question;
+      expect(asked.focusJson).toBe(stored);
+    }
   });
 
   it("refuses what it can't ask about", async () => {
@@ -548,7 +563,7 @@ describe("mock questions", () => {
     ).toBe(200);
     const FOCUS = [
       400,
-      'focus_json: a focus is {"type": ..., "id": ...}, both set',
+      'focus_json: a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them',
     ];
     for (const focusJson of [
       '{"type":"A"}',
@@ -557,6 +572,11 @@ describe("mock questions", () => {
       '{"type":"A","id":1}',
       '{"type":"A","id":"b"} {}',
       "null",
+      '{"id":"b"}',
+      '{"key":1.5}',
+      '{"key":"a","name":"b"}',
+      '{"name":"  "}',
+      '{"key":{}}',
     ])
       expect(
         await refused({

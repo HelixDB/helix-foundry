@@ -60,7 +60,7 @@ type AskRequest struct {
 	// Focus is the entity the user asked it about, if any. The agent reads it
 	// before the first step; one the load doesn't hold is said so in the
 	// question, which still runs.
-	Focus *EntityRef `json:"focus,omitempty"`
+	Focus *EntityLookup `json:"focus,omitempty"`
 	// History is the thread's earlier answered turns, oldest first, at most
 	// MaxAskHistory. Never nil: the schema needs an array.
 	History []AskTurn `json:"history"`
@@ -114,16 +114,90 @@ type EntityRef struct {
 
 func (e EntityRef) whole() bool { return e.Type != "" && e.ID != "" }
 
-// ParseFocus reads what a question is asked about: exactly
-// {"type": ..., "id": ...}, both set.
-func ParseFocus(raw string) (EntityRef, error) {
+// EntityLookup is an entity as a request names one (contract 4.27.0): its type
+// and exactly one of its id as reads return it, its key's plain values (Key: the
+// value alone, a string or an integer, for a key of one property, or an object
+// of each key property's value) or a name in any spelling. With a key or a name
+// the type may be left out: the engine finds the entity among every type, and
+// refuses a value several entities share, naming them.
+type EntityLookup struct {
+	Type string          `json:"type,omitempty"`
+	ID   string          `json:"id,omitempty"`
+	Key  json.RawMessage `json:"key,omitempty"`
+	Name string          `json:"name,omitempty"`
+}
+
+// errFocus says what a focus may be.
+var errFocus = errors.New(`a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: ` +
+	`exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them`)
+
+// ParseFocus reads what a question is asked about: an EntityLookup, its
+// shape checked here and what it names resolved by the engine.
+//
+//	ParseFocus(`{"type": "Customer", "id": "scus_1"}`) // by its id
+//	ParseFocus(`{"type": "Site", "key": "app.example.com"}`) // by its key's plain value
+//	ParseFocus(`{"name": "Acme Corp"}`) // by a name, among every type
+func ParseFocus(raw string) (EntityLookup, error) {
 	d := json.NewDecoder(strings.NewReader(raw))
 	d.DisallowUnknownFields()
-	var focus EntityRef
-	if err := d.Decode(&focus); err != nil || d.More() || !focus.whole() {
-		return EntityRef{}, errors.New(`a focus is {"type": ..., "id": ...}, both set`)
+	var focus EntityLookup
+	if err := d.Decode(&focus); err != nil || d.More() {
+		return EntityLookup{}, errFocus
+	}
+	// A type or an id given empty is refused, as the engine refuses it, not read as left out.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil {
+		return EntityLookup{}, errFocus
+	}
+	for _, field := range []string{"type", "id"} {
+		if v, ok := fields[field]; ok && string(v) == `""` {
+			return EntityLookup{}, errFocus
+		}
+	}
+	given := 0
+	for _, set := range []bool{focus.ID != "", focus.Key != nil, focus.Name != ""} {
+		if set {
+			given++
+		}
+	}
+	switch {
+	case given != 1,
+		focus.ID != "" && focus.Type == "",
+		focus.Name != "" && strings.TrimSpace(focus.Name) == "",
+		focus.Key != nil && !keyValues(focus.Key):
+		return EntityLookup{}, errFocus
 	}
 	return focus, nil
+}
+
+// keyValues is whether raw is a key's plain values: a string, an integer, or a
+// non-empty object of them.
+func keyValues(raw json.RawMessage) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var v any
+	if d.Decode(&v) != nil {
+		return false
+	}
+	scalar := func(v any) bool {
+		switch v := v.(type) {
+		case string:
+			return true
+		case json.Number:
+			_, err := v.Int64()
+			return err == nil
+		}
+		return false
+	}
+	if obj, ok := v.(map[string]any); ok {
+		for _, value := range obj {
+			if !scalar(value) {
+				return false
+			}
+		}
+		return len(obj) > 0
+	}
+	return scalar(v)
 }
 
 // CatalogKind is what a source in the catalog is.

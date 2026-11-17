@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FOUNDRY_NODES } from "@/shared/foundry-labels";
 import {
+  type EntityLookup,
   parseEntityResult,
   parseExplainResult,
   parseViolationsResult,
@@ -720,6 +721,16 @@ key = ["deal_id"]
         },
       ],
     });
+    // By keys' plain values, and an entity read by key or by a name.
+    expect(
+      ok({
+        start: { type: "Org", keys: ["bolt", "nope"] },
+        return: { rows: { columns: [{ at: 0 }] } },
+      }).result,
+    ).toMatchObject({
+      total: 1,
+      rows: [{ cells: [{ type: "Org", id: "bolt" }] }],
+    });
     // Counts, a flag, where and a text search of names.
     expect(
       ok({ start: { type: "Place" }, return: { count: {} } }).result,
@@ -747,10 +758,15 @@ key = ["deal_id"]
         return: { rows: { columns: [{ at: 0 }] } },
       }).result,
     ).toMatchObject({ total: 1, rows: [{ cells: [london] }] });
+    // A keyed type without names is found by its key (contract 4.27.0).
+    expect(
+      ok({ start: { type: "Org", text: "acme" }, return: { count: {} } })
+        .result,
+    ).toEqual({ kind: "count", count: 1 });
     // What the engine refuses, with a pointer to it.
     expect(
       query(model, {
-        start: { type: "Org", text: "acme" },
+        start: { type: "Org", text: "!!" },
         return: { count: {} },
       }),
     ).toMatchObject({ error: { code: "invalid", pointer: "/start/text" } });
@@ -771,6 +787,45 @@ key = ["deal_id"]
     expect(
       query(model, { start: { type: "Ghost" }, return: { count: {} } }),
     ).toMatchObject({ error: { pointer: "/start/type" } });
+  });
+
+  it("looks an entity up by its key in the type's order, and refuses an ambiguous name", () => {
+    const g = new MockGraph().view("load_1");
+    g.addNode("Flight", {
+      entity_key: "AA 100/2026-03-14",
+      flight: "AA 100",
+      day: "2026-03-14",
+    });
+    g.addNode("Place", { norm_name: "soho", name: "Soho" });
+    g.addNode("Place", { norm_name: "soho", name: "SoHo" });
+    const m = evaluate(
+      g,
+      compile(`version = "draft"
+[types.Place]
+description = "A place, known by its name."
+[types.Flight]
+description = "A flight on a day."
+props = { flight = "string", day = "string" }
+key = ["flight", "day"]
+`),
+    );
+    // The site's reads name entities by id; the MCP's send any lookup form.
+    const lookup = (entity: EntityLookup) =>
+      read(m, { entity } as unknown as Parameters<typeof answer>[1]);
+    // The key's values in any order of their fields name the one flight.
+    for (const key of [
+      { flight: "AA 100", day: "2026-03-14" },
+      { day: "2026-03-14", flight: "AA 100" },
+    ])
+      expect(lookup({ type: "Flight", key })).toHaveProperty("ok");
+    // A key missing one of its props, or with another, names nothing.
+    for (const key of <Record<string, string>[]>[
+      { flight: "AA 100" },
+      { flight: "AA 100", day: "2026-03-14", gate: "B" },
+    ])
+      expect(lookup({ type: "Flight", key })).not.toHaveProperty("ok");
+    // Two places of one name: the lookup is refused, not answered by the first.
+    expect(lookup({ type: "Place", name: "Soho" })).not.toHaveProperty("ok");
   });
 
   it("leaves out datalog with values, and refuses negation through a cycle", () => {

@@ -212,9 +212,13 @@ type ReadFoundryGraphInput struct {
 	WorkflowRunID string           `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
 }
 
+// FoundryEntityInput names an entity as a read does: its type and exactly one of id, key and
+// name; with a key or a name the type may be left out.
 type FoundryEntityInput struct {
-	Type string `json:"type" jsonschema:"The entity's type in the ontology."`
-	ID   string `json:"id" jsonschema:"Its key's encoding or its normalized name, as reads return it."`
+	Type string `json:"type,omitempty" jsonschema:"The entity's type in the ontology; with key or name it may be left out, to find the entity among every type."`
+	ID   string `json:"id,omitempty" jsonschema:"Its id as reads return it: a keyed type's key encoding (such as sapp.example.com for the key app.example.com) or a named type's name. Give exactly one of id, key and name."`
+	Key  any    `json:"key,omitempty" jsonschema:"Its key's plain values as the source holds them: the value alone for a key of one property (such as app.example.com or 42), or an object of each key property's value."`
+	Name string `json:"name,omitempty" jsonschema:"A name in any spelling."`
 }
 
 type AskFoundryInput struct {
@@ -1000,7 +1004,8 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		readGraph := tool(toolFoundryReadGraph,
 			"Look up exact records in a business's Foundry ontology: typed queries over its entities and facts, the evidence and source behind a fact, "+
 				"why a derived fact holds, and rule breaks, read from a load with its version's rules applied. "+
-				"1 to 20 reads in one call; "+toolFoundryReadGuide+" gives their JSON Schema.")
+				"1 to 20 reads in one call; "+toolFoundryReadGuide+" gives their JSON Schema. "+
+				"An entity is named by its id as reads return it, its key's plain values (such as {\"type\": \"Site\", \"key\": \"app.example.com\"}) or a name.")
 		readGraph.InputSchema = withItems(schemaFor[ReadFoundryGraphInput](), "reads", 1, ontologyagent.MaxReads)
 		addFoundryTool(s, server, identity, readGraph, s.ReadFoundryGraph)
 		no := false
@@ -1457,7 +1462,12 @@ func (s *Service) FoundryReadGuide(
 	return FoundryReadGuideOutput{
 		ReadKinds: ontologyagent.ReadKinds, MaxReads: ontologyagent.MaxReads, Schema: readItemSchema,
 		Notes: "Each read is an object with exactly one key, its kind. Name types, properties and links as the ontology's " +
-			"definition does (helix_foundry_get_ontology). An entity is {\"type\": ..., \"id\": ...}, its id as reads return it. " +
+			"definition does (helix_foundry_get_ontology). An entity is {\"type\", \"id\"} with its id as reads return it, " +
+			"{\"type\", \"key\"} with its key's plain values as the source holds them (the value alone for a key of one property, " +
+			"or an object of each key property's value), or {\"type\", \"name\"} with a name in any spelling; with a key or a name the " +
+			"type may be left out, and a value several entities share is refused, naming them. A query starts from ids, keys or text: " +
+			"text finds exact names, keys and identifiers first, then names that begin with it, then shared words, and rows keep that " +
+			"order unless order_by sets one. " +
 			"Every read in a call has its own result, in order.",
 	}, len(ontologyagent.ReadKinds), nil
 }
@@ -1528,7 +1538,10 @@ func (s *Service) AskFoundryQuestion(
 		Question: input.Question, ClientToken: input.ClientToken, WorkflowRunId: input.WorkflowRunID,
 	}
 	if input.Focus != nil {
-		focus, _ := json.Marshal(input.Focus) // two strings: it can't fail
+		focus, err := json.Marshal(input.Focus)
+		if err != nil {
+			return FoundryQuestionOutput{}, 0, errCodeInvalidArguments
+		}
 		req.FocusJson = string(focus)
 	}
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,

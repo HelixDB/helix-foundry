@@ -2568,6 +2568,9 @@ export type OntologyQuery = {
     type: string;
     where?: QueryWhere[];
     ids?: string[] | null;
+    // Keys' plain values (contract 4.27.0): the value alone for a key of one
+    // property, or an object of each key property's value.
+    keys?: (string | number | Record<string, string | number>)[] | null;
     text?: string | null;
   };
   steps?: {

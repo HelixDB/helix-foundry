@@ -24,6 +24,18 @@ export const MAX_READS = 20;
  */
 export type EntityRef = { type: string; id: string };
 
+/**
+ * An entity as a request may name one (contract 4.27.0): by its id, as reads
+ * return it; by its key's plain values, the value alone for a key of one
+ * property or an object of each key property's value; or by a name in any
+ * spelling. With a key or a name the type may be left out. The site names
+ * entities by id; the MCP's reads and questions may use any of them.
+ */
+export type EntityLookup =
+  | EntityRef
+  | { type?: string; key: string | number | Record<string, string | number> }
+  | { type?: string; name: string };
+
 /** A stated fact: a link between two entities. */
 export type FactRef = { link: string; subject: EntityRef; object: EntityRef };
 
