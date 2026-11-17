@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -66,9 +68,9 @@ type pieceList struct {
 	// one, waiting or the table's, is a send the first replaced.
 	waiting map[string]bool
 	kept    []listedPiece
-	// floor is the arrival of the oldest piece kept once limit are: nothing
-	// that arrived no later can be among the newest limit.
-	floor time.Time
+	// floor is the oldest piece kept once limit are, nil before: nothing
+	// that is not newer can be among the newest limit.
+	floor *listedPiece
 	// left is set once a piece that belongs in the list was left out.
 	left bool
 }
@@ -80,9 +82,16 @@ type listedPiece struct {
 	piece *foundryv1.FoundryEventSourcePiece
 }
 
+// byNewest orders pieces as a source's newest go (events.Newer), so a list
+// is the same whatever order its source holds them in: the later arrival
+// first, then the lower id.
+func byNewest(aAt time.Time, aID string, bAt time.Time, bID string) int {
+	return cmp.Or(bAt.Compare(aAt), strings.Compare(aID, bID))
+}
+
 // admits reports whether the piece id, which arrived at, may be one of the
 // list's, before its row is read: not when a newer send replaced it, nor,
-// with no words to find, when it arrived no later than the oldest of limit
+// with no words to find, when it is not newer than the oldest of limit
 // pieces kept, which leaves it out. With words, an older piece is not known
 // to hold them, so it is read. The table holds an id once, so only waiting
 // ids are remembered.
@@ -93,7 +102,7 @@ func (l *pieceList) admits(id string, at time.Time, synced bool) bool {
 	if !synced {
 		l.waiting[id] = true
 	}
-	if len(l.words) == 0 && !l.floor.IsZero() && !at.After(l.floor) {
+	if len(l.words) == 0 && l.floor != nil && byNewest(at, id, l.floor.at, l.floor.piece.GetId()) > 0 {
 		l.left = true
 		return false
 	}
@@ -102,8 +111,10 @@ func (l *pieceList) admits(id string, at time.Time, synced bool) bool {
 
 // add takes a piece the list admits by its row: a row of the source's table
 // (synced), or a waiting piece's line as one (events.Line.Row). It is kept
-// when its id, its fields or its text hold every word. A row that does not
-// render is events.ErrCorruptRow, or an error of the source's settings.
+// when its id and its document's lines of its fields and its text hold
+// every word: a field's value as the document shows it, which cuts a long
+// one. A row that does not render is events.ErrCorruptRow, or an error of
+// the source's settings.
 func (l *pieceList) add(id string, at time.Time, synced bool, row []byte) error {
 	doc, err := events.Render(row, l.schema, l.textField)
 	if err != nil {
@@ -128,19 +139,21 @@ func (l *pieceList) add(id string, at time.Time, synced bool, row []byte) error 
 
 // trim cuts the list to its newest limit pieces, in that order.
 func (l *pieceList) trim() {
-	slices.SortStableFunc(l.kept, func(a, b listedPiece) int { return b.at.Compare(a.at) })
+	slices.SortFunc(l.kept, func(a, b listedPiece) int { return byNewest(a.at, a.piece.GetId(), b.at, b.piece.GetId()) })
 	if len(l.kept) > l.limit {
 		l.kept, l.left = l.kept[:l.limit], true
 	}
 	if len(l.kept) == l.limit {
-		l.floor = l.kept[l.limit-1].at
+		oldest := l.kept[l.limit-1]
+		l.floor = &oldest
 	}
 }
 
 // ListFoundryEventPieces lists the pieces of a live event source of the
 // workspace, newest first by arrival, each id once and as the document a sync
 // makes of it (events.Render): with a query, those whose id, fields or text
-// hold every word of it as a substring, whatever its case. The source must
+// hold every word of it as a substring, whatever its case, a field as the
+// document shows it. Pieces that arrived together go by id. The source must
 // have a text field, which the document's text is.
 //
 // It reads, in this order, the source's batches no sync has read (above its
@@ -156,7 +169,7 @@ func (l *pieceList) trim() {
 // waiting batches a list reads the eventPieceBatches newest; with more
 // waiting it says pieces were left out, and a piece it lists from the table
 // may be an older send of its id. One list of a workspace reads at a time,
-// and eventPieceLists in all; the source is read once the list has its turn.
+// and eventPieceLists in all.
 //
 // The list holds at most the request's limit and maxEventPieceTextBytes of
 // text (always its newest piece), and says when pieces were left out: more
@@ -179,8 +192,33 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 		limit = defaultEventPieceLimit
 	}
 	limit = min(limit, maxEventPieceLimit)
+	// read is the source as it stands: its state, schema and newest batches
+	// from one consistent read, and its text field.
+	read := func(batches int) (foundrymodel.FoundryEventBatchList, string, error) {
+		source, err := s.deps.DB.ListFoundryEventBatches(ctx, ws, cid, batches)
+		if err != nil {
+			return source, "", eventSourceError("list the API source's batches", cid, err)
+		}
+		var stored struct {
+			TextField string `json:"text_field"`
+		}
+		if err := json.Unmarshal(source.State.Connector.Config, &stored); err != nil {
+			return source, "", status.Errorf(codes.Internal, "read the API source's settings: %v", err)
+		}
+		if stored.TextField == "" {
+			return source, "", eventPrecondition(reasonEventSourceNoText,
+				"this API source has no text field, so its pieces are rows of its table with no text to list: choose its text field, then list its pieces")
+		}
+		return source, stored.TextField, nil
+	}
+	// A list of no source, or of one with no text to list, takes no turn
+	// and holds no state.
+	if _, _, err := read(1); err != nil {
+		return nil, err
+	}
 	// The workspace's turn first, so its lists wait on each other and hold
-	// one of the backend's turns between them.
+	// one of the backend's turns between them. The source is read again
+	// with the turn: what was sent while the list waited is listed.
 	src, workspace := e.enter(ws, cid)
 	defer e.leave(src, workspace)
 	if err := takeTurn(ctx, workspace.reading); err != nil {
@@ -191,21 +229,10 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 		return nil, err
 	}
 	defer func() { <-e.reading }()
-
 	// A source's batches no sync has read are its newest.
-	source, err := s.deps.DB.ListFoundryEventBatches(ctx, ws, cid, eventPieceBatches)
+	source, textField, err := read(eventPieceBatches)
 	if err != nil {
-		return nil, eventSourceError("list the API source's batches", cid, err)
-	}
-	var stored struct {
-		TextField string `json:"text_field"`
-	}
-	if err := json.Unmarshal(source.State.Connector.Config, &stored); err != nil {
-		return nil, status.Errorf(codes.Internal, "read the API source's settings: %v", err)
-	}
-	if stored.TextField == "" {
-		return nil, eventPrecondition(reasonEventSourceNoText,
-			"this API source has no text field, so its pieces are rows of its table with no text to list: choose its text field, then list its pieces")
+		return nil, err
 	}
 	// A table without a snapshot holds nothing whatever the cursor says, as
 	// a sync reads it (connector's tableCursor).
@@ -225,7 +252,7 @@ func (s *Service) ListFoundryEventPieces(ctx context.Context, req *foundryv1.Lis
 	if synced := slices.IndexFunc(waiting, func(b *foundrymodel.FoundryEventBatch) bool { return b.Seq <= cursor }); synced >= 0 {
 		waiting = waiting[:synced]
 	}
-	list := &pieceList{limit: limit, words: words, schema: source.State.Schema, textField: stored.TextField, waiting: map[string]bool{}}
+	list := &pieceList{limit: limit, words: words, schema: source.State.Schema, textField: textField, waiting: map[string]bool{}}
 	// A source's batches are numbered from 1 with no gap, so more wait than
 	// the list reads when the oldest it reads is not the cursor's next.
 	list.left = len(waiting) > 0 && waiting[len(waiting)-1].Seq > cursor+1

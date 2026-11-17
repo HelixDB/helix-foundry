@@ -582,6 +582,21 @@ func TestListFoundryEventPieces(t *testing.T) {
 		if resp, err := h.list("", 0); err != nil || len(resp.GetPieces()) != 2 || len(e.reading) != 0 || len(workspace.reading) != 0 {
 			t.Fatalf("a list with a turn: %v, %v, %d and %d reading", pieceIDs(resp), err, len(e.reading), len(workspace.reading))
 		}
+		// And a source deleted while its list waited is not found.
+		workspace.reading <- struct{}{}
+		gone := make(chan error, 1)
+		go func() {
+			_, err := h.list("", 0)
+			gone <- err
+		}()
+		time.Sleep(50 * time.Millisecond)
+		h.store.mu.Lock()
+		delete(h.store.rows, h.notes)
+		h.store.mu.Unlock()
+		<-workspace.reading
+		if err := <-gone; status.Code(err) != codes.NotFound {
+			t.Fatalf("a list of a source deleted while it waited = %v", err)
+		}
 	})
 }
 

@@ -1139,15 +1139,16 @@ message ListFoundryEventPiecesRequest {
   string workspace_id = 1;
   string connector_id = 2;
   // Words to find, separated by spaces: only the pieces whose id, fields or
-  // text hold every one as a substring, whatever its case, are listed. At
-  // most 200 bytes and 10 words; empty lists every piece.
+  // text hold every one as a substring, whatever its case, are listed. A
+  // field is read as the piece's document shows it, which names it and cuts
+  // a long value. At most 200 bytes and 10 words; empty lists every piece.
   string query = 3;
   // At most 50; 0 means 20.
   int32 limit = 4;
 }
 
-// The source's pieces, newest first by arrival, each id once, as its newest
-// send has it.
+// The source's pieces, newest first by arrival, those that arrived together
+// by id, each id once, as its newest send has it.
 message ListFoundryEventPiecesResponse {
   // At most limit, and at most 1 MiB of text together (always the newest).
   repeated FoundryEventSourcePiece pieces = 1;

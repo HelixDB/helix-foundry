@@ -208,12 +208,17 @@ type piecesBackend struct {
 	foundryv1.FoundryServiceClient
 	req *foundryv1.ListFoundryEventPiecesRequest
 	err error
+	// pieces, when set, are the answer's, none left out.
+	pieces []*foundryv1.FoundryEventSourcePiece
 }
 
 func (b *piecesBackend) ListFoundryEventPieces(_ context.Context, req *foundryv1.ListFoundryEventPiecesRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryEventPiecesResponse, error) {
 	b.req = req
 	if b.err != nil {
 		return nil, b.err
+	}
+	if b.pieces != nil {
+		return &foundryv1.ListFoundryEventPiecesResponse{Pieces: b.pieces}, nil
 	}
 	return &foundryv1.ListFoundryEventPiecesResponse{Truncated: true, Pieces: []*foundryv1.FoundryEventSourcePiece{
 		{Id: "n-2", ReceivedAt: timestamppb.New(time.Date(2026, 11, 17, 9, 30, 0, 0, time.UTC)), Title: "Short emails", Text: "# Short emails\n\n- Piece: n-2\n\nShort emails"},
@@ -245,6 +250,25 @@ func TestRecallListsAnAPISourcesPieces(t *testing.T) {
 		{ID: "n-2", ReceivedAt: "2026-11-17T09:30:00Z", Title: "Short emails", Text: "# Short emails\n\n- Piece: n-2\n\nShort emails"},
 		{ID: "n-1", ReceivedAt: "2026-11-16T09:30:00Z", Title: "Long emails", Text: "# Long emails\n", Synced: true},
 	}}, out)
+
+	// An agent's context holds less than the backend lists: the newest notes within 64 KiB of
+	// text, and always the newest, saying the rest were left out.
+	long := strings.Repeat("x", 40<<10)
+	b.pieces = []*foundryv1.FoundryEventSourcePiece{{Id: "n-3", Text: long}, {Id: "n-2", Text: long}, {Id: "n-1", Text: "short"}}
+	out, count, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "n-3", out.Pieces[0].ID)
+	assert.True(t, out.Truncated)
+	b.pieces = []*foundryv1.FoundryEventSourcePiece{{Id: "n-9", Text: strings.Repeat("x", 100<<10)}}
+	out, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.NoError(t, err)
+	assert.Len(t, out.Pieces, 1)
+	assert.False(t, out.Truncated)
+	b.pieces = []*foundryv1.FoundryEventSourcePiece{}
+	out, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.NoError(t, err)
+	assert.Equal(t, []RecalledPieceOutput{}, out.Pieces, "no notes is an empty list, not null")
 
 	// An id that is no id never reaches the backend, and a denial is the registry's.
 	b.req = nil

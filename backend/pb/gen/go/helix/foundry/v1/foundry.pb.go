@@ -2793,8 +2793,9 @@ type ListFoundryEventPiecesRequest struct {
 	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	ConnectorId string `protobuf:"bytes,2,opt,name=connector_id,json=connectorId,proto3" json:"connector_id,omitempty"`
 	// Words to find, separated by spaces: only the pieces whose id, fields or
-	// text hold every one as a substring, whatever its case, are listed. At
-	// most 200 bytes and 10 words; empty lists every piece.
+	// text hold every one as a substring, whatever its case, are listed. A
+	// field is read as the piece's document shows it, which names it and cuts
+	// a long value. At most 200 bytes and 10 words; empty lists every piece.
 	Query string `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
 	// At most 50; 0 means 20.
 	Limit int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
@@ -2858,8 +2859,8 @@ func (x *ListFoundryEventPiecesRequest) GetLimit() int32 {
 	return 0
 }
 
-// The source's pieces, newest first by arrival, each id once, as its newest
-// send has it.
+// The source's pieces, newest first by arrival, those that arrived together
+// by id, each id once, as its newest send has it.
 type ListFoundryEventPiecesResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

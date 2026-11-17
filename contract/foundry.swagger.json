@@ -1894,7 +1894,7 @@
           },
           {
             "name": "query",
-            "description": "Words to find, separated by spaces: only the pieces whose id, fields or\ntext hold every one as a substring, whatever its case, are listed. At\nmost 200 bytes and 10 words; empty lists every piece.",
+            "description": "Words to find, separated by spaces: only the pieces whose id, fields or\ntext hold every one as a substring, whatever its case, are listed. A\nfield is read as the piece's document shows it, which names it and cuts\na long value. At most 200 bytes and 10 words; empty lists every piece.",
             "in": "query",
             "required": false,
             "type": "string"
@@ -12763,7 +12763,7 @@
           "description": "Pieces were left out. More were found than pieces holds: a narrower\nquery finds the rest. Or more than 100 sends wait for a sync, of which\na list reads the newest 100: a piece listed from the source's table may\nthen be an older send of its id, until a sync has read them."
         }
       },
-      "description": "The source's pieces, newest first by arrival, each id once, as its newest\nsend has it."
+      "description": "The source's pieces, newest first by arrival, those that arrived together\nby id, each id once, as its newest send has it."
     },
     "v1ListFoundryEventSourceTokensResponse": {
       "type": "object",

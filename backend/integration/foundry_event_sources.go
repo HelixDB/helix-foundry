@@ -30,6 +30,10 @@ const toolFoundrySendPieces = "helix_foundry_send_pieces"
 // sends).
 const toolFoundryRecall = "helix_foundry_recall"
 
+// maxRecallTextBytes is the most text recall returns, less than the backend lists: an agent's
+// context holds it beside everything else.
+const maxRecallTextBytes = 64 << 10
+
 // eventSourceTable is an event source's one table: the newest piece of each id.
 const eventSourceTable = "events"
 
@@ -199,7 +203,7 @@ func (s *Service) SendFoundryPieces(
 type RecallInput struct {
 	WorkspaceID   string `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace."`
 	EventSourceID string `json:"event_source_id" jsonschema:"The API source: a connector of kind events that has a text field."`
-	Query         string `json:"query,omitempty" jsonschema:"Words to find, separated by spaces: only the notes whose id, fields or text hold every one as a substring, whatever its case, are returned. At most 200 bytes and 10 words. Leave it out for the newest notes."`
+	Query         string `json:"query,omitempty" jsonschema:"Words to find, separated by spaces: only the notes whose id, fields or text hold every one as a substring, whatever its case, are returned; a field is read as the note shows it, which cuts a long value. At most 200 bytes and 10 words. Leave it out for the newest notes."`
 	Limit         int32  `json:"limit,omitempty" jsonschema:"The most notes to return: at most 50, and 20 when left out."`
 }
 
@@ -217,8 +221,8 @@ type RecalledPieceOutput struct {
 type RecallOutput struct {
 	ContentTrust  string                `json:"content_trust"`
 	EventSourceID string                `json:"event_source_id"`
-	Truncated     bool                  `json:"truncated" jsonschema:"True when notes were left out: more were found than limit or 1 MiB of text holds (ask again with words that narrow it), or more than 100 sends still wait to sync (ask again in a minute)."`
-	Pieces        []RecalledPieceOutput `json:"pieces" jsonschema:"Newest first, each id once, as its newest send has it."`
+	Truncated     bool                  `json:"truncated" jsonschema:"True when notes were left out: more were found than limit or 64 KiB of text holds (ask again with words that narrow it), or more than 100 sends still wait to sync (ask again in a minute)."`
+	Pieces        []RecalledPieceOutput `json:"pieces" jsonschema:"Newest first, each id once, as its newest send has it. Always the newest found, however long."`
 }
 
 // RecallFoundryPieces lists an API source's pieces, the newest or those holding the query's
@@ -239,12 +243,14 @@ func (s *Service) RecallFoundryPieces(
 	if err != nil {
 		return RecallOutput{}, 0, FoundryError(err)
 	}
-	out := RecallOutput{
-		ContentTrust: contentTrustUntrusted, EventSourceID: input.EventSourceID, Truncated: response.GetTruncated(),
-		Pieces: make([]RecalledPieceOutput, len(response.GetPieces())),
-	}
+	out := RecallOutput{ContentTrust: contentTrustUntrusted, EventSourceID: input.EventSourceID, Truncated: response.GetTruncated(), Pieces: []RecalledPieceOutput{}}
+	text := 0
 	for i, p := range response.GetPieces() {
-		out.Pieces[i] = RecalledPieceOutput{ID: p.GetId(), ReceivedAt: protoTimestamp(p.GetReceivedAt()), Title: p.GetTitle(), Text: p.GetText(), Synced: p.GetSynced()}
+		if text += len(p.GetText()); i > 0 && text > maxRecallTextBytes {
+			out.Truncated = true
+			break
+		}
+		out.Pieces = append(out.Pieces, RecalledPieceOutput{ID: p.GetId(), ReceivedAt: protoTimestamp(p.GetReceivedAt()), Title: p.GetTitle(), Text: p.GetText(), Synced: p.GetSynced()})
 	}
 	return out, len(out.Pieces), nil
 }
