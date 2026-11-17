@@ -119,10 +119,20 @@ func TestDecode(t *testing.T) {
 		"&# &#x; &;":               "&# &#x; &;",
 		"trailing &":               "trailing &",
 		"&averyveryverylongname;":  "&averyveryverylongname;",
+		"&#x010ffff; &#x0010ffff;": "\U0010ffff &#x0010ffff;",
 	} {
 		if got := decode(in); got != want {
 			t.Errorf("decode(%q) = %q, want %q", in, got, want)
 		}
+	}
+	// A cue near the size cap that is all & with no ; reads in one pass.
+	run := strings.Repeat("&", 1<<20) + ";"
+	start := time.Now()
+	if got := decode(run); got != run {
+		t.Errorf("decode of a run of & changed it")
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("decode of 1 MiB of & took %v", took)
 	}
 }
 

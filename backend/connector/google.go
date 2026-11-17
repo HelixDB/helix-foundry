@@ -766,14 +766,21 @@ func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 // (googleDocsStream) or a transcript (googleTranscriptsStream). It is what
 // the document is made of besides the file's text, the time that orders it,
 // and its version. A withheld file is one its owner keeps viewers from
-// downloading, and so exporting, or a transcript over
-// googleTranscriptMaxBytes: it can't be a document, and has no time.
+// downloading, and so exporting, a transcript over
+// googleTranscriptMaxBytes, or, in a change read, a file the Transcripts
+// stream holds that is no transcript now (googleNoTranscript): it can't be
+// a document, and has no time.
 type googleDoc struct {
 	stream                         string
 	id, name, owner, link, version string
 	modified                       time.Time
 	withheld                       bool
 }
+
+// googleNoTranscript is the version a change read gives a file the
+// Transcripts stream holds that is no transcript now, withheld so that it
+// loses its document: no transcript's version (googleFile's, from 1|).
+const googleNoTranscript = "0|no-transcript"
 
 // googleTranscript reports a listed file that is a WebVTT transcript:
 // Drive's type for one, or a name ending .vtt on a file that is no Google

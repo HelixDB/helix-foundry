@@ -70,6 +70,17 @@ describe("parseTranscript", () => {
       "&#0; &#xD800; &#x110000; &copy; &",
     );
     expect(words("x&lrm;y&rlm;z&nbsp;w")).toBe("xyz w");
+    expect(words("&#x010ffff; &#x0010ffff;")).toBe("\u{10ffff} &#x0010ffff;");
+  });
+
+  it("reads a cue near the size cap that is all & with no ; in one pass", () => {
+    const run = "&".repeat(1 << 20) + ";";
+    const start = performance.now();
+    const turns = parseTranscript(
+      `WEBVTT\n\n00:01.000 --> 00:02.000\n${run}`,
+    )?.turns;
+    expect(turns?.[0]?.text).toBe(run);
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 });
 

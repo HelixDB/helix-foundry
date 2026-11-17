@@ -178,7 +178,8 @@ var errFilesReset = errors.New("google: the files table is read in full")
 // one is exported or downloaded again. One its owner no longer lets the
 // user download, or a transcript grown past googleTranscriptMaxBytes, loses
 // the document its stream holds, if Drive's version of it changed; a full
-// read leaves it out.
+// read leaves it out. So does a file the Transcripts stream holds that is
+// no transcript now (one named .vtt renamed, or given another type).
 //
 // The files table is reset, and read in full, when there is no cursor; when
 // the shared drives the user can read changed (one joined has no token; one
@@ -236,6 +237,8 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 		}
 		if doc != nil {
 			pending[id] = *doc
+		} else if _, held := w.Held(googleTranscriptsStream.Name, id); held {
+			pending[id] = googleDoc{stream: googleTranscriptsStream.Name, id: id, version: googleNoTranscript, withheld: true}
 		}
 		return w.Upsert("files", row)
 	}

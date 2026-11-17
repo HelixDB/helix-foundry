@@ -94,8 +94,11 @@ function decode(s: string) {
     if (i < 0) return out + s;
     out += s.slice(0, i);
     s = s.slice(i);
-    const end = s.indexOf(";");
-    const name = end >= 0 && end <= 10 ? s.slice(1, end) : undefined;
+    // A reference's ; is within its first 11 characters (&#x10ffff; is the
+    // longest): looking no further keeps a run of & with no ; from reading
+    // the rest at each one.
+    const end = s.slice(0, 11).indexOf(";");
+    const name = end >= 0 ? s.slice(1, end) : undefined;
     const r =
       name === undefined
         ? undefined

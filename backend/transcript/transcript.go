@@ -284,6 +284,10 @@ func collapse(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return strings.ContainsRune(space, r) }), " ")
 }
 
+// maxReference is where a character reference's ; may be at most, after
+// its &: &#x10ffff; is the longest.
+const maxReference = 10
+
 // references are the named character references WebVTT tools write.
 var references = map[string]string{"amp": "&", "lt": "<", "gt": ">", "quot": `"`, "apos": "'", "nbsp": "\u00a0", "lrm": "", "rlm": ""}
 
@@ -303,8 +307,10 @@ func decode(s string) string {
 		}
 		b.WriteString(s[:i])
 		s = s[i:]
-		end := strings.IndexByte(s, ';')
-		if end < 0 || end > 10 {
+		// A reference's ; is within its first 11 bytes: looking no further
+		// keeps a run of & with no ; from reading the rest at each one.
+		end := strings.IndexByte(s[:min(len(s), maxReference+1)], ';')
+		if end < 0 {
 			b.WriteByte('&')
 			s = s[1:]
 			continue

@@ -533,6 +533,21 @@ func TestGoogleChanges(t *testing.T) {
 			t.Fatalf("downloads = %v", asked)
 		}
 	})
+	t.Run("drops the transcript of a .vtt file renamed, which is no transcript now", func(t *testing.T) {
+		routes := unchanged()
+		// call3 was a transcript by its name alone; notes is a text file the stream never held.
+		renamed := googleChangeFile("call3", "text/plain", "2026-11-05T10:00:00Z", "4", `,"name":"call3.txt"`)
+		notes := googleChangeFile("notes", "text/plain", "2026-11-05T11:00:00Z", "2", `,"name":"notes.txt"`)
+		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			"":     {"100": `{"changes":[{"fileId":"call3","file":` + renamed + `},{"fileId":"notes","file":` + notes + `}],"newStartPageToken":"101"}`},
+			"drv1": {"200": `{"newStartPageToken":"201"}`}})
+		w := &googleWorkspace{routes: routes}
+		got, _ := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"call3": "1|old"})
+		if fmt.Sprint(got.log) != "[upsert files call3 upsert files notes]" || fmt.Sprint(got.drops) != "[call3]" || len(got.puts) != 0 ||
+			fmt.Sprint(got.offers) != "[transcripts call3 "+googleNoTranscript+"]" || len(w.requested("/drive/v3/files/")) != 0 {
+			t.Fatalf("log = %v, drops = %v, offers = %v, puts = %+v", got.log, got.drops, got.offers, got.puts)
+		}
+	})
 	t.Run("skips a changed Doc Drive fails to export, as a full read does", func(t *testing.T) {
 		noBackoff(t)
 		routes := unchanged()
