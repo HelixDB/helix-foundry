@@ -74,10 +74,10 @@ var foundryOperationDocs = []foundryOperationDoc{
 	{name: "set_current_load", doc: "{load_id}."},
 	{name: "revise_version", doc: "{version_id, edits, dry_run}: 1 to 100 edits, each {put: {item_id, toml}} with the item's whole TOML (such as item rule.overdue) or {remove: {item_id}}; dry_run previews without storing a version."},
 	{name: "upload_document",
-		doc: "{set_id, name, size_bytes, sha256}: the file's name, ending .md, .markdown, .mdx, .txt, .json, .csv, .tsv, .jsonl, .ndjson, .parquet or .pdf; its exact size " +
-			"(at most 1 MiB for Markdown, MDX and text and 3 MiB for the rest, unless the stamp says otherwise); and its lowercase hex SHA-256. " +
+		doc: "{set_id, name, size_bytes, sha256}: the file's name, ending .md, .markdown, .mdx, .txt, .json, .csv, .tsv, .jsonl, .ndjson, .parquet, .pdf or .vtt; its exact size " +
+			"(at most 1 MiB for Markdown, MDX, text and WebVTT and 3 MiB for the rest, unless the stamp says otherwise); and its lowercase hex SHA-256. " +
 			"Then PUT the bytes to the upload URL it returns and call " + toolFoundryCompleteUpload + ". " +
-			"Ontologies read Markdown, MDX and text as text; a PDF as its text once Helix has read it (at most 150 pages; an encrypted or damaged PDF, or a scan with no text layer, stays stored unread); " +
+			"Ontologies read Markdown, MDX and text as text; a WebVTT transcript (a meeting's or call's .vtt) as its turns, a line each with its start, speaker and words; a PDF as its text once Helix has read it (at most 150 pages; an encrypted or damaged PDF, or a scan with no text layer, stays stored unread); " +
 			"and CSV, TSV, JSON, JSONL and Parquet each as a table once read. The document's read says how and when."},
 	{name: "create_document_set", doc: "{name, description}."},
 	{name: "update_document_set", doc: "{set_id, name, description}, name and description each optional."},
@@ -133,7 +133,7 @@ var foundryOperationDocs = []foundryOperationDoc{
 // generateReads is what a generation reads, on every host.
 const generateReads = "No connector_ids reads every connector unless no_connectors is true; no document_set_ids reads no document set: list up to 20. " +
 	"A set's CSV, TSV, JSON, JSONL and Parquet files that have been read are tables, counted with the synced tables toward the 50 tables a generation covers (choose fewer past it); " +
-	"its Markdown, MDX, text and read PDFs are text the agent reads and loads extract (a PDF still being read is left out; a scan has no text). " +
+	"its Markdown, MDX, text, WebVTT transcripts and read PDFs are text the agent reads and loads extract (a PDF still being read is left out; a scan has no text). " +
 	"A generation needs at least one table, table file or set holding text. " +
 	"sample \"acme\" drafts the Acme Corp sample company from its connector, with its six tables synced, and its document set, as its one connector_ids and document_set_ids: a ready-made draft, in seconds and with no model."
 

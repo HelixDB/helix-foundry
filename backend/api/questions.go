@@ -80,7 +80,7 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "focus_json: %v", err)
 		}
-		focus, _ = json.Marshal(ref) // two strings: it can't fail
+		focus, _ = json.Marshal(ref) // strings and checked JSON: it can't fail
 	}
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {

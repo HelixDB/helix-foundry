@@ -1,0 +1,23 @@
+WEBVTT
+00:00:01.000 --> 00:00:02.000
+<v Ada Lovelace>A cue right under the header.
+
+This block has no timing line, so it is left out.
+
+bad
+00:00:xx.000 --> 00:00:04.000
+<v Ada Lovelace>A cue whose start can't be read.
+
+00:00:04.000 --> 00:00:05.000
+
+00:00:05.000 --> 00:00:06.000
+<v Ada Lovelace>   <i></i>   
+
+00:00:06.000 --> 00:00:07.000
+<v Ada Lovelace>Ada again, merged after the empty cues: 3 < 4 and <unclosed
+
+00:00:61.000 --> 00:00:62.000
+<v Grace Hopper>Sixty-one seconds isn't a time.
+
+00:00:08.000 --> 00:00:09.000
+<v Grace Hopper>Grace, at last.

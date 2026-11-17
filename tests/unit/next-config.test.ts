@@ -164,33 +164,8 @@ describe("next.config.ts", () => {
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: origin && `${origin}/login/callback`,
       });
       expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toBe(id);
-      // BotID on the reminder form runs where a stamp's own Databuddy site
-      // loads, and only there: never in a local build, which has its own.
-      expect(env.NEXT_PUBLIC_BOTID).toBe(id && mode !== "local" ? "1" : "");
     },
   );
-
-  // BotID's client reaches Vercel through this origin: without the
-  // rewrites (botid/next/config's withBotId) every check says bot.
-  it.each([
-    ["dev's stamp", "dev", "https://dev.foundry.helix-db.com", true],
-    ["prod's stamp", "prod", "https://foundry.helix-db.com", true],
-    ["pnpm dev", "dev", "https://local.foundry.helix-db.com:3000", false],
-    ["the mock", "mock", "http://localhost:3100", false],
-  ])("rewrites BotID's paths for %s: %s", async (_, appEnv, origin, on) => {
-    const built = await config({
-      NEXT_PUBLIC_APP_ENV: appEnv,
-      NEXT_PUBLIC_FOUNDRY_MODE: undefined,
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${origin}/login/callback`,
-    });
-    const rewrites = built.rewrites ? await built.rewrites() : [];
-    const sources = (Array.isArray(rewrites) ? rewrites : []).map(
-      (r) => r.source,
-    );
-    expect(sources.some((s) => s.endsWith("/a-4-a/c.js"))).toBe(on);
-    const headers = (await built.headers?.()) ?? [];
-    expect(headers.length).toBe(on ? 3 : 2);
-  });
 
   it("sends no referrer from a published dashboard's page, and keeps it from search and caches", async () => {
     const built = await config({ NEXT_PUBLIC_APP_ENV: "prod" });

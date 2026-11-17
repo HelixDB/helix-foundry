@@ -522,6 +522,7 @@ func (s *mysqlDB) queueFoundryExtract(ctx context.Context, o *model.FoundryOntol
 	job := &model.FoundryGraphJob{
 		ID: extract.ID, WorkspaceID: o.WorkspaceID, OntologyID: o.ID, VersionID: versionID, LoadID: loadID,
 		Kind: model.FoundryGraphJobExtract, Phase: model.FoundryGraphJobDocuments, RequestedByUserID: extract.RequestedByUserID,
+		ClientToken: extract.ClientToken,
 	}
 	return true, s.insertFoundryGraphJob(ctx, job)
 }

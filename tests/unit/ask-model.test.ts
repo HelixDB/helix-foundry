@@ -1212,6 +1212,16 @@ describe("the query renderer", () => {
     expect(t.path).toBe(
       'Customer@0 (cus_1, cus_2) matching "acme" where closed_at is empty and email is set and name contains "Corp" and name starts with "Glo" and since < today-30d and tier >= 2 and vip != true ← billed_to ← Invoice → billed_to → Customer@2 where x = null',
     );
+    // Keys' plain values, as the engine takes them since 4.26.0.
+    expect(
+      queryText({
+        start: {
+          type: "Flight",
+          keys: ["AA 100", { number: "BA 1", day: "2026-03-14" }],
+        },
+        return: { count: {} },
+      }).path,
+    ).toBe("Flight (AA 100, BA 1/2026-03-14)");
     expect(t.filters).toEqual([]);
     expect(t.returns).toBe("Count of distinct Customer@2");
     // A count at the last position, as the model may write it.

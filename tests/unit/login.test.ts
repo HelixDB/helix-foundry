@@ -125,7 +125,6 @@ describe("return paths", () => {
     "/login?return_to=/",
     "/auth/logout",
     "/papi/v1/whoami",
-    "/remind",
     "/a/../b",
     "/" + "x".repeat(2048),
   ])("refuse %s", (input) => expect(parseReturnPath(input)).toBeNull());

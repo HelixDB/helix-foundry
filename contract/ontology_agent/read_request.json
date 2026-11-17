@@ -284,12 +284,19 @@
         }
       ]
     },
-    "EntityRef": {
-      "description": "An entity: its type and its identity within the type, as the load stores it (a named\ntype's normalized name, a keyed type's key encoding).",
+    "EntityLookup": {
+      "description": "An entity: its type and exactly one of its stored `id` (as reads return it), its `key`'s plain values, or a `name`. With `key` or `name` the type may be left out: the entity is then the one any type holds, and a value several entities share is refused, naming them.",
       "type": "object",
       "properties": {
         "id": {
-          "description": "`norm_name` or `entity_key`.",
+          "description": "Its stored id, as reads return it: a named type's normalized name, a keyed type's key encoding (each value tagged by its type, such as `sapp.example.com` for the string `app.example.com`). For a key's plain value use `key`.",
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/KeyValues"
+        },
+        "name": {
+          "description": "A name in any spelling: a named type's name, or one of a keyed type's names.",
           "type": "string"
         },
         "type": {
@@ -298,9 +305,47 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "type",
-        "id"
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "key"
+                ]
+              },
+              {
+                "required": [
+                  "name"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "type",
+            "id"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "required": [
+            "key"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "required": [
+            "name"
+          ]
+        }
       ]
     },
     "EvidenceRead": {
@@ -333,7 +378,7 @@
           "properties": {
             "entity": {
               "description": "The entity.",
-              "$ref": "#/$defs/EntityRef"
+              "$ref": "#/$defs/EntityLookup"
             },
             "limit": {
               "description": "The most pieces, 1 to 100.",
@@ -366,7 +411,7 @@
           "description": "Every argument.",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/EntityRef"
+            "$ref": "#/$defs/EntityLookup"
           }
         },
         "pred": {
@@ -449,11 +494,11 @@
         },
         "object": {
           "description": "The object.",
-          "$ref": "#/$defs/EntityRef"
+          "$ref": "#/$defs/EntityLookup"
         },
         "subject": {
           "description": "The subject.",
-          "$ref": "#/$defs/EntityRef"
+          "$ref": "#/$defs/EntityLookup"
         }
       },
       "additionalProperties": false,
@@ -624,6 +669,27 @@
         "timeout_secs"
       ]
     },
+    "KeyValues": {
+      "description": "A key's plain values: the value, or an object of each key property's value.",
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "minProperties": 1
+        }
+      ]
+    },
     "LoadId": {
       "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
       "type": "string",
@@ -723,7 +789,7 @@
           "items": {
             "anyOf": [
               {
-                "$ref": "#/$defs/EntityRef"
+                "$ref": "#/$defs/EntityLookup"
               },
               {
                 "type": "null"
@@ -787,7 +853,7 @@
           "type": "object",
           "properties": {
             "entity": {
-              "$ref": "#/$defs/EntityRef"
+              "$ref": "#/$defs/EntityLookup"
             }
           },
           "additionalProperties": false,
@@ -1007,7 +1073,7 @@
           "minimum": 0
         },
         "order_by": {
-          "description": "The order: a property of a position the columns name, then the entities; by the\nentities alone if `null`.",
+          "description": "The order: a property of a position the columns name, then a text start's rank, then\nthe entities.",
           "anyOf": [
             {
               "$ref": "#/$defs/OrderBy"
@@ -1029,7 +1095,7 @@
       "type": "object",
       "properties": {
         "ids": {
-          "description": "Only these entities, by their stored identity (a named type's normalized name, a\nkeyed type's key encoding), at most 1,000; every entity of the type if `null`.",
+          "description": "Only these entities, by their ids as reads return them, at most 1,000; every entity of\nthe type if `null`.",
           "type": [
             "array",
             "null"
@@ -1039,8 +1105,19 @@
             "type": "string"
           }
         },
+        "keys": {
+          "description": "Only these, by their keys' plain values, at most 1,000.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/KeyValues"
+          },
+          "maxItems": 1000
+        },
         "text": {
-          "description": "A text search of the type's names, over what rows and documents created alike: the\nquery starts from its best 100 matches by score, so it finds names that share words\nwith the text rather than testing them (use `where` with `contains` for that). At most\n256 bytes, with a word to search for; not with `ids`, and only for a type with names.",
+          "description": "A search of the type's names, key and identifiers, over rows and documents alike: the\nquery starts from its best 100 matches, exact ones first, then names it begins, then\nshared words; rows keep that order unless `order_by`. It finds rather than tests (use\n`where` with `contains` for that). At most 256 bytes; not with `ids` or `keys`.",
           "type": [
             "string",
             "null"
@@ -1128,7 +1205,7 @@
           "description": "Only those naming this entity.",
           "anyOf": [
             {
-              "$ref": "#/$defs/EntityRef"
+              "$ref": "#/$defs/EntityLookup"
             },
             {
               "type": "null"

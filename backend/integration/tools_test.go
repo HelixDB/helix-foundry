@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // everyTool is a user's identity on a host that grants everything, so every
@@ -1110,5 +1111,57 @@ func TestEveryWorkspaceInputDefaultsItsWorkspaceID(t *testing.T) {
 	} {
 		*in.Workspace() = "workspace-1"
 		assert.Contains(t, mustJSON(t, in), `"workspace_id":"workspace-1"`, "%T", in)
+	}
+}
+
+// What the MCP's ask takes as a focus is what the backend's ParseFocus takes:
+// an entity by its id, its key's plain values or a name (contract 4.27.0).
+func TestFoundryEntityInputIsAFocus(t *testing.T) {
+	var fromJSON FoundryEntityInput
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"Ticket","key":42}`), &fromJSON))
+	for _, in := range []FoundryEntityInput{
+		{Type: "Customer", ID: "scus_1"},
+		{Type: "Site", Key: "app.example.com"},
+		{Key: map[string]any{"flight": "AA 100", "day": "2026-03-14"}},
+		{Name: "Acme Corp"},
+		fromJSON,
+	} {
+		raw, err := json.Marshal(in)
+		require.NoError(t, err)
+		_, err = ontologyagent.ParseFocus(string(raw))
+		assert.NoError(t, err, "%s", raw)
+	}
+	for _, in := range []FoundryEntityInput{
+		{Type: "Customer"},
+		{Type: "Customer", ID: "scus_1", Name: "Acme"},
+		{ID: "scus_1"},
+		{Key: 1.5},
+	} {
+		raw, _ := json.Marshal(in)
+		_, err := ontologyagent.ParseFocus(string(raw))
+		assert.Error(t, err, "%s", raw)
+	}
+}
+
+// A load the model left documents unread of says so, how many, why and when Helix reads them
+// again, so an agent never reports it as complete; one with none says nothing.
+func TestGetLoadSaysWhatTheModelLeftUnread(t *testing.T) {
+	at := time.Date(2026, 11, 14, 12, 41, 0, 0, time.UTC)
+	load := &foundryv1.FoundryLoad{Id: "load-1", VersionId: "version-1", Status: "partial", Current: true,
+		Unread: &foundryv1.FoundryLoadUnread{Documents: 9, ModelFailure: "quota", Reason: "provider quota", RereadAt: timestamppb.New(at)}}
+	arguments := map[string]any{"workspace_id": "workspace-1", "ontology_id": "ontology-1", "load_id": "load-1"}
+	out := called(t, &Service{Foundry: &loadBackend{load: load}}, toolFoundryGetLoad, arguments)
+	assert.Equal(t, map[string]any{"documents": 9.0, "model_failure": "quota", "reason": "provider quota", "reread_at": "2026-11-14T12:41:00Z"},
+		out["load"].(map[string]any)["unread"])
+
+	out = called(t, &Service{Foundry: &loadBackend{load: &foundryv1.FoundryLoad{Id: "load-1", Status: "ready"}}}, toolFoundryGetLoad, arguments)
+	assert.NotContains(t, out["load"], "unread")
+
+	tools, err := connect(t, &Service{}, reader()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	for _, tool := range tools.Tools {
+		if tool.Name == toolFoundryGetLoad {
+			assert.Contains(t, mustJSON(t, tool.OutputSchema), "is not complete")
+		}
 	}
 }

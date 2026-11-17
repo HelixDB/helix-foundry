@@ -277,11 +277,22 @@ export function parseQuery(x: unknown): OntologyQuery | undefined {
   const ids = Array.isArray(x.start.ids)
     ? x.start.ids.filter((i): i is string => typeof i === "string")
     : null;
+  // Keys' plain values (contract 4.27.0): a value, or an object of each key
+  // property's value.
+  const keyValue = (v: unknown) =>
+    typeof v === "string" || typeof v === "number";
+  const keys = Array.isArray(x.start.keys)
+    ? x.start.keys.filter(
+        (k): k is string | number | Record<string, string | number> =>
+          keyValue(k) || (isRecord(k) && Object.values(k).every(keyValue)),
+      )
+    : null;
   return {
     start: {
       type: x.start.type as string,
       where: startWhere,
       ids,
+      ...(keys ? { keys } : {}),
       text: str(x.start.text) ?? null,
     },
     steps: steps as NonNullable<OntologyQuery["steps"]>,
@@ -1500,6 +1511,9 @@ export function queryText(q: OntologyQuery): QueryText {
   const start =
     at(0) +
     (q.start.ids?.length ? ` (${q.start.ids.join(", ")})` : "") +
+    (q.start.keys?.length
+      ? ` (${q.start.keys.map((k) => (typeof k === "object" ? Object.values(k).join("/") : String(k))).join(", ")})`
+      : "") +
     (q.start.text ? ` matching ${JSON.stringify(q.start.text)}` : "") +
     whereClause(q.start.where);
   const path = (q.steps || []).reduce(

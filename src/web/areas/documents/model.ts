@@ -63,9 +63,10 @@ export type TableSource = "csv" | "tsv" | "jsonl" | "parquet";
  * click away; MDX too, never compiled or run, its frontmatter a code block),
  * plain text as it is, JSON as a tree (its source a click away), a table's
  * first rows in a grid, a PDF's text once read (its pages in the browser's
- * viewer a click away), and a type this page doesn't know as text with a
- * download. A PDF's pages, Parquet tables and `unknown` read the bytes
- * (`:bytes`); the others, and a PDF's text, the text (`:content`).
+ * viewer a click away), a WebVTT transcript as its turns, as ontologies
+ * read it (its cues a click away), and a type this page doesn't know as
+ * text with a download. A PDF's pages, Parquet tables and `unknown` read the
+ * bytes (`:bytes`); the others, and a PDF's text, the text (`:content`).
  */
 export type DocumentViewer =
   | { kind: "markdown"; mdx: boolean }
@@ -73,12 +74,14 @@ export type DocumentViewer =
   | { kind: "json" }
   | { kind: "table"; source: TableSource }
   | { kind: "pdf" }
+  | { kind: "transcript" }
   | { kind: "unknown" };
 
 /**
  * How ontologies read a format (the WFE's FoundryReadKind):
- * - text (Markdown, MDX, text): loads read its text for what the version's
- *   routes say it fills;
+ * - text (Markdown, MDX, text, WebVTT): loads read its text for what the
+ *   version's routes say it fills; a WebVTT transcript's text is its turns,
+ *   a line each with its start and speaker (src/shared/transcript.ts);
  * - table (CSV, TSV, JSON, JSONL, Parquet): Foundry reads it once, when its
  *   upload completes, as a table of its own that a version's mappings name
  *   by the document's id; never read as text;
@@ -174,6 +177,14 @@ export const DOCUMENT_FORMATS: readonly DocumentFormat[] = [
     viewer: { kind: "pdf" },
     kind: "pdf",
     maxBytes: MAX_FILE_BYTES,
+  },
+  {
+    mediaType: "text/vtt",
+    name: "WebVTT",
+    extensions: [".vtt"],
+    viewer: { kind: "transcript" },
+    kind: "text",
+    maxBytes: MAX_TEXT_BYTES,
   },
 ];
 
@@ -314,8 +325,8 @@ export function fileRead(d: FoundryDocument): FileRead {
 }
 
 /**
- * Whether ontologies read a document as text: Markdown, MDX and text, and a
- * PDF once its text is read. A table file never is: its rows load through
+ * Whether ontologies read a document as text: Markdown, MDX, text and
+ * WebVTT, and a PDF once its text is read. A table file never is: its rows load through
  * mappings.
  *
  * @example
@@ -389,7 +400,7 @@ export function kindText(d: FoundryDocument, setName: string) {
  * slash, backslash or control character.
  *
  * @example
- * fileProblem({ name: "deck.docx", size: 10 }); // "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, or PDF files can be uploaded."
+ * fileProblem({ name: "deck.docx", size: 10 }); // "Only Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF, or WebVTT files can be uploaded."
  */
 export function fileProblem(file: { name: string; size: number }) {
   const name = file.name.trim();
@@ -615,6 +626,33 @@ const failures: Record<NonNullable<ExtractionError["code"]>, string> = {
   model: "The model couldn’t read it.",
   store: "The database couldn’t store what was read.",
 };
+// Why the model couldn't read a document, by its failure class
+// (ExtractionError.modelFailure); any other class is "The model couldn’t
+// read it." Helix reads again on its own what the provider's quota, account
+// or a busy provider left unread.
+const modelFailures: Record<string, string> = {
+  quota:
+    "The model provider’s quota or credit ran out, so the model couldn’t read it.",
+  auth: "The model provider refused the account, so the model couldn’t read it.",
+  permission:
+    "The model provider refused the account, so the model couldn’t read it.",
+  not_found:
+    "The model provider refused the model, so the model couldn’t read it.",
+  unavailable: "The model provider was busy, so the model couldn’t read it.",
+  rate_limited: "The model provider was busy, so the model couldn’t read it.",
+  timeout: "The model provider was busy, so the model couldn’t read it.",
+  context_too_long: "It was too long for the model to read.",
+  truncated: "It was too long for the model to read.",
+};
+const rereads = new Set([
+  "quota",
+  "auth",
+  "permission",
+  "not_found",
+  "unavailable",
+  "rate_limited",
+  "timeout",
+]);
 /**
  * Why reading a document failed, in a sentence, and whether a load retries
  * it. A load records a PDF whose text couldn't be read with its read's code
@@ -622,7 +660,8 @@ const failures: Record<NonNullable<ExtractionError["code"]>, string> = {
  * before its text was read (an older load) is read by the next load.
  *
  * @example
- * failureText({ code: "model", retryable: true }); // "The model couldn’t read it. The next load tries again."
+ * failureText({ code: "model", retryable: true, modelFailure: "context_too_long" }); // "It was too long for the model to read. The next load tries again."
+ * failureText({ code: "model", retryable: true, modelFailure: "quota" }); // "The model provider’s quota or credit ran out, so the model couldn’t read it. Helix tries again on its own."
  * failureText(
  *   { code: "unsupported" },
  *   { id: "d", status: "uploaded", mediaType: "application/pdf", read: { state: "FOUNDRY_FILE_READ_STATE_FAILED", error: { message: "Scanned PDF: no text to read." } } },
@@ -640,8 +679,16 @@ export function failureText(
         : read.state === "ready"
           ? "Its text wasn’t read when this load ran. The next load reads it."
           : "Foundry couldn’t read its text."
-      : failures[error?.code || "model"] || failures.model;
-  return error?.retryable ? `${why} The next load tries again.` : why;
+      : error?.code === "model" && error.modelFailure
+        ? modelFailures[error.modelFailure] || failures.model
+        : failures[error?.code || "model"] || failures.model;
+  if (!error?.retryable) return why;
+  // One whose class wasn't kept (failed before Foundry kept it) is read
+  // again as the passing ones are.
+  return error.code === "model" &&
+    (!error.modelFailure || rereads.has(error.modelFailure))
+    ? `${why} Helix tries again on its own.`
+    : `${why} The next load tries again.`;
 }
 
 const isLive = (j?: GraphJob | null) =>
@@ -852,6 +899,7 @@ export const readsBytes = (v: DocumentViewer) =>
 export function renderedLabel(v: DocumentViewer) {
   if (v.kind === "markdown") return "Rendered";
   if (v.kind === "json") return "Tree";
+  if (v.kind === "transcript") return "Transcript";
   if (v.kind === "table" && v.source !== "parquet") return "Table";
   return undefined;
 }

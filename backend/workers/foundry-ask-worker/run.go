@@ -332,7 +332,7 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 		},
 	}
 	if len(q.Focus) > 0 {
-		// AskFoundryQuestion stored it as the entity ParseFocus read.
+		// AskFoundryQuestion stored it as the lookup ParseFocus read.
 		focus, err := ontologyagent.ParseFocus(string(q.Focus))
 		if err != nil {
 			return nil, permanent("the question's focus is not an entity", err)

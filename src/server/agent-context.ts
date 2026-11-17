@@ -11,8 +11,8 @@ import {
 } from "@/web/areas/workspace/plan";
 
 // What the hosted site tells AI agents and crawlers about Foundry, in the
-// formats they read: llms.txt and llms-full.txt (https://llmstxt.org), the
-// landing page's JSON-LD, and the manifests under /.well-known. It says what
+// formats they read: llms.txt and llms-full.txt (https://llmstxt.org) and
+// the manifests under /.well-known. It says what
 // Foundry is for, when to use it and when not, how an agent connects (the
 // Helix MCP, or a self-registered sandbox), the tools it then has, the plans,
 // and Foundry's part of Helix's docs, read from docs.helix-db.com's own
@@ -208,8 +208,8 @@ export const llmsTxt = (site: Site, docsLlms: string | null): string =>
   `${agentGuide(site)}\n${docsSection(foundryDocsIndex(docsLlms ?? ""))}\n`;
 
 /**
- * /llms-full.txt: the guide, the setup prompt the landing page's “Set up
- * with your agent” copies, then Foundry's docs pages whole.
+ * /llms-full.txt: the guide, the setup prompt for someone without a
+ * workspace yet, then Foundry's docs pages whole.
  */
 export function llmsFullTxt(
   site: Site,
@@ -221,7 +221,7 @@ export function llmsFullTxt(
   return `${agentGuide(site)}
 ## Setup prompt for an agent
 
-What “Set up with your agent” on ${site.origin} copies: from no account to an ontology an agent can ask, through the Helix MCP. Follow it with your user, step by step.
+What “Set up with your agent” copies: from no account to an ontology an agent can ask, through the Helix MCP. Follow it with your user, step by step.
 
 \`\`\`\`markdown
 ${setupPrompt(site)}
@@ -231,7 +231,7 @@ ${pages ? `## Docs\n\n${pages}` : docsSection(index)}
 `;
 }
 
-/** The landing page's prompt, for someone without a workspace yet. */
+/** The setup prompt for someone without a workspace yet. */
 export const setupPrompt = ({ origin, mcpUrl, eventsUrl }: Site): string =>
   onboardingPrompt({ origin, mcpUrl, eventsUrl, workspace: null }).trim();
 
@@ -245,7 +245,7 @@ export const mcpManifest = ({ origin, mcpUrl }: Site) => ({
   name: "Helix Foundry",
   description: TAGLINE,
   status: "active",
-  icon: `${origin}/landing/favicon.svg`,
+  icon: `${origin}/favicon.svg`,
   mcp: {
     supported: true,
     public_server: mcpUrl,
@@ -285,7 +285,7 @@ export const aiCatalog = ({ origin, mcpUrl }: Site) => ({
     displayName: "Helix Foundry",
     identifier: new URL(origin).host,
     documentationUrl: `${DOCS}/foundry/start-here/introduction`,
-    logoUrl: `${origin}/landing/favicon.svg`,
+    logoUrl: `${origin}/favicon.svg`,
   },
   entries: [
     {
@@ -306,32 +306,4 @@ export const aiCatalog = ({ origin, mcpUrl }: Site) => ({
       tags: TAGS,
     },
   ],
-});
-
-/**
- * The landing page's JSON-LD (schema.org): Foundry as an application with
- * its plans, published by HelixDB.
- */
-export const jsonLd = () => ({
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  name: "Helix Foundry",
-  url: PROD_ORIGIN,
-  description: SUMMARY,
-  applicationCategory: "BusinessApplication",
-  operatingSystem: "Web; macOS, Linux and Windows with Docker",
-  license: "https://www.apache.org/licenses/LICENSE-2.0",
-  sameAs: [SOURCE, `${DOCS}/foundry/start-here/introduction`],
-  publisher: {
-    "@type": "Organization",
-    name: "HelixDB",
-    url: "https://www.helix-db.com",
-  },
-  offers: (["free", "pro", "max"] as const).map((tier) => ({
-    "@type": "Offer",
-    name: `Foundry ${TIER_NAME[tier]}`,
-    price: PLAN_PRICE[tier].replace("$", ""),
-    priceCurrency: "USD",
-    description: PLAN_FEATURES[tier].join(". "),
-  })),
 });

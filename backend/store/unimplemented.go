@@ -626,6 +626,10 @@ func (u Unimplemented) ListFoundryLoadJobs(context.Context, []string, int) (map[
 	u.unimplemented("ListFoundryLoadJobs")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryLoadUnread(context.Context, []string) (map[string]model.FoundryLoadUnread, error) {
+	u.unimplemented("ListFoundryLoadUnread")
+	return nil, nil
+}
 func (u Unimplemented) GetActiveFoundryGraphJob(context.Context, string) (*model.FoundryGraphJob, error) {
 	u.unimplemented("GetActiveFoundryGraphJob")
 	return nil, nil
@@ -798,6 +802,15 @@ func (u Unimplemented) ListDueFoundryRefreshes(context.Context, time.Time, strin
 }
 func (u Unimplemented) QueueFoundryRefresh(context.Context, string, string, *model.FoundryGraphJob) (bool, error) {
 	u.unimplemented("QueueFoundryRefresh")
+	return false, nil
+}
+func (u Unimplemented) ListFoundryRereads(context.Context, []string, string, int) ([]*model.FoundryOntology, error) {
+	u.unimplemented("ListFoundryRereads")
+	return nil, nil
+}
+func (u Unimplemented) QueueFoundryReread(context.Context, string, string, []string, *model.FoundryGraphJob, model.FoundryGraphBudget,
+	time.Time) (bool, error) {
+	u.unimplemented("QueueFoundryReread")
 	return false, nil
 }
 func (u Unimplemented) OweFoundryRefreshes(context.Context, string, string, string, []string, time.Duration) error {

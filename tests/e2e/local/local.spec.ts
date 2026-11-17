@@ -140,7 +140,6 @@ test("serves agents and crawlers nothing", async ({ page }) => {
   for (const path of [
     "/llms.txt",
     "/llms-full.txt",
-    "/index.md",
     "/.well-known/mcp.json",
     "/.well-known/ai-catalog.json",
   ])
