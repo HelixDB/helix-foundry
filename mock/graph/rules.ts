@@ -72,6 +72,8 @@ export type Program = {
   // from it (it has `names`, or is known by its name).
   props: Map<string, Set<string>>;
   names: Map<string, string[]>;
+  // Each type's key props, in the order the ontology declares them.
+  keys: Map<string, string[]>;
   searchable: Set<string>;
   // Pred strings ("link:x", "relation:x") of what may never self-loop.
   binary: Set<string>;
@@ -268,6 +270,7 @@ export function compile(ontologyToml: string): Program {
       ]),
     ),
     names: new Map(tables(doc.types).map(([n, t]) => [n, texts(t.names)])),
+    keys: new Map(tables(doc.types).map(([n, t]) => [n, texts(t.key)])),
     searchable: new Set(
       tables(doc.types)
         .filter(([, t]) => texts(t.names).length > 0 || !texts(t.key).length)
@@ -518,6 +521,18 @@ export function refOf(n: MockNode): EntityRef {
  * a named type's or one of a keyed type's names. With a key or a name and no
  * type, among every type, as the engine finds it.
  */
+function keyText(m: Model, type: string, k: unknown): string | undefined {
+  if (typeof k !== "object" || !k) return String(k).trim();
+  const props = m.program.keys.get(type) || [];
+  const values = k as Record<string, unknown>;
+  if (
+    props.length !== Object.keys(values).length ||
+    props.some((p) => values[p] === undefined)
+  )
+    return undefined;
+  return props.map((p) => String(values[p])).join("/");
+}
+
 function lookupOf(m: Model, ref: unknown): MockNode[] {
   const r = ref as Partial<
     Record<"type" | "id" | "name", unknown> & { key: unknown }
@@ -538,26 +553,26 @@ function lookupOf(m: Model, ref: unknown): MockNode[] {
   const types = typeof r.type === "string" ? [r.type] : [...m.program.types];
   const found = new Set<MockNode>();
   for (const t of types) {
+    const key = r.key === undefined ? undefined : keyText(m, t, r.key);
     const at: [string, string][] =
-      r.key !== undefined
-        ? [
-            [
-              "entity_key",
-              typeof r.key === "object" && r.key
-                ? Object.values(r.key).map(String).join("/")
-                : String(r.key).trim(),
-            ],
-          ]
-        : typeof r.name === "string"
-          ? [
-              "norm_name",
-              ...(m.program.names.get(t) || []).map((p) => `${p}__nn`),
-            ].map((p) => [p, normName(String(r.name))] as [string, string])
-          : [];
-    for (const [prop, value] of at) {
-      const n = held(m.g.find(t, prop, value));
-      if (n) found.add(n);
-    }
+      key !== undefined
+        ? [["entity_key", key]]
+        : r.key !== undefined
+          ? []
+          : typeof r.name === "string"
+            ? [
+                "norm_name",
+                ...(m.program.names.get(t) || []).map((p) => `${p}__nn`),
+              ].map((p) => [p, normName(String(r.name))] as [string, string])
+            : [];
+    // Every match, not the first: two of a type sharing a name is ambiguous.
+    for (const n of m.g.nodes())
+      if (
+        n.label === t &&
+        held(n) &&
+        at.some(([prop, value]) => n.props[prop] === value)
+      )
+        found.add(n);
   }
   return [...found];
 }
@@ -1231,10 +1246,6 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
     return bad("/start/text", "give one of `ids`, `keys` and `text`");
   if (text !== null && !words(text).length)
     return bad("/start/text", "the text has no word to search for");
-  const keyText = (k: unknown) =>
-    typeof k === "object" && k
-      ? Object.values(k).map(String).join("/")
-      : String(k).trim();
   const ret = q.return;
   const last = steps.length;
   const groupLimit = (pointer: string, limit: number) =>
@@ -1296,7 +1307,8 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       n.label === q.start.type &&
       isEntity(n, m.program) &&
       (!ids || ids.includes(refOf(n).id)) &&
-      (!keys || keys.some((k) => keyText(k) === n.props.entity_key)) &&
+      (!keys ||
+        keys.some((k) => keyText(m, q.start.type, k) === n.props.entity_key)) &&
       passes(n, q.start.where || []),
   );
   // A text search's matches, best first, by rank: exact (a name, or the key),
