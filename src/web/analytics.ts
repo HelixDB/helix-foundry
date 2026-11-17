@@ -165,16 +165,6 @@ export type AnalyticsEvents = {
   ontology_step_shown: { step: WizardStepId; first: boolean };
   ontology_create_failed: { reason: "no_subscription" | Refusal };
 
-  // The landing page's copy buttons: the agent's setup prompt, or a local
-  // install's (visitors who take them never open sign-in).
-  setup_prompt_copied: { setup: "agent" | "local" };
-  // The landing page on a phone: a reminder to try Foundry on a computer
-  // set up (again: the address already had them), or why it wasn't; then a
-  // visit from a reminder's link or the README's (?via=).
-  reminder_requested: { again: boolean };
-  reminder_refused: { reason: "invalid" | "rate_limit" | "error" };
-  landing_returned: { via: "email" | "github" };
-
   // The sample company: Use the sample, then its tour reaching each step,
   // with how long each took: its data (by the page's clock), its draft made
   // into a version, and its load (by Helix's).
@@ -423,7 +413,7 @@ const TRACK_URL = "https://basket.databuddy.cc/track";
 
 /**
  * Sends an event before the page may leave (for WorkOS, Stripe, a
- * provider's sign-in, or the app from the landing page). The tracker holds custom events for up to 5 s and
+ * provider's sign-in). The tracker holds custom events for up to 5 s and
  * loses what it still holds when the page unloads (its build of Oct 2026),
  * and a call made before it loads waits in the SDK's queue, which the
  * navigation drops. So this waits for the tracker, at most a second, then

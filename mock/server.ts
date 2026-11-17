@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { compileTemplate, matchTemplate } from "../src/shared/route-template";
 import { fail, type MockReply, type Principal } from "./http";
-import { handleReminders, mockReminders } from "./reminders";
 import { handleSharedDashboard } from "./routes/dashboards";
 import { mockFeedback } from "./routes/feedback";
 import { routes } from "./routes";
@@ -44,15 +43,11 @@ import { handleWorkos } from "./workos";
 // memberQueryRead, invoiceOnlyCustomers, healEnabled, healRun, healDismiss,
 // healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
 // githubInstalled, directoryTeams, directoryEntitled, directoryIssues,
-// directorySyncMs, remindersPerHour, remindersPerClientPerHour, assessEnabled,
+// directorySyncMs, assessEnabled,
 // assessMs, assessOutcome, automationClockMs, automationStepMs,
 // automationRunsPerDay, automationsDisabled, automationAnswer,
 // automationCount, automationSuggestionsMs, automationSuggestionsOutcome,
 // automationSuggestionsAi }.
-//
-// POST /v1/reminders and /v1/reminders/stop are Foundry's door's, not the
-// WFE's: the landing page's reminders (./reminders.ts), which the site's
-// server calls with the mock's secret. GET /__mock/reminders lists them.
 //
 // GET /__mock/password-resets lists the reset links WorkOS would have
 // emailed, oldest first: [{ email, token }] (./routes/auth.ts).
@@ -234,11 +229,6 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify({ resets }));
         return;
       }
-      if (url.pathname === "/__mock/reminders" && req.method === "GET") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ reminders: mockReminders() }));
-        return;
-      }
       if (url.pathname.startsWith("/__mock/agent/v1/")) {
         const reply = await asAgent(req, url, raw);
         res.writeHead(reply.status, { "Content-Type": "application/json" });
@@ -262,9 +252,8 @@ const server = createServer(async (req, res) => {
     if (handleBillingPage(req, res, url, raw)) return;
     if (handleConnectPage(req, res, url, raw)) return;
     if (handleDirectoryPage(req, res, url)) return;
-    // Foundry's door's reminder routes (ingest.helix-db.com), not the WFE's.
-    if (handleReminders(req, res, url, raw)) return;
-    // And its dashboards' public snapshots.
+    // Foundry's door's (ingest.helix-db.com) public dashboard snapshots, not
+    // the WFE's.
     if (handleSharedDashboard(req, res, url)) return;
     const reply = url.pathname.startsWith("/v1/")
       ? await wfe(req, url, raw)
