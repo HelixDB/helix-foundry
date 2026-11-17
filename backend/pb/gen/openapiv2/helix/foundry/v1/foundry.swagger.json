@@ -1861,6 +1861,58 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/connectors/{connectorId}/pieces": {
+      "get": {
+        "summary": "The pieces of an event source with a text field, newest first, each as\nthe document a sync makes of it, from the moment it is sent: those no\nsync has read yet, and its table's. With a query, those holding its\nwords.",
+        "operationId": "FoundryService_ListFoundryEventPieces",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryEventPiecesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "connectorId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Words to find, separated by spaces: only the pieces whose document holds\nevery one, whatever its case, are listed. At most 200 bytes and 10\nwords; empty lists every piece.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "At most 50; 0 means 20.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/connectors/{connectorId}/syncs": {
       "get": {
         "operationId": "FoundryService_ListConnectorSyncs",
@@ -10115,6 +10167,33 @@
       },
       "description": "FoundryEventSourcePick is one event source a generation drafts from, and\nhow its ontology reads it."
     },
+    "v1FoundryEventSourcePiece": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The piece's id in its source."
+        },
+        "receivedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When its newest send arrived."
+        },
+        "title": {
+          "type": "string",
+          "description": "The document's name: the first line of the piece's text, else its id."
+        },
+        "text": {
+          "type": "string",
+          "description": "The document, Markdown: the piece's fields, then its text."
+        },
+        "synced": {
+          "type": "boolean",
+          "description": "A sync has read it: it is in the source's table."
+        }
+      },
+      "description": "FoundryEventSourcePiece is a piece an event source holds, as the document\na sync makes of it."
+    },
     "v1FoundryEventSourceToken": {
       "type": "object",
       "properties": {
@@ -12667,6 +12746,24 @@
           "$ref": "#/definitions/v1EventSourceCapacity"
         }
       }
+    },
+    "v1ListFoundryEventPiecesResponse": {
+      "type": "object",
+      "properties": {
+        "pieces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryEventSourcePiece"
+          },
+          "description": "At most limit, and at most 1 MiB of text together (always the newest)."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "Pieces were left out: more were found than pieces holds, or the source\nholds more than one list reads (its 100 newest sends no sync has read,\nand 64 MiB of its table). A narrower query finds what a list left out."
+        }
+      },
+      "description": "The source's pieces, newest first by arrival, each id once, as its newest\nsend has it."
     },
     "v1ListFoundryEventSourceTokensResponse": {
       "type": "object",

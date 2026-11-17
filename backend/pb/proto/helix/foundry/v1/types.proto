@@ -564,6 +564,21 @@ message FoundryEventBatch {
   bool synced = 8;
 }
 
+// FoundryEventSourcePiece is a piece an event source holds, as the document
+// a sync makes of it.
+message FoundryEventSourcePiece {
+  // The piece's id in its source.
+  string id = 1;
+  // When its newest send arrived.
+  google.protobuf.Timestamp received_at = 2;
+  // The document's name: the first line of the piece's text, else its id.
+  string title = 3;
+  // The document, Markdown: the piece's fields, then its text.
+  string text = 4;
+  // A sync has read it: it is in the source's table.
+  bool synced = 5;
+}
+
 // FoundryEventSourceToken is a send-only credential of one event source.
 message FoundryEventSourceToken {
   string id = 1;

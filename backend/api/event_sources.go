@@ -71,6 +71,7 @@ const (
 	reasonEventSourceFull   = "FOUNDRY_EVENT_SOURCE_FULL"
 	reasonEventSourcePaused = "FOUNDRY_EVENT_SOURCE_PAUSED"
 	reasonEventSourceFields = "FOUNDRY_EVENT_SOURCE_FIELDS"
+	reasonEventSourceNoText = "FOUNDRY_EVENT_SOURCE_NO_TEXT_FIELD"
 )
 
 var (
@@ -122,6 +123,10 @@ type eventSends struct {
 	// slots is the deployment-wide semaphore of send transactions, each of which
 	// holds one of the pool's connections while it runs.
 	slots chan struct{}
+	// reading is the deployment-wide semaphore of lists of pieces
+	// (eventPieceLists), each of which reads a source's waiting batches and
+	// up to eventPieceTableBytes of its table.
+	reading chan struct{}
 
 	mu sync.Mutex
 	// sources are by workspace and connector id, so a send naming another
@@ -140,6 +145,7 @@ func newEventSends(cfg *foundryconfig.Config, objects eventObjects, now func() t
 		spacing: foundrymodel.EventSyncSpacing{After: ev.SyncAfter, PerMillionRows: ev.SyncAfterPerMillionRows},
 		objects: objects, now: now,
 		checking: make(chan struct{}, ev.MaxSendsInProgress), slots: make(chan struct{}, ev.SendConcurrency),
+		reading: make(chan struct{}, eventPieceLists),
 		sources: map[string]*eventSource{}, workspaces: map[string]*eventWorkspace{},
 	}
 }

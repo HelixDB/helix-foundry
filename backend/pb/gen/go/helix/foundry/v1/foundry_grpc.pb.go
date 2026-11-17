@@ -43,6 +43,7 @@ const (
 	FoundryService_ListFoundryEventSourceTokens_FullMethodName          = "/helix.foundry.v1.FoundryService/ListFoundryEventSourceTokens"
 	FoundryService_RevokeFoundryEventSourceToken_FullMethodName         = "/helix.foundry.v1.FoundryService/RevokeFoundryEventSourceToken"
 	FoundryService_ListFoundryEventBatches_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryEventBatches"
+	FoundryService_ListFoundryEventPieces_FullMethodName                = "/helix.foundry.v1.FoundryService/ListFoundryEventPieces"
 	FoundryService_ListFoundryDocuments_FullMethodName                  = "/helix.foundry.v1.FoundryService/ListFoundryDocuments"
 	FoundryService_CreateFoundryDocument_FullMethodName                 = "/helix.foundry.v1.FoundryService/CreateFoundryDocument"
 	FoundryService_GetFoundryDocument_FullMethodName                    = "/helix.foundry.v1.FoundryService/GetFoundryDocument"
@@ -211,6 +212,11 @@ type FoundryServiceClient interface {
 	ListFoundryEventSourceTokens(ctx context.Context, in *ListFoundryEventSourceTokensRequest, opts ...grpc.CallOption) (*ListFoundryEventSourceTokensResponse, error)
 	RevokeFoundryEventSourceToken(ctx context.Context, in *RevokeFoundryEventSourceTokenRequest, opts ...grpc.CallOption) (*FoundryEventSourceTokenResponse, error)
 	ListFoundryEventBatches(ctx context.Context, in *ListFoundryEventBatchesRequest, opts ...grpc.CallOption) (*ListFoundryEventBatchesResponse, error)
+	// The pieces of an event source with a text field, newest first, each as
+	// the document a sync makes of it, from the moment it is sent: those no
+	// sync has read yet, and its table's. With a query, those holding its
+	// words.
+	ListFoundryEventPieces(ctx context.Context, in *ListFoundryEventPiecesRequest, opts ...grpc.CallOption) (*ListFoundryEventPiecesResponse, error)
 	// Helix Foundry documents and document sets, the workspace's: the Data
 	// area.
 	ListFoundryDocuments(ctx context.Context, in *ListFoundryDocumentsRequest, opts ...grpc.CallOption) (*ListFoundryDocumentsResponse, error)
@@ -699,6 +705,16 @@ func (c *foundryServiceClient) ListFoundryEventBatches(ctx context.Context, in *
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryEventBatchesResponse)
 	err := c.cc.Invoke(ctx, FoundryService_ListFoundryEventBatches_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryEventPieces(ctx context.Context, in *ListFoundryEventPiecesRequest, opts ...grpc.CallOption) (*ListFoundryEventPiecesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryEventPiecesResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryEventPieces_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1996,6 +2012,11 @@ type FoundryServiceServer interface {
 	ListFoundryEventSourceTokens(context.Context, *ListFoundryEventSourceTokensRequest) (*ListFoundryEventSourceTokensResponse, error)
 	RevokeFoundryEventSourceToken(context.Context, *RevokeFoundryEventSourceTokenRequest) (*FoundryEventSourceTokenResponse, error)
 	ListFoundryEventBatches(context.Context, *ListFoundryEventBatchesRequest) (*ListFoundryEventBatchesResponse, error)
+	// The pieces of an event source with a text field, newest first, each as
+	// the document a sync makes of it, from the moment it is sent: those no
+	// sync has read yet, and its table's. With a query, those holding its
+	// words.
+	ListFoundryEventPieces(context.Context, *ListFoundryEventPiecesRequest) (*ListFoundryEventPiecesResponse, error)
 	// Helix Foundry documents and document sets, the workspace's: the Data
 	// area.
 	ListFoundryDocuments(context.Context, *ListFoundryDocumentsRequest) (*ListFoundryDocumentsResponse, error)
@@ -2327,6 +2348,9 @@ func (UnimplementedFoundryServiceServer) RevokeFoundryEventSourceToken(context.C
 }
 func (UnimplementedFoundryServiceServer) ListFoundryEventBatches(context.Context, *ListFoundryEventBatchesRequest) (*ListFoundryEventBatchesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryEventBatches not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryEventPieces(context.Context, *ListFoundryEventPiecesRequest) (*ListFoundryEventPiecesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryEventPieces not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryDocuments(context.Context, *ListFoundryDocumentsRequest) (*ListFoundryDocumentsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryDocuments not implemented")
@@ -3133,6 +3157,24 @@ func _FoundryService_ListFoundryEventBatches_Handler(srv interface{}, ctx contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FoundryServiceServer).ListFoundryEventBatches(ctx, req.(*ListFoundryEventBatchesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryEventPieces_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryEventPiecesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryEventPieces(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryEventPieces_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryEventPieces(ctx, req.(*ListFoundryEventPiecesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -5485,6 +5527,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListFoundryEventBatches",
 			Handler:    _FoundryService_ListFoundryEventBatches_Handler,
+		},
+		{
+			MethodName: "ListFoundryEventPieces",
+			Handler:    _FoundryService_ListFoundryEventPieces_Handler,
 		},
 		{
 			MethodName: "ListFoundryDocuments",
