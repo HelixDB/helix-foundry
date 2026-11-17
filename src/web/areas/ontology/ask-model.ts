@@ -760,7 +760,8 @@ export const FAILURE_TEXT: Record<AskFailure, string> = {
   model_unsupported: UNREACHED,
   model_truncated: UNREACHED,
   model_malformed: UNREACHED,
-  model_timeout: UNREACHED,
+  // The agent tried the call that stopped sending output once more.
+  model_timeout: "The model provider stopped responding; ask again.",
   model_changed: UNREACHED,
   model_private_host: UNREACHED,
   no_answer: "The model stopped without an answer.",

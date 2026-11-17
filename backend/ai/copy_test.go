@@ -94,8 +94,9 @@ func TestAskFailure(t *testing.T) {
 		room    = "the question needed more room than the model has; ask something narrower"
 	)
 	// Helix's Claude says what each failure is: a provider still busy after
-	// the agent's retries says to try again, a request the model rejected is
-	// Helix's bug and never "ask again", and the key's and account's
+	// the agent's retries says to try again, one that stopped responding (a
+	// stalled call, tried twice) to ask again, a request the model rejected
+	// is Helix's bug and never "ask again", and the key's and account's
 	// failures are Helix's; all but the provider's passing trouble are
 	// raised with on-call.
 	t.Run("words Helix's Claude's failures for what they are", func(t *testing.T) {
@@ -103,7 +104,7 @@ func TestAskFailure(t *testing.T) {
 			ontologyagent.ModelRefused:        {Message: askDeclined, Permanent: true},
 			ontologyagent.ModelUnavailable:    {Message: busy},
 			ontologyagent.ModelRateLimited:    {Message: busy},
-			ontologyagent.ModelTimeout:        {Message: busy},
+			ontologyagent.ModelTimeout:        {Message: "the model provider stopped responding; ask again"},
 			ontologyagent.ModelMalformed:      {Message: "the model's answer couldn't be read; ask again"},
 			ontologyagent.ModelUnsupported:    {Message: bug, Ops: true},
 			ontologyagent.ModelChanged:        {Message: bug, Ops: true},
@@ -123,8 +124,8 @@ func TestAskFailure(t *testing.T) {
 			if got := AskFailure(house, f); got != w {
 				t.Errorf("AskFailure(house, %s) = %+v, want %+v", f, got, w)
 			}
-			if f != ontologyagent.ModelMalformed && strings.Contains(w.Message, "ask again") {
-				t.Errorf("%s: only an answer that couldn't be read is worth asking again: %q", f, w.Message)
+			if f != ontologyagent.ModelMalformed && f != ontologyagent.ModelTimeout && strings.Contains(w.Message, "ask again") {
+				t.Errorf("%s: only an answer that couldn't be read, or a call that stalled, is worth asking again: %q", f, w.Message)
 			}
 		}
 		if len(want) != len(ontologyagent.ModelFailures) {
@@ -140,8 +141,17 @@ func TestAskFailure(t *testing.T) {
 		if got := AskFailure(own, ontologyagent.ModelRefused); got.Message != askDeclined {
 			t.Errorf("refused = %+v", got)
 		}
-		if got := AskFailure(own, ontologyagent.ModelTimeout); got != (Copy{Message: askUnreachable}) {
+		if got := AskFailure(own, ontologyagent.ModelTimeout); got != (Copy{Message: "Claude stopped responding; ask again"}) {
 			t.Errorf("timeout = %+v", got)
+		}
+		if got := AskFailure(own, ontologyagent.ModelUnavailable); got != (Copy{Message: askUnreachable}) {
+			t.Errorf("unavailable = %+v", got)
+		}
+		compat := Resolved{Source: SourceWorkspace, Settings: Settings{
+			Provider: Compatible{BaseURL: "https://llm.example.com/v1"}, Models: Roles{Ask: Model{Name: "m"}},
+		}}
+		if got := AskFailure(compat, ontologyagent.ModelTimeout); got != (Copy{Message: "llm.example.com stopped responding; ask again"}) {
+			t.Errorf("a custom server's timeout = %+v", got)
 		}
 	})
 }
