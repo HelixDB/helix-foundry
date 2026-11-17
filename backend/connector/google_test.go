@@ -1642,12 +1642,9 @@ func TestGooglePDFs(t *testing.T) {
 	ctx := context.Background()
 	routes := func(t *testing.T, answers map[string]func(*http.Request) (int, string)) map[string]func(*http.Request) (int, string) {
 		routes := map[string]func(*http.Request) (int, string){
-			"/drive/v3/files":  func(*http.Request) (int, string) { return http.StatusOK, googlePDFFiles },
-			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`}),
+			"/drive/v3/files":      func(*http.Request) (int, string) { return http.StatusOK, googlePDFFiles },
+			"/drive/v3/drives":     googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`}),
 			"/drive/v3/files/gone": googleFailure(http.StatusNotFound, "File not found: gone.", "notFound"),
-			"/drive/v3/files/notpdf/export": func(*http.Request) (int, string) {
-				return http.StatusOK, "## Notes"
-			},
 		}
 		for id, body := range googlePDFBodies {
 			routes["/drive/v3/files/"+id] = func(r *http.Request) (int, string) {
