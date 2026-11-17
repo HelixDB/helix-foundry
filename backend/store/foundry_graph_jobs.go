@@ -530,7 +530,7 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 				return err
 			}
 		}
-		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets); err != nil {
+		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets, outcome.ModelUnread); err != nil {
 			return err
 		}
 		// A resend sends only what its load holds: uploads that came during
@@ -586,9 +586,11 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 // end of the same job, merged meanwhile, changes nothing; its People
 // enrichment step, if still preparing or queued, ends with it. held are the
 // sets with an allowance the job's budget stop left unfinished
-// (FoundryGraphJobOutcome.HeldSets). The caller holds the ontology's lock.
+// (FoundryGraphJobOutcome.HeldSets); modelUnread says the model, not a
+// budget, left documents unread (FoundryGraphJobOutcome.ModelUnread). The
+// caller holds the ontology's lock.
 func (s *mysqlDB) endFoundryLoadWork(ctx context.Context, o *model.FoundryOntology, job *model.FoundryGraphJob, status model.FoundryGraphJobStatus,
-	ingestDone bool, held []string) error {
+	ingestDone bool, held []string, modelUnread bool) error {
 	switch job.Kind {
 	case model.FoundryGraphJobExtract:
 		return s.completeFoundryLoad(ctx, job.LoadID, status)
@@ -642,18 +644,12 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 		refresh := origin == string(model.FoundryLoadByRefresh)
 		// A refresh replaces only the load it refreshed.
 		refreshesCurrent := refresh && replaced != nil && refreshes.Valid && *replaced == refreshes.String
-		becomesCurrent := load == model.FoundryLoadReady || replaced == nil
-		if load == model.FoundryLoadPartial && !refresh && !becomesCurrent {
-			// A load a person started that the model left documents unread
-			// of is the version they asked for: it replaces the current load
-			// as a ready one would, and, current, has those documents read
-			// again on its own (QueueFoundryReread). One a spent budget
-			// stopped waits for a person, as before.
-			if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_extractions
-WHERE load_id=? AND status='failed' AND error_code='model')`, job.LoadID).Scan(&becomesCurrent); err != nil {
-				return err
-			}
-		}
+		// A load a person started that the model left documents unread of
+		// (modelUnread) is the version they asked for: it replaces the
+		// current load as a ready one would, and, current, has those
+		// documents read again on its own (QueueFoundryReread). One a spent
+		// budget stopped waits for a person, as before.
+		becomesCurrent := load == model.FoundryLoadReady || replaced == nil || load == model.FoundryLoadPartial && modelUnread && !refresh
 		if load == model.FoundryLoadPartial && refreshesCurrent {
 			// A partial refresh (one whose budget ran out) replaces the load it
 			// refreshed once it holds what that load held: it recorded every

@@ -19,9 +19,9 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			t.Fatalf("unread = %v", got)
 		}
 	})
-	t.Run("counts the documents the model failed, with the reason and the re-read", func(t *testing.T) {
+	t.Run("counts failed and unrecorded documents, with the reason and the re-read", func(t *testing.T) {
 		got := foundryLoadUnreadToProto(partial, true, quota)
-		if got.GetDocuments() != 2 || got.GetModelFailure() != "quota" || got.GetReason() != "provider quota" ||
+		if got.GetDocuments() != 3 || got.GetModelFailure() != "quota" || got.GetReason() != "provider quota" ||
 			!got.GetRereadAt().AsTime().Equal(ended.Add(15*time.Minute)) {
 			t.Fatalf("unread = %v", got)
 		}
@@ -37,7 +37,7 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			t.Fatalf("reread at = %v", got.GetRereadAt().AsTime())
 		}
 		u.Rereads = foundrymodel.FoundryRereadLimit
-		if got := foundryLoadUnreadToProto(ready, true, u); got.GetRereadAt() != nil || got.GetDocuments() != 2 {
+		if got := foundryLoadUnreadToProto(ready, true, u); got.GetRereadAt() != nil || got.GetDocuments() != 3 {
 			t.Fatalf("past the limit: %v", got)
 		}
 	})
@@ -58,8 +58,8 @@ func TestFoundryLoadUnreadToProto(t *testing.T) {
 			}
 		}
 	})
-	t.Run("leaves out documents no job recorded, which wait for reasons of their own", func(t *testing.T) {
-		u := foundrymodel.FoundryLoadUnread{Failed: map[string]int{"rate_limited": 1}, Unrecorded: 5}
+	t.Run("leaves out unrecorded documents while a job writes the load", func(t *testing.T) {
+		u := foundrymodel.FoundryLoadUnread{Failed: map[string]int{"rate_limited": 1}, Unrecorded: 5, Live: true}
 		if got := foundryLoadUnreadToProto(ready, true, u); got.GetDocuments() != 1 || got.GetReason() != "provider busy" {
 			t.Fatalf("unread = %v", got)
 		}

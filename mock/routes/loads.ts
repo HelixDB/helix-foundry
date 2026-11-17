@@ -1822,18 +1822,22 @@ function rulesOf(
  * none, saying how many and why, as the graph worker's does.
  */
 function finish(j: StoredJob, status: JobStatus, at: number, error = "") {
+  // A load the model left documents unread of: a person's replaces the
+  // current load (FoundryGraphJobOutcome.ModelUnread).
+  let modelUnread = false;
   if (j.kind === "load" && status === "succeeded") {
     const u = loadModelReads(j.loadId);
-    const failed = [...u.failed.values()].reduce((n, c) => n + c, 0);
-    if (failed) {
-      const n = failed + u.unrecorded,
-        why = unreadWhy(unreadFailure(u.failed));
+    const n = [...u.failed.values()].reduce((n, c) => n + c, 0);
+    if (n) {
+      const f = unreadFailure(u.failed),
+        why = unreadWhy(f);
+      modelUnread = true;
       if (u.read === 0) {
         status = "failed";
         error = `none of the load's documents could be read (${n} ${n === 1 ? "document" : "documents"}): ${why}; start a new load to read them`;
       } else {
         status = "budget_exhausted";
-        error = `${n} ${n === 1 ? "document wasn't" : "documents weren't"} read: ${why}; Helix reads them again on its own`;
+        error = `${n} ${n === 1 ? "document wasn't" : "documents weren't"} read: ${why}; ${REREADS.has(f) ? "Helix reads them again on its own while the load is current" : "the next load reads them"}`;
       }
     }
   }
@@ -1851,7 +1855,7 @@ function finish(j: StoredJob, status: JobStatus, at: number, error = "") {
       state.current.set(j.ontologyId, l.id);
     } else if (status === "budget_exhausted") {
       l.status = "partial";
-      if (!loadById(currentLoadId(j.ontologyId) || ""))
+      if (modelUnread || !loadById(currentLoadId(j.ontologyId) || ""))
         state.current.set(j.ontologyId, l.id);
     } else l.status = "failed";
   }
@@ -2199,10 +2203,15 @@ const UNREAD_REASONS: Record<string, string> = {
   "": "model failed",
 };
 const unreadReason = (f: string) => UNREAD_REASONS[f] ?? "model error";
+// Why, as the WFE's ai.UnreadMessage says it.
 const unreadWhy = (f: string) =>
   ({
     "provider quota": "the model provider's quota or credit ran out",
+    "provider account": "the model provider refused the account or its models",
     "provider busy": "the model provider was busy",
+    "too long for the model": "they were too long for the model",
+    "model declined": "the model declined them",
+    "model error": "the model rejected the request",
   })[unreadReason(f)] || "the model failed";
 // The class a load's unread documents are told by, as the WFE's
 // ai.UnreadFailure: the most common of those Helix re-reads (ai.Rereads),
@@ -2242,7 +2251,7 @@ function loadUnread(l: StoredLoad, current: boolean) {
     reason = unreadReason(f);
   const passes = [...u.failed.keys()].some((c) => REREADS.has(c));
   return {
-    documents: failed,
+    documents: failed + (live ? 0 : u.unrecorded),
     modelFailure: f,
     reason,
     rereadAt:

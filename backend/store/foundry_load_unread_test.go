@@ -104,7 +104,8 @@ func TestFoundryLoadUnread(t *testing.T) {
 		assert.Equal(t, map[string]int{"quota": 1, "": 1}, u.Failed)
 		assert.Equal(t, 1, u.Unrecorded)
 		assert.True(t, u.Live, "the load job is running")
-		assert.Equal(t, 2, u.Failures(), "what no job reached waits for a reason of its own")
+		assert.Equal(t, 2, u.Failures())
+		assert.Equal(t, 2, u.Documents(), "while a job writes the load, what it hasn't reached isn't unread")
 		assert.Nil(t, u.LastEnd)
 		assert.Equal(t, model.FoundryLoadUnread{}, got[id26("FJ-none")])
 
@@ -115,8 +116,7 @@ func TestFoundryLoadUnread(t *testing.T) {
 		require.NoError(t, err)
 		u = got[loadID]
 		assert.False(t, u.Live)
-		assert.Equal(t, 2, u.Failures())
-		assert.Equal(t, 1, u.Unrecorded)
+		assert.Equal(t, 3, u.Documents())
 		require.NotNil(t, u.LastEnd)
 		assert.Equal(t, 0, u.Rereads)
 		assert.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, loadID))
@@ -201,7 +201,7 @@ func TestFoundryLoadUnread(t *testing.T) {
 		assert.NotContains(t, ids(owed), f.ontology.ID)
 		got, err = f.db.ListFoundryLoadUnread(ctx, []string{loadID})
 		require.NoError(t, err)
-		assert.Equal(t, 0, got[loadID].Failures())
+		assert.Equal(t, 0, got[loadID].Documents())
 	})
 
 	// A failure that doesn't pass on its own (the model rejected the
@@ -233,7 +233,7 @@ func TestFoundryLoadUnread(t *testing.T) {
 
 	// A person's new load the model left documents unread of replaces the
 	// current load, as a ready one would, so its documents are re-read; one a
-	// spent budget stopped doesn't.
+	// spent budget stopped doesn't, whatever the model failed on the way.
 	t.Run("makes a person's load the model left documents of current", func(t *testing.T) {
 		f := newFoundryFixture(t, "LU7")
 		a, b := f.uploaded(t, "LU7-a"), f.uploaded(t, "LU7-b")
@@ -242,16 +242,21 @@ func TestFoundryLoadUnread(t *testing.T) {
 		require.Equal(t, first, *f.ontologyNow(t).CurrentLoadID)
 
 		budget := f.load(t, "L2")
-		f.finish(t, "w1", "LU7-2", model.FoundryGraphJobBudgetExhausted, a)
+		job := f.claimed(t, "w1", budget)
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", extracted(a), false))
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", modelFailed(b, "rate_limited"), false))
+		_, err := f.db.FinishFoundryGraphJob(ctx, job.ID, "w1", model.FoundryGraphJobOutcome{
+			Status: model.FoundryGraphJobBudgetExhausted, IngestDone: true, Next: next("LU7-2")})
+		require.NoError(t, err)
 		assert.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, budget))
 		assert.Equal(t, first, *f.ontologyNow(t).CurrentLoadID, "a budget stop waits for a person")
 
 		unread := f.load(t, "L3")
-		job := f.claimed(t, "w1", unread)
+		job = f.claimed(t, "w1", unread)
 		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", extracted(a), false))
 		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", modelFailed(b, "rate_limited"), false))
-		_, err := f.db.FinishFoundryGraphJob(ctx, job.ID, "w1", model.FoundryGraphJobOutcome{
-			Status: model.FoundryGraphJobBudgetExhausted, IngestDone: true, Next: next("LU7-3")})
+		_, err = f.db.FinishFoundryGraphJob(ctx, job.ID, "w1", model.FoundryGraphJobOutcome{
+			Status: model.FoundryGraphJobBudgetExhausted, IngestDone: true, ModelUnread: true, Next: next("LU7-3")})
 		require.NoError(t, err)
 		assert.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, unread))
 		assert.Equal(t, unread, *f.ontologyNow(t).CurrentLoadID)

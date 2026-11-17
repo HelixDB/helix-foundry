@@ -8,12 +8,15 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-func ExampleFoundryLoadUnread_Failures() {
-	u := model.FoundryLoadUnread{Read: 3, Failed: map[string]int{"quota": 1, "timeout": 2}, Unrecorded: 8}
-	fmt.Println(u.Failures())
-	fmt.Println(model.FoundryLoadUnread{Read: 9, Unrecorded: 2}.Failures())
+func ExampleFoundryLoadUnread_Documents() {
+	u := model.FoundryLoadUnread{Read: 3, Failed: map[string]int{"quota": 1}, Unrecorded: 8}
+	fmt.Println(u.Documents())
+	u.Live = true
+	fmt.Println(u.Documents())
+	fmt.Println(model.FoundryLoadUnread{Read: 9, Unrecorded: 2}.Documents())
 	// Output:
-	// 3
+	// 9
+	// 1
 	// 0
 }
 

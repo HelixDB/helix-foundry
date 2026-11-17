@@ -160,7 +160,8 @@
   color: var(--hf-text);
 }
 .feed-item.is-pending .feed-item-name,
-.feed-item.is-unread .feed-item-name {
+.feed-item.is-unread .feed-item-name,
+.feed-item.is-ended .feed-item-name {
   color: var(--hf-muted);
 }
 .feed-item.is-unread .feed-item-mark {

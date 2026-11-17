@@ -1122,24 +1122,31 @@ export function LoadPage({ loadId }: { loadId: string }) {
   const uploaded = (documents.data?.documents || []).filter(
     (d) => d.status === "uploaded",
   );
+  // What the load made of every document it holds, as the WFE counted it: a
+  // job's progress counts a document it only stored as done.
+  const totals = loadDocumentTotals(l);
   const docItems: FeedItem[] = uploaded.map((d) => ({
     id: d.id,
     name: d.name || d.id,
     source: "upload",
     group: "Documents",
     // A document's extraction is the current load's; another load's
-    // documents are as far as its job got. One the model failed was not
-    // read, nor was one a job that ended without succeeding never reached.
+    // documents are as far as its job got. While a job reads documents,
+    // those it hasn't recorded are loading. Once no job is live, one the
+    // model failed was not read; of another load, whose documents' rows the
+    // page doesn't have, every one is unread only when it read none.
     status:
-      l.current && d.extraction?.status === "failed"
-        ? "unread"
-        : (l.current ? !!d.extraction : j.status === "succeeded")
+      l.current && d.extraction && d.extraction.status !== "failed"
+        ? "ready"
+        : !l.current && j.status === "succeeded"
           ? "ready"
           : j.status === "running" && j.phase === "documents"
             ? "loading"
-            : !isLiveJob(j) && j.status !== "succeeded"
-              ? "unread"
-              : "pending",
+            : isLiveJob(j)
+              ? "pending"
+              : l.current || totals?.read === 0
+                ? "unread"
+                : "ended",
   }));
   const reviews = uploaded.reduce(
     (n, d) => n + (d.extraction?.reviews || 0),
@@ -1151,9 +1158,6 @@ export function LoadPage({ loadId }: { loadId: string }) {
   );
   const retry = loadRetry(j, ontology.createdAt, now);
   const loadBadgeShown = loadBadge(l);
-  // What the load made of every document it holds, as the WFE counted it: a
-  // job's progress counts a document it only stored as done.
-  const totals = loadDocumentTotals(l);
   const unread = loadUnreadText(l, now);
   return (
     <Page>

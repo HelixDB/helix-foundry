@@ -435,6 +435,7 @@ func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attem
 	switch {
 	case f.Budget:
 		outcome.Status, outcome.Error, outcome.HeldSets = model.FoundryGraphJobBudgetExhausted, f.Message, a.held
+		outcome.ModelUnread = f.Model
 	case f.Permanent:
 		outcome.Status, outcome.Error = model.FoundryGraphJobFailed, f.Message
 	case stopping:

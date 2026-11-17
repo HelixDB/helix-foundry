@@ -17,8 +17,9 @@ export type FeedItem = {
   group?: string;
   rows?: number;
   // unread: its load is done with it and didn't read it (the model failed
-  // it, or the load stopped before it).
-  status: "pending" | "loading" | "ready" | "unread";
+  // it, or the load stopped before it); ended: its load is done, and which
+  // of its documents it read isn't known here.
+  status: "pending" | "loading" | "ready" | "unread" | "ended";
 };
 export type FeedStep = { label: string; status: "pending" | "active" | "done" };
 

@@ -19,8 +19,8 @@ type FoundryLoadUnread struct {
 	Failed map[string]int
 	// Unrecorded counts the load's documents no job has recorded yet: those
 	// a run the model stopped never sent (a workspace's own provider refusing
-	// its key or quota), a spent budget held back, or an upload a job hasn't
-	// reached. Not counted in Documents: why they wait isn't recorded.
+	// its key or quota), or a spent budget held back. Counted in Documents
+	// once no job writes the load.
 	Unrecorded int
 	// Live means a job writes the load now: its counts are still moving.
 	Live bool
@@ -50,15 +50,29 @@ const (
 	FoundryRereadLimit = 28
 )
 
-// Failures counts the documents the model failed: those that went unread
-// because of it. A document no job recorded waits for a reason its row
-// doesn't say (Unrecorded), so it is not among them.
-//
-//	model.FoundryLoadUnread{Failed: map[string]int{"quota": 1, "timeout": 2}, Unrecorded: 8}.Failures() // 3
+// Failures counts the documents the model failed.
 func (u FoundryLoadUnread) Failures() int {
 	n := 0
 	for _, c := range u.Failed {
 		n += c
+	}
+	return n
+}
+
+// Documents is how many of the load's documents went unread because the
+// model failed: those it failed, and, once no job writes the load, those no
+// job recorded (a run the model stopped never sent them; a re-read sends
+// them with the rest). 0 when the model failed none.
+//
+//	u := model.FoundryLoadUnread{Failed: map[string]int{"quota": 1}, Unrecorded: 8}
+//	u.Documents() // 9
+func (u FoundryLoadUnread) Documents() int {
+	n := u.Failures()
+	if n == 0 {
+		return 0
+	}
+	if !u.Live {
+		n += u.Unrecorded
 	}
 	return n
 }

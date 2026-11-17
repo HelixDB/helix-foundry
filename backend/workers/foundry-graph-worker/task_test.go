@@ -2493,8 +2493,9 @@ func TestSetAllowance(t *testing.T) {
 				job.Spend.USDMicros = tc.jobSpent
 				outcome := h.run(t, job)
 				requests := h.extractRequests(t)
+				// A budget, not the model, stopped it: it waits for a person.
 				if outcome.Status != model.FoundryGraphJobBudgetExhausted || !strings.Contains(outcome.Error, tc.says) || len(requests) != len(tc.maxUSD) ||
-					!slices.Equal(outcome.HeldSets, tc.held) {
+					!slices.Equal(outcome.HeldSets, tc.held) || outcome.ModelUnread {
 					t.Fatalf("outcome = %+v after %d Extracts", outcome, len(requests))
 				}
 				for i, r := range requests {

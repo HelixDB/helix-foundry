@@ -57,7 +57,8 @@ func TestUnreadDocuments(t *testing.T) {
 			h := newHarness(t)
 			h.agent.extract = extractModelFailing(h, failure, "doc-b", "doc-d")
 			outcome := h.run(t, loadJob())
-			if outcome.Status != model.FoundryGraphJobBudgetExhausted || outcome.Error != want || len(outcome.HeldSets) != 0 {
+			if outcome.Status != model.FoundryGraphJobBudgetExhausted || outcome.Error != want || len(outcome.HeldSets) != 0 ||
+				!outcome.ModelUnread {
 				t.Fatalf("%s: outcome = %+v", failure, outcome)
 			}
 			if e := h.store.extractions["doc-b"]; e.Error.ModelFailure != failure {
@@ -97,7 +98,8 @@ func TestUnreadDocuments(t *testing.T) {
 		withOwnKey(t, h)
 		h.agent.extract = extractModelFailing(h, "quota", "doc-c")
 		outcome := h.run(t, loadJob())
-		if outcome.Status != model.FoundryGraphJobBudgetExhausted || outcome.Error != "The Claude account is out of credit or quota." {
+		if outcome.Status != model.FoundryGraphJobBudgetExhausted || outcome.Error != "The Claude account is out of credit or quota." ||
+			!outcome.ModelUnread {
 			t.Fatalf("outcome = %+v", outcome)
 		}
 	})

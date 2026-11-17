@@ -370,9 +370,10 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 }
 
 // unread ends a load job whose documents the model left unread as they
-// make the load: failed when the model read none of them, else partial,
-// which never replaces a current load holding more (endFoundryLoadWork),
-// its message saying how many went unread and why (ai.UnreadMessage). A
+// make the load: failed when the model read none of them, else partial
+// (FoundryGraphJobOutcome.ModelUnread: a person's replaces the current load,
+// a refresh only once it holds what that load held), its message saying how
+// many went unread and why (ai.UnreadMessage). A
 // document the model failed is never counted as read: no names or facts of
 // it are in the load. err is how the job's extract ended: nil, or a stop
 // for the model (failure.Model), whose own words (the workspace's provider

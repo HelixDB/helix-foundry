@@ -359,7 +359,7 @@ func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOnto
 // partial, while one of them failed for a reason that passes (ai.Rereads),
 // as store.QueueFoundryReread decides.
 func foundryLoadUnreadToProto(l *foundrymodel.FoundryLoad, rereads bool, u foundrymodel.FoundryLoadUnread) *foundryv1.FoundryLoadUnread {
-	n := u.Failures()
+	n := u.Documents()
 	if n == 0 {
 		return nil
 	}
