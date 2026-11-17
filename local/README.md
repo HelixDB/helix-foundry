@@ -121,6 +121,8 @@ backup=~/foundry-backup-2026-11-02-1413
 )
 ```
 
+A backup taken before these images were pinned by digest lists them by tag alone: a `diff` whose only difference is `@sha256:…` on the same tags is expected, and the images are the same.
+
 Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first, once the check passes. Then restore, in the same shell (it reads `$backup`); it stops at the first step that fails. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
 
 ```sh

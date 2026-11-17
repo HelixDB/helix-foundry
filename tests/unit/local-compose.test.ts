@@ -606,7 +606,7 @@ describe.skipIf(!compose)("local/compose.yaml's ollama profile", () => {
   it("pins every service's image by tag and digest", () => {
     for (const [name, service] of Object.entries(composed(OLLAMA).services)) {
       expect(service.image, name).toMatch(
-        /^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$/,
+        /^(?:[^@\s]*\/)?[^/:@\s]+:[^/:@\s]+@sha256:[0-9a-f]{64}$/,
       );
     }
   });
