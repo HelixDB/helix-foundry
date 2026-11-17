@@ -132,6 +132,13 @@ service FoundryService {
   rpc ListFoundryEventBatches(ListFoundryEventBatchesRequest) returns (ListFoundryEventBatchesResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/event-batches"};
   }
+  // The pieces of an event source with a text field, newest first, each as
+  // the document a sync makes of it, from the moment it is sent: those no
+  // sync has read yet, and its table's. With a query, those holding its
+  // words.
+  rpc ListFoundryEventPieces(ListFoundryEventPiecesRequest) returns (ListFoundryEventPiecesResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/pieces"};
+  }
 
   // Helix Foundry documents and document sets, the workspace's: the Data
   // area.
@@ -1120,6 +1127,36 @@ message ListFoundryEventBatchesResponse {
   // Pieces in batches no sync has read yet.
   int64 pending_pieces = 2;
   EventSourceCapacity capacity = 3;
+}
+
+// ListFoundryEventPiecesRequest reads an event source's pieces back. The
+// source must have a text field (FAILED_PRECONDITION, reason
+// FOUNDRY_EVENT_SOURCE_NO_TEXT_FIELD, otherwise): a piece is listed as the
+// document its text makes. Nothing indexes a source's pieces, so a list
+// reads its table, and one of a table over 64 MiB is refused
+// (FAILED_PRECONDITION, reason FOUNDRY_EVENT_SOURCE_TOO_LARGE).
+message ListFoundryEventPiecesRequest {
+  string workspace_id = 1;
+  string connector_id = 2;
+  // Words to find, separated by spaces: only the pieces whose id, fields or
+  // text hold every one as a substring, whatever its case, are listed. A
+  // field is read as the piece's document shows it, which names it and cuts
+  // a long value. At most 200 bytes and 10 words; empty lists every piece.
+  string query = 3;
+  // At most 50; 0 means 20.
+  int32 limit = 4;
+}
+
+// The source's pieces, newest first by arrival, those that arrived together
+// by id, each id once, as its newest send has it.
+message ListFoundryEventPiecesResponse {
+  // At most limit, and at most 1 MiB of text together (always the newest).
+  repeated FoundryEventSourcePiece pieces = 1;
+  // Pieces were left out. More were found than pieces holds: a narrower
+  // query finds the rest. Or more than 100 sends wait for a sync, of which
+  // a list reads the newest 100: a piece listed from the source's table may
+  // then be an older send of its id, until a sync has read them.
+  bool truncated = 2;
 }
 
 message GetCurrentOntologyVersionRequest {

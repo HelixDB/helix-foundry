@@ -85,6 +85,11 @@ func (r *routeRecorder) GetOntologyGeneration(_ context.Context, req *foundryv1.
 	return &foundryv1.OntologyGenerationResponse{}, nil
 }
 
+func (r *routeRecorder) ListFoundryEventPieces(_ context.Context, req *foundryv1.ListFoundryEventPiecesRequest) (*foundryv1.ListFoundryEventPiecesResponse, error) {
+	r.workspaceHit("ListFoundryEventPieces", req.GetWorkspaceId(), req.GetConnectorId()+"/"+req.GetQuery()+"/"+strconv.Itoa(int(req.GetLimit())))
+	return &foundryv1.ListFoundryEventPiecesResponse{}, nil
+}
+
 // workspaceHit records a workspace route, which names no ontology.
 func (r *routeRecorder) workspaceHit(name, workspaceID, id string) {
 	r.got = name + " " + workspaceID + " - " + id
@@ -535,6 +540,7 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodGet, w + "/connectors/c-1/tokens", "", "ListFoundryEventSourceTokens ws-1 - c-1"},
 		{http.MethodPost, w + "/connectors/c-1/tokens/t-1:revoke", `{}`, "RevokeFoundryEventSourceToken ws-1 - c-1/t-1"},
 		{http.MethodGet, w + "/connectors/c-1/event-batches?limit=5", "", "ListFoundryEventBatches ws-1 - c-1/5"},
+		{http.MethodGet, w + "/connectors/c-1/pieces?query=long+emails&limit=5", "", "ListFoundryEventPieces ws-1 - c-1/long emails/5"},
 		{http.MethodPut, w + "/data-layout", `{"layout":{"v":1},"expectedRevision":"3"}`, "PutFoundryDataLayout ws-1 - 3 1"},
 		{http.MethodGet, o + "/ont-1/documents?status=review&pageToken=p", "", "ListFoundryOntologyDocuments ws-1 ont-1 review/p"},
 		{http.MethodGet, o + "/ont-1/documents/d-1", "", "GetFoundryOntologyDocument ws-1 ont-1 d-1"},

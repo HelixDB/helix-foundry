@@ -67,10 +67,12 @@ const (
 
 // The reasons front ends tell an event source's FAILED_PRECONDITION refusals apart by.
 const (
-	reasonNotEventSource    = "FOUNDRY_NOT_EVENT_SOURCE"
-	reasonEventSourceFull   = "FOUNDRY_EVENT_SOURCE_FULL"
-	reasonEventSourcePaused = "FOUNDRY_EVENT_SOURCE_PAUSED"
-	reasonEventSourceFields = "FOUNDRY_EVENT_SOURCE_FIELDS"
+	reasonNotEventSource      = "FOUNDRY_NOT_EVENT_SOURCE"
+	reasonEventSourceFull     = "FOUNDRY_EVENT_SOURCE_FULL"
+	reasonEventSourcePaused   = "FOUNDRY_EVENT_SOURCE_PAUSED"
+	reasonEventSourceFields   = "FOUNDRY_EVENT_SOURCE_FIELDS"
+	reasonEventSourceNoText   = "FOUNDRY_EVENT_SOURCE_NO_TEXT_FIELD"
+	reasonEventSourceTooLarge = "FOUNDRY_EVENT_SOURCE_TOO_LARGE"
 )
 
 var (
@@ -122,6 +124,10 @@ type eventSends struct {
 	// slots is the deployment-wide semaphore of send transactions, each of which
 	// holds one of the pool's connections while it runs.
 	slots chan struct{}
+	// reading is the semaphore of lists of pieces (eventPieceLists), each of
+	// which reads a source's waiting batches and its table's snapshot; a
+	// workspace's own (eventWorkspace.reading) comes first.
+	reading chan struct{}
 
 	mu sync.Mutex
 	// sources are by workspace and connector id, so a send naming another
@@ -140,6 +146,7 @@ func newEventSends(cfg *foundryconfig.Config, objects eventObjects, now func() t
 		spacing: foundrymodel.EventSyncSpacing{After: ev.SyncAfter, PerMillionRows: ev.SyncAfterPerMillionRows},
 		objects: objects, now: now,
 		checking: make(chan struct{}, ev.MaxSendsInProgress), slots: make(chan struct{}, ev.SendConcurrency),
+		reading: make(chan struct{}, eventPieceLists),
 		sources: map[string]*eventSource{}, workspaces: map[string]*eventWorkspace{},
 	}
 }
@@ -177,6 +184,10 @@ type eventSource struct {
 type eventWorkspace struct {
 	eventHolders
 	bucket *rate.Limiter
+	// reading is the workspace's one-slot semaphore of lists of pieces: its
+	// lists read one at a time, so no workspace holds every turn of the
+	// backend's.
+	reading chan struct{}
 	// mu guards the day's counters, and is held while they are seeded.
 	mu sync.Mutex
 	// day is the UTC day pieces and bytes count, the zero time until they
@@ -207,7 +218,7 @@ func (e *eventSends) enter(workspaceID, connectorID string) (*eventSource, *even
 	}
 	ws := e.workspaces[workspaceID]
 	if ws == nil {
-		ws = &eventWorkspace{bucket: rate.NewLimiter(rate.Limit(e.cfg.WorkspaceSendsPerSecond), e.cfg.WorkspaceSendsBurst)}
+		ws = &eventWorkspace{bucket: rate.NewLimiter(rate.Limit(e.cfg.WorkspaceSendsPerSecond), e.cfg.WorkspaceSendsBurst), reading: make(chan struct{}, 1)}
 		e.workspaces[workspaceID] = ws
 	}
 	src.holders++
