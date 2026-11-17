@@ -1894,7 +1894,7 @@
           },
           {
             "name": "query",
-            "description": "Words to find, separated by spaces: only the pieces whose document holds\nevery one as a substring, whatever its case, in its id, its fields or\nits text, are listed. At most 200 bytes and 10 words; empty lists every\npiece.",
+            "description": "Words to find, separated by spaces: only the pieces whose id, fields or\ntext hold every one as a substring, whatever its case, are listed. At\nmost 200 bytes and 10 words; empty lists every piece.",
             "in": "query",
             "required": false,
             "type": "string"
@@ -12760,7 +12760,7 @@
         },
         "truncated": {
           "type": "boolean",
-          "description": "Pieces were left out. More were found than pieces holds: a narrower\nquery finds the rest. Or the source holds more than one list reads,\nwhich no query changes: its 100 newest sends no sync has read (a piece\nlisted from its table may then be an older send of its id), and the 64\nMiB of its table synced last."
+          "description": "Pieces were left out. More were found than pieces holds: a narrower\nquery finds the rest. Or more than 100 sends wait for a sync, of which\na list reads the newest 100: a piece listed from the source's table may\nthen be an older send of its id, until a sync has read them."
         }
       },
       "description": "The source's pieces, newest first by arrival, each id once, as its newest\nsend has it."

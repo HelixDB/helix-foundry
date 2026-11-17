@@ -2782,7 +2782,9 @@ func (x *ListFoundryEventBatchesResponse) GetCapacity() *EventSourceCapacity {
 // ListFoundryEventPiecesRequest reads an event source's pieces back. The
 // source must have a text field (FAILED_PRECONDITION, reason
 // FOUNDRY_EVENT_SOURCE_NO_TEXT_FIELD, otherwise): a piece is listed as the
-// document its text makes.
+// document its text makes. Nothing indexes a source's pieces, so a list
+// reads its table, and one of a table over 64 MiB is refused
+// (FAILED_PRECONDITION, reason FOUNDRY_EVENT_SOURCE_TOO_LARGE).
 type ListFoundryEventPiecesRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -2790,10 +2792,9 @@ type ListFoundryEventPiecesRequest struct {
 
 	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	ConnectorId string `protobuf:"bytes,2,opt,name=connector_id,json=connectorId,proto3" json:"connector_id,omitempty"`
-	// Words to find, separated by spaces: only the pieces whose document holds
-	// every one as a substring, whatever its case, in its id, its fields or
-	// its text, are listed. At most 200 bytes and 10 words; empty lists every
-	// piece.
+	// Words to find, separated by spaces: only the pieces whose id, fields or
+	// text hold every one as a substring, whatever its case, are listed. At
+	// most 200 bytes and 10 words; empty lists every piece.
 	Query string `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
 	// At most 50; 0 means 20.
 	Limit int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
@@ -2867,10 +2868,9 @@ type ListFoundryEventPiecesResponse struct {
 	// At most limit, and at most 1 MiB of text together (always the newest).
 	Pieces []*FoundryEventSourcePiece `protobuf:"bytes,1,rep,name=pieces,proto3" json:"pieces,omitempty"`
 	// Pieces were left out. More were found than pieces holds: a narrower
-	// query finds the rest. Or the source holds more than one list reads,
-	// which no query changes: its 100 newest sends no sync has read (a piece
-	// listed from its table may then be an older send of its id), and the 64
-	// MiB of its table synced last.
+	// query finds the rest. Or more than 100 sends wait for a sync, of which
+	// a list reads the newest 100: a piece listed from the source's table may
+	// then be an older send of its id, until a sync has read them.
 	Truncated bool `protobuf:"varint,2,opt,name=truncated,proto3" json:"truncated,omitempty"`
 }
 

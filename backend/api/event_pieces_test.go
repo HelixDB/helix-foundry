@@ -194,10 +194,7 @@ func TestListFoundryEventPieces(t *testing.T) {
 			"emails march":       nil,
 			"n-2":                {"n-2+"},
 			"préférences":        nil,
-			// A document's own labels are not the piece's words.
-			"piece":    nil,
-			"occurred": nil,
-			"mail":     {"n-3-", "n-1+"},
+			"mail":               {"n-3-", "n-1+"},
 		} {
 			resp, err := h.list(query, 0)
 			if err != nil {
@@ -209,17 +206,44 @@ func TestListFoundryEventPieces(t *testing.T) {
 		}
 	})
 
-	// A piece's time is its own, and is found; the label before it is not.
-	t.Run("finds a piece by when it occurred, not by the label", func(t *testing.T) {
+	// A query finds a piece by its id, its fields and its text: the lines a
+	// document heads every piece with are not the piece's words.
+	t.Run("does not find a piece by its document's own lines", func(t *testing.T) {
 		h := newPiecesHarness(t)
 		h.note(t, "n-0=Small")
 		h.store.rows[h.notes].ChangeCursor = []byte(`{"seq":1}`)
-		h.table(t, "snap-1", `{"id":"n-1","received_at":"2026-10-24T12:01:00.000000Z","occurred_at":"2026-10-23T09:30:00Z","note":"Renewal call"}`)
-		for query, want := range map[string][]string{"occurred": nil, "2026-10-23": {"n-1+"}, "renewal 09:30": {"n-1+"}} {
+		h.table(t, "snap-1", `{"id":"n-1","received_at":"2026-10-24T12:01:00.000000Z","occurred_at":"2026-10-23T09:30:00Z","note":"Renewal call"}`,
+			tableRow("n-2", h.clock.now().Add(time.Minute), "- Occurred: after the piece: a call"))
+		for query, want := range map[string][]string{
+			"piece": {"n-2+"}, "occurred": {"n-2+"}, "2026-10-23": nil, "#": nil, "renewal": {"n-1+"}, "n-1": {"n-1+"}, "CALL": {"n-2+", "n-1+"},
+		} {
 			resp, err := h.list(query, 0)
-			if err != nil || !slices.Equal(pieceIDs(resp), want) {
-				t.Errorf("%q: pieces %v, %v", query, pieceIDs(resp), err)
+			if err != nil || !slices.Equal(pieceIDs(resp), want) || resp.GetTruncated() {
+				t.Errorf("%q: pieces %v, truncated %v, %v", query, pieceIDs(resp), resp.GetTruncated(), err)
 			}
+		}
+	})
+
+	// With words, a list says pieces were left out only when more hold them
+	// than it lists, whatever else the source holds.
+	t.Run("says pieces were left out only when more were found", func(t *testing.T) {
+		h := newPiecesHarness(t)
+		for i := range 10 {
+			h.note(t, fmt.Sprintf("old-%d=Nothing here", i))
+		}
+		h.note(t, "hit-1=A match")
+		h.sync(t)
+		h.note(t, "hit-2=A match", "new-1=Nothing here")
+		h.note(t, "hit-3=A match")
+		resp, err := h.list("match", 3)
+		if err != nil || !slices.Equal(pieceIDs(resp), []string{"hit-3-", "hit-2-", "hit-1+"}) || resp.GetTruncated() {
+			t.Fatalf("every match: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
+		}
+		if resp, err = h.list("match", 2); err != nil || !slices.Equal(pieceIDs(resp), []string{"hit-3-", "hit-2-"}) || !resp.GetTruncated() {
+			t.Fatalf("one match more than the list holds: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
+		}
+		if resp, err = h.list("", 3); err != nil || len(resp.GetPieces()) != 3 || !resp.GetTruncated() {
+			t.Fatalf("the newest of 14: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
 		}
 	})
 
@@ -280,7 +304,7 @@ func TestListFoundryEventPieces(t *testing.T) {
 
 	// Nothing indexes a source's pieces, so a list reads them, within
 	// bounds, and says when the source holds more.
-	t.Run("reads the 100 newest waiting batches and 64 MiB of the table", func(t *testing.T) {
+	t.Run("reads the 100 newest waiting batches", func(t *testing.T) {
 		h := newPiecesHarness(t)
 		for i := range eventPieceBatches + 1 {
 			h.note(t, fmt.Sprintf("n-%03d=Note", i))
@@ -293,46 +317,41 @@ func TestListFoundryEventPieces(t *testing.T) {
 		if resp, err = h.list("n-000", 0); err != nil || len(resp.GetPieces()) != 0 || !resp.GetTruncated() {
 			t.Fatalf("a piece of the batch not read: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
 		}
+	})
 
-		// Of a table past 64 MiB a list reads the end, where a sync's merge
-		// writes the rows it changed.
-		h = newPiecesHarness(t)
+	// A snapshot holds its rows in no order of arrival, so a part of a table
+	// would be no answer: a list reads a table whole, or refuses it.
+	t.Run("refuses a table past 64 MiB", func(t *testing.T) {
+		h := newPiecesHarness(t)
 		h.note(t, "n-0=Small")
 		h.store.rows[h.notes].ChangeCursor = []byte(`{"seq":1}`)
-		at, filler := h.clock.now(), strings.Repeat("x", 1<<20)
-		rows := []string{tableRow("first", at, "needle")}
-		for i := range eventPieceTableBytes >> 20 {
-			rows = append(rows, tableRow(fmt.Sprintf("big-%02d", i), at.Add(-time.Hour), filler))
-		}
-		h.table(t, "snap-1", append(rows, tableRow("last", at, "needle"))...)
-		if resp, err = h.list("needle", 0); err != nil || !slices.Equal(pieceIDs(resp), []string{"last+"}) || !resp.GetTruncated() {
-			t.Fatalf("a table past 64 MiB: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
-		}
-		// A snapshot shorter than its size says, or cut where the list starts
-		// to read it, can't be read.
-		key := h.store.tables[len(h.store.tables)-1].S3Key
-		size := len(strings.Join(rows, "\n")) + len(tableRow("last", at, "needle")) + 2
-		h.bucket.objects[key] = gzipped(t, "short\n")
-		if _, err = h.list("", 0); status.Code(err) != codes.Unavailable {
-			t.Fatalf("a snapshot shorter than its size = %v", err)
-		}
-		var stored bytes.Buffer
-		w, _ := gzip.NewWriterLevel(&stored, gzip.NoCompression)
-		_, _ = w.Write(bytes.Repeat([]byte{'x'}, size-eventPieceTableBytes+100<<10))
-		_ = w.Close()
-		h.bucket.objects[key] = stored.Bytes()[:stored.Len()-9]
-		if _, err = h.list("", 0); status.Code(err) != codes.Unavailable {
-			t.Fatalf("a snapshot cut where the list reads it = %v", err)
-		}
-		// A table of 64 MiB is read whole.
+		at := h.clock.now()
 		first, last := tableRow("first", at, "needle"), tableRow("last", at, "needle")
 		pad := eventPieceTableBytes - len(first) - len(last) - len(tableRow("pad", at, "")) - 3
-		h.table(t, "snap-2", first, tableRow("pad", at, strings.Repeat("x", pad)), last)
-		if resp, err = h.list("needle", 0); err != nil || !slices.Equal(pieceIDs(resp), []string{"first+", "last+"}) || resp.GetTruncated() {
+		h.table(t, "snap-1", first, tableRow("pad", at, strings.Repeat("x", pad)), last)
+		resp, err := h.list("needle", 0)
+		if err != nil || !slices.Equal(pieceIDs(resp), []string{"first+", "last+"}) || resp.GetTruncated() {
 			t.Fatalf("a table of 64 MiB: %v, truncated %v, %v", pieceIDs(resp), resp.GetTruncated(), err)
 		}
-		h.bucket.tailErr = errors.New("s3 down")
+		// One byte more, and nothing of it is read.
+		h.table(t, "snap-2", first, tableRow("pad", at, strings.Repeat("x", pad+1)), last)
+		h.bucket.opens = 0
+		if _, err = h.list("needle", 0); status.Code(err) != codes.FailedPrecondition || foundryReason(err) != "FOUNDRY_EVENT_SOURCE_TOO_LARGE" || h.bucket.opens != 0 {
+			t.Fatalf("a table past 64 MiB = %v, after %d reads", err, h.bucket.opens)
+		}
+		// A gzip says its size modulo 4 GiB, so a snapshot is counted as it
+		// is read too: here one larger than the size read of its key.
+		large := h.bucket.objects[h.store.tables[len(h.store.tables)-1].S3Key]
 		h.table(t, "snap-3", first)
+		if _, err = h.list("", 0); err != nil {
+			t.Fatal(err)
+		}
+		h.bucket.objects[h.store.tables[len(h.store.tables)-1].S3Key] = large
+		if _, err = h.list("", 0); foundryReason(err) != "FOUNDRY_EVENT_SOURCE_TOO_LARGE" {
+			t.Fatalf("a snapshot larger than its size said = %v", err)
+		}
+		h.bucket.tailErr = errors.New("s3 down")
+		h.table(t, "snap-4", first)
 		if _, err = h.list("", 0); status.Code(err) != codes.Unavailable {
 			t.Fatalf("a table whose size can't be read = %v", err)
 		}
@@ -457,19 +476,11 @@ func TestListFoundryEventPieces(t *testing.T) {
 		h := newPiecesHarness(t)
 		h.note(t, "n-1=Hello")
 		h.sync(t)
-		synced := h.store.tables[len(h.store.tables)-1].S3Key
-		snapshot := h.bucket.objects[synced]
-		// A snapshot whose size the source has read, then cut or removed.
+		key := h.store.tables[len(h.store.tables)-1].S3Key
+		snapshot := h.bucket.objects[key]
+		// The snapshot's size is read once, here: a key is never written again.
 		if _, err := h.list("", 0); err != nil {
 			t.Fatal(err)
-		}
-		h.bucket.objects[synced] = snapshot[:len(snapshot)-9]
-		if _, err := h.list("", 0); status.Code(err) != codes.Unavailable {
-			t.Fatalf("a snapshot cut since its size was read = %v", err)
-		}
-		delete(h.bucket.objects, synced)
-		if _, err := h.list("", 0); status.Code(err) != codes.Unavailable {
-			t.Fatalf("a snapshot removed since its size was read = %v", err)
 		}
 		for name, tc := range map[string]struct {
 			object []byte
@@ -484,15 +495,30 @@ func TestListFoundryEventPieces(t *testing.T) {
 			"a row of a field the schema lacks": {gzipped(t, `{"id":"n-1","received_at":"2026-10-24T12:01:00.000000Z","occurred_at":null,"other":1}`+"\n"),
 				codes.Internal},
 		} {
-			// A snapshot of its own, as a sync's is: a key's size is read once.
-			h.table(t, strings.ReplaceAll(name, " ", "-"))
-			key := h.store.tables[len(h.store.tables)-1].S3Key
 			if h.bucket.objects[key] = tc.object; tc.object == nil {
 				delete(h.bucket.objects, key)
 			}
 			if _, err := h.list("", 0); status.Code(err) != tc.code {
 				t.Errorf("%s = %v", name, err)
 			}
+		}
+	})
+
+	// A caller that left is not a bucket that failed.
+	t.Run("answers a read its caller ended as the caller's", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		if err := readError(ctx, "read", errors.New("s3 down")); status.Code(err) != codes.Unavailable {
+			t.Fatalf("a failed read = %v", err)
+		}
+		cancel()
+		if err := readError(ctx, "read", context.Canceled); status.Code(err) != codes.Canceled {
+			t.Fatalf("a read its caller cancelled = %v", err)
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		<-ctx.Done()
+		if err := readError(ctx, "read", context.DeadlineExceeded); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("a read past its deadline = %v", err)
 		}
 	})
 
@@ -539,7 +565,21 @@ func TestListFoundryEventPieces(t *testing.T) {
 		}
 		waits(workspace.reading, 1)
 		waits(e.reading, eventPieceLists)
-		if resp, err := h.list("", 0); err != nil || len(resp.GetPieces()) != 1 || len(e.reading) != 0 || len(workspace.reading) != 0 {
+		// The source is read once the list has its turn: a piece sent while it
+		// waited is listed.
+		workspace.reading <- struct{}{}
+		listed := make(chan []string, 1)
+		go func() {
+			resp, _ := h.list("", 0)
+			listed <- pieceIDs(resp)
+		}()
+		time.Sleep(50 * time.Millisecond)
+		h.note(t, "n-2=Sent meanwhile")
+		<-workspace.reading
+		if got := <-listed; !slices.Equal(got, []string{"n-2-", "n-1-"}) {
+			t.Fatalf("a list that waited: %v", got)
+		}
+		if resp, err := h.list("", 0); err != nil || len(resp.GetPieces()) != 2 || len(e.reading) != 0 || len(workspace.reading) != 0 {
 			t.Fatalf("a list with a turn: %v, %v, %d and %d reading", pieceIDs(resp), err, len(e.reading), len(workspace.reading))
 		}
 	})
