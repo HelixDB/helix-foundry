@@ -31,6 +31,7 @@ import {
   plainText,
   queryText,
   questionFocus,
+  questionValidAt,
   questionView,
   reduceEvents,
   refusalText,
@@ -40,6 +41,7 @@ import {
   stepInput,
   threadGroups,
   threadsOf,
+  todayUtc,
   toolLabel,
   type AskStep,
   type CitationContext,
@@ -2337,6 +2339,35 @@ describe("questions and threads", () => {
     expect(questionFocus(q({ focusJson: '["Customer","cus_1"]' }))).toBe(
       undefined,
     );
+  });
+
+  // A thread's follow-ups are asked as of its last question's day, as they
+  // are about its last question's focus; a value that isn't a day is none.
+  it("reads the day a thread is answered as of from its last question", () => {
+    const [thread] = threadsOf([
+      q({
+        id: "q2",
+        threadId: "q1",
+        validAt: "2026-03-01",
+        createdAt: "2026-11-18T10:01:00Z",
+      }),
+      q({
+        id: "q1",
+        threadId: "q1",
+        validAt: "2026-03-01",
+        createdAt: "2026-11-18T10:00:00Z",
+      }),
+    ]);
+    expect(questionValidAt(thread!.questions.at(-1))).toBe("2026-03-01");
+    expect(questionValidAt(q({}))).toBe(undefined);
+    expect(questionValidAt(undefined)).toBe(undefined);
+    for (const validAt of ["", "March", "2026-3-1", "2026-03-01T00:00:00Z"])
+      expect(questionValidAt(q({ validAt }))).toBe(undefined);
+  });
+
+  it("dates today in UTC, the latest day a question is asked as of", () => {
+    expect(todayUtc(new Date("2026-11-18T23:30:00-05:00"))).toBe("2026-11-19");
+    expect(todayUtc(new Date("2026-11-18T00:00:00Z"))).toBe("2026-11-18");
   });
 });
 

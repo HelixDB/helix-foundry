@@ -531,6 +531,40 @@ describe("mock questions", () => {
     }
   });
 
+  it("asks as of a day: kept, echoed, the same token only the same day", async () => {
+    await loaded();
+    const q = (await ask({ validAt: "2026-03-01", clientToken: "dated" })).body
+      .question;
+    expect(q.validAt).toBe("2026-03-01");
+    expect((await call("GET", `${Q}/${q.id}`)).body.question.validAt).toBe(
+      "2026-03-01",
+    );
+    expect(
+      (await call("GET", Q)).body.questions.find((x: any) => x.id === q.id)
+        .validAt,
+    ).toBe("2026-03-01");
+    expect(
+      (await ask({ validAt: "2026-03-01", clientToken: "dated" })).body.question
+        .id,
+    ).toBe(q.id);
+    expect(refusal(await ask({ clientToken: "dated" }))).toEqual([
+      400,
+      "client_token was already used for another question",
+    ]);
+    expect((await ask({})).body.question).not.toHaveProperty("validAt");
+    // Today in UTC is the latest day; a day that isn't one is refused.
+    expect((await ask({ validAt: "2026-10-19" })).status).toBe(200);
+    expect(refusal(await ask({ validAt: "2026-10-20" }))).toEqual([
+      400,
+      "valid_at 2026-10-20 is after today (2026-10-19, UTC): no load records the future",
+    ]);
+    for (const day of ["2026-3-1", "2026-02-30", "soon"])
+      expect(refusal(await ask({ validAt: day }))).toEqual([
+        400,
+        `valid_at "${day}" is not a date, YYYY-MM-DD`,
+      ]);
+  });
+
   it("refuses what it can't ask about", async () => {
     const { load } = await loaded();
     const refused = async (body: Record<string, unknown>) =>

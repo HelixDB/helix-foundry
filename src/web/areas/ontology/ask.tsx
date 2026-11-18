@@ -69,6 +69,7 @@ import {
   useAiConfigured,
 } from "../workspace/ai-gate";
 import {
+  AFTER_AS_OF_DATE_LABEL,
   CANNOT_ANSWER_LABELS,
   EMPTY_STREAM,
   PART_UNCOVERED_LABEL,
@@ -86,6 +87,7 @@ import {
   knownOf,
   queryText,
   questionFocus,
+  questionValidAt,
   questionView,
   reduceEvents,
   refusalText,
@@ -93,6 +95,7 @@ import {
   resultText,
   stepHeading,
   stepInput,
+  todayUtc,
   workedFor,
   threadsOf,
   type AnswerPart,
@@ -185,9 +188,13 @@ function focusOf(param: string | null): EntityRef | undefined {
 export function AskPage() {
   const { id: ws } = useWorkspace(),
     { id: o, ontology } = useOntology(),
-    access = useReadAccess();
+    access = useReadAccess(),
+    readsPart = useReadsPart();
   const [params, setParams] = useSearchParams();
   const focus = focusOf(params.get("focus"));
+  // The day a new thread is answered as of; empty for now. Its follow-ups
+  // keep it (ThreadView).
+  const [asOf, setAsOf] = useState("");
   const selection = useLoadSelection();
   const list = useQuery({
     ...questionQueries.list(ws, o),
@@ -301,6 +308,8 @@ export function AskPage() {
     <div className="ak-chat">
       <ChatBar onBack={threads.length > 0 ? () => setThread("") : undefined}>
         {picker}
+        {/* The engine reads nothing as of a date for a reader of part of a load. */}
+        {!readsPart && <AsOfPicker value={asOf} onChange={setAsOf} />}
       </ChatBar>
       <div className="ak-scroll">
         <div className="ak-start">
@@ -312,12 +321,41 @@ export function AskPage() {
           <Composer
             load={load}
             focus={focus}
+            validAt={(!readsPart && asOf) || undefined}
             suggestions={suggestions}
             onAsked={(q) => setThread(q.threadId || q.id)}
           />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The day a new thread is answered as of, in the bar beside the Load picker:
+ * empty is now, and no later day than today (UTC) can be chosen.
+ */
+function AsOfPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (day: string) => void;
+}) {
+  return (
+    <label
+      className="hf-filter-select ak-as-of"
+      title="Answer as of this date: reads that can only show the load as it is now are left out. Empty answers as of now."
+    >
+      <span>As of</span>
+      <input
+        type="date"
+        aria-label="Answer as of"
+        value={value}
+        max={todayUtc()}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
   );
 }
 
@@ -403,11 +441,17 @@ export function ThreadView({
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology(),
     [params] = useSearchParams();
-  const tag = readOnly ? "Earlier question" : undefined;
   const list = useQuery(questionQueries.list(ws, o, thread));
   const questions = threadsOf(list.data?.questions || [])[0]?.questions || [];
   const first = questions[0],
     last = questions[questions.length - 1];
+  // A thread is answered as of its questions' day: follow-ups keep it.
+  const validAt = questionValidAt(last);
+  const tag = readOnly
+    ? "Earlier question"
+    : validAt
+      ? `As of ${validAt}`
+      : undefined;
   useTitle(first?.question);
   // The conversation follows its end until the reader scrolls up, and
   // again once they are back at it: content growing under a scroll the
@@ -541,6 +585,7 @@ export function ThreadView({
             load={load}
             thread={thread}
             focus={questionFocus(last)}
+            validAt={validAt}
             busy={isLiveQuestion(last)}
             onAsked={() => {
               stick.current = true;
@@ -797,7 +842,8 @@ export function QuestionCard({
     q,
     seen ? citedEntities(citations) : [],
   );
-  const focus = questionFocus(q);
+  const focus = questionFocus(q),
+    validAt = questionValidAt(q);
   const [lit, setLit] = useState("");
   // The trace opened to every step, and the steps opened to their input
   // and output, by index.
@@ -871,6 +917,7 @@ export function QuestionCard({
           </div>
           <p className="ak-question-meta">
             {focus && `About ${focus.type} ${focus.id} · `}
+            {validAt && `As of ${validAt} · `}
             {formatRelative(q.createdAt || "")}
           </p>
         </>
@@ -1250,7 +1297,9 @@ function Outcome({
                 <Tag>
                   {readsPart && gap === "uncovered"
                     ? PART_UNCOVERED_LABEL
-                    : CANNOT_ANSWER_LABELS[gap]}
+                    : gap === "after_as_of" && questionValidAt(q)
+                      ? AFTER_AS_OF_DATE_LABEL
+                      : CANNOT_ANSWER_LABELS[gap]}
                 </Tag>
               )}{" "}
               {view.result.reason || "What it holds doesn’t say."}
@@ -1437,6 +1486,7 @@ function Answer({
         {q.finishedAt && (
           <p className="ak-answer-meta">
             Answered {formatRelative(q.finishedAt)}
+            {questionValidAt(q) && ` · as of ${questionValidAt(q)}`}
           </p>
         )}
       </div>
@@ -1453,6 +1503,7 @@ function Composer({
   load,
   thread,
   focus,
+  validAt,
   busy,
   docked,
   suggestions = [],
@@ -1461,6 +1512,8 @@ function Composer({
   load: Load;
   thread?: string;
   focus?: EntityRef;
+  // The day to answer as of, YYYY-MM-DD; undefined for now.
+  validAt?: string;
   busy?: boolean;
   docked?: boolean;
   // Questions under the box that a click asks at once.
@@ -1493,6 +1546,7 @@ function Composer({
         question,
         ...(thread ? { threadId: thread } : {}),
         ...(about ? { focusJson: JSON.stringify(about) } : {}),
+        ...(validAt ? { validAt } : {}),
         clientToken: token,
       });
       setText("");
@@ -1522,7 +1576,7 @@ function Composer({
         ? `${named!.charAt(0).toUpperCase() + named!.slice(1)} can’t be asked about until it’s written.`
         : busy
           ? "You can ask a follow-up once this answer is ready."
-          : `Answers from ${named}${thread ? ", using this thread’s earlier answers" : ""} · ${MOD}Enter to ask`;
+          : `Answers from ${named}${validAt ? ` as of ${validAt}` : ""}${thread ? ", using this thread’s earlier answers" : ""} · ${MOD}Enter to ask`;
   return (
     <form
       className="ag-composer"

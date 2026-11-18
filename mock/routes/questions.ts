@@ -43,7 +43,7 @@ import {
 import { tracked } from "./workflows";
 import { PROD_STAMP, config, onReset } from "../state";
 import { tenantGraph } from "./databases";
-import { currentLoadId, ontologyLoad } from "./loads";
+import { currentLoadId, ontologyLoad, validAtRefusal } from "./loads";
 import { ontologyVersion } from "./ontology";
 import { aiModel, aiProvider, aiRefusal } from "./ai";
 import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
@@ -154,6 +154,8 @@ type StoredQuestion = {
   question: string;
   // Its EntityRef as canonical JSON, "" for none.
   focusJson: string;
+  // The day it is answered as of, YYYY-MM-DD; "" for when it was asked.
+  validAt: string;
   clientToken: string;
   askedByUserId: string;
   // The principal a grantee asked as (./access.ts); unset for anyone else.
@@ -1562,6 +1564,7 @@ const toQuestion = (q: StoredQuestion, list = false): FoundryQuestion => ({
   threadId: q.threadId,
   question: q.question,
   focusJson: q.focusJson,
+  ...(q.validAt ? { validAt: q.validAt } : {}),
   status: q.status,
   resultJson: list ? listed(q.resultJson) : q.resultJson,
   error: q.error,
@@ -1691,12 +1694,17 @@ export function askQuestion(req: MockRequest): MockReply {
       "INVALID_ARGUMENT",
       'focus_json: a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them',
     );
+  const validAt = body.validAt || "";
+  const dayRefusal = validAt ? validAtRefusal(validAt) : undefined;
+  if (dayRefusal) return fail("INVALID_ARGUMENT", dayRefusal);
   advanceAll(s.m.workspaceId);
   const again = state.questions.find(
     (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
   );
   if (again)
-    return again.question === text && visible(req, again)
+    return again.question === text &&
+      again.validAt === validAt &&
+      visible(req, again)
       ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
       : fail(
           "INVALID_ARGUMENT",
@@ -1731,6 +1739,12 @@ export function askQuestion(req: MockRequest): MockReply {
     )
   )
     return fail("NOT_FOUND", "thread not found");
+  // The engine reads nothing as of a date for a reader of part of a load.
+  if (validAt && req.grantee?.load?.partial)
+    return fail(
+      "FAILED_PRECONDITION",
+      "you hold only part of this load, so it can't be asked as of a date; ask without valid_at",
+    );
   const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
   if (refusal) return refusal;
   const qid = id("q"),
@@ -1756,6 +1770,7 @@ export function askQuestion(req: MockRequest): MockReply {
     versionId: load.versionId,
     question: text,
     focusJson,
+    validAt,
     clientToken,
     askedByUserId: req.principal.user.id,
     ...(req.grantee ? { grantee: req.grantee.principal } : {}),

@@ -748,6 +748,12 @@ export const CANNOT_ANSWER_LABELS: Record<CannotAnswerKind, string> = {
 };
 
 /**
+ * `after_as_of` of a question asked as of a date (its `validAt`): the time
+ * asked about is after that date, not after when it was asked.
+ */
+export const AFTER_AS_OF_DATE_LABEL = "After the as-of date";
+
+/**
  * `uncovered` for someone who reads part of the load: the engine shows them
  * no past values, so their questions about another time or a change end
  * uncovered whatever the load records.
@@ -1894,6 +1900,31 @@ export const isLiveQuestion = (q?: { status?: QuestionStatus } | null) =>
  */
 export const questionFocus = (q: FoundryQuestion): EntityRef | undefined =>
   q.focusJson ? entityRef(json(q.focusJson)) : undefined;
+
+/**
+ * The day a question is answered as of (its `validAt`, YYYY-MM-DD), or
+ * undefined for one answered as of when it was asked, or a value that isn't
+ * a day. A thread's follow-ups are asked as of its last question's day.
+ *
+ * @example
+ * questionValidAt({ id: "q1", validAt: "2026-03-01" }); // "2026-03-01"
+ * questionValidAt({ id: "q2" }); // undefined
+ * questionValidAt({ id: "q3", validAt: "March" }); // undefined
+ */
+export const questionValidAt = (
+  q: Pick<FoundryQuestion, "validAt"> | undefined,
+): string | undefined =>
+  q?.validAt && /^\d{4}-\d{2}-\d{2}$/.test(q.validAt) ? q.validAt : undefined;
+
+/**
+ * Today in UTC, YYYY-MM-DD: the latest day a question may be asked as of
+ * (the backend refuses a later one).
+ *
+ * @example
+ * todayUtc(new Date("2026-11-18T23:30:00-05:00")); // "2026-11-19"
+ */
+export const todayUtc = (now = new Date()): string =>
+  now.toISOString().slice(0, 10);
 
 /** Questions of one thread, oldest first. */
 export type Thread = {
