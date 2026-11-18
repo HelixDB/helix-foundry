@@ -324,7 +324,7 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 		RequestID: q.ID, Load: load.ID, OntologyVersion: load.OntologyVersion(),
 		OntologyTOML: def.OntologyTOML, MappingsTOML: def.MappingsTOML, DraftJSON: rawText(def.Draft, "{}"),
 		QuestionsJSON: rawText(def.Questions, "[]"), Catalog: []ontologyagent.CatalogEntry{}, Question: q.Question,
-		History: []ontologyagent.AskTurn{}, AsOf: q.CreatedAt.UTC().Format(time.RFC3339),
+		History: []ontologyagent.AskTurn{}, AskedAt: q.CreatedAt.UTC().Format(time.RFC3339),
 		// The cap is the question's own, reserved and charged by it: config may have moved since it was asked.
 		Limits: ontologyagent.AskLimits{
 			MaxUSD: float64(q.MaxUSDMicros) / 1e6, MaxSteps: uint32(cfg.MaxSteps), MaxWallSecs: uint64(cfg.MaxWallSecs),

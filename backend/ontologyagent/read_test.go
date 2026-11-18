@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -53,7 +54,7 @@ const (
 
 // readResult is a Read result with these results.
 func readResult(results string) string {
-	return `{"as_of":"2026-10-19","results":` + results + `,"stats":{"instances":120,"wall_ms":35}}`
+	return `{"asked_at":"2026-10-19","results":` + results + `,"stats":{"instances":120,"wall_ms":35}}`
 }
 
 func ExampleParseReads() {
@@ -120,14 +121,45 @@ func TestReadRequest(t *testing.T) {
 		}
 		body, err := json.Marshal(ReadRequest{
 			RequestID: "r-1", Database: "tenant-1", Load: "load-1", OntologyTOML: "version = \"x\"\n", OntologyVersion: "foundry-v3",
-			Helix: HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 1 << 21, TimeoutSecs: 10},
-			AsOf:  "2026-10-19", Budget: DefaultReadBudget, Reads: reads,
+			Helix:   HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 1 << 21, TimeoutSecs: 10},
+			AskedAt: "2026-10-19", Budget: DefaultReadBudget, Reads: reads,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := contracttest.Validate(t, contracttest.Schema(t, "read_request.json"), body); err != nil {
 			t.Fatalf("%s does not match read_request.json: %v", body, err)
+		}
+	})
+
+	// A read as of a day sends it beside the day it was asked; the agent no
+	// longer takes as_of (contract 4.28.0), so a request naming it is refused.
+	t.Run("sends valid_at beside asked_at", func(t *testing.T) {
+		reads, err := ParseReads(everyRead)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema := contracttest.Schema(t, "read_request.json")
+		req := ReadRequest{
+			RequestID: "r-1", Database: "tenant-1", Load: "load-1", OntologyTOML: "o", OntologyVersion: "foundry-v3",
+			Helix:   HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 1 << 21, TimeoutSecs: 10},
+			AskedAt: "2026-11-18", ValidAt: "2026-03-01", Budget: DefaultReadBudget, Reads: reads,
+		}
+		body, _ := json.Marshal(req)
+		if err := contracttest.Validate(t, schema, body); err != nil {
+			t.Fatalf("%s does not match read_request.json: %v", body, err)
+		}
+		if !strings.Contains(string(body), `"asked_at":"2026-11-18","valid_at":"2026-03-01"`) {
+			t.Fatalf("request = %s", body)
+		}
+		req.ValidAt = ""
+		body, _ = json.Marshal(req)
+		if strings.Contains(string(body), "valid_at") {
+			t.Fatalf("a read as of now sends valid_at: %s", body)
+		}
+		old := strings.Replace(string(body), `"asked_at"`, `"as_of"`, 1)
+		if err := contracttest.Validate(t, schema, []byte(old)); err == nil {
+			t.Fatalf("read_request.json accepted as_of: %s", old)
 		}
 	})
 
@@ -146,7 +178,7 @@ func TestReadRequest(t *testing.T) {
 				t.Fatalf("%s: %v", name, err)
 			}
 			body, _ := json.Marshal(ReadRequest{RequestID: "r", Database: "d", Load: "l", OntologyTOML: "o", OntologyVersion: "v",
-				Helix: HelixTarget{URL: "u", Token: "t", MaxRequestBytes: 1, TimeoutSecs: 1}, AsOf: "2026-10-19", Budget: DefaultReadBudget, Reads: reads})
+				Helix: HelixTarget{URL: "u", Token: "t", MaxRequestBytes: 1, TimeoutSecs: 1}, AskedAt: "2026-10-19", Budget: DefaultReadBudget, Reads: reads})
 			if err := contracttest.Validate(t, schema, body); err == nil {
 				t.Errorf("%s: read_request.json accepted %s", name, read)
 			}
@@ -195,17 +227,42 @@ func TestCheckReadResult(t *testing.T) {
 		}
 	})
 
+	// Read as of a valid_at (contract 4.28.0), the result echoes it and an
+	// undated document's quote is flagged: both reach the caller as written.
+	t.Run("takes a result read as of a day", func(t *testing.T) {
+		reads, err := ParseReads(`[{"evidence":{"entity":{"type":"Contract","id":"msa"},"prop":"amount"}},{"query":{"start":{"type":"Invoice"},"return":{"count":{"distinct_at":0}}}}]`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := `{"asked_at":"2026-11-18","valid_at":"2026-03-01","stats":{"instances":0,"wall_ms":1},"results":[` +
+			`{"ok":{"kind":"evidence","items":[{"kind":"quote","doc_id":"d1","section":0,"start":4,"end":16,"quote":"total $1,200","confidence":0.8,"value":1200,"undated":true}]}},` +
+			`{"error":{"code":"current_only","message":"a query reads the load as it is now, so it can't answer as of 2026-03-01 (valid_at)"}}]}`
+		if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(result)); err != nil {
+			t.Fatalf("the fixture does not match read_result.json: %v", err)
+		}
+		if err := CheckReadResult([]byte(result), reads); err != nil {
+			t.Fatal(err)
+		}
+		// current_only fails a whole read, never part of an entity read.
+		entity := readResult(`[{"ok":{"kind":"entity","entity":{"type":"C","id":"c"},"derived":[],"flags":[],"violations":[],"errors":[{"pred":"derived:x","code":"current_only","message":"m"}]}}]`)
+		oneEntity, _ := ParseReads(`[{"entity":{"type":"C","id":"c"}}]`)
+		if err := CheckReadResult([]byte(entity), oneEntity); err == nil {
+			t.Fatalf("accepted a part failed current_only: %s", entity)
+		}
+	})
+
 	// Each failure code comes with its own fields; the website shows budget
 	// as "too deep to compute live", too_broad with its count.
 	t.Run("takes each failure with its fields", func(t *testing.T) {
 		pointer := "/steps/0/via"
 		for raw, want := range map[string]ReadFailure{
-			`{"code":"budget","message":"too deep","limit":64}`:                      {Code: ReadBudgetExceeded, Message: "too deep", Limit: 64},
-			`{"code":"hub","message":"a hub","limit":10000}`:                         {Code: ReadHub, Message: "a hub", Limit: 10000},
-			`{"code":"too_broad","message":"too broad","limit":20000,"count":31000}`: {Code: ReadTooBroad, Message: "too broad", Limit: 20000, Count: 31000},
-			`{"code":"unknown_entity","message":"no Invoice x"}`:                     {Code: ReadUnknownEntity, Message: "no Invoice x"},
-			`{"code":"invalid","message":"no link via","pointer":"/steps/0/via"}`:    {Code: ReadInvalid, Message: "no link via", Pointer: &pointer},
-			`{"code":"invalid","message":"no type X"}`:                               {Code: ReadInvalid, Message: "no type X"},
+			`{"code":"budget","message":"too deep","limit":64}`:                       {Code: ReadBudgetExceeded, Message: "too deep", Limit: 64},
+			`{"code":"hub","message":"a hub","limit":10000}`:                          {Code: ReadHub, Message: "a hub", Limit: 10000},
+			`{"code":"too_broad","message":"too broad","limit":20000,"count":31000}`:  {Code: ReadTooBroad, Message: "too broad", Limit: 20000, Count: 31000},
+			`{"code":"unknown_entity","message":"no Invoice x"}`:                      {Code: ReadUnknownEntity, Message: "no Invoice x"},
+			`{"code":"invalid","message":"no link via","pointer":"/steps/0/via"}`:     {Code: ReadInvalid, Message: "no link via", Pointer: &pointer},
+			`{"code":"invalid","message":"no type X"}`:                                {Code: ReadInvalid, Message: "no type X"},
+			`{"code":"current_only","message":"a query reads the load as it is now"}`: {Code: ReadCurrentOnly, Message: "a query reads the load as it is now"},
 		} {
 			result := readResult(`[{"error":` + raw + `}]`)
 			if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(result)); err != nil {
@@ -247,9 +304,9 @@ func TestCheckReadResult(t *testing.T) {
 			reads  Reads
 		}{
 			"not JSON":                   {`{`, oneQuery},
-			"no as_of":                   {`{"results":[` + count + `],"stats":{"instances":0,"wall_ms":0}}`, oneQuery},
-			"no stats":                   {`{"as_of":"d","results":[` + count + `]}`, oneQuery},
-			"stats with no wall time":    {`{"as_of":"d","results":[` + count + `],"stats":{"instances":0}}`, oneQuery},
+			"no asked_at":                {`{"results":[` + count + `],"stats":{"instances":0,"wall_ms":0}}`, oneQuery},
+			"no stats":                   {`{"asked_at":"d","results":[` + count + `]}`, oneQuery},
+			"stats with no wall time":    {`{"asked_at":"d","results":[` + count + `],"stats":{"instances":0}}`, oneQuery},
 			"fewer results":              {readResult(`[]`), oneQuery},
 			"more results":               {readResult(`[` + count + `,` + count + `]`), oneQuery},
 			"neither ok nor error":       {readResult(`[{}]`), oneQuery},
@@ -293,7 +350,7 @@ func TestClientRead(t *testing.T) {
 	// One unary call carries the request as sent and the result as written;
 	// the agent's refusals keep their gRPC code.
 	t.Run("relays the request, the result and the agent's status", func(t *testing.T) {
-		agent := &readAgent{result: `{"as_of":"d","results":[]}`}
+		agent := &readAgent{result: `{"asked_at":"d","results":[]}`}
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
@@ -345,7 +402,7 @@ func TestVisibility(t *testing.T) {
 		"nothing": VisibilityOf(access.Part{}),
 	} {
 		body, err := json.Marshal(ReadRequest{
-			RequestID: "r", Database: "d", Load: "l", OntologyTOML: "o", OntologyVersion: "v", AsOf: "2026-10-30", Budget: DefaultReadBudget, Reads: reads,
+			RequestID: "r", Database: "d", Load: "l", OntologyTOML: "o", OntologyVersion: "v", AskedAt: "2026-10-30", Budget: DefaultReadBudget, Reads: reads,
 			Helix: HelixTarget{URL: "http://x", Token: "t", MaxRequestBytes: 1, TimeoutSecs: 1}, Visibility: &visibility, MappingsTOML: "m",
 		})
 		if err != nil {
@@ -380,7 +437,7 @@ func mustField(t *testing.T, body []byte, field string) json.RawMessage {
 }
 
 func TestParseReadView(t *testing.T) {
-	raw := `{"as_of":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[{"ok":{"kind":"view","ontology_toml":"o","mappings_toml":"m","partial":["A"]}}]}`
+	raw := `{"asked_at":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[{"ok":{"kind":"view","ontology_toml":"o","mappings_toml":"m","partial":["A"]}}]}`
 	if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +459,7 @@ func TestCheckReadResultOfPart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := `{"as_of":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[
+	raw := `{"asked_at":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[
 		{"error":{"code":"not_visible","message":"/start/type: A is only partly held","pointer":"/start/type"}},
 		{"ok":{"kind":"view","ontology_toml":"o","mappings_toml":"m","partial":["A"]}}]}`
 	if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(raw)); err != nil {
@@ -410,5 +467,32 @@ func TestCheckReadResultOfPart(t *testing.T) {
 	}
 	if err := CheckReadResult([]byte(raw), reads); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParseValidAt(t *testing.T) {
+	now := time.Date(2026, 11, 18, 23, 30, 0, 0, time.FixedZone("UTC-5", -5*3600)) // 2026-11-19 04:30 UTC
+	for day, want := range map[string]time.Time{
+		"2026-03-01": time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		"2026-11-19": time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC), // today in UTC, tomorrow where now was written
+		"0001-01-01": time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC),
+	} {
+		got, err := ParseValidAt(day, now)
+		if err != nil || !got.Equal(want) || got.Location() != time.UTC {
+			t.Errorf("%s: %v, %v", day, got, err)
+		}
+	}
+	for day, want := range map[string]string{
+		"":                     "not a date",
+		"2026-3-1":             "not a date",
+		"2026-02-30":           "not a date",
+		"2026-03-01T00:00:00Z": "not a date",
+		"yesterday":            "not a date",
+		"2026-11-20":           "after today (2026-11-19, UTC)",
+		"9999-12-31":           "after today",
+	} {
+		if _, err := ParseValidAt(day, now); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", day, err, want)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 
@@ -19,7 +20,9 @@ import (
 
 // ReadFoundryGraph reads a load of the ontology's database through
 // foundry-read. Authz has checked the caller may read the database.
-//  1. The reads must be 1 to 20 of the contract's kinds.
+//  1. The reads must be 1 to 20 of the contract's kinds, and valid_at, when
+//     set, a day not after today (UTC): every read but view and evidence
+//     then fails current_only in its result, never read as of now instead.
 //  2. The load must be the ontology's and not deleted (NotFound), nor being
 //     deleted (FailedPrecondition): its marker no longer serves reads.
 //  3. foundry-read evaluates the reads with the load's version's rules; its
@@ -37,6 +40,11 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	}
 	if _, err := ontologyagent.ParseReads(req.GetReadsJson()); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if day := req.GetValidAt(); day != "" {
+		if _, err := ontologyagent.ParseValidAt(day, time.Now()); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
 	}
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -68,7 +76,7 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	}
 	read := &foundryreadv1.ReadRequest{
 		WorkspaceId: o.WorkspaceID, OntologyId: o.ID, LoadId: load.ID, OntologyVersion: load.OntologyVersion(),
-		OntologyToml: def.OntologyTOML, ReadsJson: req.GetReadsJson(),
+		OntologyToml: def.OntologyTOML, ReadsJson: req.GetReadsJson(), ValidAt: req.GetValidAt(),
 	}
 	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
 		g, _ := access.GranteeFrom(ctx)

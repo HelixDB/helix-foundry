@@ -45,7 +45,7 @@ func TestReadFoundryGraph(t *testing.T) {
 		store.loads = append(store.loads,
 			&foundrymodel.FoundryLoad{ID: "load-1", WorkspaceID: "ws-1", OntologyID: "ont-1", VersionID: "v-3", Version: 3, Status: loadStatus},
 			&foundrymodel.FoundryLoad{ID: "load-2", WorkspaceID: "ws-2", OntologyID: "ont-2", VersionID: "v-9", Version: 9, Status: foundrymodel.FoundryLoadReady})
-		reader := &fakeFoundryRead{result: `{"as_of":"2026-10-19","results":[{"ok":{}}]}`}
+		reader := &fakeFoundryRead{result: `{"asked_at":"2026-10-19","results":[{"ok":{}}]}`}
 		s.deps.FoundryRead = reader
 		return s, store, reader
 	}

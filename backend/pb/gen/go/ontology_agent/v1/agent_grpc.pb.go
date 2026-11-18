@@ -279,7 +279,7 @@ type AgentClient interface {
 	//
 	// The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
 	// (the message has the JSON error), or it can't run (the message says why: an empty
-	// question, more than 5 earlier turns, an `as_of` that isn't a date, a `limits.read.wall_ms`
+	// question, more than 5 earlier turns, an `asked_at` or `valid_at` that isn't a date, a `limits.read.wall_ms`
 	// past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
 	// one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
 	// server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting
@@ -723,7 +723,7 @@ type AgentServer interface {
 	//
 	// The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
 	// (the message has the JSON error), or it can't run (the message says why: an empty
-	// question, more than 5 earlier turns, an `as_of` that isn't a date, a `limits.read.wall_ms`
+	// question, more than 5 earlier turns, an `asked_at` or `valid_at` that isn't a date, a `limits.read.wall_ms`
 	// past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
 	// one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
 	// server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting

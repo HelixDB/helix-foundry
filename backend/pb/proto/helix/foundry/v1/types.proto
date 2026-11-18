@@ -1525,6 +1525,8 @@ message FoundryQuestion {
   int32 attempts = 16;
   // What a running question holds back of the month's budget: its cap.
   int64 reserved_micros = 17;
+  // The day it is answered as of, YYYY-MM-DD; empty for when it was asked.
+  string valid_at = 18;
 }
 
 // FoundryQuestionBudget is a workspace's questions budget this calendar

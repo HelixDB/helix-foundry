@@ -68,9 +68,13 @@ type AskRequest struct {
 	Helix HelixTarget `json:"helix"`
 	// Visibility is what the asker holds of the load, when it isn't everything.
 	Visibility *Visibility `json:"visibility,omitempty"`
-	// AsOf is when the question was asked (RFC 3339), the `today` its rules see.
-	AsOf   string    `json:"as_of"`
-	Limits AskLimits `json:"limits"`
+	// AskedAt is when the question was asked (RFC 3339), the `today` its rules see.
+	AskedAt string `json:"asked_at"`
+	// ValidAt is the day the question is answered as of (YYYY-MM-DD, not after
+	// AskedAt), empty for now (contract 4.28.0): the engine reads entities as
+	// they were then and refuses the reads that can only show the load now.
+	ValidAt string    `json:"valid_at,omitempty"`
+	Limits  AskLimits `json:"limits"`
 	// Models is the question's model, resolved for the workspace; the key
 	// goes in the call's metadata.
 	Models AskModels `json:"models"`

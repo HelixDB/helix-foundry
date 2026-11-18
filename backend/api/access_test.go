@@ -495,7 +495,7 @@ func TestGranteeAdmission(t *testing.T) {
 // its own questions.
 func TestGranteeAnswers(t *testing.T) {
 	s, store := accessService(t)
-	reader := &fakeFoundryRead{result: `{"as_of":"2026-10-30","results":[{"ok":{}}]}`}
+	reader := &fakeFoundryRead{result: `{"asked_at":"2026-10-30","results":[{"ok":{}}]}`}
 	s.deps.FoundryRead = reader
 	conn, as := served(t, s)
 	client := foundryv1.NewFoundryServiceClient(conn)
@@ -717,7 +717,7 @@ func TestGranteeAnswers(t *testing.T) {
 // version as the agent projects it, and reads and questions told what it holds.
 func TestGranteePartial(t *testing.T) {
 	s, store := accessService(t)
-	const view = `{"as_of":"2026-10-30","results":[{"ok":{"kind":"view","ontology_toml":"projected","mappings_toml":"held mappings","partial":["Customer"]}}]}`
+	const view = `{"asked_at":"2026-10-30","results":[{"ok":{"kind":"view","ontology_toml":"projected","mappings_toml":"held mappings","partial":["Customer"]}}]}`
 	reader := &fakeFoundryRead{result: view}
 	s.deps.FoundryRead = reader
 	mixed := "load-4"
@@ -795,7 +795,7 @@ func TestGranteePartial(t *testing.T) {
 	})
 	t.Run("reads told what it holds", func(t *testing.T) {
 		before := len(reader.requests)
-		reader.result = `{"as_of":"2026-10-30","results":[{"ok":{}}]}`
+		reader.result = `{"asked_at":"2026-10-30","results":[{"ok":{}}]}`
 		defer func() { reader.result = view }()
 		if _, err := client.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", LoadId: "load-4", ReadsJson: `[{"query":{}}]`}); err != nil {
 			t.Fatal(err)

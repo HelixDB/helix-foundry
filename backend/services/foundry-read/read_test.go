@@ -138,7 +138,7 @@ func okResult(kinds []string) string {
 	for _, kind := range kinds {
 		results = append(results, `{"ok":{"kind":"`+kind+`"}}`)
 	}
-	return `{"as_of":"2026-10-20","results":[` + strings.Join(results, ",") + `],"stats":{"instances":0,"wall_ms":1}}`
+	return `{"asked_at":"2026-10-20","results":[` + strings.Join(results, ",") + `],"stats":{"instances":0,"wall_ms":1}}`
 }
 
 // gateway records the queries the proxy forwards and answers each with 200.
@@ -299,8 +299,8 @@ func TestRead(t *testing.T) {
 		}
 		got := requests[0]
 		if got.RequestID == "" || got.Database != "tenant-1" || got.Load != "load-1" || got.OntologyVersion != "foundry-v3" ||
-			got.OntologyTOML != "version = \"x\"\n" || got.AsOf != "2026-10-20" || got.Budget != ontologyagent.DefaultReadBudget {
-			t.Fatalf("request = %+v (as_of is the UTC date)", got)
+			got.OntologyTOML != "version = \"x\"\n" || got.AskedAt != "2026-10-20" || got.Budget != ontologyagent.DefaultReadBudget {
+			t.Fatalf("request = %+v (asked_at is the UTC date)", got)
 		}
 		if got.Helix.URL != h.reader.proxy.URL() || got.Helix.Token == "" || got.Helix.TimeoutSecs != helixTimeoutSecs ||
 			got.Helix.MaxRequestBytes != graphproxy.MaxRequestBytes {
@@ -425,7 +425,7 @@ func TestRead(t *testing.T) {
 			t.Fatalf("a pattern's answer to an explain: %v", err)
 		}
 		h.agent.result = func([]string) string {
-			return `{"as_of":"d","results":[{"ok":{"pad":"` + strings.Repeat("a", MaxResultBytes) + `"}},{"ok":{}}]}`
+			return `{"asked_at":"d","results":[{"ok":{"pad":"` + strings.Repeat("a", MaxResultBytes) + `"}},{"ok":{}}]}`
 		}
 		if _, err := h.reader.Read(ctx, request("ws-1", "ont-1")); status.Code(err) != codes.ResourceExhausted {
 			t.Fatalf("a result past %d bytes: %v", MaxResultBytes, err)

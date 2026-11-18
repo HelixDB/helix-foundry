@@ -4,8 +4,8 @@
   "description": "What a request read.",
   "type": "object",
   "properties": {
-    "as_of": {
-      "description": "The request's `as_of`.",
+    "asked_at": {
+      "description": "The request's `asked_at`.",
       "type": "string"
     },
     "results": {
@@ -18,10 +18,17 @@
     "stats": {
       "description": "What the request spent.",
       "$ref": "#/$defs/ReadStats"
+    },
+    "valid_at": {
+      "description": "The request's `valid_at`, if it gave one.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
-    "as_of",
+    "asked_at",
     "results",
     "stats"
   ],
@@ -563,7 +570,7 @@
           "type": "string"
         },
         "value": {
-          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from the read's `as_of`). None for\n`is_null` and `not_null`.",
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from today). None for\n`is_null` and `not_null`.",
           "default": null
         }
       },
@@ -734,6 +741,10 @@
               "type": "integer",
               "format": "uint32",
               "minimum": 0
+            },
+            "undated": {
+              "description": "Read as of a `valid_at`: its document gives no date, so it may be from after that\nday. Absent otherwise.",
+              "type": "boolean"
             },
             "value": {
               "description": "The value it states, for a property's quote: a document's, so data too. Absent for\na fact's."
@@ -965,6 +976,24 @@
                 "string",
                 "null"
               ]
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ]
+        },
+        {
+          "description": "It reads the load as it is now, so it can't answer as of the request's `valid_at`:\nrules, violation records and queries have no valid time.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "current_only"
+            },
+            "message": {
+              "description": "For a person.",
+              "type": "string"
             }
           },
           "required": [
@@ -1476,7 +1505,7 @@
           }
         },
         "test": {
-          "description": "The property test or comparison this step is, if any, as the rule wrote it (such as\n`due_on < today - 30d` or `amount > limit`); its arguments are the entities whose\nproperties were read, and today is the response's as_of date. In a `not` step,\n`absent <prop>`: the property has no value.",
+          "description": "The property test or comparison this step is, if any, as the rule wrote it (such as\n`due_on < today - 30d` or `amount > limit`); its arguments are the entities whose\nproperties were read, and today is the response's asked_at date. In a `not` step,\n`absent <prop>`: the property has no value.",
           "type": [
             "string",
             "null"

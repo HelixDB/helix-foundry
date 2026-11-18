@@ -1674,6 +1674,12 @@ message AskFoundryQuestionRequest {
   // under; empty for none. A retry with the same client_token records it
   // once.
   string workflow_run_id = 8;
+  // The day to answer as of, YYYY-MM-DD, not after today (UTC); empty for
+  // now. Entities are read as they were then, history and changes to it, and
+  // documents dated after it are left out; reads that can only show the load
+  // as it is now (queries, searches for entities) aren't offered. Refused
+  // for someone who holds only part of the load.
+  string valid_at = 9;
 }
 message FoundryQuestionResponse {
   FoundryQuestion question = 1;
@@ -1750,6 +1756,10 @@ message ReadFoundryGraphRequest {
   // with its result; empty for none. NOT_FOUND for a run the ontology has
   // not, FAILED_PRECONDITION for one that finished.
   string workflow_run_id = 5;
+  // The day to read as of, YYYY-MM-DD, not after today (UTC); empty for now.
+  // Every read but view and evidence then fails current_only, and evidence
+  // leaves out quotes of documents dated after it.
+  string valid_at = 6;
 }
 
 // ReadFoundryGraphResponse is the agent's ReadResult (read_result.json): one
