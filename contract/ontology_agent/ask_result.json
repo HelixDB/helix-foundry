@@ -517,7 +517,7 @@
           "type": "string"
         },
         "value": {
-          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from the read's `as_of`). None for\n`is_null` and `not_null`.",
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from today). None for\n`is_null` and `not_null`.",
           "default": null
         }
       },
@@ -892,7 +892,7 @@
           "const": "uncovered"
         },
         {
-          "description": "The time asked about is after the question's `as_of`.",
+          "description": "The time asked about is after the time the question is answered as of: its `valid_at`,\nelse when it was asked (`asked_at`).",
           "type": "string",
           "const": "after_as_of"
         },

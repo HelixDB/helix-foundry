@@ -486,12 +486,12 @@ function readTiles(
     const result = JSON.parse(
       (r.body as ReadFoundryGraphResponse).resultJson || "{}",
     ) as {
-      as_of: string;
+      asked_at: string;
       results: unknown[];
     };
     out.push({
       loadId,
-      asOf: result.as_of,
+      asOf: result.asked_at,
       outcomes: new Map(group.map((t, i) => [t.id, result.results[i]])),
     });
   }
