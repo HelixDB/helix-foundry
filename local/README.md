@@ -154,6 +154,25 @@ To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.e
 
 After a few questions, the site asks once whether you'd like to star helixdb/helix-foundry. If the shell that ran `docker compose up` has `GH_TOKEN` or `GITHUB_TOKEN`, Compose passes it to the site, which uses it only to check and add that star when you click Star on GitHub. Without one, the button opens the repository on GitHub.
 
+The backend and ontology agent must speak the same agent contract. A running
+agent's health check only says it is serving; it does not check that its
+contract matches the backend. To check a running local stack using a backend
+image built from this checkout, run:
+
+```sh
+docker compose exec foundry /usr/local/bin/foundry check-agent
+```
+
+This compares the sidecar's reported contract with the contract compiled into
+that backend image. It makes no model calls and reads no workspace data. A
+mismatch or an unavailable agent returns a nonzero exit code; use a matching
+agent image before starting graph work. The command is part of the backend
+built from this checkout and is not available in older released images. Use
+matching release images when running the published release; don't assume the
+release agent matches a backend built from a newer checkout. For a non-default
+loopback address pass `--addr 127.0.0.1:PORT`. See the [agent contract](../backend/pb/proto/ontology_agent/v1/README.md)
+for the version required by this checkout.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.
