@@ -44,13 +44,16 @@ export type Site = {
 /**
  * The stamp that answers `request`, with its build's Helix MCP. The setup
  * address (foundry.new) serves no sign-in, so its links go to the product's
- * site.
+ * site. It is told by the URL or, since `next start` builds a route's URL
+ * from its own hostname, the Host header.
  */
 export const siteOf = (request: Request): Site => ({
-  origin:
-    new URL(request.url).hostname === SETUP_HOST
-      ? PROD_ORIGIN
-      : new URL(request.url).origin,
+  origin: [
+    new URL(request.url).hostname,
+    request.headers.get("host")?.split(":")[0],
+  ].includes(SETUP_HOST)
+    ? PROD_ORIGIN
+    : new URL(request.url).origin,
   mcpUrl:
     process.env.NEXT_PUBLIC_HELIX_MCP_URL || "https://mcp.helix-db.com/mcp",
   eventsUrl: process.env.NEXT_PUBLIC_HELIX_EVENTS_URL || "",

@@ -186,6 +186,11 @@ describe("setup.md, what foundry.new serves", () => {
     expect(
       siteOf(new Request("https://dev.foundry.helix-db.com/setup.md")).origin,
     ).toBe("https://dev.foundry.helix-db.com");
+    // next start's URL is its own; the Host header is foundry.new's.
+    const proxied = new Request("http://localhost:3000/setup.md", {
+      headers: { host: "foundry.new:443" },
+    });
+    expect(siteOf(proxied).origin).toBe("https://foundry.helix-db.com");
   });
 });
 
