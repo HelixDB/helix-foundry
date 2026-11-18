@@ -221,7 +221,7 @@
                   "valid_at": {
                     "type": "string",
                     "format": "date",
-                    "description": "Answer as of this day, YYYY-MM-DD, not after today (UTC); absent for now. Entities are read as they were then and documents dated after it are left out; reads that can only show the load as it is now are refused."
+                    "description": "Answer as of this day, YYYY-MM-DD, not after today (UTC); absent for now. Entities are read as they were then and documents dated after it are left out; reads that can only show the load as it is now are refused. A follow-up takes its thread's day; anyone who reads the load through grants can't ask as of a day."
                   }
                 }
               }

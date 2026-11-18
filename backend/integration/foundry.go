@@ -214,7 +214,7 @@ type ReadFoundryGraphInput struct {
 	LoadID        string           `json:"load_id,omitempty" jsonschema:"Load to read; the ontology's current load when empty."`
 	Reads         []map[string]any `json:"reads" jsonschema:"1 to 20 reads, each an object with exactly one key: entity, pattern, explain, violations, evidence or query. helix_foundry_read_guide returns their schema."`
 	WorkflowRunID string           `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
-	ValidAt       string           `json:"valid_at,omitempty" jsonschema:"Read as of this day, YYYY-MM-DD, not after today (UTC); empty for now. Evidence then leaves out quotes of documents dated after it and flags an undated document's quote undated; reads that can only show the load as it is now (entity, pattern, explain, violations, query) are refused with current_only."`
+	ValidAt       string           `json:"valid_at,omitempty" jsonschema:"Read as of this day, YYYY-MM-DD, not after today (UTC); empty for now. Evidence then leaves out quotes of documents dated after it or whose date couldn't be read, and rows the load didn't know by then, and flags an undated document's quote undated; reads that can only show the load as it is now (entity, pattern, explain, violations, query) are refused with current_only."`
 }
 
 // FoundryEntityInput names an entity as a read does: its type and exactly one of id, key and
@@ -234,7 +234,7 @@ type AskFoundryInput struct {
 	Focus         *FoundryEntityInput `json:"focus,omitempty" jsonschema:"The entity the question is about."`
 	LoadID        string              `json:"load_id,omitempty" jsonschema:"Load to ask; the ontology's current load when empty."`
 	WorkflowRunID string              `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
-	ValidAt       string              `json:"valid_at,omitempty" jsonschema:"Answer as of this day, YYYY-MM-DD, not after today (UTC); empty for now. Entities are read as they were then and documents dated after it are left out; reads that can only show the load as it is now (queries, searches for entities) are refused, never answered as of now instead."`
+	ValidAt       string              `json:"valid_at,omitempty" jsonschema:"Answer as of this day, YYYY-MM-DD, not after today (UTC); empty for now. Entities are read as they were then and documents dated after it are left out; reads that can only show the load as it is now (queries, searches for entities) are refused, never answered as of now instead. A follow-up takes its thread's day; anyone who reads the load through grants can't ask as of a day."`
 }
 
 type GetFoundryQuestionInput struct {

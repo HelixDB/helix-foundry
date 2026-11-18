@@ -552,6 +552,20 @@ describe("mock questions", () => {
       "client_token was already used for another question",
     ]);
     expect((await ask({})).body.question).not.toHaveProperty("validAt");
+    // A thread is asked as of one day.
+    expect(
+      (await ask({ validAt: "2026-03-01", threadId: q.id, clientToken: "f1" }))
+        .status,
+    ).toBe(200);
+    for (const validAt of [undefined, "2026-03-02"])
+      expect(
+        refusal(
+          await ask({ validAt, threadId: q.id, clientToken: `f-${validAt}` }),
+        ),
+      ).toEqual([
+        400,
+        "a thread is asked as of one day: give its valid_at (empty for now)",
+      ]);
     // Today in UTC is the latest day; a day that isn't one is refused.
     expect((await ask({ validAt: "2026-10-19" })).status).toBe(200);
     expect(refusal(await ask({ validAt: "2026-10-20" }))).toEqual([

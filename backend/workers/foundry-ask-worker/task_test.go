@@ -700,6 +700,17 @@ func TestAnswer(t *testing.T) {
 		if req.AskedAt != "2026-10-19T11:59:00Z" || req.ValidAt != "2026-03-01" {
 			t.Fatalf("asked_at %q, valid_at %q", req.AskedAt, req.ValidAt)
 		}
+		// Accepted as of a day the API's clock reached before the database's
+		// created_at did, it is asked no earlier than that day.
+		ahead := newHarness(t)
+		early := question(1)
+		next := early.CreatedAt.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
+		early.ValidAt = &next
+		ahead.run(t, early)
+		req, _ = decodeAsk(t, ahead.agent.calls()[0])
+		if req.AskedAt != next.Format(time.RFC3339) || req.ValidAt != next.Format(time.DateOnly) {
+			t.Fatalf("asked_at %q, valid_at %q", req.AskedAt, req.ValidAt)
+		}
 		plain := newHarness(t)
 		plain.run(t, question(1))
 		if body := plain.agent.calls()[0]; strings.Contains(body, "valid_at") || !strings.Contains(body, `"asked_at":"2026-10-19T11:59:00Z"`) {

@@ -6891,8 +6891,10 @@ type AskFoundryQuestionRequest struct {
 	// The day to answer as of, YYYY-MM-DD, not after today (UTC); empty for
 	// now. Entities are read as they were then, history and changes to it, and
 	// documents dated after it are left out; reads that can only show the load
-	// as it is now (queries, searches for entities) aren't offered. Refused
-	// for someone who holds only part of the load.
+	// as it is now (queries, searches for entities) aren't offered. A
+	// follow-up is asked as of its thread's day: another is INVALID_ARGUMENT.
+	// FAILED_PRECONDITION for anyone who reads the load through grants, even
+	// all of it.
 	ValidAt string `protobuf:"bytes,9,opt,name=valid_at,json=validAt,proto3" json:"valid_at,omitempty"`
 }
 
@@ -7513,7 +7515,8 @@ type ReadFoundryGraphRequest struct {
 	WorkflowRunId string `protobuf:"bytes,5,opt,name=workflow_run_id,json=workflowRunId,proto3" json:"workflow_run_id,omitempty"`
 	// The day to read as of, YYYY-MM-DD, not after today (UTC); empty for now.
 	// Every read but view and evidence then fails current_only, and evidence
-	// leaves out quotes of documents dated after it.
+	// leaves out quotes of documents dated after it or whose date couldn't be
+	// read, and rows the load didn't know by then.
 	ValidAt string `protobuf:"bytes,6,opt,name=valid_at,json=validAt,proto3" json:"valid_at,omitempty"`
 }
 

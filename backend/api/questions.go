@@ -143,6 +143,10 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 			return nil, status.Error(codes.NotFound, "thread not found")
 		case err != nil:
 			return nil, status.Errorf(codes.Internal, "get thread: %v", err)
+		// A thread is asked as of one day, so its earlier answers are of it.
+		case !sameDay(first.ValidAt, validAt):
+			return nil, status.Error(codes.InvalidArgument,
+				"a thread is asked as of one day: give its valid_at (empty for now)")
 		}
 		q.ThreadID = thread
 	}

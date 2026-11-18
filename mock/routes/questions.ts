@@ -1739,6 +1739,17 @@ export function askQuestion(req: MockRequest): MockReply {
     )
   )
     return fail("NOT_FOUND", "thread not found");
+  // A thread is asked as of one day, so its earlier answers are of it.
+  if (
+    body.threadId &&
+    state.questions.some(
+      (q) => q.id === body.threadId && (q.validAt || "") !== validAt,
+    )
+  )
+    return fail(
+      "INVALID_ARGUMENT",
+      "a thread is asked as of one day: give its valid_at (empty for now)",
+    );
   // A grantee asks through its grants, which the engine reads nothing as of a date through.
   if (validAt && req.grantee)
     return fail(

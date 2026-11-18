@@ -2491,8 +2491,8 @@ export type AskQuestionRequest = {
   // The day to answer as of, YYYY-MM-DD, not after today (UTC); missing
   // for now. Entities are read as they were then and documents dated after
   // it left out; reads that can only show the load now aren't offered.
-  // INVALID_ARGUMENT for a day that isn't one or is later; FAILED_PRECONDITION
-  // for someone who holds only part of the load.
+  // INVALID_ARGUMENT for a day that isn't one, is later, or isn't its thread's;
+  // FAILED_PRECONDITION for anyone who reads the load through grants.
   validAt?: string;
 };
 

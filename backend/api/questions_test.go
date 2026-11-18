@@ -290,7 +290,23 @@ func TestAskFoundryQuestion(t *testing.T) {
 				t.Fatalf("%s: %v, want %q", day, err, want)
 			}
 		}
-		if len(store.questions) != 3 {
+		// A thread is asked as of one day: a follow-up as of its day is asked, one
+		// as of another day, or of now, refused.
+		follow := func(token, day string) error {
+			_, err := ask(s, token, "And then?", func(r *foundryv1.AskFoundryQuestionRequest) {
+				r.ThreadId, r.ValidAt = resp.GetQuestion().GetId(), day
+			})
+			return err
+		}
+		if err := follow("f1", "2026-03-01"); err != nil {
+			t.Fatalf("a follow-up as of its thread's day: %v", err)
+		}
+		for name, day := range map[string]string{"another day": "2026-03-02", "now": ""} {
+			if err := follow("f-"+name, day); status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "one day") {
+				t.Fatalf("a follow-up as of %s: %v", name, err)
+			}
+		}
+		if len(store.questions) != 4 {
 			t.Fatalf("queued %d questions", len(store.questions))
 		}
 	})

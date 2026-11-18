@@ -332,9 +332,14 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 		},
 	}
 	if q.ValidAt != nil {
-		// A day, from its midnight where the question was asked (UTC); never
-		// after the day it was asked, as AskFoundryQuestion checked.
+		// A day, from its midnight where the question was asked (UTC), never
+		// after the day it was asked, as AskFoundryQuestion checked: by the API's
+		// clock, which may run ahead of the database's created_at at midnight,
+		// so it is asked no earlier than that day.
 		req.ValidAt = q.ValidAt.UTC().Format(time.DateOnly)
+		if q.ValidAt.After(q.CreatedAt) {
+			req.AskedAt = q.ValidAt.UTC().Format(time.RFC3339)
+		}
 	}
 	if len(q.Focus) > 0 {
 		// AskFoundryQuestion stored it as the lookup ParseFocus read.
