@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const foundryQuestionColumns = `id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, status, result, error,
+const foundryQuestionColumns = `id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, as_of, status, result, error,
        client_token, lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros,
        input_tokens, output_tokens, last_seq, asked_by_user_id, created_at, started_at, finished_at,
        (SELECT CONCAT(g.principal_kind, ' ', g.principal_id) FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id),
@@ -94,10 +94,10 @@ WHERE g.principal_kind=? AND g.principal_id=? AND q.workspace_id=?`,
 			}
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_questions
-  (id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, status, client_token, max_usd_micros, asked_by_user_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
-			q.ID, q.WorkspaceID, q.OntologyID, q.LoadID, q.VersionID, q.ThreadID, q.Question, nullJSON(q.Focus), q.ClientToken,
-			q.MaxUSDMicros, q.AskedByUserID)
+  (id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, as_of, status, client_token, max_usd_micros, asked_by_user_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+			q.ID, q.WorkspaceID, q.OntologyID, q.LoadID, q.VersionID, q.ThreadID, q.Question, nullJSON(q.Focus), nullDay(q.ValidAt),
+			q.ClientToken, q.MaxUSDMicros, q.AskedByUserID)
 		if isDuplicateKey(err) {
 			return ErrConflict
 		}
@@ -467,9 +467,9 @@ func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 	var q model.FoundryQuestion
 	var status string
 	var focus, result, errText, clientToken, leaseOwner, askedBy, grantee, seen sql.NullString
-	var leaseUntil, startedAt, finishedAt sql.NullTime
+	var validAt, leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &q.Spend
-	if err := scanner.Scan(&q.ID, &q.WorkspaceID, &q.OntologyID, &q.LoadID, &q.VersionID, &q.ThreadID, &q.Question, &focus, &status,
+	if err := scanner.Scan(&q.ID, &q.WorkspaceID, &q.OntologyID, &q.LoadID, &q.VersionID, &q.ThreadID, &q.Question, &focus, &validAt, &status,
 		&result, &errText, &clientToken, &leaseOwner, &leaseUntil, &q.Attempts, &q.NextAttemptAt, &q.MaxUSDMicros,
 		&q.ReservedMicros, &spend.USDMicros, &spend.InputTokens, &spend.OutputTokens, &q.LastSeq, &askedBy, &q.CreatedAt,
 		&startedAt, &finishedAt, &grantee, &seen,
@@ -513,12 +513,21 @@ func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 	for _, f := range []struct {
 		src sql.NullTime
 		dst **time.Time
-	}{{leaseUntil, &q.LeaseUntil}, {startedAt, &q.StartedAt}, {finishedAt, &q.FinishedAt}} {
+	}{{validAt, &q.ValidAt}, {leaseUntil, &q.LeaseUntil}, {startedAt, &q.StartedAt}, {finishedAt, &q.FinishedAt}} {
 		if f.src.Valid {
 			*f.dst = &f.src.Time
 		}
 	}
 	return &q, nil
+}
+
+// nullDay is a day as a nullable DATE column's value, YYYY-MM-DD in UTC:
+// NULL when nil.
+func nullDay(day *time.Time) any {
+	if day == nil {
+		return nil
+	}
+	return day.UTC().Format(time.DateOnly)
 }
 
 // nullString is s as a nullable column's value: NULL when empty.

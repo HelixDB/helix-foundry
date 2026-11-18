@@ -219,6 +219,7 @@ const evidenceOf = (e: EvidenceItem): Evidence =>
         end: e.end,
         quote: e.quote,
         confidence: e.confidence,
+        ...(e.undated ? { undated: true as const } : {}),
       };
 
 /**
@@ -420,6 +421,7 @@ export function entityPlan(
               value: e.value,
               quote: e.quote,
               confidence: e.confidence,
+              ...(e.undated ? { undated: true as const } : {}),
             });
           continue;
         }

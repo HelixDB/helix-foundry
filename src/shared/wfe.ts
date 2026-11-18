@@ -2385,7 +2385,14 @@ export type ListLoadsResponse = { loads?: FoundryLoad[] };
  * one deleted (NOT_FOUND), one being deleted (FAILED_PRECONDITION), and more
  * reads at once than the workspace may run (RESOURCE_EXHAUSTED).
  */
-export type ReadFoundryGraphRequest = { readsJson: string };
+export type ReadFoundryGraphRequest = {
+  readsJson: string;
+  // The day to read as of, YYYY-MM-DD, not after today (UTC); missing for
+  // now (contract 4.28.0). Every read but view and evidence then fails
+  // `current_only`, and evidence leaves out quotes of documents dated after
+  // it and flags an undated document's quote `undated`.
+  validAt?: string;
+};
 
 /** helixwfev1ReadFoundryGraphResponse: the engine's ReadResult as JSON. */
 export type ReadFoundryGraphResponse = { resultJson?: string };
@@ -2420,6 +2427,8 @@ export type FoundryQuestion = {
   question?: string;
   // What "Ask about this" asked about: an EntityRef as JSON, empty for none.
   focusJson?: string;
+  // The day it is answered as of, YYYY-MM-DD; missing for when it was asked.
+  validAt?: string;
   status?: QuestionStatus;
   // The engine's AskResult JSON (snake_case): set once answered or
   // cannot_answer, and for a failed question whose agent sent one.
@@ -2479,6 +2488,12 @@ export type AskQuestionRequest = {
   question: string;
   focusJson?: string;
   clientToken: string;
+  // The day to answer as of, YYYY-MM-DD, not after today (UTC); missing
+  // for now. Entities are read as they were then and documents dated after
+  // it left out; reads that can only show the load now aren't offered.
+  // INVALID_ARGUMENT for a day that isn't one, is later, or isn't its thread's;
+  // FAILED_PRECONDITION for anyone who reads the load through grants.
+  validAt?: string;
 };
 
 /**

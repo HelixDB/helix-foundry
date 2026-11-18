@@ -6,7 +6,8 @@ import { isRecord } from "./json";
 // .../loads/{loadId}:read takes the reads as JSON (`readsJson`, each a
 // ReadItem) and returns the engine's ReadResult as JSON (`resultJson`). The
 // backend fills in the rest of the engine's ReadRequest (database, load,
-// ontology, budget, `as_of`). The rules are evaluated when the read runs,
+// ontology, budget, `asked_at`, and `valid_at` when a read is as of a day).
+// The rules are evaluated when the read runs,
 // never stored: a derived fact or flag holds for this load now, or the read
 // says why it couldn't tell.
 //
@@ -145,7 +146,10 @@ export type ReadFailure =
   | { code: "budget" | "hub"; message: string; limit: number }
   | { code: "too_broad"; message: string; limit: number; count: number }
   | { code: "unknown_entity"; message: string }
-  | { code: "not_visible" | "invalid"; message: string; pointer?: string };
+  | { code: "not_visible" | "invalid"; message: string; pointer?: string }
+  // Read as of a day (contract 4.28.0's `valid_at`): it shows the load only
+  // as it is now, so it is refused rather than answered as of now.
+  | { code: "current_only"; message: string };
 export type ReadErrorCode = ReadFailure["code"];
 /** Why one pred (or the live violations) of an entity read has no answer. */
 export type PartFailure =
@@ -249,7 +253,8 @@ export type ViolationsResult = {
 /**
  * Stored evidence: a quote's offsets are UTF-8 bytes into its section. A
  * quote read for a property carries the value it states (document data,
- * never markup); a fact's quote has none.
+ * never markup); a fact's quote has none. Read as of a day, a quote whose
+ * document gives no date is `undated`: it may be from after that day.
  */
 export type EvidenceItem =
   | {
@@ -268,6 +273,7 @@ export type EvidenceItem =
       quote: string;
       confidence: number;
       value?: string | number | boolean;
+      undated?: true;
     };
 export type EvidenceResult = { items: EvidenceItem[] };
 
@@ -311,7 +317,9 @@ export type Outcome<T> =
   | { ok: false; error: ReadFailure };
 export type ReadStats = { instances: number; wallMs: number };
 export type ReadResult = {
-  asOf: string;
+  // The day it was asked, and the day it was read as of when it was.
+  askedAt: string;
+  validAt?: string;
   results: Outcome<unknown>[];
   stats: ReadStats;
 };
@@ -377,7 +385,8 @@ export function parseFailure(v: unknown): ReadFailure {
         ? MALFORMED
         : { code: "too_broad", message, limit, count: n };
     case "unknown_entity":
-      return { code: "unknown_entity", message };
+    case "current_only":
+      return { code: v.code, message };
     case "not_visible":
     case "invalid": {
       const pointer = str(v.pointer);
@@ -393,7 +402,7 @@ export function parseFailure(v: unknown): ReadFailure {
  * an `ok` (still raw) or a failure. The results are in the reads' order.
  *
  * @example
- * parseReadResult('{"as_of":"2026-10-19","results":[{"error":{"code":"budget","message":"too deep","limit":64}}],"stats":{"instances":0,"wall_ms":3}}')
+ * parseReadResult('{"asked_at":"2026-10-19","results":[{"error":{"code":"budget","message":"too deep","limit":64}}],"stats":{"instances":0,"wall_ms":3}}')
  *   ?.results[0]; // { ok: false, error: { code: "budget", message: "too deep", limit: 64 } }
  */
 export function parseReadResult(json: string): ReadResult | undefined {
@@ -405,8 +414,10 @@ export function parseReadResult(json: string): ReadResult | undefined {
   }
   if (!isRecord(body) || !Array.isArray(body.results)) return undefined;
   const stats = isRecord(body.stats) ? body.stats : {};
+  const validAt = str(body.valid_at);
   return {
-    asOf: str(body.as_of) || "",
+    askedAt: str(body.asked_at) || "",
+    ...(validAt ? { validAt } : {}),
     results: body.results.map(
       (r): Outcome<unknown> =>
         isRecord(r) && "ok" in r
@@ -653,6 +664,7 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
               (typeof value === "number" && Number.isFinite(value))
                 ? { value }
                 : {}),
+              ...(e.undated === true ? { undated: true as const } : {}),
             },
           ]
         : [];

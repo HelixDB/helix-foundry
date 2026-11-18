@@ -4,9 +4,9 @@
   "description": "A request to read a load with its version's rules applied.",
   "type": "object",
   "properties": {
-    "as_of": {
-      "description": "The day the read is as of, which value rules compare `today` with.",
-      "$ref": "#/$defs/AsOf"
+    "asked_at": {
+      "description": "The day the read was asked, which value rules compare `today` with.",
+      "$ref": "#/$defs/Day"
     },
     "budget": {
       "description": "What the request may spend.",
@@ -58,6 +58,17 @@
       "description": "The idempotency key; a read writes nothing, so a retry simply reads again.",
       "type": "string"
     },
+    "valid_at": {
+      "description": "The day to answer as of, from its midnight UTC, not after `asked_at`: evidence then\nleaves out quotes of documents dated after it, or whose dates couldn't be read, and rows\nthe load didn't know by then, and flags each undated document's quote; every other read\nbut `view` shows the load as it is now, so it is refused (`current_only`). Absent, reads\nare as of now.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Day"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "visibility": {
       "description": "What the reader holds of the load, when it isn't everything: the reads see the version\nand the load as those sources fill them. Needs `mappings_toml`.",
       "anyOf": [
@@ -78,7 +89,7 @@
     "ontology_toml",
     "ontology_version",
     "helix",
-    "as_of",
+    "asked_at",
     "reads"
   ],
   "$defs": {
@@ -148,11 +159,6 @@
       ],
       "unevaluatedProperties": false
     },
-    "AsOf": {
-      "description": "A calendar date, YYYY-MM-DD.",
-      "type": "string",
-      "format": "date"
-    },
     "Column": {
       "description": "One column of rows: a position's entity, a property of it (`prop`), or a number from two\n(`expr`).",
       "type": "object",
@@ -215,7 +221,7 @@
           "type": "string"
         },
         "value": {
-          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from the read's `as_of`). None for\n`is_null` and `not_null`.",
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from today). None for\n`is_null` and `not_null`.",
           "default": null
         }
       },
@@ -241,6 +247,11 @@
         }
       },
       "additionalProperties": false
+    },
+    "Day": {
+      "description": "A calendar date, YYYY-MM-DD.",
+      "type": "string",
+      "format": "date"
     },
     "Direction": {
       "description": "Which way a step goes.",

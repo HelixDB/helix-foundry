@@ -2469,7 +2469,7 @@ describe("mock documents and loads", () => {
     expect(r.status).toBe(200);
     const result = JSON.parse(r.body.resultJson);
     expect(contractErrors("read_result", result)).toEqual([]);
-    expect(result.as_of).toBe("2026-10-18");
+    expect(result.asked_at).toBe("2026-10-18");
     const [entity, explain, violations, unknown] = result.results;
     expect(entity.ok.flags.map((f: { name: string }) => f.name).sort()).toEqual(
       ["invoiced", "under_contract"],
@@ -2525,6 +2525,43 @@ describe("mock documents and loads", () => {
         message: expect.any(String),
         limit: 64,
       },
+    ]);
+    // As of a day, every read but view and evidence is refused current_only,
+    // never read as of now; the result echoes the day.
+    const dated = JSON.parse(
+      (
+        await call("POST", `${O}/loads/${load.id}:read`, {
+          readsJson: JSON.stringify([
+            { entity: globex },
+            { evidence: { entity: msa, prop: "signed_on" } },
+            { view: {} },
+          ]),
+          validAt: "2026-10-01",
+        })
+      ).body.resultJson,
+    );
+    expect(contractErrors("read_result", dated)).toEqual([]);
+    expect(dated).toMatchObject({
+      asked_at: "2026-10-18",
+      valid_at: "2026-10-01",
+    });
+    expect(dated.results[0].error).toEqual({
+      code: "current_only",
+      message:
+        "an entity read gives what rules derive now, so it can't answer as of 2026-10-01 (valid_at)",
+    });
+    expect(dated.results[1].ok.kind).toBe("evidence");
+    expect(dated.results[2].ok.kind).toBe("view");
+    expect(
+      refusal(
+        await call("POST", `${O}/loads/${load.id}:read`, {
+          readsJson: JSON.stringify([{ view: {} }]),
+          validAt: "2026-10-19",
+        }),
+      ),
+    ).toEqual([
+      400,
+      "valid_at 2026-10-19 is after today (2026-10-18, UTC): no load records the future",
     ]);
     // Refusals, as the WFE's.
     expect(refusal(await reads([]))).toEqual([

@@ -604,3 +604,48 @@ test("labels a gap's kind and keeps its reason and draft action", async ({
     question.getByRole("link", { name: "Draft a new version with this" }),
   ).toBeVisible();
 });
+
+// A thread asked as of a date (contract 4.28.0's valid_at): where the WFE
+// has Founder off, /ask is the Analyst's page, whose new thread takes an As
+// of date beside the Load picker. Each question and answer says the day,
+// and a follow-up keeps it, as the WFE stored it.
+test("asks a thread as of a date, its follow-ups as of the same day", async ({
+  page,
+}) => {
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    agentEnabled: false,
+  });
+  await signIn(page);
+  await uploadAndLoadContract(page);
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Founder", exact: true })
+    .click();
+  await page.getByLabel("Answer as of").fill("2026-03-01");
+  const form = page.getByRole("form", { name: "Ask a question" });
+  await expect(form).toContainText("as of 2026-03-01");
+  const first = "Who signed the services agreement?";
+  await form.getByRole("textbox", { name: /^Question/ }).fill(first);
+  await form.getByRole("button", { name: "Ask", exact: true }).click();
+  const asked = page.getByRole("article", { name: `Question: ${first}` });
+  await expect(asked).toContainText("As of 2026-03-01");
+  await expect(asked.getByRole("region", { name: "Answer" })).toContainText(
+    "as of 2026-03-01",
+    { timeout: 20_000 },
+  );
+  await expect(page.locator(".ak-bar .hf-tag")).toHaveText("As of 2026-03-01");
+
+  const followUp = page.getByRole("form", { name: "Ask a follow-up" });
+  await expect(followUp).toContainText("as of 2026-03-01");
+  const second = "And when did it start?";
+  await followUp.getByRole("textbox", { name: /^Question/ }).fill(second);
+  await followUp.getByRole("button", { name: "Ask", exact: true }).click();
+  const next = page.getByRole("article", { name: `Question: ${second}` });
+  await expect(next).toContainText("As of 2026-03-01");
+  await expect(next.getByRole("region", { name: "Answer" })).toContainText(
+    "as of 2026-03-01",
+    { timeout: 20_000 },
+  );
+});

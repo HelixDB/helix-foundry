@@ -324,12 +324,22 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 		RequestID: q.ID, Load: load.ID, OntologyVersion: load.OntologyVersion(),
 		OntologyTOML: def.OntologyTOML, MappingsTOML: def.MappingsTOML, DraftJSON: rawText(def.Draft, "{}"),
 		QuestionsJSON: rawText(def.Questions, "[]"), Catalog: []ontologyagent.CatalogEntry{}, Question: q.Question,
-		History: []ontologyagent.AskTurn{}, AsOf: q.CreatedAt.UTC().Format(time.RFC3339),
+		History: []ontologyagent.AskTurn{}, AskedAt: q.CreatedAt.UTC().Format(time.RFC3339),
 		// The cap is the question's own, reserved and charged by it: config may have moved since it was asked.
 		Limits: ontologyagent.AskLimits{
 			MaxUSD: float64(q.MaxUSDMicros) / 1e6, MaxSteps: uint32(cfg.MaxSteps), MaxWallSecs: uint64(cfg.MaxWallSecs),
 			Read: ontologyagent.AskReadLimits{WallMS: uint64(cfg.ReadWallMS), ScanEntities: uint64(cfg.ReadScanEntities)},
 		},
+	}
+	if q.ValidAt != nil {
+		// A day, from its midnight where the question was asked (UTC), never
+		// after the day it was asked, as AskFoundryQuestion checked: by the API's
+		// clock, which may run ahead of the database's created_at at midnight,
+		// so it is asked no earlier than that day.
+		req.ValidAt = q.ValidAt.UTC().Format(time.DateOnly)
+		if q.ValidAt.After(q.CreatedAt) {
+			req.AskedAt = q.ValidAt.UTC().Format(time.RFC3339)
+		}
 	}
 	if len(q.Focus) > 0 {
 		// AskFoundryQuestion stored it as the lookup ParseFocus read.

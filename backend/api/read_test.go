@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 
@@ -45,7 +46,7 @@ func TestReadFoundryGraph(t *testing.T) {
 		store.loads = append(store.loads,
 			&foundrymodel.FoundryLoad{ID: "load-1", WorkspaceID: "ws-1", OntologyID: "ont-1", VersionID: "v-3", Version: 3, Status: loadStatus},
 			&foundrymodel.FoundryLoad{ID: "load-2", WorkspaceID: "ws-2", OntologyID: "ont-2", VersionID: "v-9", Version: 9, Status: foundrymodel.FoundryLoadReady})
-		reader := &fakeFoundryRead{result: `{"as_of":"2026-10-19","results":[{"ok":{}}]}`}
+		reader := &fakeFoundryRead{result: `{"asked_at":"2026-10-19","results":[{"ok":{}}]}`}
 		s.deps.FoundryRead = reader
 		return s, store, reader
 	}
@@ -98,6 +99,31 @@ func TestReadFoundryGraph(t *testing.T) {
 			if _, err := read(s, "ws-1", "ont-1", "load-1", reads); status.Code(err) != codes.FailedPrecondition || len(reader.requests) != 0 {
 				t.Fatalf("%s: %v after %d calls", loadStatus, err, len(reader.requests))
 			}
+		}
+	})
+
+	// A read as of a day passes it to foundry-read as given; a day that isn't
+	// one, or is after today, is refused before any read.
+	t.Run("reads as of a day", func(t *testing.T) {
+		s, _, reader := setup(t, foundrymodel.FoundryLoadReady)
+		dated := func(day string) error {
+			_, err := s.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", LoadId: "load-1",
+				ReadsJson: reads, ValidAt: day})
+			return err
+		}
+		if err := dated("2026-03-01"); err != nil || len(reader.requests) != 1 || reader.requests[0].GetValidAt() != "2026-03-01" {
+			t.Fatalf("%v, %+v", err, reader.requests)
+		}
+		if _, err := read(s, "ws-1", "ont-1", "load-1", reads); err != nil || reader.requests[1].GetValidAt() != "" {
+			t.Fatalf("a read as of now: %v, %+v", err, reader.requests[1])
+		}
+		for _, day := range []string{"2026-3-1", "2026-03-01T00:00:00Z", time.Now().UTC().AddDate(0, 0, 2).Format(time.DateOnly)} {
+			if err := dated(day); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("%s: %v", day, err)
+			}
+		}
+		if len(reader.requests) != 2 {
+			t.Fatalf("foundry-read was called %d times", len(reader.requests))
 		}
 	})
 

@@ -27,8 +27,9 @@ type httpBackend struct {
 	foundryv1.FoundryServiceClient
 	// panicOnGet crashes the nth GetFoundryQuestion; 0 never does.
 	panicOnGet, gets int
-	// tokens are the client tokens asked with, in order.
+	// tokens are the client tokens asked with, in order, and validAts the days asked as of.
 	tokens       []string
+	validAts     []string
 	mu           sync.Mutex
 	question     *foundryv1.FoundryQuestion
 	queued       int
@@ -40,6 +41,7 @@ func (b *httpBackend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoun
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.tokens = append(b.tokens, r.ClientToken)
+	b.validAts = append(b.validAts, r.ValidAt)
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -192,6 +194,19 @@ func TestHTTPQuestionLifecycle(t *testing.T) {
 	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	w = httpCall(h, "POST", "/v1/ontologies/ontology-1/ask", `{"question":"Changed question"}`, "retry-key")
 	assert.Equal(t, 400, w.Code)
+}
+
+// A body may name the day to answer as of, handed to the backend as given (it checks the day),
+// and the question says it; a body without one asks as of now.
+func TestHTTPAskAsOfADay(t *testing.T) {
+	h, b := httpFixture(t, "answered")
+	b.question.ValidAt = "2026-03-01"
+	w := httpCall(h, "POST", httpAskPath, `{"question":"Who?","valid_at":"2026-03-01"}`, "dated")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"valid_at":"2026-03-01"`)
+	w = httpCall(h, "POST", httpAskPath, `{"question":"Who?"}`, "plain")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Equal(t, []string{"2026-03-01", ""}, b.validAts)
 }
 
 func TestHTTPTerminalStates(t *testing.T) {

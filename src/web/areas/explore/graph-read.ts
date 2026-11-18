@@ -113,6 +113,7 @@ export function rulesOf(v?: OntologyVersion | null): AgentOntology | null {
  * readFailureText({ code: "budget", message: "m", limit: 64 }); // "Too deep to compute live"
  * readFailureText({ code: "too_broad", message: "m", limit: 20000, count: 31200 }); // "Covers too many entities to compute live: 31,200, past 20,000"
  * readFailureText({ code: "not_visible", message: "m" }); // "Only part of this is in the sources shared with you, so it can’t be counted, filtered or sorted"
+ * readFailureText({ code: "current_only", message: "m" }); // "This shows the load only as it is now, so it can’t answer as of a past date"
  */
 export function readFailureText(f: ReadFailure): string {
   switch (f.code) {
@@ -128,6 +129,8 @@ export function readFailureText(f: ReadFailure): string {
       return "Only part of this is in the sources shared with you, so it can’t be counted, filtered or sorted";
     case "invalid":
       return `The rules can’t answer this${f.pointer ? ` (at ${f.pointer})` : ""}`;
+    case "current_only":
+      return "This shows the load only as it is now, so it can’t answer as of a past date";
   }
 }
 

@@ -21,8 +21,8 @@ func askRequest() AskRequest {
 		DraftJSON: `{"items":{}}`, QuestionsJSON: `[]`, Goal: "track contracts",
 		Catalog:  []CatalogEntry{{ID: "src_1", Kind: CatalogTable, Name: "Stripe / customers"}},
 		Question: "Which customers?", History: []AskTurn{},
-		Helix: HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 10, TimeoutSecs: 30},
-		AsOf:  "2026-10-19T12:00:00Z", Models: houseAskModels(),
+		Helix:   HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 10, TimeoutSecs: 30},
+		AskedAt: "2026-10-19T12:00:00Z", Models: houseAskModels(),
 		Limits: AskLimits{MaxUSD: 0.5, MaxSteps: 10, MaxWallSecs: 120, Read: AskReadLimits{WallMS: 5000, ScanEntities: 20000}},
 	}
 }
@@ -39,7 +39,9 @@ func TestAskRequest(t *testing.T) {
 		for range MaxAskHistory {
 			threaded.History = append(threaded.History, AskTurn{Question: "Who signed?", Answer: "Acme [c1]."})
 		}
-		for name, req := range map[string]AskRequest{"plain": askRequest(), "focused": focused, "threaded": threaded} {
+		dated := askRequest()
+		dated.ValidAt = "2026-03-01"
+		for name, req := range map[string]AskRequest{"plain": askRequest(), "focused": focused, "threaded": threaded, "dated": dated} {
 			body, err := json.Marshal(req)
 			if err != nil {
 				t.Fatal(err)
@@ -49,8 +51,13 @@ func TestAskRequest(t *testing.T) {
 			}
 		}
 		plain, _ := json.Marshal(askRequest())
-		if strings.Contains(string(plain), `"focus"`) {
-			t.Fatalf("a request without a focus sends one: %s", plain)
+		if strings.Contains(string(plain), `"focus"`) || strings.Contains(string(plain), `"valid_at"`) {
+			t.Fatalf("a request without a focus or a day sends one: %s", plain)
+		}
+		// Contract 4.28.0 took as_of's name away: a request still naming it is refused.
+		old := strings.Replace(string(plain), `"asked_at"`, `"as_of"`, 1)
+		if err := contracttest.Validate(t, schema, []byte(old)); err == nil {
+			t.Fatalf("ask_request.json accepted as_of: %s", old)
 		}
 	})
 

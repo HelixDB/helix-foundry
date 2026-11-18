@@ -2412,6 +2412,37 @@ export function queueLoad(
  * of readsJson over the load req.params names (workspaceId, ontologyId,
  * loadId): what the dashboards' preview and publish read too.
  */
+/**
+ * Why a day to answer or read as of is refused, as the backend's
+ * ontologyagent.ParseValidAt words it, or undefined for a day it takes: a
+ * calendar date, YYYY-MM-DD, not after today (UTC).
+ */
+export function validAtRefusal(day: string): string | undefined {
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(day)
+    ? new Date(`${day}T00:00:00Z`)
+    : undefined;
+  if (
+    !at ||
+    Number.isNaN(at.getTime()) ||
+    at.toISOString().slice(0, 10) !== day
+  )
+    return `valid_at "${day}" is not a date, YYYY-MM-DD`;
+  const today = now().slice(0, 10);
+  return day > today
+    ? `valid_at ${day} is after today (${today}, UTC): no load records the future`
+    : undefined;
+}
+
+// What can only show the load as it is now, by read kind: under a valid_at
+// every read but view and evidence fails current_only, as the engine's do.
+const CURRENT_ONLY: Record<string, string> = {
+  entity: "an entity read gives what rules derive now",
+  pattern: "a pattern reads facts and rules as they hold now",
+  explain: "a proof is of what rules derive now",
+  violations: "violation records are as the load holds them now",
+  query: "a query reads the load as it is now",
+};
+
 export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
   const s = ontologyOf(req);
   if (!isScope(s)) return s;
@@ -2422,6 +2453,9 @@ export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
     return fail("NOT_FOUND", "load not found");
   const reads = readsOf(readsJson);
   if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
+  const validAt = (req.body as { validAt?: string } | undefined)?.validAt || "";
+  const dayRefusal = validAt ? validAtRefusal(validAt) : undefined;
+  if (dayRefusal) return fail("INVALID_ARGUMENT", dayRefusal);
   advanceLoads(s.o.id);
   const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
   if (!l) return fail("NOT_FOUND", "load not found");
@@ -2452,10 +2486,19 @@ export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
   const model = rulesOf(l, view);
   return ok({
     resultJson: JSON.stringify({
-      as_of: now().slice(0, 10),
-      results: reads.map((r) =>
-        answer(model, r, { errors: knobs.readErrors, view }),
-      ),
+      asked_at: now().slice(0, 10),
+      ...(validAt ? { valid_at: validAt } : {}),
+      results: reads.map((r) => {
+        const kind = Object.keys(r)[0] || "";
+        return validAt && CURRENT_ONLY[kind]
+          ? {
+              error: {
+                code: "current_only",
+                message: `${CURRENT_ONLY[kind]}, so it can't answer as of ${validAt} (valid_at)`,
+              },
+            }
+          : answer(model, r, { errors: knobs.readErrors, view });
+      }),
       stats: { instances: model.facts.size, wall_ms: 1 },
     }),
   } satisfies ReadFoundryGraphResponse);

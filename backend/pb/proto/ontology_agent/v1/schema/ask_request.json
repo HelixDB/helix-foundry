@@ -4,7 +4,7 @@
   "description": "One question's request.",
   "type": "object",
   "properties": {
-    "as_of": {
+    "asked_at": {
       "description": "When the question was asked, a date or an RFC 3339 time: the `today` its rules see.",
       "type": "string"
     },
@@ -86,6 +86,13 @@
       "description": "The question's id, the same on every attempt.",
       "type": "string"
     },
+    "valid_at": {
+      "description": "The time to answer as of, a date (its midnight where the question was asked) or an RFC\n3339 time, not after `asked_at`: entities are read as they were then by valid time,\nhistory and changes as the load had recorded them by then, and documents dated after\nits day are left out (undated ones are read, shown undated). A read that can only show\nthe load as it is now (a query, a search for entities, a Helix read, a rule's proof,\nviolation records, a type's count, the load's overview) isn't offered and is refused.\nAbsent, the question is answered as of now. Refused with a `visibility`, even one that\nholds the whole load: a reader through its sources reads nothing as of a time.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "visibility": {
       "description": "What the asker holds of the load, when it isn't everything: the question sees the\nversion and the load as those sources fill them, and reads nothing raw or historic.",
       "anyOf": [
@@ -112,7 +119,7 @@
     "catalog",
     "question",
     "helix",
-    "as_of",
+    "asked_at",
     "limits",
     "models"
   ],

@@ -6284,6 +6284,10 @@
         "workflowRunId": {
           "type": "string",
           "description": "An open run of a workflow of this ontology to record the question\nunder; empty for none. A retry with the same client_token records it\nonce."
+        },
+        "validAt": {
+          "type": "string",
+          "description": "The day to answer as of, YYYY-MM-DD, not after today (UTC); empty for\nnow. Entities are read as they were then, history and changes to it, and\ndocuments dated after it are left out; reads that can only show the load\nas it is now (queries, searches for entities) aren't offered. A\nfollow-up is asked as of its thread's day: another is INVALID_ARGUMENT.\nFAILED_PRECONDITION for anyone who reads the load through grants, even\nall of it."
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
@@ -6718,6 +6722,10 @@
         "workflowRunId": {
           "type": "string",
           "description": "An open run of a workflow of this ontology to record the read under,\nwith its result; empty for none. NOT_FOUND for a run the ontology has\nnot, FAILED_PRECONDITION for one that finished."
+        },
+        "validAt": {
+          "type": "string",
+          "description": "The day to read as of, YYYY-MM-DD, not after today (UTC); empty for now.\nEvery read but view and evidence then fails current_only, and evidence\nleaves out quotes of documents dated after it or whose date couldn't be\nread, and rows the load didn't know by then."
         }
       },
       "description": "ReadFoundryGraphRequest reads a load of the ontology's database: entities\nwith the facts its version's rules derive, patterns, explanations (\"why\"),\nrule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each\nthe `reads` item of the ontology agent's read_request.json. NOT_FOUND for a\nload of another ontology or one deleted; FAILED_PRECONDITION while it is\nbeing deleted; RESOURCE_EXHAUSTED while the workspace has as many reads\nrunning as it may."
@@ -11188,6 +11196,10 @@
           "type": "string",
           "format": "int64",
           "description": "What a running question holds back of the month's budget: its cap."
+        },
+        "validAt": {
+          "type": "string",
+          "description": "The day it is answered as of, YYYY-MM-DD; empty for when it was asked."
         }
       },
       "description": "FoundryQuestion is one question asked of one load of an ontology. The\nfoundry-ask-worker answers it with the ontology agent's read-only Ask; its\nrun streams events (ListFoundryQuestionEvents), then it ends with a result."

@@ -64,6 +64,7 @@ import {
   provenanceText,
   resolvedByText,
   snippet,
+  UNDATED,
   valueText,
   type Evidence,
   type EntityIdentity,
@@ -181,7 +182,7 @@ function QuoteChip({
   link: (path: string) => string;
 }) {
   const { id: o } = useOntology();
-  const label = `${prop} quoted in ${docName(q.documentId)}`;
+  const label = `${prop} quoted in ${docName(q.documentId)}${q.undated ? ", undated" : ""}`;
   return (
     <Link
       className="an-chip"
@@ -191,6 +192,7 @@ function QuoteChip({
     >
       <FileText size={13} aria-hidden />
       {docName(q.documentId)}
+      {q.undated && " · undated"}
     </Link>
   );
 }
@@ -556,6 +558,7 @@ function Entity({
           >
             Open in {docName(ev.documentId)}
           </Link>
+          {ev.undated && <small title={UNDATED}> · undated</small>}
         </span>
       </li>
     );

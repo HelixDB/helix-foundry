@@ -686,6 +686,8 @@ export type PropEvidence = Span & {
   value: unknown;
   quote: string;
   confidence?: number;
+  // Read as of a date, its document gives none: it may be from after it.
+  undated?: true;
 };
 export type EntityGraph = {
   entity:
@@ -1353,6 +1355,10 @@ export function resolvedByText(r?: string): string | undefined {
   }
 }
 
+/** Why a quote is flagged undated: read as of a date, its document gives none. */
+export const UNDATED =
+  "Read as of a date, its document gives no date: it may be from after it";
+
 /** What states a fact: a table row, or a quote in a document. */
 export type Evidence =
   | (SourceRow & { kind: "row"; confidence?: number })
@@ -1361,6 +1367,8 @@ export type Evidence =
       documentId: string;
       quote: string;
       confidence?: number;
+      // Read as of a date, its document gives none: it may be from after it.
+      undated?: true;
     });
 
 /** The evidence of up to 50 facts, by fact key (index-backed). Null when none has a key. */

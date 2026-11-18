@@ -29,7 +29,7 @@ const fits = (value: unknown, def = "Answer") =>
 describe("the read envelope", () => {
   it("keeps each outcome in order, a failure's code and fields checked", () => {
     const body = {
-      as_of: "2026-10-19",
+      asked_at: "2026-10-19",
       results: [
         { ok: { kind: "pattern", rows: [] } },
         { error: { code: "budget", message: "too deep", limit: 2000000 } },
@@ -60,7 +60,7 @@ describe("the read envelope", () => {
         }),
       ),
     ).toEqual({
-      asOf: "2026-10-19",
+      askedAt: "2026-10-19",
       results: [
         { ok: true, value: { kind: "pattern", rows: [] } },
         {
@@ -116,9 +116,55 @@ describe("the read envelope", () => {
     expect(parseReadResult("[]")).toBeUndefined();
     expect(parseReadResult('{"results":{}}')).toBeUndefined();
     expect(parseReadResult('{"results":[]}')).toMatchObject({
-      asOf: "",
+      askedAt: "",
       results: [],
       stats: { instances: 0, wallMs: 0 },
+    });
+  });
+
+  it("keeps the day a read was as of, and current_only failures", () => {
+    const body = {
+      asked_at: "2026-11-18",
+      valid_at: "2026-03-01",
+      results: [
+        {
+          ok: {
+            kind: "view",
+            ontology_toml: "o",
+            mappings_toml: "m",
+            partial: [],
+          },
+        },
+        {
+          error: {
+            code: "current_only",
+            message:
+              "a query reads the load as it is now, so it can't answer as of 2026-03-01 (valid_at)",
+          },
+        },
+      ],
+      stats: { instances: 0, wall_ms: 1 },
+    };
+    expect(contractErrors("read_result", body)).toEqual([]);
+    const parsed = parseReadResult(JSON.stringify(body));
+    expect(parsed).toMatchObject({
+      askedAt: "2026-11-18",
+      validAt: "2026-03-01",
+    });
+    expect(parsed?.results[1]).toEqual({
+      ok: false,
+      error: {
+        code: "current_only",
+        message:
+          "a query reads the load as it is now, so it can't answer as of 2026-03-01 (valid_at)",
+      },
+    });
+    expect(
+      parseReadResult(JSON.stringify({ ...body, valid_at: null })),
+    ).not.toHaveProperty("validAt");
+    expect(parseFailure({ code: "current_only" })).toEqual({
+      code: "current_only",
+      message: "The read failed.",
     });
   });
 
@@ -657,6 +703,29 @@ describe("an evidence read", () => {
         i.kind === "quote" ? i.value : null,
       ),
     ).toEqual(["net_30", 30, undefined]);
+  });
+
+  it("flags a quote of an undated document, read as of a day", () => {
+    const quote = {
+      kind: "quote",
+      doc_id: "doc_1",
+      section: 0,
+      start: 0,
+      end: 12,
+      quote: "Net 30 terms",
+      confidence: 0.9,
+    };
+    const ok = {
+      kind: "evidence",
+      items: [{ ...quote, undated: true }, quote, { ...quote, undated: false }],
+    };
+    fits(ok);
+    expect(
+      parseEvidenceResult({
+        ...ok,
+        items: [...ok.items, { ...quote, undated: "yes" }],
+      })?.items.map((i) => i.kind === "quote" && i.undated),
+    ).toEqual([true, undefined, undefined, undefined]);
   });
 });
 

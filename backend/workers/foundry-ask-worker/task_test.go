@@ -670,7 +670,7 @@ func TestAnswer(t *testing.T) {
 		case req.Goal != "Track who signs our contracts" || fmt.Sprint(req.Catalog) != fmt.Sprint(catalog):
 			t.Fatalf("goal %q, catalog %+v", req.Goal, req.Catalog)
 		case req.Question != "Which customers signed this year?" || req.Focus == nil ||
-			req.Focus.Type != "Customer" || req.Focus.ID != "scus_1" || req.Focus.Key != nil || req.AsOf != "2026-10-19T11:59:00Z":
+			req.Focus.Type != "Customer" || req.Focus.ID != "scus_1" || req.Focus.Key != nil || req.AskedAt != "2026-10-19T11:59:00Z":
 			t.Fatalf("question = %+v", req)
 		case len(req.History) != 1 || req.History[0] != (ontologyagent.AskTurn{Question: "Who are our customers?", Answer: "Acme signed [c1].\n\n- Globex [c2]"}):
 			t.Fatalf("history = %+v", req.History)
@@ -678,6 +678,43 @@ func TestAnswer(t *testing.T) {
 			t.Fatalf("limits = %+v", req.Limits)
 		case !strings.HasPrefix(req.Helix.URL, "http://127.0.0.1:") || req.Helix.Token == "" || req.Helix.TimeoutSecs != 30:
 			t.Fatalf("helix = %+v", req.Helix)
+		}
+	})
+
+	// A question asked as of a day sends it as valid_at beside when it was
+	// asked (contract 4.28.0), in a request the agent accepts; one asked as of
+	// now sends no valid_at.
+	t.Run("asks as of the question's day", func(t *testing.T) {
+		h := newHarness(t)
+		q := question(1)
+		day := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		q.ValidAt = &day
+		if settled := h.run(t, q); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		body := h.agent.calls()[0]
+		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(body)); err != nil {
+			t.Fatalf("the request does not match ask_request.json: %v", err)
+		}
+		req, _ := decodeAsk(t, body)
+		if req.AskedAt != "2026-10-19T11:59:00Z" || req.ValidAt != "2026-03-01" {
+			t.Fatalf("asked_at %q, valid_at %q", req.AskedAt, req.ValidAt)
+		}
+		// Accepted as of a day the API's clock reached before the database's
+		// created_at did, it is asked no earlier than that day.
+		ahead := newHarness(t)
+		early := question(1)
+		next := early.CreatedAt.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
+		early.ValidAt = &next
+		ahead.run(t, early)
+		req, _ = decodeAsk(t, ahead.agent.calls()[0])
+		if req.AskedAt != next.Format(time.RFC3339) || req.ValidAt != next.Format(time.DateOnly) {
+			t.Fatalf("asked_at %q, valid_at %q", req.AskedAt, req.ValidAt)
+		}
+		plain := newHarness(t)
+		plain.run(t, question(1))
+		if body := plain.agent.calls()[0]; strings.Contains(body, "valid_at") || !strings.Contains(body, `"asked_at":"2026-10-19T11:59:00Z"`) {
+			t.Fatalf("a question as of now sent %s", body)
 		}
 	})
 
