@@ -214,6 +214,7 @@ type ReadFoundryGraphInput struct {
 	LoadID        string           `json:"load_id,omitempty" jsonschema:"Load to read; the ontology's current load when empty."`
 	Reads         []map[string]any `json:"reads" jsonschema:"1 to 20 reads, each an object with exactly one key: entity, pattern, explain, violations, evidence or query. helix_foundry_read_guide returns their schema."`
 	WorkflowRunID string           `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
+	ValidAt       string           `json:"valid_at,omitempty" jsonschema:"Read as of this day, YYYY-MM-DD, not after today (UTC); empty for now. Evidence then leaves out quotes of documents dated after it and flags an undated document's quote undated; reads that can only show the load as it is now (entity, pattern, explain, violations, query) are refused with current_only."`
 }
 
 // FoundryEntityInput names an entity as a read does: its type and exactly one of id, key and
@@ -233,6 +234,7 @@ type AskFoundryInput struct {
 	Focus         *FoundryEntityInput `json:"focus,omitempty" jsonschema:"The entity the question is about."`
 	LoadID        string              `json:"load_id,omitempty" jsonschema:"Load to ask; the ontology's current load when empty."`
 	WorkflowRunID string              `json:"use_case_run_id,omitempty" jsonschema:"An open run of a use case (helix_foundry_start_use_case_run) to record this call under; empty for none."`
+	ValidAt       string              `json:"valid_at,omitempty" jsonschema:"Answer as of this day, YYYY-MM-DD, not after today (UTC); empty for now. Entities are read as they were then and documents dated after it are left out; reads that can only show the load as it is now (queries, searches for entities) are refused, never answered as of now instead."`
 }
 
 type GetFoundryQuestionInput struct {
@@ -879,6 +881,8 @@ type FoundryQuestionOutput struct {
 	ThreadID     string `json:"thread_id"`
 	LoadID       string `json:"load_id"`
 	Question     string `json:"question"`
+	// ValidAt is the day it is answered as of, YYYY-MM-DD; empty for when it was asked.
+	ValidAt string `json:"valid_at,omitempty"`
 	// Status is queued, running, answered, cannot_answer, failed or cancelled; done says
 	// it will not change, otherwise call helix_foundry_get_question again.
 	Status string `json:"status"`
@@ -1527,6 +1531,7 @@ func (s *Service) ReadFoundryGraph(
 	}
 	req := &foundryv1.ReadFoundryGraphRequest{
 		WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, LoadId: input.LoadID, ReadsJson: string(reads), WorkflowRunId: input.WorkflowRunID,
+		ValidAt: input.ValidAt,
 	}
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
 		"ReadFoundryGraph", "GetFoundryOntology", "GetFoundryLoad"); err != nil {
@@ -1573,7 +1578,7 @@ func (s *Service) AskFoundryQuestion(
 	}
 	req := &foundryv1.AskFoundryQuestionRequest{
 		WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, LoadId: input.LoadID, ThreadId: input.ThreadID,
-		Question: input.Question, ClientToken: input.ClientToken, WorkflowRunId: input.WorkflowRunID,
+		Question: input.Question, ClientToken: input.ClientToken, WorkflowRunId: input.WorkflowRunID, ValidAt: input.ValidAt,
 	}
 	if input.Focus != nil {
 		focus, err := json.Marshal(input.Focus)
@@ -2313,7 +2318,7 @@ func FoundrySync(sync *foundryv1.ConnectorSync) FoundrySyncOutput {
 func FoundryQuestion(q *foundryv1.FoundryQuestion) FoundryQuestionOutput {
 	out := FoundryQuestionOutput{
 		ContentTrust: contentTrustUntrusted, ID: q.GetId(), ThreadID: q.GetThreadId(), LoadID: q.GetLoadId(), Question: q.GetQuestion(),
-		Status: q.GetStatus(), Done: QuestionDone(q.GetStatus()), Error: q.GetError(), Attempts: q.GetAttempts(), USDMicros: q.GetUsdMicros(),
+		ValidAt: q.GetValidAt(), Status: q.GetStatus(), Done: QuestionDone(q.GetStatus()), Error: q.GetError(), Attempts: q.GetAttempts(), USDMicros: q.GetUsdMicros(),
 		CreatedAt: protoTimestamp(q.GetCreatedAt()), FinishedAt: protoTimestamp(q.GetFinishedAt()),
 	}
 	if q.GetResultJson() != "" {

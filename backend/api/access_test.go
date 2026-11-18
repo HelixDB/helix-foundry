@@ -857,6 +857,13 @@ func TestGranteePartial(t *testing.T) {
 		if err != nil || again.GetQuestion().GetId() != asked.GetQuestion().GetId() {
 			t.Fatalf("%+v, %v", again, err)
 		}
+		// The engine reads nothing as of a day for a reader of part of a load:
+		// refused when asked, not failed when run.
+		_, err = client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?",
+			ClientToken: "part-dated", ValidAt: "2026-03-01"})
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "only part of this load") {
+			t.Fatalf("a day of part of a load: %v", err)
+		}
 	})
 	t.Run("an answer reads while its grants hold what it read", func(t *testing.T) {
 		token := "seen"

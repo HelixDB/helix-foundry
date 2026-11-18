@@ -319,6 +319,29 @@ func TestRead(t *testing.T) {
 		}
 	})
 
+	// A read as of a day sends it beside the day it was asked (contract
+	// 4.28.0), its request one the agent accepts; today is the latest day.
+	t.Run("reads as of a day", func(t *testing.T) {
+		h := newHarness(t)
+		for _, day := range []string{"2026-03-01", "2026-10-20"} {
+			req := request("ws-1", "ont-1")
+			req.ValidAt = day
+			if _, err := h.reader.Read(ctx, req); err != nil {
+				t.Fatalf("%s: %v", day, err)
+			}
+		}
+		requests, _ := h.agent.calls()
+		if len(requests) != 2 || requests[0].AskedAt != "2026-10-20" || requests[0].ValidAt != "2026-03-01" || requests[1].ValidAt != "2026-10-20" {
+			t.Fatalf("requests = %+v", requests)
+		}
+		if !strings.Contains(h.agent.bodies[0], `"asked_at":"2026-10-20","valid_at":"2026-03-01"`) {
+			t.Fatalf("body = %s", h.agent.bodies[0])
+		}
+		if err := contracttest.Validate(t, contracttest.Schema(t, "read_request.json"), []byte(h.agent.bodies[0])); err != nil {
+			t.Fatalf("the request does not match read_request.json: %v", err)
+		}
+	})
+
 	// A workspace runs at most MaxReadsPerWorkspace reads at once; another
 	// workspace's reads don't wait for it, and a slot frees when a read ends.
 	t.Run("limits each workspace's concurrent reads", func(t *testing.T) {
@@ -372,6 +395,8 @@ func TestRead(t *testing.T) {
 			"a deleted ontology":      {request("ws-1", "ont-1"), func(h *harness) { h.store.ontologies["ont-1"].DeletedAt = &now }, codes.NotFound},
 			"a paused database":       {request("ws-2", "ont-2"), func(h *harness) { h.store.paused["tenant-2"] = true }, codes.FailedPrecondition},
 			"an agent on another one": {request("ws-1", "ont-1"), func(h *harness) { h.agent.contract = "0.0.1" }, codes.FailedPrecondition},
+			"a day that isn't one":    {func() *foundryreadv1.ReadRequest { r := request("ws-1", "ont-1"); r.ValidAt = "2026-3-1"; return r }(), nil, codes.InvalidArgument},
+			"a day after today":       {func() *foundryreadv1.ReadRequest { r := request("ws-1", "ont-1"); r.ValidAt = "2026-10-21"; return r }(), nil, codes.InvalidArgument},
 		} {
 			h := newHarness(t)
 			if tc.mutate != nil {

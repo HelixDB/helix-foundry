@@ -681,6 +681,32 @@ func TestAnswer(t *testing.T) {
 		}
 	})
 
+	// A question asked as of a day sends it as valid_at beside when it was
+	// asked (contract 4.28.0), in a request the agent accepts; one asked as of
+	// now sends no valid_at.
+	t.Run("asks as of the question's day", func(t *testing.T) {
+		h := newHarness(t)
+		q := question(1)
+		day := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		q.ValidAt = &day
+		if settled := h.run(t, q); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		body := h.agent.calls()[0]
+		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(body)); err != nil {
+			t.Fatalf("the request does not match ask_request.json: %v", err)
+		}
+		req, _ := decodeAsk(t, body)
+		if req.AskedAt != "2026-10-19T11:59:00Z" || req.ValidAt != "2026-03-01" {
+			t.Fatalf("asked_at %q, valid_at %q", req.AskedAt, req.ValidAt)
+		}
+		plain := newHarness(t)
+		plain.run(t, question(1))
+		if body := plain.agent.calls()[0]; strings.Contains(body, "valid_at") || !strings.Contains(body, `"asked_at":"2026-10-19T11:59:00Z"`) {
+			t.Fatalf("a question as of now sent %s", body)
+		}
+	})
+
 	// The agent stops itself at its wall-time cap; the attempt's own bound,
 	// which the call carries, also allows for the wait on a sidecar still
 	// starting, so the call has AskAttemptMargin past the cap however long

@@ -217,6 +217,11 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 4000
+                  },
+                  "valid_at": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Answer as of this day, YYYY-MM-DD, not after today (UTC); absent for now. Entities are read as they were then and documents dated after it are left out; reads that can only show the load as it is now are refused."
                   }
                 }
               }
@@ -431,6 +436,11 @@
           },
           "question": {
             "type": "string"
+          },
+          "valid_at": {
+            "type": "string",
+            "format": "date",
+            "description": "The day the question is answered as of; absent for when it was asked."
           },
           "created_at": {
             "type": "string"

@@ -174,7 +174,7 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 }
 
 func askHTTP(w http.ResponseWriter, r *http.Request, resolved HTTPCall, call *Call, bodyTimeout time.Duration) (FoundryQuestionOutput, error) {
-	question, err := readHTTPQuestion(w, r, bodyTimeout)
+	body, err := readHTTPQuestion(w, r, bodyTimeout)
 	if err != nil {
 		return FoundryQuestionOutput{}, err
 	}
@@ -184,7 +184,8 @@ func askHTTP(w http.ResponseWriter, r *http.Request, resolved HTTPCall, call *Ca
 		return FoundryQuestionOutput{}, invalidHTTPRequest("Idempotency-Key is required, at most 64 bytes of UTF-8")
 	}
 	out, _, err := resolved.Service.AskFoundryQuestion(resolved.Context, resolved.Identity, call, AskFoundryInput{
-		OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, Question: question, ClientToken: httpClientToken(resolved.Caller, key),
+		OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, Question: body.Question,
+		ClientToken: httpClientToken(resolved.Caller, key), ValidAt: body.ValidAt,
 	})
 	return out, err
 }
@@ -211,10 +212,10 @@ func invalidHTTPRequest(message string) error {
 // of the body, which net/http makes before it writes the response, with no end of its own if
 // the client stalls. A host whose writer has no read deadlines leaves all of this to its server's
 // own timeouts.
-func readHTTPQuestion(w http.ResponseWriter, r *http.Request, bodyTimeout time.Duration) (string, error) {
+func readHTTPQuestion(w http.ResponseWriter, r *http.Request, bodyTimeout time.Duration) (httpQuestion, error) {
 	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/json" {
-		return "", invalidHTTPRequest("Content-Type must be application/json")
+		return httpQuestion{}, invalidHTTPRequest("Content-Type must be application/json")
 	}
 	// Resolving took some of what was first set, and the time was no fault of the client's.
 	deadline := time.Now().Add(bodyTimeout)
@@ -222,19 +223,24 @@ func readHTTPQuestion(w http.ResponseWriter, r *http.Request, bodyTimeout time.D
 		deadline = end
 	}
 	_ = http.NewResponseController(w).SetReadDeadline(deadline)
-	var input struct {
-		Question string `json:"question"`
-	}
+	var input httpQuestion
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, httpMaxBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
-		return "", httpBodyError(r, err, "expected a JSON object containing question")
+		return httpQuestion{}, httpBodyError(r, err, "expected a JSON object containing question")
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return "", httpBodyError(r, err, "expected exactly one JSON object")
+		return httpQuestion{}, httpBodyError(r, err, "expected exactly one JSON object")
 	}
-	return input.Question, nil
+	return input, nil
+}
+
+// httpQuestion is an HTTP Ask's body: the question and, optionally, the day to answer it as of
+// (YYYY-MM-DD, checked by the backend).
+type httpQuestion struct {
+	Question string `json:"question"`
+	ValidAt  string `json:"valid_at"`
 }
 
 // httpBodyError tells a body the client didn't finish sending from one that is wrong. A failed read

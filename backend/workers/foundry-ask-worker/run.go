@@ -331,6 +331,11 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 			Read: ontologyagent.AskReadLimits{WallMS: uint64(cfg.ReadWallMS), ScanEntities: uint64(cfg.ReadScanEntities)},
 		},
 	}
+	if q.ValidAt != nil {
+		// A day, from its midnight where the question was asked (UTC); never
+		// after the day it was asked, as AskFoundryQuestion checked.
+		req.ValidAt = q.ValidAt.UTC().Format(time.DateOnly)
+	}
 	if len(q.Focus) > 0 {
 		// AskFoundryQuestion stored it as the lookup ParseFocus read.
 		focus, err := ontologyagent.ParseFocus(string(q.Focus))
