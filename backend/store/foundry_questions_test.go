@@ -112,6 +112,39 @@ func TestFoundryQuestionCreate(t *testing.T) {
 		assert.ErrorIs(t, f.tryAsk(1, "", f.limits()), store.ErrConflict, "the same client token is the same question")
 	})
 
+	// The day a question is answered as of round-trips as midnight UTC, read
+	// one at a time, by its token and in lists, and stays nil when not given.
+	t.Run("keeps the day it is answered as of", func(t *testing.T) {
+		f := newQuestionFixture(t, "C9")
+		day := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		token := "ask-dated"
+		require.NoError(t, f.db.CreateFoundryQuestion(ctx, &model.FoundryQuestion{
+			ID: f.id(2), WorkspaceID: f.workspaceID, OntologyID: f.ontologyID, LoadID: id26("FL-" + f.tag), VersionID: id26("FV-" + f.tag),
+			ThreadID: f.id(2), Question: "question as of March?", ValidAt: &day, ClientToken: &token, MaxUSDMicros: questionCap,
+		}, f.limits()))
+		plain := f.ask(t, 1, "")
+		dated := f.get(t, f.id(2))
+		require.NotNil(t, dated.ValidAt)
+		assert.True(t, day.Equal(*dated.ValidAt), "got %v", dated.ValidAt)
+		assert.Equal(t, "2026-03-01", dated.ValidAt.UTC().Format(time.DateOnly))
+		assert.Nil(t, f.get(t, plain).ValidAt)
+		byToken, err := f.db.GetFoundryQuestionByClientToken(ctx, f.ontologyID, token)
+		require.NoError(t, err)
+		require.NotNil(t, byToken.ValidAt)
+		assert.True(t, day.Equal(*byToken.ValidAt))
+		page, _, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, "", "", 10, nil)
+		require.NoError(t, err)
+		require.Len(t, page, 2)
+		for _, q := range page {
+			if q.ID == f.id(2) {
+				require.NotNil(t, q.ValidAt)
+				assert.True(t, day.Equal(*q.ValidAt))
+			} else {
+				assert.Nil(t, q.ValidAt, "a question without a day lists none")
+			}
+		}
+	})
+
 	t.Run("refuses past the hour's count", func(t *testing.T) {
 		f := newQuestionFixture(t, "C2")
 		limits := f.limits()
