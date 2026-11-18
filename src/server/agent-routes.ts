@@ -6,12 +6,13 @@ import {
   llmsFullTxt,
   llmsTxt,
   mcpManifest,
+  setupMd,
   siteOf,
   type Site,
 } from "./agent-context";
 
-// The answers of the site's agent routes (src/app/llms.txt, llms-full.txt
-// and .well-known): a 200 in the format asked for, readable from
+// The answers of the site's agent routes (src/app/llms.txt, llms-full.txt,
+// setup.md and .well-known): a 200 in the format asked for, readable from
 // any origin and cached by the CDN for 5 minutes. A local build serves none
 // of them: it serves no crawler. Off prod they say
 // noindex, as robots.txt does.
@@ -40,6 +41,10 @@ const TEXT = {
           docsText("/llms-full.txt"),
         ])),
       ),
+  },
+  setup: {
+    type: "text/markdown; charset=utf-8",
+    body: async (site: Site) => setupMd(site),
   },
 } as const;
 

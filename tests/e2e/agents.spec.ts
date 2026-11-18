@@ -1,7 +1,7 @@
 import { APP_ORIGIN, expect, test } from "./support/mock";
 
 // What the hosted site serves agents and crawlers (src/app/llms.txt,
-// llms-full.txt, .well-known and robots.ts). The mock is no prod stamp: it
+// llms-full.txt, setup.md, .well-known and robots.ts) and foundry.new. The mock is no prod stamp: it
 // reads no docs and asks crawlers to read nothing.
 
 const MCP = "https://mcp.dev.helix-db.com/mcp";
@@ -49,6 +49,33 @@ test("tells agents what Foundry is for and how to connect", async ({
   const catalog = await request.get("/.well-known/ai-catalog.json");
   expect(catalog.headers()["content-type"]).toBe("application/ai-catalog+json");
   expect((await catalog.json()).entries).toHaveLength(2);
+});
+
+test("serves the setup prompt on foundry.new, and sends the rest to the site", async ({
+  request,
+}) => {
+  const host = { host: "foundry.new" };
+  const res = await request.get("/", { headers: host, maxRedirects: 0 });
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toBe("text/markdown; charset=utf-8");
+  const text = await res.text();
+  expect(text).toMatch(/^> Helix Foundry’s setup, for an agent/);
+  expect(text).toContain("\n# Set up Helix Foundry with me\n");
+  expect(text).toContain(`\`claude mcp add --transport http helix ${MCP}\``);
+  // Its links are the product's site: foundry.new signs no one in.
+  expect(text).toContain("https://foundry.helix-db.com");
+  expect(text).not.toContain("foundry.new/");
+
+  for (const path of ["/login", "/ask?new=1", "/setup.md"]) {
+    const away = await request.get(path, { headers: host, maxRedirects: 0 });
+    expect(away.status()).toBe(307);
+    expect(away.headers().location).toBe(`https://foundry.helix-db.com${path}`);
+  }
+
+  // The site's own copy, with its own links.
+  const own = await request.get("/setup.md");
+  expect(own.headers()["content-type"]).toBe("text/markdown; charset=utf-8");
+  expect(await own.text()).toContain(`${APP_ORIGIN}`);
 });
 
 test("asks crawlers to read nothing off prod", async ({ request }) => {
