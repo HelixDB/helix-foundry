@@ -177,8 +177,9 @@ type AgentClient interface {
 	// Reads one load with its version's rules applied as they are read: an entity's derived
 	// facts, flags and live violations, a pattern's facts, why a fact holds, a page of stored
 	// violation records, the evidence for a fact, an entity or one of its properties (its rows,
-	// then documents' quotes of it), or a typed query's rows, counts or aggregates. It writes
-	// nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
+	// then documents' quotes of it), or a typed query's rows, counts or aggregates. An answer
+	// over a rule whose `not` reads a property few or none of its type's entities have in the
+	// load says so (`unfilled`). It writes nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
 	// `too_broad`, `unknown_entity`, `not_visible`, `current_only` (under `valid_at`, every read
 	// but `evidence` and `view`), `invalid`); the result is at most 4 MiB.
 	//
@@ -624,8 +625,9 @@ type AgentServer interface {
 	// Reads one load with its version's rules applied as they are read: an entity's derived
 	// facts, flags and live violations, a pattern's facts, why a fact holds, a page of stored
 	// violation records, the evidence for a fact, an entity or one of its properties (its rows,
-	// then documents' quotes of it), or a typed query's rows, counts or aggregates. It writes
-	// nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
+	// then documents' quotes of it), or a typed query's rows, counts or aggregates. An answer
+	// over a rule whose `not` reads a property few or none of its type's entities have in the
+	// load says so (`unfilled`). It writes nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
 	// `too_broad`, `unknown_entity`, `not_visible`, `current_only` (under `valid_at`, every read
 	// but `evidence` and `view`), `invalid`); the result is at most 4 MiB.
 	//

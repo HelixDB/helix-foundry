@@ -240,9 +240,10 @@ describe("mock rules", () => {
         },
       ],
       next: key,
+      unfilled: [],
     });
     expect(page(10)?.next).toBeNull();
-    expect(page(10, key)).toEqual({ records: [], next: null });
+    expect(page(10, key)).toEqual({ records: [], next: null, unfilled: [] });
     // The engine's defaults: every constraint, 100 a page.
     expect(read(model, { violations: {} })).toMatchObject({
       ok: { records: [{ violation_key: key }], next: null },
@@ -294,6 +295,7 @@ describe("mock rules", () => {
     expect(explained("link:in", [england, soho])).toEqual({
       steps: [],
       root: null,
+      unfilled: [],
     });
   });
 

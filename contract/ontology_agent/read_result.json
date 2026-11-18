@@ -202,6 +202,13 @@
               "type": "string",
               "const": "entity"
             },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
+            },
             "violations": {
               "description": "The violations naming it first, as the rules have them now.",
               "type": "array",
@@ -233,6 +240,13 @@
               "items": {
                 "$ref": "#/$defs/PatternRow"
               }
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
             }
           },
           "required": [
@@ -263,6 +277,13 @@
               "items": {
                 "$ref": "#/$defs/ProofStep"
               }
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
             }
           },
           "required": [
@@ -291,6 +312,13 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/StoredViolation"
+              }
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
               }
             }
           },
@@ -340,6 +368,13 @@
             "stats": {
               "description": "What it read.",
               "$ref": "#/$defs/Stats"
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
             }
           },
           "required": [
@@ -2027,6 +2062,53 @@
           "type": "string",
           "const": "rust"
         }
+      ]
+    },
+    "Unfilled": {
+      "description": "A property a rule reads under `not` that few or none of its type's entities have.",
+      "type": "object",
+      "properties": {
+        "filled": {
+          "description": "How many of the type's entities have it in the load: under 5% of `of`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "negated": {
+          "description": "Whether the read negates `rule` itself (a query's `not_holds`): then `prop` is read\nwith no `not` in the rule, which fails where it is empty.",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "`never filled in this load`, or `filled on <filled> of <of> in this load`.",
+          "type": "string"
+        },
+        "of": {
+          "description": "How many entities of the type the load holds; more than 0.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property, read under an odd number of `not`s, the read's own negation counted:\nwhere it is empty that negation holds.",
+          "type": "string"
+        },
+        "rule": {
+          "description": "The rule the result depends on, as `rule:<name>` or `constraint:<name>`.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type whose entities the property is read of.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "negated",
+        "type",
+        "prop",
+        "filled",
+        "of",
+        "note"
       ]
     }
   }

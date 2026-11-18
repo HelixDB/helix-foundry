@@ -1510,6 +1510,9 @@ func (s *Service) FoundryReadGuide(
 			"type may be left out, and a value several entities share is refused, naming them. A query starts from ids, keys or text: " +
 			"text finds exact names, keys and identifiers first, then names that begin with it, then shared words, and rows keep that " +
 			"order unless order_by sets one. " +
+			"An entity, pattern, explain, violations or query answer may carry unfilled: each rule it depends on whose `not` " +
+			"reads a property few or none of its type's entities have in the load (filled of of, and a note), so that rule " +
+			"holds there because the property is empty and checked nothing; say so rather than trusting the rule. " +
 			"Every read in a call has its own result, in order.",
 	}, len(ontologyagent.ReadKinds), nil
 }
