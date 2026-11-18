@@ -59,7 +59,7 @@
       "type": "string"
     },
     "valid_at": {
-      "description": "The day to answer as of, not after `asked_at`: evidence then leaves out quotes of\ndocuments dated after it, or whose dates couldn't be read, and rows a sync found changed\nafter it, and flags each undated document's quote; every other read but `view` shows the\nload as it is now, so it is refused (`current_only`). Absent, reads are as of now.",
+      "description": "The day to answer as of, from its midnight UTC, not after `asked_at`: evidence then\nleaves out quotes of documents dated after it, or whose dates couldn't be read, and rows\nthe load didn't know by then, and flags each undated document's quote; every other read\nbut `view` shows the load as it is now, so it is refused (`current_only`). Absent, reads\nare as of now.",
       "anyOf": [
         {
           "$ref": "#/$defs/Day"

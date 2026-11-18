@@ -152,12 +152,14 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	q.Grantee = asker
 	// Of a load it holds only some of, what it holds now is what its answer can
 	// say: the question reads only while its grants hold that.
-	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
-		// The engine reads nothing as of a time for a reader of part of a load.
-		if validAt != nil {
-			return nil, status.Error(codes.FailedPrecondition,
-				"you hold only part of this load, so it can't be asked as of a date; ask without valid_at")
-		}
+	granted, isGrantee := granteeLoad(ctx)
+	// A grantee's question reads through its grants (the worker sends their
+	// visibility), and the engine reads nothing as of a time through grants.
+	if isGrantee && validAt != nil {
+		return nil, status.Error(codes.FailedPrecondition,
+			"you read this load through grants, so it can't be asked as of a date; ask without valid_at")
+	}
+	if isGrantee && granted.Partial {
 		g, _ := access.GranteeFrom(ctx)
 		part, err := s.granteePart(ctx, g, load.ID)
 		if err != nil {

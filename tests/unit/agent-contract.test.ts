@@ -22,7 +22,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
   it("is 4.28.0, the engine that answers as of a date", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.28.0 sha256:55f060fab310f4a5");
+    expect(AGENT_CONTRACT_VERSION).toBe("4.28.0 sha256:dece03e833138010");
   });
 
   it("takes asked_at for as_of, and refuses as_of", () => {

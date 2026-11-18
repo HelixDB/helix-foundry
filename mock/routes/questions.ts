@@ -1739,11 +1739,11 @@ export function askQuestion(req: MockRequest): MockReply {
     )
   )
     return fail("NOT_FOUND", "thread not found");
-  // The engine reads nothing as of a date for a reader of part of a load.
-  if (validAt && req.grantee?.load?.partial)
+  // A grantee asks through its grants, which the engine reads nothing as of a date through.
+  if (validAt && req.grantee)
     return fail(
       "FAILED_PRECONDITION",
-      "you hold only part of this load, so it can't be asked as of a date; ask without valid_at",
+      "you read this load through grants, so it can't be asked as of a date; ask without valid_at",
     );
   const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
   if (refusal) return refusal;

@@ -614,6 +614,13 @@ func TestGranteeAnswers(t *testing.T) {
 				t.Errorf("%s: %v", name, err)
 			}
 		}
+		// A grantee asks through its grants, even ones holding the whole load, and
+		// the engine reads nothing as of a day through grants: refused when asked.
+		_, err = client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1",
+			Question: "How many customers?", ClientToken: "agent-dated", ValidAt: "2026-03-01"})
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "through grants") {
+			t.Fatalf("a day through grants: %v", err)
+		}
 		again, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1",
 			Question: "And then?", ClientToken: "agent-6", ThreadId: mine.GetQuestion().GetId()})
 		if err != nil || again.GetQuestion().GetThreadId() != mine.GetQuestion().GetId() {
@@ -861,7 +868,7 @@ func TestGranteePartial(t *testing.T) {
 		// refused when asked, not failed when run.
 		_, err = client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?",
 			ClientToken: "part-dated", ValidAt: "2026-03-01"})
-		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "only part of this load") {
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "through grants") {
 			t.Fatalf("a day of part of a load: %v", err)
 		}
 	})

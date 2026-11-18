@@ -179,11 +179,13 @@ type AgentClient interface {
 	// violation records, the evidence for a fact, an entity or one of its properties (its rows,
 	// then documents' quotes of it), or a typed query's rows, counts or aggregates. It writes
 	// nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
-	// `too_broad`, `unknown_entity`, `invalid`); the result is at most 4 MiB.
+	// `too_broad`, `unknown_entity`, `not_visible`, `current_only` (under `valid_at`, every read
+	// but `evidence` and `view`), `invalid`); the result is at most 4 MiB.
 	//
 	// The errors come before any result. INVALID_ARGUMENT: `request_json` is not a ReadRequest
 	// (the message has the JSON error), or it can't run (no reads or more than 20, an empty
-	// `database`, an ontology that doesn't compile, a Helix URL that isn't one).
+	// `database`, a `valid_at` after `asked_at`, an ontology that doesn't compile, a Helix URL
+	// that isn't one).
 	// FAILED_PRECONDITION: `load_unknown` (the graph holds no such load, or it is being
 	// deleted) or `load_mismatch` (the load was created with another version), as the message
 	// starts. RESOURCE_EXHAUSTED: the server runs as many reads as it allows at once.
@@ -279,7 +281,8 @@ type AgentClient interface {
 	//
 	// The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
 	// (the message has the JSON error), or it can't run (the message says why: an empty
-	// question, more than 5 earlier turns, an `asked_at` or `valid_at` that isn't a date, a `limits.read.wall_ms`
+	// question, more than 5 earlier turns, an `asked_at` or `valid_at` that isn't a date, a
+	// `valid_at` after `asked_at` or beside a `visibility`, a `limits.read.wall_ms`
 	// past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
 	// one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
 	// server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting
@@ -623,11 +626,13 @@ type AgentServer interface {
 	// violation records, the evidence for a fact, an entity or one of its properties (its rows,
 	// then documents' quotes of it), or a typed query's rows, counts or aggregates. It writes
 	// nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
-	// `too_broad`, `unknown_entity`, `invalid`); the result is at most 4 MiB.
+	// `too_broad`, `unknown_entity`, `not_visible`, `current_only` (under `valid_at`, every read
+	// but `evidence` and `view`), `invalid`); the result is at most 4 MiB.
 	//
 	// The errors come before any result. INVALID_ARGUMENT: `request_json` is not a ReadRequest
 	// (the message has the JSON error), or it can't run (no reads or more than 20, an empty
-	// `database`, an ontology that doesn't compile, a Helix URL that isn't one).
+	// `database`, a `valid_at` after `asked_at`, an ontology that doesn't compile, a Helix URL
+	// that isn't one).
 	// FAILED_PRECONDITION: `load_unknown` (the graph holds no such load, or it is being
 	// deleted) or `load_mismatch` (the load was created with another version), as the message
 	// starts. RESOURCE_EXHAUSTED: the server runs as many reads as it allows at once.
@@ -723,7 +728,8 @@ type AgentServer interface {
 	//
 	// The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
 	// (the message has the JSON error), or it can't run (the message says why: an empty
-	// question, more than 5 earlier turns, an `asked_at` or `valid_at` that isn't a date, a `limits.read.wall_ms`
+	// question, more than 5 earlier turns, an `asked_at` or `valid_at` that isn't a date, a
+	// `valid_at` after `asked_at` or beside a `visibility`, a `limits.read.wall_ms`
 	// past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
 	// one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
 	// server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting

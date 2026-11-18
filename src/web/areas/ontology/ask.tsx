@@ -186,10 +186,9 @@ function focusOf(param: string | null): EntityRef | undefined {
 }
 
 export function AskPage() {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, grantee } = useWorkspace(),
     { id: o, ontology } = useOntology(),
-    access = useReadAccess(),
-    readsPart = useReadsPart();
+    access = useReadAccess();
   const [params, setParams] = useSearchParams();
   const focus = focusOf(params.get("focus"));
   // The day a new thread is answered as of; empty for now. Its follow-ups
@@ -308,8 +307,8 @@ export function AskPage() {
     <div className="ak-chat">
       <ChatBar onBack={threads.length > 0 ? () => setThread("") : undefined}>
         {picker}
-        {/* The engine reads nothing as of a date for a reader of part of a load. */}
-        {!readsPart && <AsOfPicker value={asOf} onChange={setAsOf} />}
+        {/* A grantee asks through its grants, which the engine reads nothing as of a date through. */}
+        {!grantee && <AsOfPicker value={asOf} onChange={setAsOf} />}
       </ChatBar>
       <div className="ak-scroll">
         <div className="ak-start">
@@ -321,7 +320,7 @@ export function AskPage() {
           <Composer
             load={load}
             focus={focus}
-            validAt={(!readsPart && asOf) || undefined}
+            validAt={(!grantee && asOf) || undefined}
             suggestions={suggestions}
             onAsked={(q) => setThread(q.threadId || q.id)}
           />
