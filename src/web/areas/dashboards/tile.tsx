@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
-import type { EntityRef } from "../../../shared/foundry-read";
+import type { EntityRef, Unfilled } from "../../../shared/foundry-read";
 import type {
   DashboardTile,
   OntologyQuery,
@@ -9,6 +9,7 @@ import type {
 } from "../../../shared/wfe";
 import { Button, Skeleton } from "../../kit";
 import { useWorkspace } from "../../ui";
+import { UnfilledNote } from "../explore/derived";
 import { entityId } from "../explore/model";
 import { namingOf, type Naming } from "../explore/naming";
 import { AskVisual } from "../ontology/ask-visual";
@@ -34,6 +35,8 @@ export type TileState =
       kind: "drawn";
       output: QueryOutput;
       query: OntologyQuery;
+      // Rules the answer rests on that checked an empty field.
+      unfilled: Unfilled[];
       ontologyId: string;
       loadId: string;
     };
@@ -102,14 +105,17 @@ function Drawn({
     hasColumns(state.output),
   );
   return (
-    <AskVisual
-      output={state.output}
-      query={state.query}
-      hint={{ kind: tile.visual.kind, title: tile.title }}
-      href={href}
-      naming={naming}
-      actions={actions}
-    />
+    <>
+      <AskVisual
+        output={state.output}
+        query={state.query}
+        hint={{ kind: tile.visual.kind, title: tile.title }}
+        href={href}
+        naming={naming}
+        actions={actions}
+      />
+      <UnfilledNote unfilled={state.unfilled} />
+    </>
   );
 }
 

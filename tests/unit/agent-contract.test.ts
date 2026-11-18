@@ -22,7 +22,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
   it("is 4.29.0, the engine that flags rules over empty properties", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.29.0 sha256:0f6a6e7f9240dbcd");
+    expect(AGENT_CONTRACT_VERSION).toBe("4.29.0 sha256:897bec09af56a000");
   });
 
   it("takes asked_at for as_of, and refuses as_of", () => {

@@ -2074,6 +2074,10 @@
           "format": "uint64",
           "minimum": 0
         },
+        "negated": {
+          "description": "Whether the read negates `rule` itself (a query's `not_holds`): then `prop` is read\nwith no `not` in the rule, which fails where it is empty.",
+          "type": "boolean"
+        },
         "note": {
           "description": "`never filled in this load`, or `filled on <filled> of <of> in this load`.",
           "type": "string"
@@ -2085,7 +2089,7 @@
           "minimum": 0
         },
         "prop": {
-          "description": "The property, read under `not`: where it is empty the negation holds.",
+          "description": "The property, read under an odd number of `not`s, the read's own negation counted:\nwhere it is empty that negation holds.",
           "type": "string"
         },
         "rule": {
@@ -2099,6 +2103,7 @@
       },
       "required": [
         "rule",
+        "negated",
         "type",
         "prop",
         "filled",

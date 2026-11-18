@@ -835,6 +835,7 @@ describe("a query read", () => {
         },
       ],
       total: 7,
+      unfilled: [],
     });
     // An edge or row that isn't well formed is left out.
     expect(
@@ -858,7 +859,12 @@ describe("a query read", () => {
           total: 1,
         },
       }),
-    ).toEqual({ kind: "rows", rows: [{ cells: [1], edges: [] }], total: 1 });
+    ).toEqual({
+      kind: "rows",
+      rows: [{ cells: [1], edges: [] }],
+      total: 1,
+      unfilled: [],
+    });
   });
 
   it("keeps a count, and refuses other answers", () => {
@@ -869,7 +875,11 @@ describe("a query read", () => {
       stats,
     };
     fits(ok);
-    expect(parseQueryResult(ok)).toEqual({ kind: "count", count: 3 });
+    expect(parseQueryResult(ok)).toEqual({
+      kind: "count",
+      count: 3,
+      unfilled: [],
+    });
     for (const bad of [
       { kind: "query", result: { kind: "count", count: -1 } },
       { kind: "query", result: { kind: "rows", rows: [] } },
@@ -888,6 +898,7 @@ describe("a query read", () => {
 describe("rules over empty properties (4.29.0)", () => {
   const never = {
     rule: "rule:no_expansion_hold",
+    negated: false,
     type: "Account",
     prop: "freeze_date",
     filled: 0,
@@ -896,6 +907,7 @@ describe("rules over empty properties (4.29.0)", () => {
   };
   const low = {
     rule: "constraint:untiered",
+    negated: false,
     type: "Account",
     prop: "tier",
     filled: 3,
@@ -953,6 +965,7 @@ describe("rules over empty properties (4.29.0)", () => {
           { ...never, filled: 200 },
           { ...never, note: undefined },
           { ...never, of: -1 },
+          { ...never, negated: "no" },
           "never filled",
           low,
         ],
@@ -962,10 +975,34 @@ describe("rules over empty properties (4.29.0)", () => {
 
   it("reads as a sentence naming the rule and the field", () => {
     expect(unfilledText(never)).toBe(
-      "“no_expansion_hold” holds where Account.freeze_date is empty, and it is never filled in this load.",
+      "“no_expansion_hold” reads Account.freeze_date under “not”, and it is never filled in this load: that “not” checked nothing there.",
     );
     expect(unfilledText(low)).toBe(
-      "“untiered” holds where Account.tier is empty, and it is filled on 3 of 157 in this load.",
+      "“untiered” reads Account.tier under “not”, and it is filled on 3 of 157 in this load: that “not” checked nothing there.",
     );
+    // A query's `not_holds` negates the rule itself.
+    expect(
+      unfilledText({ ...never, rule: "rule:on_hold", negated: true }),
+    ).toBe(
+      "“on_hold” fails where Account.freeze_date is empty, and it is never filled in this load: “not on_hold” checked nothing there.",
+    );
+  });
+
+  it("rides on a query's answer, its count or its rows", () => {
+    const count = {
+      kind: "query",
+      query_echo: { start: { type: "Account" }, return: { count: {} } },
+      result: { kind: "count", count: 157 },
+      stats: { matched: 0, patterns: 0, terminal: "store" },
+      unfilled: [never],
+    };
+    expect(parseQueryResult(count)).toEqual({
+      kind: "count",
+      count: 157,
+      unfilled: [never],
+    });
+    expect(
+      parseQueryResult({ ...count, unfilled: undefined })?.unfilled,
+    ).toEqual([]);
   });
 });

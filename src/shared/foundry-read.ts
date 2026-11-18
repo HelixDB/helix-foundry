@@ -200,6 +200,9 @@ export type PartError = { part: Pred | "violations"; failure: PartFailure };
  */
 export type Unfilled = {
   rule: string;
+  // The read negates the rule itself (a query's `not_holds`): the rule's own
+  // test of the property fails where it is empty.
+  negated: boolean;
   type: string;
   prop: string;
   filled: number;
@@ -320,8 +323,9 @@ export type QueryResult =
       // For a query narrowed to what a reader holds, the rows shown: the
       // answer says nothing of the rest.
       total: number;
+      unfilled: Unfilled[];
     }
-  | { kind: "count"; count: number };
+  | { kind: "count"; count: number; unfilled: Unfilled[] };
 
 /**
  * A view read's answer: the version's two files as the reader sees them, and
@@ -481,8 +485,8 @@ export function outcomeOf<T>(
  * engine before 4.29.0, or nothing to say).
  *
  * @example
- * parseUnfilled({ unfilled: [{ rule: "rule:no_hold", type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }] });
- *   // [{ rule: "rule:no_hold", type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }]
+ * parseUnfilled({ unfilled: [{ rule: "rule:no_hold", negated: false, type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }] });
+ *   // [{ rule: "rule:no_hold", negated: false, type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }]
  */
 export function parseUnfilled(ok: unknown): Unfilled[] {
   if (!isRecord(ok)) return [];
@@ -493,15 +497,17 @@ export function parseUnfilled(ok: unknown): Unfilled[] {
       prop = str(u.prop),
       filled = count(u.filled),
       of = count(u.of),
-      note = str(u.note);
-    return rule &&
+      note = str(u.note),
+      negated = u.negated;
+    return typeof negated === "boolean" &&
+      rule &&
       type &&
       prop &&
       note &&
       filled !== undefined &&
       of !== undefined &&
       filled <= of
-      ? [{ rule, type, prop, filled, of, note }]
+      ? [{ rule, negated, type, prop, filled, of, note }]
       : [];
   });
 }
@@ -510,12 +516,14 @@ export function parseUnfilled(ok: unknown): Unfilled[] {
  * An `unfilled` entry as a person reads it.
  *
  * @example
- * unfilledText({ rule: "constraint:untiered", type: "Account", prop: "tier", filled: 3, of: 157, note: "filled on 3 of 157 in this load" });
- *   // "“untiered” holds where Account.tier is empty, and it is filled on 3 of 157 in this load."
+ * unfilledText({ rule: "constraint:untiered", negated: false, type: "Account", prop: "tier", filled: 3, of: 157, note: "filled on 3 of 157 in this load" });
+ *   // "“untiered” reads Account.tier under “not”, and it is filled on 3 of 157 in this load: that “not” checked nothing there."
  */
 export function unfilledText(u: Unfilled): string {
   const rule = u.rule.replace(/^(?:rule|constraint):/, "");
-  return `“${rule}” holds where ${u.type}.${u.prop} is empty, and it is ${u.note}.`;
+  return u.negated
+    ? `“${rule}” fails where ${u.type}.${u.prop} is empty, and it is ${u.note}: “not ${rule}” checked nothing there.`
+    : `“${rule}” reads ${u.type}.${u.prop} under “not”, and it is ${u.note}: that “not” checked nothing there.`;
 }
 
 /** An entity read's `ok`: its derived facts, flags, live violations and failed parts. */
@@ -747,13 +755,15 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
  * edge that isn't is left out.
  *
  * @example
- * parseQueryResult({ kind: "query", result: { kind: "count", count: 3 } }); // { kind: "count", count: 3 }
+ * parseQueryResult({ kind: "query", result: { kind: "count", count: 3 } }); // { kind: "count", count: 3, unfilled: [] }
  */
 export function parseQueryResult(ok: unknown): QueryResult | undefined {
   const r = isKind(ok, "query") ? ok.result : undefined;
   if (isKind(r, "count")) {
     const n = count(r.count);
-    return n === undefined ? undefined : { kind: "count", count: n };
+    return n === undefined
+      ? undefined
+      : { kind: "count", count: n, unfilled: parseUnfilled(ok) };
   }
   if (!isKind(r, "rows") || !Array.isArray(r.rows)) return undefined;
   const total = count(r.total);
@@ -781,6 +791,7 @@ export function parseQueryResult(ok: unknown): QueryResult | undefined {
         : [],
     ),
     total,
+    unfilled: parseUnfilled(ok),
   };
 }
 

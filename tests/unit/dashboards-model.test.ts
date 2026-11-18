@@ -441,7 +441,12 @@ describe("tileDraw", () => {
         },
         COUNT as never,
       ),
-    ).toEqual({ kind: "drawn", output: groups, query: parseQuery(echo) });
+    ).toEqual({
+      kind: "drawn",
+      output: groups,
+      query: parseQuery(echo),
+      unfilled: [],
+    });
   });
 
   it("falls back on the tile's own query without an echo", () => {
@@ -457,6 +462,7 @@ describe("tileDraw", () => {
       kind: "drawn",
       output: { kind: "count", count: 2 },
       query: parseQuery(COUNT),
+      unfilled: [],
     });
   });
 

@@ -177,19 +177,15 @@ const join = (parts: ReactNode[]) =>
 export function UnfilledNote({ unfilled }: { unfilled: Unfilled[] }) {
   if (!unfilled.length) return null;
   return (
-    <Callout
-      icon={TriangleAlert}
-      title="A rule here checked an empty field"
-      text={
-        <ul className="ex-read-errors" aria-label="Rules over empty fields">
-          {unfilled.map((u) => (
-            <li key={`${u.rule}\u0000${u.type}.${u.prop}`}>
-              {unfilledText(u)}
-            </li>
-          ))}
-        </ul>
-      }
-    />
+    <Callout icon={TriangleAlert} title="A rule here checked an empty field">
+      <ul className="ex-read-errors" aria-label="Rules over empty fields">
+        {unfilled.map((u) => (
+          <li key={`${u.rule}\u0000${u.negated}\u0000${u.type}.${u.prop}`}>
+            {unfilledText(u)}
+          </li>
+        ))}
+      </ul>
+    </Callout>
   );
 }
 
