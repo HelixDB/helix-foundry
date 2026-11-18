@@ -10,9 +10,11 @@ import {
   parseQueryResult,
   parseReadResult,
   parseStepPred,
+  parseUnfilled,
   parseVia,
   parseViolationsResult,
   predString,
+  unfilledText,
 } from "@/shared/foundry-read";
 import { contractErrors } from "../../mock/agent-contract";
 
@@ -174,7 +176,7 @@ describe("the read envelope", () => {
         { ok: true, value: { kind: "pattern", rows: [] } },
         parsePatternResult,
       ),
-    ).toEqual({ ok: true, value: { rows: [] } });
+    ).toEqual({ ok: true, value: { rows: [], unfilled: [] } });
     // An answer of another kind doesn't parse as this one.
     expect(
       outcomeOf(
@@ -385,6 +387,7 @@ describe("an entity read", () => {
           failure: { code: "invalid", message: "The read failed." },
         },
       ],
+      unfilled: [],
     });
     expect(parseEntityResult([])).toBeUndefined();
     expect(parseEntityResult({ kind: "entity" })).toBeUndefined();
@@ -397,6 +400,7 @@ describe("an entity read", () => {
       flags: [],
       violations: [],
       errors: [],
+      unfilled: [],
     });
   });
 });
@@ -446,6 +450,7 @@ describe("a pattern read", () => {
           rules: [],
         },
       ],
+      unfilled: [],
     });
   });
 });
@@ -553,7 +558,11 @@ describe("an explain read", () => {
     // A fact that doesn't hold has no root.
     const none = { kind: "explain", steps: [], root: null };
     fits(none);
-    expect(parseExplainResult(none)).toEqual({ steps: [], root: null });
+    expect(parseExplainResult(none)).toEqual({
+      steps: [],
+      root: null,
+      unfilled: [],
+    });
   });
 
   it("refuses half a proof: a bad step, a premise or root out of range, a cycle", () => {
@@ -614,10 +623,15 @@ describe("a violations read", () => {
         },
       ],
       next: "k1",
+      unfilled: [],
     });
     const last = { kind: "violations", records: [], next: null };
     fits(last);
-    expect(parseViolationsResult(last)).toEqual({ records: [], next: null });
+    expect(parseViolationsResult(last)).toEqual({
+      records: [],
+      next: null,
+      unfilled: [],
+    });
     expect(parseViolationsResult(null)).toBeUndefined();
   });
 });
@@ -868,5 +882,90 @@ describe("a query read", () => {
       null,
     ])
       expect(parseQueryResult(bad)).toBeUndefined();
+  });
+});
+
+describe("rules over empty properties (4.29.0)", () => {
+  const never = {
+    rule: "rule:no_expansion_hold",
+    type: "Account",
+    prop: "freeze_date",
+    filled: 0,
+    of: 157,
+    note: "never filled in this load",
+  };
+  const low = {
+    rule: "constraint:untiered",
+    type: "Account",
+    prop: "tier",
+    filled: 3,
+    of: 157,
+    note: "filled on 3 of 157 in this load",
+  };
+  const account = { type: "Account", id: "sacme" };
+
+  it("rides on every rule-derived answer, and fits the contract", () => {
+    const entity = {
+      kind: "entity",
+      entity: account,
+      derived: [],
+      flags: [{ name: "no_expansion_hold", rules: ["rule:no_expansion_hold"] }],
+      violations: [],
+      errors: [],
+      unfilled: [never, low],
+    };
+    fits(entity);
+    expect(parseEntityResult(entity)?.unfilled).toEqual([never, low]);
+    const pattern = {
+      kind: "pattern",
+      rows: [{ args: [account], holder: null, basis: "derived", rules: [] }],
+      unfilled: [never],
+    };
+    fits(pattern);
+    expect(parsePatternResult(pattern)?.unfilled).toEqual([never]);
+    const explain = {
+      kind: "explain",
+      steps: [],
+      root: null,
+      unfilled: [never],
+    };
+    fits(explain);
+    expect(parseExplainResult(explain)?.unfilled).toEqual([never]);
+    const page = {
+      kind: "violations",
+      records: [],
+      next: null,
+      unfilled: [low],
+    };
+    fits(page);
+    expect(parseViolationsResult(page)?.unfilled).toEqual([low]);
+  });
+
+  it("is empty where an engine says nothing, and keeps only well-formed entries", () => {
+    expect(
+      parseEntityResult({ kind: "entity", entity: account })?.unfilled,
+    ).toEqual([]);
+    expect(parseUnfilled(undefined)).toEqual([]);
+    expect(
+      parseUnfilled({
+        unfilled: [
+          never,
+          { ...never, filled: 200 },
+          { ...never, note: undefined },
+          { ...never, of: -1 },
+          "never filled",
+          low,
+        ],
+      }),
+    ).toEqual([never, low]);
+  });
+
+  it("reads as a sentence naming the rule and the field", () => {
+    expect(unfilledText(never)).toBe(
+      "“no_expansion_hold” holds where Account.freeze_date is empty, and it is never filled in this load.",
+    );
+    expect(unfilledText(low)).toBe(
+      "“untiered” holds where Account.tier is empty, and it is filled on 3 of 157 in this load.",
+    );
   });
 });

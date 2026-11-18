@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Sparkles, TriangleAlert } from "lucide-react";
 import type {
   DerivedFact,
   EntityRef,
@@ -9,8 +9,11 @@ import type {
   ExplainResult,
   Pred,
   StepPred,
+  Unfilled,
   Via,
 } from "../../../shared/foundry-read";
+import { unfilledText } from "../../../shared/foundry-read";
+import { Callout } from "../ontology/parts";
 import { Button, EmptyState, Panel, Tag, plural } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { useOntology } from "../ontology/scope";
@@ -167,6 +170,30 @@ const join = (parts: ReactNode[]) =>
   parts.flatMap((p, i) => (i ? [", ", p] : [p]));
 
 /**
+ * The rules an answer rests on that checked nothing: each reads, under
+ * `not`, a property the load (almost) never fills, so it holds because the
+ * property is empty. Nothing when there are none.
+ */
+export function UnfilledNote({ unfilled }: { unfilled: Unfilled[] }) {
+  if (!unfilled.length) return null;
+  return (
+    <Callout
+      icon={TriangleAlert}
+      title="A rule here checked an empty field"
+      text={
+        <ul className="ex-read-errors" aria-label="Rules over empty fields">
+          {unfilled.map((u) => (
+            <li key={`${u.rule}\u0000${u.type}.${u.prop}`}>
+              {unfilledText(u)}
+            </li>
+          ))}
+        </ul>
+      }
+    />
+  );
+}
+
+/**
  * A proof as nested lists, root first; a step reached twice shows once
  * and is named the second time.
  */
@@ -210,9 +237,12 @@ export function Proof({
     );
   };
   return (
-    <ol className="ex-proof" aria-label="Why it holds">
-      {step(proof.root)}
-    </ol>
+    <>
+      <UnfilledNote unfilled={proof.unfilled} />
+      <ol className="ex-proof" aria-label="Why it holds">
+        {step(proof.root)}
+      </ol>
+    </>
   );
 }
 
@@ -311,7 +341,7 @@ export function DerivedFacts({
   result: EntityResult;
   view: RefView;
 }) {
-  const { derived, flags, errors } = result;
+  const { derived, flags, errors, unfilled } = result;
   const named = useNamed(
     view,
     derived.flatMap((f) => f.args),
@@ -336,6 +366,7 @@ export function DerivedFacts({
           ))}
         </ul>
       )}
+      <UnfilledNote unfilled={unfilled} />
       {!derived.length && !flags.length ? (
         <EmptyState
           size="sm"

@@ -191,12 +191,29 @@ export type LiveViolation = {
  */
 export type PartError = { part: Pred | "violations"; failure: PartFailure };
 
+/**
+ * A rule the answer depends on that reads, under `not`, a property few or
+ * none of its type's entities have in the load (contract 4.29.0): the rule
+ * holds there because the property is empty, so it checked nothing. `rule`
+ * is `rule:<name>` or `constraint:<name>`; `filled` of `of` entities have
+ * the property (under 5%); `note` says so in words.
+ */
+export type Unfilled = {
+  rule: string;
+  type: string;
+  prop: string;
+  filled: number;
+  of: number;
+  note: string;
+};
+
 export type EntityResult = {
   entity: EntityRef;
   derived: DerivedFact[];
   flags: Flag[];
   violations: LiveViolation[];
   errors: PartError[];
+  unfilled: Unfilled[];
 };
 
 export type PatternRow = {
@@ -205,7 +222,7 @@ export type PatternRow = {
   basis: "stated" | Basis;
   rules: string[];
 };
-export type PatternResult = { rows: PatternRow[] };
+export type PatternResult = { rows: PatternRow[]; unfilled: Unfilled[] };
 
 /**
  * How a proof step holds: stated in the data (its evidence is the fact's),
@@ -232,7 +249,11 @@ export type ExplainStep = {
   test?: string;
 };
 /** A proof; `root` is null when the fact doesn't hold. */
-export type ExplainResult = { steps: ExplainStep[]; root: number | null };
+export type ExplainResult = {
+  steps: ExplainStep[];
+  root: number | null;
+  unfilled: Unfilled[];
+};
 
 /** A stored violation record (StoredViolation). */
 export type ViolationRecord = {
@@ -248,6 +269,7 @@ export type ViolationRecord = {
 export type ViolationsResult = {
   records: ViolationRecord[];
   next: string | null;
+  unfilled: Unfilled[];
 };
 
 /**
@@ -454,6 +476,48 @@ export function outcomeOf<T>(
     : { ok: true, value };
 }
 
+/**
+ * An answer's `unfilled`: each well-formed entry, none when absent (an
+ * engine before 4.29.0, or nothing to say).
+ *
+ * @example
+ * parseUnfilled({ unfilled: [{ rule: "rule:no_hold", type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }] });
+ *   // [{ rule: "rule:no_hold", type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }]
+ */
+export function parseUnfilled(ok: unknown): Unfilled[] {
+  if (!isRecord(ok)) return [];
+  return list(ok.unfilled).flatMap((u): Unfilled[] => {
+    if (!isRecord(u)) return [];
+    const rule = str(u.rule),
+      type = str(u.type),
+      prop = str(u.prop),
+      filled = count(u.filled),
+      of = count(u.of),
+      note = str(u.note);
+    return rule &&
+      type &&
+      prop &&
+      note &&
+      filled !== undefined &&
+      of !== undefined &&
+      filled <= of
+      ? [{ rule, type, prop, filled, of, note }]
+      : [];
+  });
+}
+
+/**
+ * An `unfilled` entry as a person reads it.
+ *
+ * @example
+ * unfilledText({ rule: "constraint:untiered", type: "Account", prop: "tier", filled: 3, of: 157, note: "filled on 3 of 157 in this load" });
+ *   // "“untiered” holds where Account.tier is empty, and it is filled on 3 of 157 in this load."
+ */
+export function unfilledText(u: Unfilled): string {
+  const rule = u.rule.replace(/^(?:rule|constraint):/, "");
+  return `“${rule}” holds where ${u.type}.${u.prop} is empty, and it is ${u.note}.`;
+}
+
 /** An entity read's `ok`: its derived facts, flags, live violations and failed parts. */
 export function parseEntityResult(ok: unknown): EntityResult | undefined {
   const entity = isKind(ok, "entity") ? entityRef(ok.entity) : undefined;
@@ -495,6 +559,7 @@ export function parseEntityResult(ok: unknown): EntityResult | undefined {
         ? [{ part, failure: failure as PartFailure }]
         : [];
     }),
+    unfilled: parseUnfilled(ok),
   };
 }
 
@@ -511,6 +576,7 @@ export function parsePatternResult(ok: unknown): PatternResult | undefined {
         ? [{ args, holder, basis: b, rules: strings(r.rules) }]
         : [];
     }),
+    unfilled: parseUnfilled(ok),
   };
 }
 
@@ -585,7 +651,9 @@ export function parseExplainResult(ok: unknown): ExplainResult | undefined {
     state.set(i, "done");
     return fine;
   };
-  return steps.every((_, i) => acyclic(i)) ? { steps, root } : undefined;
+  return steps.every((_, i) => acyclic(i))
+    ? { steps, root, unfilled: parseUnfilled(ok) }
+    : undefined;
 }
 
 /** A violations read's `ok`: a page of stored records in key order. */
@@ -614,6 +682,7 @@ export function parseViolationsResult(
         : [];
     }),
     next: str(ok.next) || null,
+    unfilled: parseUnfilled(ok),
   };
 }
 

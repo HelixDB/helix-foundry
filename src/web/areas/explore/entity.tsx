@@ -44,7 +44,7 @@ import { profilesDate } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import { useSources } from "../ontology/sources";
-import { DerivedFacts, Why, type RefView } from "./derived";
+import { DerivedFacts, UnfilledNote, Why, type RefView } from "./derived";
 import { refKey } from "./rule-breaks";
 import {
   graphReadQueries,
@@ -989,6 +989,11 @@ function Entity({
             </p>
           </div>
         )}
+        <UnfilledNote
+          unfilled={(rulesRead?.unfilled || []).filter((u) =>
+            u.rule.startsWith("constraint:"),
+          )}
+        />
         {liveFailed && (
           <p className="on-muted">
             The rules it breaks now couldn’t be worked out:{" "}
