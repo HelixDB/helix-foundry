@@ -42,6 +42,9 @@ type Rendered struct {
 	Title string
 	// Body is the Markdown document (Version names it).
 	Body []byte
+	// Head is how many bytes of Body are the document's own lines, before
+	// the piece's fields and text: its heading, its id and its time.
+	Head int
 }
 
 // Render is a row of a source's events table as its piece's Markdown
@@ -115,6 +118,7 @@ func Render(row []byte, s Schema, textField string) (Rendered, error) {
 	if occurred != "" {
 		fmt.Fprintf(&body, "- Occurred: %s\n", occurred)
 	}
+	head := body.Len()
 	l := listing{body: &body}
 	for _, f := range s.fields {
 		if f.Name != textField {
@@ -125,7 +129,7 @@ func Render(row []byte, s Schema, textField string) (Rendered, error) {
 		body.WriteByte('\n')
 		body.WriteString(text)
 	}
-	return Rendered{Title: heading, Body: body.Bytes()}, nil
+	return Rendered{Title: heading, Body: body.Bytes(), Head: head}, nil
 }
 
 // Version is a document's version: the lowercase hex SHA-256 of its body,

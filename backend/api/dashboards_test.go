@@ -257,7 +257,7 @@ func newDashboardFixture(t *testing.T) dashboardFixture {
 	fs.ontologies["ont-1"].CurrentLoadID = &current
 	store := &dashboardStore{foundryStore: fs, dashboards: map[string]*foundrymodel.FoundryDashboard{}, snapshots: map[string]json.RawMessage{},
 		questions: map[string]*foundrymodel.FoundryQuestion{}, settings: map[string]foundrymodel.FoundryDashboardSettings{}}
-	reader := &fakeFoundryRead{result: `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` +
+	reader := &fakeFoundryRead{result: `{"asked_at":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` +
 		queryOK(`{"kind":"rows","total":1,"rows":[{"cells":[{"type":"Customer","id":"scus_1","name":"Globex"}],"edges":[]}]}`) + `]}`}
 	s.deps.DB, s.deps.FoundryRead, s.deps.ConnectorKeys = store, reader, aiKeyring(t)
 	s.deps.People = dashboardPeople{"user-owner": ports.RoleOwner, "user-member": ports.RoleMember, "user-other": ports.RoleMember,
@@ -468,7 +468,7 @@ func TestEditingAroundAStaleTile(t *testing.T) {
 
 func TestPreviewFoundryDashboardTile(t *testing.T) {
 	f := newDashboardFixture(t)
-	f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `]}`
+	f.reader.result = `{"asked_at":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `]}`
 	resp, err := f.s.PreviewFoundryDashboardTile(asActor(dashboardMember), &foundryv1.PreviewFoundryDashboardTileRequest{WorkspaceId: "ws-1", TileJson: countTile})
 	require.NoError(t, err)
 	assert.Equal(t, "load-1", resp.GetLoadId(), "the current load")
@@ -706,16 +706,16 @@ func TestPublishingADashboard(t *testing.T) {
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 
 		d := f.create(t, dashboardOwner, twoTiles())
-		f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,{"error":{"code":"too_broad","message":"too broad","limit":1,"count":2}}]}`
+		f.reader.result = `{"asked_at":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,{"error":{"code":"too_broad","message":"too broad","limit":1,"count":2}}]}`
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
 		assert.Equal(t, "FOUNDRY_DASHBOARD_TILE_FAILED", reasonOf(err))
 		assert.Contains(t, status.Convert(err).Message(), `"By country" (t2) can't be read: too broad`)
 
-		f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `]}`
+		f.reader.result = `{"asked_at":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `]}`
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
 		assert.Equal(t, codes.Internal, status.Code(err), "a result that doesn't answer each tile")
 
-		f.reader.result = `{"as_of":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` + queryOK(`{"kind":"rows","total":1,"rows":[{"cells":["`+
+		f.reader.result = `{"asked_at":"2026-11-14","results":[` + queryOK(`{"kind":"count","count":3}`) + `,` + queryOK(`{"kind":"rows","total":1,"rows":[{"cells":["`+
 			strings.Repeat("x", 990)+`"],"edges":[]}`+strings.Repeat(`,{"cells":["`+strings.Repeat("y", 990)+`"],"edges":[]}`, 600)+`]}`) + `]}`
 		_, err = publish(f, dashboardOwner, d.GetId(), 1)
 		assert.Equal(t, "FOUNDRY_DASHBOARD_TOO_LARGE", reasonOf(err))

@@ -100,9 +100,11 @@ type Syncer struct {
 	// MonthBudget.
 	Documents documentStore
 	// MaxDocumentBytes caps one document's text (foundry.documents.max_bytes);
-	// MaxPerStream the documents a full read keeps of one stream
-	// (foundry.documents.max_per_stream).
+	// MaxPDFBytes one PDF, which a sync drops past it rather than cut
+	// (foundry.documents.max_pdf_bytes); MaxPerStream the documents a full
+	// read keeps of one stream (foundry.documents.max_per_stream).
 	MaxDocumentBytes int64
+	MaxPDFBytes      int64
 	MaxPerStream     int
 	// PurgeGrace is how long the sweep leaves a purge row
 	// (foundry.sync.replaced_snapshot_grace): a flush publishes within half of it.

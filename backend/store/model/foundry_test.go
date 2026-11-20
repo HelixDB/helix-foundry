@@ -14,6 +14,7 @@ func TestFoundryReadKind(t *testing.T) {
 			FoundryMediaMarkdown: FoundryReadText, FoundryMediaMDX: FoundryReadText, FoundryMediaPlainText: FoundryReadText,
 			FoundryMediaJSON: FoundryReadTable, FoundryMediaCSV: FoundryReadTable, FoundryMediaTSV: FoundryReadTable,
 			FoundryMediaJSONL: FoundryReadTable, FoundryMediaParquet: FoundryReadTable, FoundryMediaPDF: FoundryReadPDF,
+			FoundryMediaVTT: FoundryReadText,
 		}
 		if len(FoundryMediaTypes()) != len(want) {
 			t.Fatalf("%d stored types, want %d", len(FoundryMediaTypes()), len(want))
@@ -38,10 +39,10 @@ func TestFoundryReadKind(t *testing.T) {
 	})
 	// The provider's SQL lists keep a fixed order, so queries are stable.
 	t.Run("lists the types of kinds in a fixed order", func(t *testing.T) {
-		if got := FoundryMediaTypesRead(FoundryReadText); !slices.Equal(got, []FoundryMediaType{FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText}) {
+		if got := FoundryMediaTypesRead(FoundryReadText); !slices.Equal(got, []FoundryMediaType{FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText, FoundryMediaVTT}) {
 			t.Errorf("text types = %v", got)
 		}
-		if got := FoundryMediaTypesRead(FoundryReadText, FoundryReadPDF); len(got) != 4 || got[3] != FoundryMediaPDF {
+		if got := FoundryMediaTypesRead(FoundryReadText, FoundryReadPDF); len(got) != 5 || got[3] != FoundryMediaPDF || got[4] != FoundryMediaVTT {
 			t.Errorf("text and PDF types = %v", got)
 		}
 		if got := FoundryMediaTypesRead(); got != nil {

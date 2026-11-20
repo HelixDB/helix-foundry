@@ -49,8 +49,10 @@ type foundryStore struct {
 	layouts map[string]*foundrymodel.FoundryDataLayout
 	// extractions are by load, then document.
 	extractions map[string]map[string]*foundrymodel.FoundryDocumentExtraction
-	loads       []*foundrymodel.FoundryLoad
-	jobs        []*foundrymodel.FoundryGraphJob
+	// unread answers ListFoundryLoadUnread for a load in place of counting.
+	unread map[string]foundrymodel.FoundryLoadUnread
+	loads  []*foundrymodel.FoundryLoad
+	jobs   []*foundrymodel.FoundryGraphJob
 	// deletesQueued are the delete job ids the store was handed.
 	deletesQueued []string
 	spent         int64
@@ -587,6 +589,41 @@ func (s *foundryStore) ListFoundryLoadDocumentSets(_ context.Context, loadID str
 	out := make([]foundrymodel.FoundryLoadDocumentSet, 0, len(bySet))
 	for _, id := range slices.Sorted(maps.Keys(bySet)) {
 		out = append(out, *bySet[id])
+	}
+	return out, nil
+}
+
+// ListFoundryLoadUnread counts each load's extractions as the store does:
+// read (extracted or duplicate), failed by the model by class, and, with a
+// failure, its uploaded members with none as unrecorded. unread, when set
+// for a load, answers for it instead (its jobs, live or ended).
+func (s *foundryStore) ListFoundryLoadUnread(_ context.Context, loadIDs []string) (map[string]foundrymodel.FoundryLoadUnread, error) {
+	out := map[string]foundrymodel.FoundryLoadUnread{}
+	for _, id := range loadIDs {
+		if u, ok := s.unread[id]; ok {
+			out[id] = u
+			continue
+		}
+		var u foundrymodel.FoundryLoadUnread
+		for _, e := range s.extractions[id] {
+			switch {
+			case e.Status == foundrymodel.FoundryExtractionExtracted || e.Status == foundrymodel.FoundryExtractionDuplicate:
+				u.Read++
+			case e.Status == foundrymodel.FoundryExtractionFailed && e.Error != nil && e.Error.Code == foundrymodel.FoundryExtractionModel:
+				if u.Failed == nil {
+					u.Failed = map[string]int{}
+				}
+				u.Failed[e.Error.ModelFailure]++
+			}
+		}
+		if u.Failures() > 0 {
+			for _, d := range s.documents {
+				if _, ok := s.extractions[id][d.ID]; !ok && slices.Contains(s.members[id], d.ID) && d.Status == foundrymodel.FoundryDocumentUploaded {
+					u.Unrecorded++
+				}
+			}
+		}
+		out[id] = u
 	}
 	return out, nil
 }
@@ -1948,6 +1985,53 @@ func TestFoundryLoadRPCs(t *testing.T) {
 	// of its version reads added nothing to the graph. Twelve sets of ten
 	// documents, two of them routed: the ten unrouted sets are told apart
 	// from the routed ones whether or not their documents were reached yet.
+	// A load the model left documents unread of says so in the list and
+	// alone, with when Helix reads them again: never while a job of the
+	// ontology is live or the month's budget for work no one started is
+	// spent, when the sync worker queues none.
+	t.Run("says what the model left unread, and a re-read only when one can be queued", func(t *testing.T) {
+		s, store, _ := foundryService(t)
+		store.versions = append(store.versions, draft("done"))
+		created, err := load(s, "v-done", "load-u")
+		if err != nil {
+			t.Fatal(err)
+		}
+		loadID := created.GetLoad().GetId()
+		ended(store, loadID, foundrymodel.FoundryLoadPartial, true)
+		finished := time.Now().Add(-time.Hour)
+		store.load(loadID).FinishedAt = &finished
+		store.unread = map[string]foundrymodel.FoundryLoadUnread{loadID: {Read: 6, Failed: map[string]int{"quota": 3}, LastEnd: &finished}}
+		get := func() *foundryv1.FoundryLoad {
+			t.Helper()
+			got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listed, err := s.ListFoundryLoads(ctx, &foundryv1.ListFoundryLoadsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(listed.GetLoads()[0].GetUnread(), got.GetLoad().GetUnread()) {
+				t.Fatalf("listed %v, alone %v", listed.GetLoads()[0].GetUnread(), got.GetLoad().GetUnread())
+			}
+			return got.GetLoad()
+		}
+		u := get().GetUnread()
+		if u.GetDocuments() != 3 || u.GetReason() != "provider quota" || !u.GetRereadAt().AsTime().Equal(finished.Add(15*time.Minute)) {
+			t.Fatalf("unread = %v", u)
+		}
+		store.spent = 1 << 40
+		if u := get().GetUnread(); u.GetDocuments() != 3 || u.GetRereadAt() != nil {
+			t.Fatalf("with the month spent: %v", u)
+		}
+		store.spent = 0
+		store.jobs = append(store.jobs, &foundrymodel.FoundryGraphJob{ID: "j-live", OntologyID: "ont-1", LoadID: "other",
+			Status: foundrymodel.FoundryGraphJobRunning})
+		if u := get().GetUnread(); u.GetRereadAt() != nil {
+			t.Fatalf("with a job live: %v", u)
+		}
+	})
+
 	t.Run("counts what a load made of its documents by set", func(t *testing.T) {
 		s, store, _ := foundryService(t)
 		v := draft("done")
@@ -2296,7 +2380,7 @@ func TestFoundryOntologyRefreshSetting(t *testing.T) {
 // The loads list tells a refresh from a load someone started.
 func TestFoundryLoadOrigin(t *testing.T) {
 	load := &foundrymodel.FoundryLoad{ID: "l1", Version: 2, Status: foundrymodel.FoundryLoadReady, Origin: foundrymodel.FoundryLoadByRefresh, CreatedAt: time.Now()}
-	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil).GetOrigin(); got != "refresh" {
+	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil, foundrymodel.FoundryLoadUnread{}, false).GetOrigin(); got != "refresh" {
 		t.Fatalf("origin = %q", got)
 	}
 }

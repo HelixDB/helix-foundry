@@ -512,8 +512,71 @@ describe("mock questions", () => {
     // Stored as the canonical EntityRef the worker sends the engine.
     expect(q.focusJson).toBe('{"type":"Customer","id":"cus_GLOBEX01"}');
     expect(
-      contractErrors("ask_request#/$defs/EntityRef", JSON.parse(q.focusJson)),
+      contractErrors(
+        "ask_request#/$defs/EntityLookup",
+        JSON.parse(q.focusJson),
+      ),
     ).toEqual([]);
+    // By its key's plain value or a name, the type optional (contract 4.27.0).
+    for (const [focusJson, stored] of [
+      [
+        '{"key": "cus_GLOBEX01", "type": "Customer"}',
+        '{"type":"Customer","key":"cus_GLOBEX01"}',
+      ],
+      ['{"name": "Globex"}', '{"name":"Globex"}'],
+    ]) {
+      const asked = (await ask({ focusJson, clientToken: focusJson })).body
+        .question;
+      expect(asked.focusJson).toBe(stored);
+    }
+  });
+
+  it("asks as of a day: kept, echoed, the same token only the same day", async () => {
+    await loaded();
+    const q = (await ask({ validAt: "2026-03-01", clientToken: "dated" })).body
+      .question;
+    expect(q.validAt).toBe("2026-03-01");
+    expect((await call("GET", `${Q}/${q.id}`)).body.question.validAt).toBe(
+      "2026-03-01",
+    );
+    expect(
+      (await call("GET", Q)).body.questions.find((x: any) => x.id === q.id)
+        .validAt,
+    ).toBe("2026-03-01");
+    expect(
+      (await ask({ validAt: "2026-03-01", clientToken: "dated" })).body.question
+        .id,
+    ).toBe(q.id);
+    expect(refusal(await ask({ clientToken: "dated" }))).toEqual([
+      400,
+      "client_token was already used for another question",
+    ]);
+    expect((await ask({})).body.question).not.toHaveProperty("validAt");
+    // A thread is asked as of one day.
+    expect(
+      (await ask({ validAt: "2026-03-01", threadId: q.id, clientToken: "f1" }))
+        .status,
+    ).toBe(200);
+    for (const validAt of [undefined, "2026-03-02"])
+      expect(
+        refusal(
+          await ask({ validAt, threadId: q.id, clientToken: `f-${validAt}` }),
+        ),
+      ).toEqual([
+        400,
+        "a thread is asked as of one day: give its valid_at (empty for now)",
+      ]);
+    // Today in UTC is the latest day; a day that isn't one is refused.
+    expect((await ask({ validAt: "2026-10-19" })).status).toBe(200);
+    expect(refusal(await ask({ validAt: "2026-10-20" }))).toEqual([
+      400,
+      "valid_at 2026-10-20 is after today (2026-10-19, UTC): no load records the future",
+    ]);
+    for (const day of ["2026-3-1", "2026-02-30", "soon"])
+      expect(refusal(await ask({ validAt: day }))).toEqual([
+        400,
+        `valid_at "${day}" is not a date, YYYY-MM-DD`,
+      ]);
   });
 
   it("refuses what it can't ask about", async () => {
@@ -548,7 +611,7 @@ describe("mock questions", () => {
     ).toBe(200);
     const FOCUS = [
       400,
-      'focus_json: a focus is {"type": ..., "id": ...}, both set',
+      'focus_json: a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them',
     ];
     for (const focusJson of [
       '{"type":"A"}',
@@ -557,6 +620,11 @@ describe("mock questions", () => {
       '{"type":"A","id":1}',
       '{"type":"A","id":"b"} {}',
       "null",
+      '{"id":"b"}',
+      '{"key":1.5}',
+      '{"key":"a","name":"b"}',
+      '{"name":"  "}',
+      '{"key":{}}',
     ])
       expect(
         await refused({

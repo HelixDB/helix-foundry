@@ -138,7 +138,7 @@ func okResult(kinds []string) string {
 	for _, kind := range kinds {
 		results = append(results, `{"ok":{"kind":"`+kind+`"}}`)
 	}
-	return `{"as_of":"2026-10-20","results":[` + strings.Join(results, ",") + `],"stats":{"instances":0,"wall_ms":1}}`
+	return `{"asked_at":"2026-10-20","results":[` + strings.Join(results, ",") + `],"stats":{"instances":0,"wall_ms":1}}`
 }
 
 // gateway records the queries the proxy forwards and answers each with 200.
@@ -299,8 +299,8 @@ func TestRead(t *testing.T) {
 		}
 		got := requests[0]
 		if got.RequestID == "" || got.Database != "tenant-1" || got.Load != "load-1" || got.OntologyVersion != "foundry-v3" ||
-			got.OntologyTOML != "version = \"x\"\n" || got.AsOf != "2026-10-20" || got.Budget != ontologyagent.DefaultReadBudget {
-			t.Fatalf("request = %+v (as_of is the UTC date)", got)
+			got.OntologyTOML != "version = \"x\"\n" || got.AskedAt != "2026-10-20" || got.Budget != ontologyagent.DefaultReadBudget {
+			t.Fatalf("request = %+v (asked_at is the UTC date)", got)
 		}
 		if got.Helix.URL != h.reader.proxy.URL() || got.Helix.Token == "" || got.Helix.TimeoutSecs != helixTimeoutSecs ||
 			got.Helix.MaxRequestBytes != graphproxy.MaxRequestBytes {
@@ -316,6 +316,29 @@ func TestRead(t *testing.T) {
 		// The call's token ends with it.
 		if code := query(ctx, got.Helix, `{"request_type":"read","query":{}}`); code != http.StatusUnauthorized {
 			t.Fatalf("token after the call: status %d", code)
+		}
+	})
+
+	// A read as of a day sends it beside the day it was asked (contract
+	// 4.28.0), its request one the agent accepts; today is the latest day.
+	t.Run("reads as of a day", func(t *testing.T) {
+		h := newHarness(t)
+		for _, day := range []string{"2026-03-01", "2026-10-20"} {
+			req := request("ws-1", "ont-1")
+			req.ValidAt = day
+			if _, err := h.reader.Read(ctx, req); err != nil {
+				t.Fatalf("%s: %v", day, err)
+			}
+		}
+		requests, _ := h.agent.calls()
+		if len(requests) != 2 || requests[0].AskedAt != "2026-10-20" || requests[0].ValidAt != "2026-03-01" || requests[1].ValidAt != "2026-10-20" {
+			t.Fatalf("requests = %+v", requests)
+		}
+		if !strings.Contains(h.agent.bodies[0], `"asked_at":"2026-10-20","valid_at":"2026-03-01"`) {
+			t.Fatalf("body = %s", h.agent.bodies[0])
+		}
+		if err := contracttest.Validate(t, contracttest.Schema(t, "read_request.json"), []byte(h.agent.bodies[0])); err != nil {
+			t.Fatalf("the request does not match read_request.json: %v", err)
 		}
 	})
 
@@ -372,6 +395,8 @@ func TestRead(t *testing.T) {
 			"a deleted ontology":      {request("ws-1", "ont-1"), func(h *harness) { h.store.ontologies["ont-1"].DeletedAt = &now }, codes.NotFound},
 			"a paused database":       {request("ws-2", "ont-2"), func(h *harness) { h.store.paused["tenant-2"] = true }, codes.FailedPrecondition},
 			"an agent on another one": {request("ws-1", "ont-1"), func(h *harness) { h.agent.contract = "0.0.1" }, codes.FailedPrecondition},
+			"a day that isn't one":    {func() *foundryreadv1.ReadRequest { r := request("ws-1", "ont-1"); r.ValidAt = "2026-3-1"; return r }(), nil, codes.InvalidArgument},
+			"a day after today":       {func() *foundryreadv1.ReadRequest { r := request("ws-1", "ont-1"); r.ValidAt = "2026-10-21"; return r }(), nil, codes.InvalidArgument},
 		} {
 			h := newHarness(t)
 			if tc.mutate != nil {
@@ -425,7 +450,7 @@ func TestRead(t *testing.T) {
 			t.Fatalf("a pattern's answer to an explain: %v", err)
 		}
 		h.agent.result = func([]string) string {
-			return `{"as_of":"d","results":[{"ok":{"pad":"` + strings.Repeat("a", MaxResultBytes) + `"}},{"ok":{}}]}`
+			return `{"asked_at":"d","results":[{"ok":{"pad":"` + strings.Repeat("a", MaxResultBytes) + `"}},{"ok":{}}]}`
 		}
 		if _, err := h.reader.Read(ctx, request("ws-1", "ont-1")); status.Code(err) != codes.ResourceExhausted {
 			t.Fatalf("a result past %d bytes: %v", MaxResultBytes, err)

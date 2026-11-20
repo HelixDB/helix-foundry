@@ -80,7 +80,15 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "focus_json: %v", err)
 		}
-		focus, _ = json.Marshal(ref) // two strings: it can't fail
+		focus, _ = json.Marshal(ref) // strings and checked JSON: it can't fail
+	}
+	var validAt *time.Time
+	if day := req.GetValidAt(); day != "" {
+		at, err := ontologyagent.ParseValidAt(day, time.Now())
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		validAt = &at
 	}
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -93,7 +101,7 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	asker := questionsOf(ctx)
 	existing, err := s.deps.DB.GetFoundryQuestionByClientToken(ctx, o.ID, token)
 	switch {
-	case err == nil && (existing.Question != question || !samePrincipal(asker, existing.Grantee)):
+	case err == nil && (existing.Question != question || !samePrincipal(asker, existing.Grantee) || !sameDay(existing.ValidAt, validAt)):
 		return nil, status.Error(codes.InvalidArgument, "client_token was already used for another question")
 	case err == nil:
 		return s.foundryQuestionResponse(ctx, o.ID, existing.ID)
@@ -125,7 +133,7 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	}
 	q := &foundrymodel.FoundryQuestion{
 		ID: id.New(), WorkspaceID: o.WorkspaceID, OntologyID: o.ID, LoadID: load.ID, VersionID: load.VersionID, Question: question,
-		Focus: focus, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Ask.MaxMicros(),
+		Focus: focus, ValidAt: validAt, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Ask.MaxMicros(),
 	}
 	q.ThreadID = q.ID
 	if thread := req.GetThreadId(); thread != "" {
@@ -135,6 +143,10 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 			return nil, status.Error(codes.NotFound, "thread not found")
 		case err != nil:
 			return nil, status.Errorf(codes.Internal, "get thread: %v", err)
+		// A thread is asked as of one day, so its earlier answers are of it.
+		case !sameDay(first.ValidAt, validAt):
+			return nil, status.Error(codes.InvalidArgument,
+				"a thread is asked as of one day: give its valid_at (empty for now)")
 		}
 		q.ThreadID = thread
 	}
@@ -144,7 +156,14 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	q.Grantee = asker
 	// Of a load it holds only some of, what it holds now is what its answer can
 	// say: the question reads only while its grants hold that.
-	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
+	granted, isGrantee := granteeLoad(ctx)
+	// A grantee's question reads through its grants (the worker sends their
+	// visibility), and the engine reads nothing as of a time through grants.
+	if isGrantee && validAt != nil {
+		return nil, status.Error(codes.FailedPrecondition,
+			"you read this load through grants, so it can't be asked as of a date; ask without valid_at")
+	}
+	if isGrantee && granted.Partial {
 		g, _ := access.GranteeFrom(ctx)
 		part, err := s.granteePart(ctx, g, load.ID)
 		if err != nil {
@@ -162,7 +181,7 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	case errors.Is(err, foundrystore.ErrConflict):
 		// The same click again won the race.
 		raced, lookupErr := s.deps.DB.GetFoundryQuestionByClientToken(ctx, o.ID, token)
-		if lookupErr != nil || raced.Question != question || !samePrincipal(asker, raced.Grantee) {
+		if lookupErr != nil || raced.Question != question || !samePrincipal(asker, raced.Grantee) || !sameDay(raced.ValidAt, validAt) {
 			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another question")
 		}
 		return &foundryv1.FoundryQuestionResponse{Question: foundryQuestionToProto(raced)}, nil
@@ -366,6 +385,12 @@ func samePrincipal(mine, asked *access.Principal) bool {
 	return mine == nil || asked != nil && *asked == *mine
 }
 
+// sameDay reports whether two questions are asked as of the same day, or both
+// as of when they were asked.
+func sameDay(a, b *time.Time) bool {
+	return a == nil && b == nil || a != nil && b != nil && a.Equal(*b)
+}
+
 func (s *Service) foundryQuestionResponse(ctx context.Context, ontologyID, id string) (*foundryv1.FoundryQuestionResponse, error) {
 	q, err := s.foundryQuestion(ctx, ontologyID, id)
 	if err != nil {
@@ -382,6 +407,9 @@ func foundryQuestionToProto(q *foundrymodel.FoundryQuestion) *foundryv1.FoundryQ
 	}
 	if q.Error != nil {
 		out.Error = *q.Error
+	}
+	if q.ValidAt != nil {
+		out.ValidAt = q.ValidAt.UTC().Format(time.DateOnly)
 	}
 	if q.AskedByUserID != nil {
 		out.AskedByUserId = *q.AskedByUserID

@@ -794,7 +794,7 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 		model: &scripted{steps: steps}, backend: b, keys: keys}
 	service := (&integration.Service{Foundry: b, Actions: integration.FoundryClients{FoundryServiceClient: b}, Confirmations: &confirmations{},
 		Workflows: b, FoundryURL: "http://localhost:3000", Wait: time.Second, Directory: directory{},
-		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true}, AgentHosts: true, PublicDashboards: true}).ForAgent()
+		SampleDatabase: &integration.SampleDatabase{Host: "acme-db", DisableTLS: true}, AgentHosts: true, PublicDashboards: true, Events: true}).ForAgent()
 	h.host = &sessions{service: service}
 	catalog, err := ai.VendoredCatalog()
 	require.NoError(t, err)

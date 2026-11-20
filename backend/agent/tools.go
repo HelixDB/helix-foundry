@@ -37,6 +37,8 @@ var Tools = map[string]bool{
 	"helix_foundry_ask":                   true,
 	"helix_foundry_get_question":          true,
 	"helix_foundry_list_questions":        true,
+	// What agents and people sent an API source to remember: read only.
+	"helix_foundry_recall": true,
 	// Dashboards: read, and a tile's query tried before it is proposed.
 	"helix_foundry_list_dashboards":        true,
 	"helix_foundry_get_dashboard":          true,

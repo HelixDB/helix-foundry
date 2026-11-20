@@ -865,7 +865,7 @@ export type MissingFile = { id: string; name?: string };
 
 /**
  * What a load of a version reads of the workspace's documents.
- * - Text (Markdown, MDX, text, and PDFs whose text is read) in its scope
+ * - Text (Markdown, MDX, text, WebVTT, and PDFs whose text is read) in its scope
  *   (`total`, with the other PDFs): those its routes read for what they
  *   hold (`routed`), those it only stores (`stored`), and how many the
  *   current load hasn't read (`unread`: `read` holds the ids it has).
@@ -2331,8 +2331,11 @@ export function jobBadge(
               ? "Applied"
               : "Loaded",
       };
+    // Stopped before reading every document: a spending cap, the owner's
+    // provider refusing its key or quota, or the model leaving some unread.
+    // The load says which.
     case "budget_exhausted":
-      return { status: "stale", label: "Stopped at the cap" };
+      return { status: "stale", label: "Stopped early" };
     case "failed":
       return { status: "failed", label: "Failed" };
     case "cancelled":
@@ -2385,11 +2388,24 @@ export function loadRetry(
     : { kind: "failed", reason: j.error };
 }
 
-/** A load as a status badge: written, ready, or going. */
+/**
+ * A load as a status badge: written, ready, or going. A ready or partial
+ * load the model left documents unread of is never shown as complete: it
+ * reads "Ready, 9 documents not read (provider quota)".
+ */
 export function loadBadge(l?: FoundryLoad | null): {
   status: Status;
   label: string;
 } {
+  const unread = l?.unread?.documents ?? 0;
+  if (unread > 0 && (l?.status === "ready" || l?.status === "partial")) {
+    const docs = unread === 1 ? "document" : "documents";
+    const why = l.unread?.reason ? ` (${l.unread.reason})` : "";
+    return {
+      status: "stale",
+      label: `Ready, ${unread.toLocaleString("en-US")} ${docs} not read${why}`,
+    };
+  }
   switch (l?.status) {
     case "writing":
       return { status: "running", label: "Writing" };
@@ -3031,11 +3047,14 @@ export function setSourcesText(documents: readonly FoundryDocument[]) {
  * file of a chosen set still being read, is waited for while nothing else
  * is ready, and said in a `note` once something is: a generation started
  * now leaves it out. None chosen of the connectors sends `noConnectors`.
- * `documents` are the uploads: a connector's set holds text only, counted
- * by the set. What `facts` lack counts as gone, whatever `draft` names:
- * it is how an ontology of the user's own never sees the sample company's
- * connector and set (isSampleConnector, isSampleSet), even as every synced
- * connector or in a choice made earlier.
+ * `documents` are the uploads; a connector's set is counted by the set, its
+ * documents as text, since the site doesn't list them. A Google Drive PDFs
+ * set's PDFs are read after their sync (one still being read, or a scan, has
+ * no text yet), so a set of those alone passes here and the WFE refuses the
+ * generation, saying why. What `facts` lack counts as gone, whatever
+ * `draft` names: it is how an ontology of the user's own never sees the
+ * sample company's connector and set (isSampleConnector, isSampleSet), even
+ * as every synced connector or in a choice made earlier.
  *
  * API sources (kind events) are chosen in `eventSources` only, each with
  * its mode: every synced connector, and `connectorIds`, leave them out, and
@@ -3098,6 +3117,7 @@ export function generationSources(
       ...uploads,
       text:
         uploads.text +
+        // A connector's set by its count: its documents aren't listed here.
         sets.reduce((n, s) => n + (s.connector ? s.documents || 0 : 0), 0),
     };
   const [first, ...rest] = picked.map((c) => c.id),
@@ -3686,4 +3706,50 @@ export function ontologySetup({
       state: o.activeJob?.kind === "load" ? "running" : "todo",
     };
   return explored ? { step: "done" } : { step: "explore", state: "todo" };
+}
+
+// Why the model left documents unread, by the reason a load gives
+// (FoundryLoadUnread.reason).
+const UNREAD_WHY: Record<string, string> = {
+  "provider quota": "the model provider’s quota or credit ran out",
+  "provider account": "the model provider refused the account or its models",
+  "provider busy": "the model provider was busy",
+  "too long for the model": "they were too long for the model",
+  "model declined": "the model declined them",
+  "model error": "the model rejected the request",
+};
+
+/**
+ * What the model left unread of a ready or partial load, in sentences: how
+ * many, why, that none of their names or facts are in the graph, and when
+ * they are read: by Helix on its own (its `rereadAt`), else by the next job
+ * into the load or a new load. Undefined when the model failed none, or for
+ * a failed load, whose load job's error says it.
+ *
+ * @example
+ * loadUnreadText({ status: "partial", unread: { documents: 9, reason: "provider quota", rereadAt: "2026-11-14T12:41:00Z" } }, Date.parse("2026-11-14T12:29:00Z"));
+ * // "9 documents weren’t read: the model provider’s quota or credit ran out, so none of their names or facts are in the graph. Helix reads them again on its own in about 12 minutes."
+ */
+export function loadUnreadText(
+  l: Pick<FoundryLoad, "status" | "unread">,
+  now = Date.now(),
+): string | undefined {
+  const n = l.unread?.documents ?? 0;
+  if (!n || (l.status !== "ready" && l.status !== "partial")) return undefined;
+  const one = n === 1;
+  const them = one ? "it" : "them";
+  const why = UNREAD_WHY[l.unread?.reason ?? ""] ?? "the model failed them";
+  const first = `${plural(n, "document")} ${one ? "wasn’t" : "weren’t"} read: ${why}, so none of ${one ? "its" : "their"} names or facts are in the graph.`;
+  const at = Date.parse(l.unread?.rereadAt ?? "");
+  if (Number.isNaN(at)) {
+    return `${first} The next job into this load, or a new load, reads ${them}.`;
+  }
+  const minutes = Math.ceil((at - now) / 60_000);
+  const when =
+    minutes <= 1
+      ? "within a minute"
+      : minutes < 90
+        ? `in about ${minutes} minutes`
+        : `in about ${Math.round(minutes / 60)} hours`;
+  return `${first} Helix reads ${them} again on its own ${when}.`;
 }

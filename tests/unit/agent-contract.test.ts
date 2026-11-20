@@ -21,8 +21,24 @@ import { draftFromTables } from "../../mock/routes/ontology-agent";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
-  it("is 4.26.0, the engine whose queries compute from two props", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.26.0 sha256:7a9e8a1e70d8cf49");
+  it("is 4.29.0, the engine that flags rules over empty properties", () => {
+    expect(AGENT_CONTRACT_VERSION).toBe("4.29.0 sha256:897bec09af56a000");
+  });
+
+  it("takes asked_at for as_of, and refuses as_of", () => {
+    const result = {
+      asked_at: "2026-11-18",
+      results: [],
+      stats: { instances: 0, wall_ms: 1 },
+    };
+    expect(contractErrors("read_result", result)).toEqual([]);
+    expect(
+      contractErrors("read_result", { ...result, valid_at: "2026-03-01" }),
+    ).toEqual([]);
+    const { asked_at, ...rest } = result;
+    expect(
+      contractErrors("read_result", { ...rest, as_of: asked_at }),
+    ).not.toEqual([]);
   });
 
   it("checks a value against a schema or one of its definitions", () => {
@@ -53,7 +69,7 @@ describe("the reads the SPA sends", () => {
         sent.push(...JSON.parse(JSON.parse(String(init?.body)).readsJson));
         return Response.json({
           resultJson: JSON.stringify({
-            as_of: "2026-10-19",
+            asked_at: "2026-10-19",
             results: [{ error: { code: "unknown_entity", message: "none" } }],
             stats: { instances: 0, wall_ms: 1 },
           }),

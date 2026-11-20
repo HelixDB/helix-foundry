@@ -228,8 +228,10 @@ func TestAskFoundryQuestion(t *testing.T) {
 			"no token":         func(r *foundryv1.AskFoundryQuestionRequest) { r.ClientToken = "" },
 			"focus not object": func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `["Customer"]` },
 			"focus not json":   func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{` },
-			"focus by key":     func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{"type":"Customer","key":"c1"}` },
-			"focus of no id":   func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{"type":"Customer"}` },
+			"focus by two": func(r *foundryv1.AskFoundryQuestionRequest) {
+				r.FocusJson = `{"type":"Customer","id":"scus_1","key":"c1"}`
+			},
+			"focus of no id": func(r *foundryv1.AskFoundryQuestionRequest) { r.FocusJson = `{"type":"Customer"}` },
 			"focus too large": func(r *foundryv1.AskFoundryQuestionRequest) {
 				r.FocusJson = `{"type":"Customer","id":"` + strings.Repeat("x", maxQuestionFocusBytes) + `"}`
 			},
@@ -240,6 +242,72 @@ func TestAskFoundryQuestion(t *testing.T) {
 		}
 		if _, err := ask(s, "c1", strings.Repeat("é", maxQuestionChars)); err != nil {
 			t.Fatalf("a question of %d characters: %v", maxQuestionChars, err)
+		}
+	})
+
+	// A question may be answered as of a day: a real date, not after today in
+	// UTC, stored as its midnight and echoed; a retry of the same token is the
+	// same question only as of the same day.
+	t.Run("asks as of a day", func(t *testing.T) {
+		s, store := questionService(t)
+		resp, err := ask(s, "c1", "Who?", func(r *foundryv1.AskFoundryQuestionRequest) { r.ValidAt = "2026-03-01" })
+		if err != nil || resp.GetQuestion().GetValidAt() != "2026-03-01" {
+			t.Fatalf("dated = (%+v, %v)", resp, err)
+		}
+		if got := store.questions[0].ValidAt; got == nil || !got.Equal(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)) {
+			t.Fatalf("stored %v", got)
+		}
+		listed, err := s.ListFoundryQuestions(ports.WithActor(context.Background(), person),
+			&foundryv1.ListFoundryQuestionsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+		if err != nil || len(listed.GetQuestions()) != 1 || listed.GetQuestions()[0].GetValidAt() != "2026-03-01" {
+			t.Fatalf("listed = (%+v, %v)", listed, err)
+		}
+		if again, err := ask(s, "c1", "Who?", func(r *foundryv1.AskFoundryQuestionRequest) { r.ValidAt = "2026-03-01" }); err != nil ||
+			again.GetQuestion().GetId() != resp.GetQuestion().GetId() {
+			t.Fatalf("retry = (%+v, %v)", again, err)
+		}
+		for name, day := range map[string]string{"another day": "2026-03-02", "now": ""} {
+			if _, err := ask(s, "c1", "Who?", func(r *foundryv1.AskFoundryQuestionRequest) { r.ValidAt = day }); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("token reused as of %s: %v", name, err)
+			}
+		}
+		plain, err := ask(s, "c2", "Who?")
+		if err != nil || plain.GetQuestion().GetValidAt() != "" || store.questions[1].ValidAt != nil {
+			t.Fatalf("undated = (%+v, %v)", plain, err)
+		}
+		today := time.Now().UTC().Format(time.DateOnly)
+		if resp, err := ask(s, "c3", "Who?", func(r *foundryv1.AskFoundryQuestionRequest) { r.ValidAt = today }); err != nil || resp.GetQuestion().GetValidAt() != today {
+			t.Fatalf("today = (%+v, %v)", resp, err)
+		}
+		for day, want := range map[string]string{
+			"2026-3-1":             "not a date",
+			"2026-02-30":           "not a date",
+			"2026-03-01T00:00:00Z": "not a date",
+			time.Now().UTC().AddDate(0, 0, 2).Format(time.DateOnly): "after today",
+		} {
+			_, err := ask(s, "c-"+day, "Who?", func(r *foundryv1.AskFoundryQuestionRequest) { r.ValidAt = day })
+			if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s: %v, want %q", day, err, want)
+			}
+		}
+		// A thread is asked as of one day: a follow-up as of its day is asked, one
+		// as of another day, or of now, refused.
+		follow := func(token, day string) error {
+			_, err := ask(s, token, "And then?", func(r *foundryv1.AskFoundryQuestionRequest) {
+				r.ThreadId, r.ValidAt = resp.GetQuestion().GetId(), day
+			})
+			return err
+		}
+		if err := follow("f1", "2026-03-01"); err != nil {
+			t.Fatalf("a follow-up as of its thread's day: %v", err)
+		}
+		for name, day := range map[string]string{"another day": "2026-03-02", "now": ""} {
+			if err := follow("f-"+name, day); status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "one day") {
+				t.Fatalf("a follow-up as of %s: %v", name, err)
+			}
+		}
+		if len(store.questions) != 4 {
+			t.Fatalf("queued %d questions", len(store.questions))
 		}
 	})
 

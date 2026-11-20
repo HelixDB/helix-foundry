@@ -4,8 +4,8 @@
   "description": "What a request read.",
   "type": "object",
   "properties": {
-    "as_of": {
-      "description": "The request's `as_of`.",
+    "asked_at": {
+      "description": "The request's `asked_at`.",
       "type": "string"
     },
     "results": {
@@ -18,10 +18,17 @@
     "stats": {
       "description": "What the request spent.",
       "$ref": "#/$defs/ReadStats"
+    },
+    "valid_at": {
+      "description": "The request's `valid_at`, if it gave one.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
-    "as_of",
+    "asked_at",
     "results",
     "stats"
   ],
@@ -195,6 +202,13 @@
               "type": "string",
               "const": "entity"
             },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
+            },
             "violations": {
               "description": "The violations naming it first, as the rules have them now.",
               "type": "array",
@@ -226,6 +240,13 @@
               "items": {
                 "$ref": "#/$defs/PatternRow"
               }
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
             }
           },
           "required": [
@@ -256,6 +277,13 @@
               "items": {
                 "$ref": "#/$defs/ProofStep"
               }
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
             }
           },
           "required": [
@@ -284,6 +312,13 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/StoredViolation"
+              }
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
               }
             }
           },
@@ -333,6 +368,13 @@
             "stats": {
               "description": "What it read.",
               "$ref": "#/$defs/Stats"
+            },
+            "unfilled": {
+              "description": "Rules it depends on that read, under `not`, a property few or none of its type's\nentities have in the load: it holds because the property is empty\n([`unfilled`](extraction::query::unfilled)). Absent where none does, for a reader\nwho holds part of the load, and where a count failed or didn't return in time.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Unfilled"
+              }
             }
           },
           "required": [
@@ -563,7 +605,7 @@
           "type": "string"
         },
         "value": {
-          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from the read's `as_of`). None for\n`is_null` and `not_null`.",
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from today). None for\n`is_null` and `not_null`.",
           "default": null
         }
       },
@@ -675,7 +717,7 @@
       ]
     },
     "EntityRef": {
-      "description": "An entity: its type and its identity within the type, as the load stores it (a named\ntype's normalized name, a keyed type's key encoding).",
+      "description": "An entity a result names: its type and its identity within the type, as the load stores it\n(a named type's normalized name, a keyed type's key encoding). A request names one by an\n[`EntityLookup`]: this id, its key's plain values or a name.",
       "type": "object",
       "properties": {
         "id": {
@@ -734,6 +776,10 @@
               "type": "integer",
               "format": "uint32",
               "minimum": 0
+            },
+            "undated": {
+              "description": "Read as of a `valid_at`: its document gives no date, so it may be from after that\nday. Absent otherwise.",
+              "type": "boolean"
             },
             "value": {
               "description": "The value it states, for a property's quote: a document's, so data too. Absent for\na fact's."
@@ -973,6 +1019,24 @@
           ]
         },
         {
+          "description": "It reads the load as it is now, so it can't answer as of the request's `valid_at`:\nrules, violation records and queries have no valid time.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "current_only"
+            },
+            "message": {
+              "description": "For a person.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ]
+        },
+        {
           "description": "It doesn't fit the ontology: an unknown type, predicate or constraint, a wrong number\nof arguments, no bound argument, an identity that isn't one, a limit out of range.",
           "type": "object",
           "properties": {
@@ -1186,6 +1250,27 @@
       "required": [
         "value",
         "count"
+      ]
+    },
+    "KeyValues": {
+      "description": "A key's plain values: the value, or an object of each key property's value.",
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "minProperties": 1
+        }
       ]
     },
     "LiveViolation": {
@@ -1455,7 +1540,7 @@
           }
         },
         "test": {
-          "description": "The property test or comparison this step is, if any, as the rule wrote it (such as\n`due_on < today - 30d` or `amount > limit`); its arguments are the entities whose\nproperties were read, and today is the response's as_of date. In a `not` step,\n`absent <prop>`: the property has no value.",
+          "description": "The property test or comparison this step is, if any, as the rule wrote it (such as\n`due_on < today - 30d` or `amount > limit`); its arguments are the entities whose\nproperties were read, and today is the response's asked_at date. In a `not` step,\n`absent <prop>`: the property has no value.",
           "type": [
             "string",
             "null"
@@ -1690,7 +1775,7 @@
           "minimum": 0
         },
         "order_by": {
-          "description": "The order: a property of a position the columns name, then the entities; by the\nentities alone if `null`.",
+          "description": "The order: a property of a position the columns name, then a text start's rank, then\nthe entities.",
           "anyOf": [
             {
               "$ref": "#/$defs/OrderBy"
@@ -1734,7 +1819,7 @@
       "type": "object",
       "properties": {
         "ids": {
-          "description": "Only these entities, by their stored identity (a named type's normalized name, a\nkeyed type's key encoding), at most 1,000; every entity of the type if `null`.",
+          "description": "Only these entities, by their ids as reads return them, at most 1,000; every entity of\nthe type if `null`.",
           "type": [
             "array",
             "null"
@@ -1744,8 +1829,19 @@
             "type": "string"
           }
         },
+        "keys": {
+          "description": "Only these, by their keys' plain values, at most 1,000.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/KeyValues"
+          },
+          "maxItems": 1000
+        },
         "text": {
-          "description": "A text search of the type's names, over what rows and documents created alike: the\nquery starts from its best 100 matches by score, so it finds names that share words\nwith the text rather than testing them (use `where` with `contains` for that). At most\n256 bytes, with a word to search for; not with `ids`, and only for a type with names.",
+          "description": "A search of the type's names, key and identifiers, over rows and documents alike: the\nquery starts from its best 100 matches, exact ones first, then names it begins, then\nshared words; rows keep that order unless `order_by`. It finds rather than tests (use\n`where` with `contains` for that). At most 256 bytes; not with `ids` or `keys`.",
           "type": [
             "string",
             "null"
@@ -1966,6 +2062,53 @@
           "type": "string",
           "const": "rust"
         }
+      ]
+    },
+    "Unfilled": {
+      "description": "A property a rule reads under `not` that few or none of its type's entities have.",
+      "type": "object",
+      "properties": {
+        "filled": {
+          "description": "How many of the type's entities have it in the load: under 5% of `of`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "negated": {
+          "description": "Whether the read negates `rule` itself (a query's `not_holds`): then `prop` is read\nwith no `not` in the rule, which fails where it is empty.",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "`never filled in this load`, or `filled on <filled> of <of> in this load`.",
+          "type": "string"
+        },
+        "of": {
+          "description": "How many entities of the type the load holds; more than 0.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property, read under an odd number of `not`s, the read's own negation counted:\nwhere it is empty that negation holds.",
+          "type": "string"
+        },
+        "rule": {
+          "description": "The rule the result depends on, as `rule:<name>` or `constraint:<name>`.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type whose entities the property is read of.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "negated",
+        "type",
+        "prop",
+        "filled",
+        "of",
+        "note"
       ]
     }
   }

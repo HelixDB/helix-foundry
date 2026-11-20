@@ -43,6 +43,9 @@ message ReadRequest {
   string visibility_json = 7;
   // The version's mappings.toml, which says what those sources fill.
   string mappings_toml = 8;
+  // The day to read as of, YYYY-MM-DD, not after today (UTC); empty for now
+  // (the agent's read_request.json `valid_at`).
+  string valid_at = 9;
 }
 
 message ReadResponse {

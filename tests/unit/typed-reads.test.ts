@@ -151,7 +151,7 @@ function run<T>(plan: ReadPlan<T>, model = load()): T {
     return a;
   });
   const parsed = parseReadResult(
-    JSON.stringify({ as_of: "2026-10-30", results, stats: {} }),
+    JSON.stringify({ asked_at: "2026-10-30", results, stats: {} }),
   )!;
   return plan.parse(parsed.results);
 }
@@ -779,7 +779,7 @@ describe("a type's records, read through grants", () => {
         sent.push({ limit, offset, sorted: !!order_by });
         return Response.json({
           resultJson: JSON.stringify({
-            as_of: "2026-11-02",
+            asked_at: "2026-11-02",
             results: [results.shift()],
             stats: { instances: 0, wall_ms: 1 },
           }),
@@ -860,7 +860,7 @@ describe("runPlan", () => {
         sent.push(reads.length);
         return Response.json({
           resultJson: JSON.stringify({
-            as_of: "2026-10-30",
+            asked_at: "2026-10-30",
             results: reads.map(() => ({
               ok: { kind: "query", result: { kind: "count", count: 1 } },
             })),

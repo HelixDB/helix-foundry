@@ -342,8 +342,8 @@ describe("trackBeforeLeaving", () => {
   it("goes through the tracker when the beacon is refused", async () => {
     const a = await load();
     beacon(false);
-    await a.trackBeforeLeaving("setup_prompt_copied", { setup: "local" });
-    expect(sent()).toEqual([["setup_prompt_copied", { setup: "local" }]]);
+    await a.trackBeforeLeaving("sign_in_started", { method: "github" });
+    expect(sent()).toEqual([["sign_in_started", { method: "github" }]]);
   });
 
   // The tracker, which drops it, has no visitor while the visitor opts out.
@@ -351,9 +351,9 @@ describe("trackBeforeLeaving", () => {
     const a = await load();
     const beacons = beacon();
     sdk.ids = { anonId: null, sessionId: null };
-    await a.trackBeforeLeaving("setup_prompt_copied", { setup: "agent" });
+    await a.trackBeforeLeaving("sign_in_started", { method: "google" });
     expect(beacons).toEqual([]);
-    expect(sent()).toEqual([["setup_prompt_copied", { setup: "agent" }]]);
+    expect(sent()).toEqual([["sign_in_started", { method: "google" }]]);
   });
 
   // Never a visitor id the SDK reads from storage, which it would before the

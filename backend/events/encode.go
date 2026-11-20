@@ -2,17 +2,19 @@ package events
 
 import (
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
 
-// ErrCorrupt is a batch line that no send could have written, or one holding
-// a field its source's schema lacks: a sync of it fails for good.
+// ErrCorrupt is a batch object or line that no send could have written, or a
+// line holding a field its source's schema lacks: a sync of it fails for good.
 var ErrCorrupt = errors.New("events: corrupt batch line")
 
 // receivedLayout writes received_at with six fractional digits always, so the
@@ -158,6 +160,47 @@ func DecodeLine(line []byte) (Line, error) {
 		return Line{}, fmt.Errorf("%w: not a line a send writes", ErrCorrupt)
 	}
 	return l, nil
+}
+
+// Lines reads batch b's object whole, as its store returns it (gzip), and
+// decodes its lines in the order sent. Every committed batch's object was
+// stored before its row, so an object that is not the b.Pieces lines of
+// b.Bytes bytes its row records, or holds a line no send writes, is
+// ErrCorrupt: reading it again cannot bring its pieces back. Any other error
+// is the read's, such as a dropped connection, and may pass on a retry: a
+// truncated stream reads as io.ErrUnexpectedEOF whether the object or the
+// connection was cut.
+func Lines(object io.Reader, b Batch) ([]Line, error) {
+	gz, err := gzip.NewReader(object)
+	var data []byte
+	if err == nil {
+		// One byte past the recorded size tells a longer object apart
+		// without reading it all; a whole one is read to its checksum.
+		data, err = io.ReadAll(io.LimitReader(gz, b.Bytes+1))
+	}
+	var flateErr flate.CorruptInputError
+	switch {
+	// An empty object (io.EOF before a header) or a broken gzip stream is
+	// not one a send wrote.
+	case errors.Is(err, io.EOF) || errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) || errors.As(err, &flateErr):
+		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	case err != nil:
+		return nil, err
+	case int64(len(data)) != b.Bytes:
+		return nil, fmt.Errorf("%w: its object is not the %d bytes its row records", ErrCorrupt, b.Bytes)
+	}
+	raw := bytes.Split(data, []byte("\n"))
+	// A whole object ends with a newline, so the split leaves one empty tail.
+	if len(raw) != b.Pieces+1 || len(raw[b.Pieces]) != 0 {
+		return nil, fmt.Errorf("%w: its object is not the %d lines its row records", ErrCorrupt, b.Pieces)
+	}
+	lines := make([]Line, b.Pieces)
+	for i := range lines {
+		if lines[i], err = DecodeLine(raw[i]); err != nil {
+			return nil, err
+		}
+	}
+	return lines, nil
 }
 
 // Row is the line as a row of the source's events table, for UpsertJSON:

@@ -271,10 +271,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       response = {
         commands: [],
         models: [],
+        // As the real CLI says it: a key in its environment outranks the
+        // subscription login, which then goes unreported.
         account:
           scenario === "no_account"
             ? {}
-            : { subscriptionType: "max", email: "ada@example.com" },
+            : process.env.ANTHROPIC_API_KEY
+              ? { apiKeySource: "ANTHROPIC_API_KEY" }
+              : { subscriptionType: "max", email: "ada@example.com" },
       };
     if (m.request.subtype === "mcp_set_servers") {
       server = m.request.servers.foundry;

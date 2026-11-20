@@ -94,7 +94,7 @@ type PDFs struct {
 }
 
 // Read reads a PDF and stores its text once:
-//  1. Download its original whole, at most the size its upload declared.
+//  1. Download its original whole, at most the size its upload or sync declared.
 //  2. Extract its text (Text).
 //  3. Store the text as UTF-8 plain text at document.TextKey, which holds
 //     the text's SHA-256: a retry that read other text (under another
@@ -181,7 +181,7 @@ func (p *PDFs) Text(ctx context.Context, data []byte) (text string, pages int, b
 	opened, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
 	switch {
 	case errors.Is(err, pdfiumerrors.ErrPassword), errors.Is(err, pdfiumerrors.ErrSecurity):
-		return fail(model.FoundryFileReadUnsupported, "the PDF is encrypted; upload it without a password")
+		return fail(model.FoundryFileReadUnsupported, "the PDF is encrypted; save it without a password")
 	case err != nil:
 		return fail(model.FoundryFileReadUnsupported, "the file is damaged or is not a PDF")
 	}

@@ -423,7 +423,7 @@
       "type": "object",
       "properties": {
         "call_timeout_secs": {
-          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead.",
+          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead; an Ask turn, but\non Ollama, is also cut when no real output (keep-alives aside) arrives for a third of\nthe wall time, and tried once more.",
           "type": "integer",
           "format": "uint32",
           "minimum": 1

@@ -495,7 +495,7 @@ func TestGranteeAdmission(t *testing.T) {
 // its own questions.
 func TestGranteeAnswers(t *testing.T) {
 	s, store := accessService(t)
-	reader := &fakeFoundryRead{result: `{"as_of":"2026-10-30","results":[{"ok":{}}]}`}
+	reader := &fakeFoundryRead{result: `{"asked_at":"2026-10-30","results":[{"ok":{}}]}`}
 	s.deps.FoundryRead = reader
 	conn, as := served(t, s)
 	client := foundryv1.NewFoundryServiceClient(conn)
@@ -614,6 +614,13 @@ func TestGranteeAnswers(t *testing.T) {
 				t.Errorf("%s: %v", name, err)
 			}
 		}
+		// A grantee asks through its grants, even ones holding the whole load, and
+		// the engine reads nothing as of a day through grants: refused when asked.
+		_, err = client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1",
+			Question: "How many customers?", ClientToken: "agent-dated", ValidAt: "2026-03-01"})
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "through grants") {
+			t.Fatalf("a day through grants: %v", err)
+		}
 		again, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1",
 			Question: "And then?", ClientToken: "agent-6", ThreadId: mine.GetQuestion().GetId()})
 		if err != nil || again.GetQuestion().GetThreadId() != mine.GetQuestion().GetId() {
@@ -717,7 +724,7 @@ func TestGranteeAnswers(t *testing.T) {
 // version as the agent projects it, and reads and questions told what it holds.
 func TestGranteePartial(t *testing.T) {
 	s, store := accessService(t)
-	const view = `{"as_of":"2026-10-30","results":[{"ok":{"kind":"view","ontology_toml":"projected","mappings_toml":"held mappings","partial":["Customer"]}}]}`
+	const view = `{"asked_at":"2026-10-30","results":[{"ok":{"kind":"view","ontology_toml":"projected","mappings_toml":"held mappings","partial":["Customer"]}}]}`
 	reader := &fakeFoundryRead{result: view}
 	s.deps.FoundryRead = reader
 	mixed := "load-4"
@@ -795,7 +802,7 @@ func TestGranteePartial(t *testing.T) {
 	})
 	t.Run("reads told what it holds", func(t *testing.T) {
 		before := len(reader.requests)
-		reader.result = `{"as_of":"2026-10-30","results":[{"ok":{}}]}`
+		reader.result = `{"asked_at":"2026-10-30","results":[{"ok":{}}]}`
 		defer func() { reader.result = view }()
 		if _, err := client.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", LoadId: "load-4", ReadsJson: `[{"query":{}}]`}); err != nil {
 			t.Fatal(err)
@@ -856,6 +863,13 @@ func TestGranteePartial(t *testing.T) {
 		again, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?", ClientToken: "part-1"})
 		if err != nil || again.GetQuestion().GetId() != asked.GetQuestion().GetId() {
 			t.Fatalf("%+v, %v", again, err)
+		}
+		// The engine reads nothing as of a day for a reader of part of a load:
+		// refused when asked, not failed when run.
+		_, err = client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?",
+			ClientToken: "part-dated", ValidAt: "2026-03-01"})
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "through grants") {
+			t.Fatalf("a day of part of a load: %v", err)
 		}
 	})
 	t.Run("an answer reads while its grants hold what it read", func(t *testing.T) {

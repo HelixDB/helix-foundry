@@ -60,7 +60,7 @@ type AskRequest struct {
 	// Focus is the entity the user asked it about, if any. The agent reads it
 	// before the first step; one the load doesn't hold is said so in the
 	// question, which still runs.
-	Focus *EntityRef `json:"focus,omitempty"`
+	Focus *EntityLookup `json:"focus,omitempty"`
 	// History is the thread's earlier answered turns, oldest first, at most
 	// MaxAskHistory. Never nil: the schema needs an array.
 	History []AskTurn `json:"history"`
@@ -68,9 +68,13 @@ type AskRequest struct {
 	Helix HelixTarget `json:"helix"`
 	// Visibility is what the asker holds of the load, when it isn't everything.
 	Visibility *Visibility `json:"visibility,omitempty"`
-	// AsOf is when the question was asked (RFC 3339), the `today` its rules see.
-	AsOf   string    `json:"as_of"`
-	Limits AskLimits `json:"limits"`
+	// AskedAt is when the question was asked (RFC 3339), the `today` its rules see.
+	AskedAt string `json:"asked_at"`
+	// ValidAt is the day the question is answered as of (YYYY-MM-DD, not after
+	// AskedAt), empty for now (contract 4.28.0): the engine reads entities as
+	// they were then and refuses the reads that can only show the load now.
+	ValidAt string    `json:"valid_at,omitempty"`
+	Limits  AskLimits `json:"limits"`
 	// Models is the question's model, resolved for the workspace; the key
 	// goes in the call's metadata.
 	Models AskModels `json:"models"`
@@ -114,16 +118,90 @@ type EntityRef struct {
 
 func (e EntityRef) whole() bool { return e.Type != "" && e.ID != "" }
 
-// ParseFocus reads what a question is asked about: exactly
-// {"type": ..., "id": ...}, both set.
-func ParseFocus(raw string) (EntityRef, error) {
+// EntityLookup is an entity as a request names one (contract 4.27.0): its type
+// and exactly one of its id as reads return it, its key's plain values (Key: the
+// value alone, a string or an integer, for a key of one property, or an object
+// of each key property's value) or a name in any spelling. With a key or a name
+// the type may be left out: the engine finds the entity among every type, and
+// refuses a value several entities share, naming them.
+type EntityLookup struct {
+	Type string          `json:"type,omitempty"`
+	ID   string          `json:"id,omitempty"`
+	Key  json.RawMessage `json:"key,omitempty"`
+	Name string          `json:"name,omitempty"`
+}
+
+// errFocus says what a focus may be.
+var errFocus = errors.New(`a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: ` +
+	`exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them`)
+
+// ParseFocus reads what a question is asked about: an EntityLookup, its
+// shape checked here and what it names resolved by the engine.
+//
+//	ParseFocus(`{"type": "Customer", "id": "scus_1"}`) // by its id
+//	ParseFocus(`{"type": "Site", "key": "app.example.com"}`) // by its key's plain value
+//	ParseFocus(`{"name": "Acme Corp"}`) // by a name, among every type
+func ParseFocus(raw string) (EntityLookup, error) {
 	d := json.NewDecoder(strings.NewReader(raw))
 	d.DisallowUnknownFields()
-	var focus EntityRef
-	if err := d.Decode(&focus); err != nil || d.More() || !focus.whole() {
-		return EntityRef{}, errors.New(`a focus is {"type": ..., "id": ...}, both set`)
+	var focus EntityLookup
+	if err := d.Decode(&focus); err != nil || d.More() {
+		return EntityLookup{}, errFocus
+	}
+	// A type or an id given empty is refused, as the engine refuses it, not read as left out.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &fields) != nil {
+		return EntityLookup{}, errFocus
+	}
+	for _, field := range []string{"type", "id"} {
+		if v, ok := fields[field]; ok && string(v) == `""` {
+			return EntityLookup{}, errFocus
+		}
+	}
+	given := 0
+	for _, set := range []bool{focus.ID != "", focus.Key != nil, focus.Name != ""} {
+		if set {
+			given++
+		}
+	}
+	switch {
+	case given != 1,
+		focus.ID != "" && focus.Type == "",
+		focus.Name != "" && strings.TrimSpace(focus.Name) == "",
+		focus.Key != nil && !keyValues(focus.Key):
+		return EntityLookup{}, errFocus
 	}
 	return focus, nil
+}
+
+// keyValues is whether raw is a key's plain values: a string, an integer, or a
+// non-empty object of them.
+func keyValues(raw json.RawMessage) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var v any
+	if d.Decode(&v) != nil {
+		return false
+	}
+	scalar := func(v any) bool {
+		switch v := v.(type) {
+		case string:
+			return true
+		case json.Number:
+			_, err := v.Int64()
+			return err == nil
+		}
+		return false
+	}
+	if obj, ok := v.(map[string]any); ok {
+		for _, value := range obj {
+			if !scalar(value) {
+				return false
+			}
+		}
+		return len(obj) > 0
+	}
+	return scalar(v)
 }
 
 // CatalogKind is what a source in the catalog is.
@@ -809,6 +887,42 @@ func AnswerText(result json.RawMessage) string {
 		blocks = append(blocks, shown[i]...)
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+// VisualOutputs are the outputs a stored result's visuals show, by evidence id,
+// as stored: what a view draws its charts and tables from beside the result
+// WithoutOutputs leaves (ExampleVisualOutputs). A visual whose query recorded
+// no output, a result without visuals, and anything that isn't a result have
+// none (nil).
+func VisualOutputs(result json.RawMessage) map[string]json.RawMessage {
+	var doc struct {
+		Answer struct {
+			Visuals []struct {
+				EvidenceID string `json:"evidence_id"`
+			} `json:"visuals"`
+		} `json:"answer"`
+		Queries []struct {
+			EvidenceID string          `json:"evidence_id"`
+			Output     json.RawMessage `json:"output"`
+		} `json:"queries"`
+	}
+	if json.Unmarshal(result, &doc) != nil {
+		return nil
+	}
+	shown := make(map[string]bool, len(doc.Answer.Visuals))
+	for _, v := range doc.Answer.Visuals {
+		shown[v.EvidenceID] = true
+	}
+	outputs := map[string]json.RawMessage{}
+	for _, q := range doc.Queries {
+		if shown[q.EvidenceID] && len(q.Output) > 0 && string(q.Output) != "null" {
+			outputs[q.EvidenceID] = q.Output
+		}
+	}
+	if len(outputs) == 0 {
+		return nil
+	}
+	return outputs
 }
 
 // WithoutOutputs is a stored result with its queries' outputs left out, for a

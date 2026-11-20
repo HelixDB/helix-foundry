@@ -30,7 +30,7 @@ import (
 
 var syncDocuments = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_sync_documents_total",
-	Help: "Connector documents by kind and what a sync did with each: added, replaced, updated, kept, over_cap, outside_window, paused, removed or truncated.",
+	Help: "Connector documents by kind and what a sync did with each: added, replaced, updated, kept, over_cap, outside_window, paused, dropped, removed or truncated.",
 }, []string{"kind", "outcome"})
 
 // documentStore holds documents' bytes (document.Store).
@@ -156,7 +156,7 @@ func (r *run) openDocuments(ctx context.Context, tables []connector.Table) (*doc
 		return d, nil
 	}
 	// Zero limits would cut every text to nothing or remove every document.
-	if r.s.Documents == nil || r.s.MonthBudget == nil || r.s.MaxDocumentBytes < 1 || r.s.MaxPerStream < 1 || r.s.PurgeGrace <= 0 {
+	if r.s.Documents == nil || r.s.MonthBudget == nil || r.s.MaxDocumentBytes < 1 || r.s.MaxPDFBytes < 1 || r.s.MaxPerStream < 1 || r.s.PurgeGrace <= 0 {
 		return nil, retryable(errors.New("the syncer's document store, budget or limits are not set"))
 	}
 	sets, err := r.s.DB.ListFoundryDocumentSets(ctx, r.sync.WorkspaceID)
@@ -372,7 +372,11 @@ func (d *documents) Want(name, externalID, version string) bool {
 // update in place when its bytes are the held document's, else a new
 // document that replaces the held one, if any. Under KeepNewest, the held
 // document at the same version, bytes and time is kept, with nothing
-// queued, and the window is then trimmed back to n (trim).
+// queued, and the window is then trimmed back to n (trim). A PDF stream's
+// document is the file whole: any bytes, never cut, and one over
+// MaxPDFBytes is dropped (Drop), which removes what the stream holds of it.
+// A new one is stored with its read queued (PublishConnectorDocuments); one
+// whose bytes are the held one's keeps the held one's read.
 func (d *documents) Put(ctx context.Context, name string, doc connector.Document) error {
 	if d.err != nil {
 		return d.err
@@ -381,6 +385,7 @@ func (d *documents) Put(ctx context.Context, name string, doc connector.Document
 	if err != nil {
 		return d.fail(err)
 	}
+	pdf := model.FoundryMediaType(s.Format.MediaType()).ReadKind() == model.FoundryReadPDF
 	reason := ""
 	switch {
 	case !s.wanted[doc.ExternalID]:
@@ -389,18 +394,26 @@ func (d *documents) Put(ctx context.Context, name string, doc connector.Document
 		reason = "its version must be 1 to 128 printable ASCII characters"
 	case doc.At.IsZero() || doc.At.Year() < 1000 || doc.At.Year() > 9999:
 		reason = "its time is missing or out of range"
-	case len(doc.Text) == 0 || !utf8.Valid(doc.Text):
-		reason = "its text is empty or not UTF-8"
+	case len(doc.Text) == 0:
+		reason = "it is empty"
+	case !pdf && !utf8.Valid(doc.Text):
+		reason = "its text is not UTF-8"
 	}
 	if reason != "" {
 		return d.fail(&connector.DocumentError{Stream: name, ExternalID: doc.ExternalID, Reason: reason})
+	}
+	if pdf && int64(len(doc.Text)) > d.r.s.MaxPDFBytes {
+		return d.Drop(name, doc.ExternalID)
 	}
 	delete(s.wanted, doc.ExternalID)
 	b := &s.batch
 	if b.held == nil {
 		b.held, b.gone, b.outcomes = map[string]model.ConnectorDocument{}, map[string]bool{}, map[string]int{}
 	}
-	text, truncated := truncate(doc.Text, d.r.s.MaxDocumentBytes)
+	text, truncated := doc.Text, false
+	if !pdf {
+		text, truncated = truncate(doc.Text, d.r.s.MaxDocumentBytes)
+	}
 	sum := sha256.Sum256(text)
 	// source_at holds microseconds, so a held time compares as it is stored.
 	at := doc.At.UTC().Truncate(time.Microsecond)

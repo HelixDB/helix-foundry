@@ -113,7 +113,7 @@ func TestSyncerConnectorDocuments(t *testing.T) {
 	bucket := &syncBucket{objects: map[string][]byte{}}
 	s := &syncer.Syncer{
 		DB: f.db, Catalog: connector.NewCatalogOf(kind), Keys: keys, PlanCatalog: planCatalog, Refresh: f.db, Snapshots: bucket,
-		MaxRows: 100, MaxBytes: 1 << 20, TempDir: t.TempDir(), Documents: bucket, MaxDocumentBytes: 1 << 20, MaxPerStream: 1000,
+		MaxRows: 100, MaxBytes: 1 << 20, TempDir: t.TempDir(), Documents: bucket, MaxDocumentBytes: 1 << 20, MaxPDFBytes: 3 << 20, MaxPerStream: 1000,
 		PurgeGrace: time.Hour, MonthBudget: func(time.Time) model.FoundryGraphBudget { return noBudget },
 	}
 	rows := int64(0)

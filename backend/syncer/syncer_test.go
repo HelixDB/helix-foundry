@@ -289,7 +289,7 @@ func newFixture(t *testing.T, stripeURL, kind string, settings string, p planRea
 		syncer: &Syncer{
 			DB: store, Catalog: connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{}), Keys: keys,
 			Plans: p, PlanCatalog: catalog(t), Snapshots: snapshots, MaxRows: 100, MaxBytes: 1 << 20, TempDir: t.TempDir(),
-			Documents: documents, MaxDocumentBytes: 1 << 10, MaxPerStream: 1000, PurgeGrace: time.Hour,
+			Documents: documents, MaxDocumentBytes: 1 << 10, MaxPDFBytes: 1 << 10, MaxPerStream: 1000, PurgeGrace: time.Hour,
 			MonthBudget: func(time.Time) model.FoundryGraphBudget {
 				return model.FoundryGraphBudget{CapMicros: 50e6, ReserveMicros: 10e6}
 			},

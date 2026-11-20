@@ -21,8 +21,8 @@ func askRequest() AskRequest {
 		DraftJSON: `{"items":{}}`, QuestionsJSON: `[]`, Goal: "track contracts",
 		Catalog:  []CatalogEntry{{ID: "src_1", Kind: CatalogTable, Name: "Stripe / customers"}},
 		Question: "Which customers?", History: []AskTurn{},
-		Helix: HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 10, TimeoutSecs: 30},
-		AsOf:  "2026-10-19T12:00:00Z", Models: houseAskModels(),
+		Helix:   HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 10, TimeoutSecs: 30},
+		AskedAt: "2026-10-19T12:00:00Z", Models: houseAskModels(),
 		Limits: AskLimits{MaxUSD: 0.5, MaxSteps: 10, MaxWallSecs: 120, Read: AskReadLimits{WallMS: 5000, ScanEntities: 20000}},
 	}
 }
@@ -33,13 +33,15 @@ func TestAskRequest(t *testing.T) {
 	t.Run("builds requests the agent accepts", func(t *testing.T) {
 		schema := contracttest.Schema(t, "ask_request.json")
 		focused := askRequest()
-		focused.Focus = &EntityRef{Type: "Customer", ID: "scus_1"}
+		focused.Focus = &EntityLookup{Type: "Customer", ID: "scus_1"}
 		threaded := askRequest()
 		threaded.Catalog = append(threaded.Catalog, CatalogEntry{ID: "set_1", Kind: CatalogDocumentSet, Name: "Contracts"})
 		for range MaxAskHistory {
 			threaded.History = append(threaded.History, AskTurn{Question: "Who signed?", Answer: "Acme [c1]."})
 		}
-		for name, req := range map[string]AskRequest{"plain": askRequest(), "focused": focused, "threaded": threaded} {
+		dated := askRequest()
+		dated.ValidAt = "2026-03-01"
+		for name, req := range map[string]AskRequest{"plain": askRequest(), "focused": focused, "threaded": threaded, "dated": dated} {
 			body, err := json.Marshal(req)
 			if err != nil {
 				t.Fatal(err)
@@ -49,8 +51,13 @@ func TestAskRequest(t *testing.T) {
 			}
 		}
 		plain, _ := json.Marshal(askRequest())
-		if strings.Contains(string(plain), `"focus"`) {
-			t.Fatalf("a request without a focus sends one: %s", plain)
+		if strings.Contains(string(plain), `"focus"`) || strings.Contains(string(plain), `"valid_at"`) {
+			t.Fatalf("a request without a focus or a day sends one: %s", plain)
+		}
+		// Contract 4.28.0 took as_of's name away: a request still naming it is refused.
+		old := strings.Replace(string(plain), `"asked_at"`, `"as_of"`, 1)
+		if err := contracttest.Validate(t, schema, []byte(old)); err == nil {
+			t.Fatalf("ask_request.json accepted as_of: %s", old)
 		}
 	})
 
@@ -81,12 +88,22 @@ func TestAskRequest(t *testing.T) {
 		}
 	})
 
-	// The check has teeth: a focus is an entity by type and id, nothing else.
-	t.Run("the schema refuses a focus that isn't an entity", func(t *testing.T) {
+	// The check has teeth: a focus is an entity by an id, a key or a name, never two.
+	t.Run("the schema takes a focus by key or name and refuses one by two", func(t *testing.T) {
 		body, _ := json.Marshal(askRequest())
-		loose := strings.Replace(string(body), `"question":`, `"focus":{"type":"Customer","key":"c1"},"question":`, 1)
-		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(loose)); err == nil {
-			t.Fatalf("ask_request.json accepted %s", loose)
+		schema := contracttest.Schema(t, "ask_request.json")
+		for focus, ok := range map[string]bool{
+			`{"type":"Customer","key":"c1"}`:           true,
+			`{"key":{"id":"c1","day":"2026-03-14"}}`:   true,
+			`{"name":"Acme Corp"}`:                     true,
+			`{"type":"Customer","id":"c1","key":"c1"}`: false,
+			`{"id":"c1"}`:                   false,
+			`{"type":"Customer","key":1.5}`: false,
+		} {
+			loose := strings.Replace(string(body), `"question":`, `"focus":`+focus+`,"question":`, 1)
+			if err := contracttest.Validate(t, schema, []byte(loose)); (err == nil) != ok {
+				t.Errorf("ask_request.json with focus %s: %v", focus, err)
+			}
 		}
 	})
 }
@@ -96,20 +113,53 @@ func TestParseFocus(t *testing.T) {
 	// else, so the backend refuses it when the question is asked.
 	t.Run("reads an entity by type and id", func(t *testing.T) {
 		got, err := ParseFocus(` {"type":"Customer","id":"scus_1"} `)
-		if err != nil || got != (EntityRef{Type: "Customer", ID: "scus_1"}) {
+		if err != nil || got.Type != "Customer" || got.ID != "scus_1" || got.Key != nil || got.Name != "" {
 			t.Fatalf("focus = %+v, %v", got, err)
+		}
+		// It is sent on as it was read: an id's JSON is as before 4.27.0.
+		if sent, _ := json.Marshal(got); string(sent) != `{"type":"Customer","id":"scus_1"}` {
+			t.Fatalf("sent %s", sent)
+		}
+	})
+
+	t.Run("reads an entity by its key's plain values or a name", func(t *testing.T) {
+		for raw, want := range map[string]string{
+			`{"type":"Site","key":"app.example.com"}`: `{"type":"Site","key":"app.example.com"}`,
+			`{"key":42}`: `{"key":42}`,
+			`{"key":{"flight":"AA 100","day":"2026-03-14"}}`: `{"key":{"flight":"AA 100","day":"2026-03-14"}}`,
+			`{"type":"Company","name":"Acme  Corp"}`:         `{"type":"Company","name":"Acme  Corp"}`,
+			`{"name":"Acme"}`:                                `{"name":"Acme"}`,
+		} {
+			got, err := ParseFocus(raw)
+			if err != nil {
+				t.Errorf("%s: %v", raw, err)
+				continue
+			}
+			if sent, _ := json.Marshal(got); string(sent) != want {
+				t.Errorf("%s sent as %s", raw, sent)
+			}
 		}
 	})
 
 	t.Run("refuses anything else", func(t *testing.T) {
 		for name, raw := range map[string]string{
-			"not JSON":       `{`,
-			"an array":       `["Customer","c1"]`,
-			"no id":          `{"type":"Customer"}`,
-			"an empty type":  `{"type":"","id":"c1"}`,
-			"an extra field": `{"type":"Customer","id":"c1","key":"c1"}`,
-			"two values":     `{"type":"Customer","id":"c1"}{}`,
-			"null":           `null`,
+			"not JSON":             `{`,
+			"an array":             `["Customer","c1"]`,
+			"no id":                `{"type":"Customer"}`,
+			"an empty type":        `{"type":"","id":"c1"}`,
+			"an id and a key":      `{"type":"Customer","id":"c1","key":"c1"}`,
+			"a key and a name":     `{"key":"c1","name":"Acme"}`,
+			"an id with no type":   `{"id":"scus_1"}`,
+			"a float key":          `{"key":1.5}`,
+			"a null key":           `{"key":null}`,
+			"a list key":           `{"key":["a","b"]}`,
+			"an empty key":         `{"key":{}}`,
+			"a nested key":         `{"key":{"a":{"b":1}}}`,
+			"a blank name":         `{"name":"  "}`,
+			"an empty type, a key": `{"type":"","key":"c1"}`,
+			"an extra field":       `{"type":"Customer","id":"c1","entity":"n1"}`,
+			"two values":           `{"type":"Customer","id":"c1"}{}`,
+			"null":                 `null`,
 		} {
 			if _, err := ParseFocus(raw); err == nil {
 				t.Errorf("%s: parsed %s", name, raw)
@@ -710,6 +760,52 @@ func TestWithoutOutputs(t *testing.T) {
 	})
 }
 
+func TestVisualOutputs(t *testing.T) {
+	// A view gets the outputs the answer's visuals show, as stored, and no
+	// other: e5's output and e7, which recorded none, stay out.
+	t.Run("keeps the outputs the visuals show", func(t *testing.T) {
+		got := VisualOutputs(json.RawMessage(withOutputs(everyVisual)))
+		want := map[string]string{}
+		for _, o := range recordedOutputs {
+			if o.evidence != "e5" {
+				want[o.evidence] = o.output
+			}
+		}
+		have := map[string]string{}
+		for id, output := range got {
+			have[id] = string(output)
+		}
+		if !reflect.DeepEqual(have, want) {
+			t.Fatalf("outputs = %v, want %v", have, want)
+		}
+	})
+
+	// A visual of a query with no output, a result with no visuals, a
+	// question that didn't answer and anything that isn't a result give none.
+	t.Run("has none where nothing shows one", func(t *testing.T) {
+		for _, raw := range []string{
+			withOutputs(`{"evidence_id":"e7"}`),
+			withOutputs(""),
+			answered(citeEveryTarget),
+			`{"status":"cannot_answer","reason":"r","gap":"g","queries":[],` + askUsage + `}`,
+			`not json`,
+			``,
+		} {
+			if got := VisualOutputs(json.RawMessage(raw)); got != nil {
+				t.Errorf("%s gave %v", raw, got)
+			}
+		}
+	})
+}
+
+// A visual of e2 gets e2's output; e3, which no visual shows, stays out.
+func ExampleVisualOutputs() {
+	outputs := VisualOutputs(json.RawMessage(`{"answer":{"visuals":[{"evidence_id":"e2"}]},` +
+		`"queries":[{"evidence_id":"e2","output":{"kind":"count","count":3}},{"evidence_id":"e3","output":{"kind":"count","count":4}}]}`))
+	fmt.Println(len(outputs), string(outputs["e2"]))
+	// Output: 1 {"kind":"count","count":3}
+}
+
 func TestDecodeAskEvent(t *testing.T) {
 	failed := "no type `Planet`"
 	// Each event the agent streams decodes. A tool result carries the
@@ -878,11 +974,14 @@ func ExampleWithoutOutputs() {
 func ExampleParseFocus() {
 	focus, err := ParseFocus(`{"type":"Customer","id":"scus_1"}`)
 	fmt.Println(focus.Type, focus.ID, err)
-	_, err = ParseFocus(`{"type":"Customer","key":"scus_1"}`)
+	focus, err = ParseFocus(`{"type":"Site","key":"app.example.com"}`)
+	fmt.Println(focus.Type, string(focus.Key), err)
+	_, err = ParseFocus(`{"type":"Customer","id":"scus_1","name":"Acme"}`)
 	fmt.Println(err)
 	// Output:
 	// Customer scus_1 <nil>
-	// a focus is {"type": ..., "id": ...}, both set
+	// Site "app.example.com" <nil>
+	// a focus is {"type", "id"}, {"type"?, "key"} or {"type"?, "name"}: exactly one of id, key and name, an id with its type, a key a string, an integer or an object of them
 }
 
 func ExampleAnswerText() {

@@ -29,6 +29,7 @@ import type {
   UpdateDocumentSetRequest,
 } from "../../src/shared/wfe";
 import { isRouted } from "../graph/scope";
+import { transcriptText } from "../../src/shared/transcript";
 import { blankMdx } from "../mdx";
 import { readPdfText, textPdf, type PdfRead } from "../pdf-text";
 import { readTableFile, type Row, type TableRead } from "../table-files";
@@ -53,6 +54,7 @@ import {
   currentLoadId,
   currentLoadVersionId,
   documentArrived,
+  type Arrival,
 } from "./loads";
 import { aiRefusal } from "./ai";
 import { advanceSyncs, connectionKind, connectionName } from "./data";
@@ -75,7 +77,9 @@ import { manages } from "./workspaces";
 //   one asked for again counts again). :content serves the text types'
 //   text, :bytes any type's bytes (base64).
 // - How ontologies read each is its kind, said in every uploaded document's
-//   `read`. Loads read Markdown, MDX (its code blanked, ../mdx.ts) and text.
+//   `read`. Loads read Markdown, MDX (its code blanked, ../mdx.ts), text and
+//   WebVTT, as its turns (src/shared/transcript.ts, the backend's
+//   transcript.Text): :content serves a transcript as uploaded.
 //   Completing a PDF's or a table file's upload queues its read, reading
 //   for `documentReadMs` (1.5 s; `POST /__mock/config`), then ready or
 //   failed with why. A PDF's read is its text (../pdf-text.ts, its pages
@@ -116,8 +120,8 @@ import { manages } from "./workspaces";
 //   SKIPPED.
 // - With MOCK_DOCUMENT_FIXTURES set (pnpm dev:mock sets it), Acme's General
 //   holds a CSV, a JSON and a PDF document from the start, read, to show
-//   their viewers, and a scanned PDF whose read failed; tests start with no
-//   document.
+//   their viewers, a scanned PDF whose read failed, and a call's WebVTT
+//   transcript; tests start with no document.
 // - A connector's syncs write documents too (writeConnectorDocuments, from
 //   ./data.ts): a set per connector and stream (`connector`), named by the
 //   stream, keeping the newest `documentsPerStream` (1000; `POST
@@ -212,6 +216,12 @@ export const FORMATS: Record<
     name: "PDF",
     binary: true,
     kind: "pdf",
+  },
+  "text/vtt": {
+    extensions: /\.vtt$/i,
+    name: "WebVTT",
+    binary: false,
+    kind: "text",
   },
 };
 type Knobs = {
@@ -537,16 +547,18 @@ export function loadDocuments(loadId: string) {
         name: d.name,
         setId,
         // MDX is read as Markdown, its code blanked (../mdx.ts); a PDF's
-        // text as plain text.
+        // text and a transcript's turns as plain text.
         markdown: d.mediaType === "text/markdown" || d.mediaType === "text/mdx",
         // A PDF whose text couldn't be read: its read's code.
         refused: r && !r.ok ? r.code : undefined,
         text:
           d.mediaType === "text/mdx"
             ? blankMdx(contents.get(d.id)?.toString("utf8") || "")
-            : r
-              ? pdfText(d) || ""
-              : contents.get(d.id)?.toString("utf8") || "",
+            : d.mediaType === "text/vtt"
+              ? transcriptText(contents.get(d.id)?.toString("utf8") || "")
+              : r
+                ? pdfText(d) || ""
+                : contents.get(d.id)?.toString("utf8") || "",
         // What the load read from it, if it did.
         extraction: extractions.get(readKey(loadId, d.id)),
       };
@@ -626,6 +638,29 @@ export function dropExtractions(loadId: string) {
  * left and the names matched to no one record, which are among the
  * reviews. `routed` says whether the load's version reads a set.
  */
+/**
+ * What a load's documents came to when the model failed some, as the WFE's
+ * ListFoundryLoadUnread counts them: those read (extracted or duplicate),
+ * those the model failed by class ("" when none was recorded), and its
+ * uploaded members with no extraction.
+ */
+export function loadModelReads(loadId: string) {
+  let read = 0,
+    unrecorded = 0;
+  const failed = new Map<string, number>();
+  for (const [documentId] of members.get(loadId) || []) {
+    if (documents.get(documentId)?.status !== "uploaded") continue;
+    const x = extractions.get(readKey(loadId, documentId));
+    if (!x) unrecorded++;
+    else if (x.status === "extracted" || x.status === "duplicate") read++;
+    else if (x.status === "failed" && x.error?.code === "model") {
+      const f = x.error.modelFailure || "";
+      failed.set(f, (failed.get(f) || 0) + 1);
+    }
+  }
+  return { read, failed, unrecorded };
+}
+
 export function loadDocumentSets(
   loadId: string,
   routed: (setId: string) => boolean,
@@ -844,7 +879,7 @@ const settle = (workspaceId: string) =>
  * no load: none reads it so. A PDF whose read hasn't finished joins them
  * (READING), and they read it once it has (wakeReads).
  */
-function fanOut(d: StoredDocument): DocumentRead[] {
+function fanOut(d: StoredDocument, by?: Arrival): DocumentRead[] {
   const kind = FORMATS[d.mediaType].kind;
   if (kind === "table") return [];
   const reading = kind === "pdf" && !readOf(d);
@@ -860,6 +895,7 @@ function fanOut(d: StoredDocument): DocumentRead[] {
         d.setId,
         !knobs.ontologyDatabaseHidden,
         reading,
+        by,
       );
       return outcome ? [{ ontologyId: o.id, outcome }] : [];
     });
@@ -868,8 +904,9 @@ function fanOut(d: StoredDocument): DocumentRead[] {
 /**
  * Has every ontology that reads a PDF's set read it once its read is done,
  * as the WFE's document worker wakes the loads that hold it when it
- * finishes. The mock runs jobs when they are next looked at, so
- * ./loads.ts's advanceLoads wakes them first.
+ * finishes: as the work of the person who uploaded it, or of no one for a
+ * connector's (Google Drive's). The mock runs jobs when they are next
+ * looked at, so ./loads.ts's advanceLoads wakes them first.
  */
 export function wakeReads() {
   for (const id of [...waking]) {
@@ -877,8 +914,32 @@ export function wakeReads() {
     // Woken already, by a call within this one, or still being read.
     if (!waking.has(id) || (d?.status === "uploaded" && !readOf(d))) continue;
     waking.delete(id);
-    if (d?.status === "uploaded") fanOut(d);
+    if (d?.status === "uploaded") fanOut(d, d.source ? "sync" : "person");
   }
+}
+
+/**
+ * Starts the read of a connector's new PDF, as the WFE queues it when the
+ * sync publishes it: the worker reads it within `documentReadMs`, and its
+ * set's readers read it once that is done (wakeReads). The read runs
+ * without blocking the sync, as the fixtures' do, and is forgotten if the
+ * document is gone by then.
+ */
+function readConnectorPdf(d: StoredDocument, bytes: Buffer) {
+  const at = Date.now() + (knobs.documentReadMs ?? READ_MS);
+  void readPdfText(bytes).then((result) => {
+    if (documents.get(d.id) === d && d.status === "uploaded")
+      reads.set(d.id, { at, result });
+  });
+  waking.add(d.id);
+}
+
+/** A connector's document is gone: its bytes and its read with it. */
+function removeSourceDocument(d: StoredDocument) {
+  d.status = "deleted";
+  contents.delete(d.id);
+  reads.delete(d.id);
+  waking.delete(d.id);
 }
 
 // ---------------------------------------------------------------- For ./data.ts
@@ -910,14 +971,16 @@ function documentName(title: string, externalId: string) {
  * version is kept, and in a keepNewest stream takes the offered time, so a
  * piece sent again as it was moves up in place; a new version with the same
  * text changes it in place; new text is a new document that replaces it;
- * one no longer kept is removed (deleted). A stream turned off is emptied,
- * and its set kept. A paused set (allowanceOf) takes nothing from a sync no
- * person started (`byPerson`): it adds, changes and removes nothing, and
- * the next one with room, or a person's, catches up, since every sync
- * offers the newest. Every ontology whose live or current load reads the
- * set reads each document added, with the trust a refresh has, as no one's
- * work; one of a set with an allowance never joins a load a person's job is
- * writing, and waits for the extract its end owes.
+ * one no longer kept is removed (deleted), with its read. A new PDF (Google
+ * Drive's) is read as an upload is (readConnectorPdf): its set's readers
+ * hold it while it is read, and read it once that is done. A stream turned
+ * off is emptied, and its set kept. A paused set (allowanceOf) takes
+ * nothing from a sync no person started (`byPerson`): it adds, changes
+ * and removes nothing, and the next one with room, or a person's, catches
+ * up, since every sync offers the newest. Every ontology whose live or
+ * current load reads the set reads each document added, with the trust a
+ * refresh has, as no one's work; one of a set with an allowance never joins
+ * a load a person's job is writing, and waits for the extract its end owes.
  */
 export function writeConnectorDocuments(
   workspaceId: string,
@@ -973,7 +1036,9 @@ export function writeConnectorDocuments(
         if (stream.keepNewest) was.source.at = doc.at;
         continue;
       }
-      const bytes = Buffer.from(doc.text),
+      const bytes = Buffer.isBuffer(doc.text)
+          ? doc.text
+          : Buffer.from(doc.text),
         source = {
           externalId: doc.externalId,
           version: doc.version,
@@ -985,10 +1050,7 @@ export function writeConnectorDocuments(
         Object.assign(was, { name, source });
         continue;
       }
-      if (was) {
-        was.status = "deleted";
-        contents.delete(was.id);
-      }
+      if (was) removeSourceDocument(was);
       const d: StoredDocument = {
         id: id("doc"),
         workspaceId,
@@ -1007,10 +1069,7 @@ export function writeConnectorDocuments(
       added.push(d);
     }
     for (const [externalId, d] of held)
-      if (!kept.has(externalId)) {
-        d.status = "deleted";
-        contents.delete(d.id);
-      }
+      if (!kept.has(externalId)) removeSourceDocument(d);
     const readers = workspaceOntologies(workspaceId).sort(
       (a, b) =>
         a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
@@ -1018,9 +1077,13 @@ export function writeConnectorDocuments(
     // No one's work, whoever started the sync: a set with an allowance's
     // never joins a person's load.
     const by = allowance ? "allowance" : "sync";
-    for (const d of added)
+    for (const d of added) {
+      // A PDF is read as an upload is: its loads wait for that (READING).
+      const pdf = FORMATS[d.mediaType].kind === "pdf";
+      if (pdf) readConnectorPdf(d, contents.get(d.id)!);
       for (const o of readers)
-        documentArrived(o.id, d.id, setId, true, false, by);
+        documentArrived(o.id, d.id, setId, true, pdf, by);
+    }
   }
 }
 
@@ -1029,10 +1092,7 @@ export function dropConnectorDocuments(connectorId: string) {
   for (const s of [...sets.values()])
     if (s.connector?.connectorId === connectorId) {
       for (const d of documents.values())
-        if (d.setId === s.id && live(d)) {
-          d.status = "deleted";
-          contents.delete(d.id);
-        }
+        if (d.setId === s.id && live(d)) removeSourceDocument(d);
       sets.delete(s.id);
     }
 }
@@ -1097,7 +1157,7 @@ function created(
   if (!format || !format.extensions.test(name))
     return fail(
       "INVALID_ARGUMENT",
-      `Foundry takes Markdown (.md, .markdown), MDX (.mdx), plain text (.txt), JSON (.json), CSV (.csv), TSV (.tsv), JSONL (.jsonl, .ndjson), Parquet (.parquet) and PDF (.pdf) documents; "${name}" is none of them`,
+      `Foundry takes Markdown (.md, .markdown), MDX (.mdx), plain text (.txt), JSON (.json), CSV (.csv), TSV (.tsv), JSONL (.jsonl, .ndjson), Parquet (.parquet), PDF (.pdf) and WebVTT (.vtt) documents; "${name}" is none of them`,
     );
   const max = MAX_BYTES[format.kind];
   if (!Number.isInteger(size) || size < 1 || size > max)
@@ -1791,8 +1851,8 @@ export async function handleDocumentUpload(
 }
 
 // Acme's fixtures for pnpm dev:mock (MOCK_DOCUMENT_FIXTURES): a CSV, a
-// JSON and a PDF document in General, uploaded, and a scan with no text
-// layer, whose read fails.
+// JSON and a PDF document in General, uploaded, a scan with no text layer,
+// whose read fails, and a renewal call's transcript, as Teams exports one.
 const FIXTURES: {
   name: string;
   mediaType: DocumentMediaType;
@@ -1857,6 +1917,43 @@ const FIXTURES: {
     mediaType: "application/pdf",
     bytes: textPdf([[], []]),
   },
+  {
+    name: "renewal-call.vtt",
+    mediaType: "text/vtt",
+    bytes: Buffer.from(
+      [
+        "WEBVTT",
+        "",
+        ...[
+          [
+            "00:00:03.120",
+            "Ada Lovelace",
+            "Thanks for joining. Globex Corporation renews on 1 December.",
+          ],
+          [
+            "00:00:07.480",
+            "Ada Lovelace",
+            "They want 250 seats at the Enterprise rate.",
+          ],
+          [
+            "00:00:11.020",
+            "Grace Hopper",
+            "Initech LLC asked for the same discount.",
+          ],
+          [
+            "00:00:15.900",
+            "Ada Lovelace",
+            "Then both renewals go to the board together.",
+          ],
+        ].flatMap(([start, speaker, words], i) => [
+          `7b2f3c1e-4a5d-4e8b-9c0d-1f2e3a4b5c6d/${12 + i}-0`,
+          `${start} --> ${start.replace(/\.\d+$/, ".900")}`,
+          `<v ${speaker}>${words}</v>`,
+          "",
+        ]),
+      ].join("\n"),
+    ),
+  },
 ];
 
 onReset(() => {
@@ -1899,10 +1996,12 @@ onReset(() => {
       uploads: [],
     });
     contents.set(id, bytes);
-    void (
-      FORMATS[f.mediaType].kind === "pdf"
-        ? readPdfText(bytes)
-        : readTableFile(f.mediaType, bytes)
-    ).then((result) => reads.set(id, { at: 0, result }));
+    // Text has no read: it is ready as it is.
+    if (FORMATS[f.mediaType].kind !== "text")
+      void (
+        FORMATS[f.mediaType].kind === "pdf"
+          ? readPdfText(bytes)
+          : readTableFile(f.mediaType, bytes)
+      ).then((result) => reads.set(id, { at: 0, result }));
   });
 });

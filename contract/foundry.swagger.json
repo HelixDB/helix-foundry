@@ -1861,6 +1861,58 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/connectors/{connectorId}/pieces": {
+      "get": {
+        "summary": "The pieces of an event source with a text field, newest first, each as\nthe document a sync makes of it, from the moment it is sent: those no\nsync has read yet, and its table's. With a query, those holding its\nwords.",
+        "operationId": "FoundryService_ListFoundryEventPieces",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryEventPiecesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "connectorId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Words to find, separated by spaces: only the pieces whose id, fields or\ntext hold every one as a substring, whatever its case, are listed. A\nfield is read as the piece's document shows it, which names it and cuts\na long value. At most 200 bytes and 10 words; empty lists every piece.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "At most 50; 0 means 20.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/connectors/{connectorId}/syncs": {
       "get": {
         "operationId": "FoundryService_ListConnectorSyncs",
@@ -6232,6 +6284,10 @@
         "workflowRunId": {
           "type": "string",
           "description": "An open run of a workflow of this ontology to record the question\nunder; empty for none. A retry with the same client_token records it\nonce."
+        },
+        "validAt": {
+          "type": "string",
+          "description": "The day to answer as of, YYYY-MM-DD, not after today (UTC); empty for\nnow. Entities are read as they were then, history and changes to it, and\ndocuments dated after it are left out; reads that can only show the load\nas it is now (queries, searches for entities) aren't offered. A\nfollow-up is asked as of its thread's day: another is INVALID_ARGUMENT.\nFAILED_PRECONDITION for anyone who reads the load through grants, even\nall of it."
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
@@ -6342,7 +6398,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "1 to 255 characters once trimmed, with no slash, backslash or control\ncharacter; its extension must agree with media_type: .md or .markdown\ntext/markdown, .mdx text/mdx, .txt text/plain, .json application/json,\n.csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson\napplication/x-ndjson, .parquet application/vnd.apache.parquet, .pdf\napplication/pdf."
+          "description": "1 to 255 characters once trimmed, with no slash, backslash or control\ncharacter; its extension must agree with media_type: .md or .markdown\ntext/markdown, .mdx text/mdx, .txt text/plain, .json application/json,\n.csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson\napplication/x-ndjson, .parquet application/vnd.apache.parquet, .pdf\napplication/pdf, .vtt text/vtt."
         },
         "mediaType": {
           "type": "string"
@@ -6666,6 +6722,10 @@
         "workflowRunId": {
           "type": "string",
           "description": "An open run of a workflow of this ontology to record the read under,\nwith its result; empty for none. NOT_FOUND for a run the ontology has\nnot, FAILED_PRECONDITION for one that finished."
+        },
+        "validAt": {
+          "type": "string",
+          "description": "The day to read as of, YYYY-MM-DD, not after today (UTC); empty for now.\nEvery read but view and evidence then fails current_only, and evidence\nleaves out quotes of documents dated after it or whose date couldn't be\nread, and rows the load didn't know by then."
         }
       },
       "description": "ReadFoundryGraphRequest reads a load of the ontology's database: entities\nwith the facts its version's rules derive, patterns, explanations (\"why\"),\nrule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each\nthe `reads` item of the ontology agent's read_request.json. NOT_FOUND for a\nload of another ontology or one deleted; FAILED_PRECONDITION while it is\nbeing deleted; RESOURCE_EXHAUSTED while the workspace has as many reads\nrunning as it may."
@@ -9598,7 +9658,7 @@
         },
         "mediaType": {
           "type": "string",
-          "description": "text/markdown, text/mdx, text/plain, application/json, text/csv,\ntext/tab-separated-values, application/x-ndjson,\napplication/vnd.apache.parquet or application/pdf. A rename keeps it."
+          "description": "text/markdown, text/mdx, text/plain, application/json, text/csv,\ntext/tab-separated-values, application/x-ndjson,\napplication/vnd.apache.parquet, application/pdf or text/vtt. A rename\nkeeps it."
         },
         "sizeBytes": {
           "type": "string",
@@ -9641,7 +9701,7 @@
           "description": "The row of a connector's table it is the text of; unset for an upload."
         }
       },
-      "description": "FoundryDocument is one document of a workspace, in one of its document\nsets: one a person uploaded, or the text of one row of a connector's table\n(source), which the connector's syncs write into its set. Ontologies read\ntext/markdown, text/mdx (as Markdown, with its code blanked to spaces; it\nis never compiled or run) and text/plain as text, extracted through\nroutes. Each text/csv,\ntext/tab-separated-values, application/json, application/x-ndjson and\napplication/vnd.apache.parquet document is read once, at upload, as a\ntable of its own, which a version's mappings name by the document's id; it\nis never extracted. Each application/pdf document is read once, at\nupload, to its text (read), and is extracted through routes as that text\nonce read; a scanned PDF has no text to read."
+      "description": "FoundryDocument is one document of a workspace, in one of its document\nsets: one a person uploaded, or the text of one row of a connector's table\n(source), which the connector's syncs write into its set. Ontologies read\ntext/markdown, text/mdx (as Markdown, with its code blanked to spaces; it\nis never compiled or run), text/plain and text/vtt (a WebVTT transcript, as\nits turns: a line each with its start, speaker and words) as text,\nextracted through routes. Each text/csv,\ntext/tab-separated-values, application/json, application/x-ndjson and\napplication/vnd.apache.parquet document is read once, at upload, as a\ntable of its own, which a version's mappings name by the document's id; it\nis never extracted. Each application/pdf document is read once, at\nupload, to its text (read), and is extracted through routes as that text\nonce read; a scanned PDF has no text to read."
     },
     "v1FoundryDocumentExtraction": {
       "type": "object",
@@ -10115,6 +10175,33 @@
       },
       "description": "FoundryEventSourcePick is one event source a generation drafts from, and\nhow its ontology reads it."
     },
+    "v1FoundryEventSourcePiece": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The piece's id in its source."
+        },
+        "receivedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When its newest send arrived."
+        },
+        "title": {
+          "type": "string",
+          "description": "The document's name: the first line of the piece's text, else its id."
+        },
+        "text": {
+          "type": "string",
+          "description": "The document, Markdown: the piece's fields, then its text."
+        },
+        "synced": {
+          "type": "boolean",
+          "description": "A sync has read it: it is in the source's table."
+        }
+      },
+      "description": "FoundryEventSourcePiece is a piece an event source holds, as the document\na sync makes of it."
+    },
     "v1FoundryEventSourceToken": {
       "type": "object",
       "properties": {
@@ -10164,6 +10251,10 @@
         "retryable": {
           "type": "boolean",
           "description": "Whether a later load may succeed."
+        },
+        "modelFailure": {
+          "type": "string",
+          "description": "How the model failed, when code is model: the model failure class\n(quota, rate_limited, unavailable, timeout, auth, permission, not_found,\ncontext_too_long, unsupported, truncated, malformed, refused, ...).\nEmpty for every other code, and for a model failure recorded before\nFoundry kept the class."
         }
       }
     },
@@ -10234,7 +10325,7 @@
         "FOUNDRY_FILE_READ_STATE_FAILED"
       ],
       "default": "FOUNDRY_FILE_READ_STATE_UNSPECIFIED",
-      "description": "FoundryFileReadState is what reading a document has come to.\n\n - FOUNDRY_FILE_READ_STATE_READY: Ontologies can read it: text, or a file whose read succeeded (a PDF's\ntext is then on :content).\n - FOUNDRY_FILE_READ_STATE_READING: Being read, or waiting to be (retrying says when after a failure). A\ngeneration started now leaves it out; a load waits for a PDF, and reads\nit once its read ends.\n - FOUNDRY_FILE_READ_STATE_FAILED: It can't be read: error says why, and a load records the PDF failed\nwith the same code. Upload a fixed file."
+      "description": "FoundryFileReadState is what reading a document has come to.\n\n - FOUNDRY_FILE_READ_STATE_READY: Ontologies can read it: text, or a file whose read succeeded (a PDF's\ntext is then on :content).\n - FOUNDRY_FILE_READ_STATE_READING: Being read, or waiting to be (retrying says when after a failure). A\ngeneration started now leaves it out; a load waits for a PDF, and reads\nit once its read ends.\n - FOUNDRY_FILE_READ_STATE_FAILED: It can't be read: error says why, and a load records the PDF failed\nwith the same code. Upload a fixed file, or fix a connection's at its\nsource for its next sync to read again."
     },
     "v1FoundryGraphJob": {
       "type": "object",
@@ -10500,6 +10591,10 @@
             "$ref": "#/definitions/v1FoundryLoadDocumentSet"
           },
           "description": "What it made of its documents, by document set: one entry per set it\nholds documents of, by set id. Only GetFoundryLoad fills it: a load in a\nlist has none, nor has the load another call answers with. Empty too\nfor a load that holds no documents, for one made before Foundry\nrecorded which documents a load holds, and for a grantee, who may not\nsee every set. While a job of the load runs, the counts may be a few\nseconds old."
+        },
+        "unread": {
+          "$ref": "#/definitions/v1FoundryLoadUnread",
+          "description": "Its documents the model left unread: unset when the model failed none.\nA ready or partial load with them reads \"ready, N documents not read\n(reason)\"; a failed load whose every document the model failed says so\nin its load job's error."
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
@@ -10712,6 +10807,30 @@
         }
       },
       "description": "FoundryLoadSource is the snapshot of one synced table a load holds."
+    },
+    "v1FoundryLoadUnread": {
+      "type": "object",
+      "properties": {
+        "documents": {
+          "type": "integer",
+          "format": "int32",
+          "description": "How many: those the model failed, and, once no job writes the load,\nthose no job recorded (a run the model stopped leaves them)."
+        },
+        "modelFailure": {
+          "type": "string",
+          "description": "The model failure class most of them failed with (quota,\nrate_limited, unavailable, ...); empty when most were recorded before\nFoundry kept the class."
+        },
+        "reason": {
+          "type": "string",
+          "description": "A few words for it: provider quota, provider account, provider busy,\ntoo long for the model, model declined, model error, or model failed\nwhen its class wasn't kept."
+        },
+        "rereadAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When Helix reads them again on its own: set for the current load whose\nfailures pass (a provider's quota or account, or a busy provider) while\nre-reads go on, 15 minutes after the job that left them, then doubling\nup to 6 hours, for about a week. Unset when a person or the next job\ninto the load reads them; a re-read may start up to a minute after."
+        }
+      },
+      "description": "FoundryLoadUnread is a load's documents the model failed: never read, so\nthe load holds none of their names or facts, and never counted as read."
     },
     "v1FoundryOllamaModel": {
       "type": "object",
@@ -11077,6 +11196,10 @@
           "type": "string",
           "format": "int64",
           "description": "What a running question holds back of the month's budget: its cap."
+        },
+        "validAt": {
+          "type": "string",
+          "description": "The day it is answered as of, YYYY-MM-DD; empty for when it was asked."
         }
       },
       "description": "FoundryQuestion is one question asked of one load of an ontology. The\nfoundry-ask-worker answers it with the ontology agent's read-only Ask; its\nrun streams events (ListFoundryQuestionEvents), then it ends with a result."
@@ -12635,6 +12758,24 @@
           "$ref": "#/definitions/v1EventSourceCapacity"
         }
       }
+    },
+    "v1ListFoundryEventPiecesResponse": {
+      "type": "object",
+      "properties": {
+        "pieces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryEventSourcePiece"
+          },
+          "description": "At most limit, and at most 1 MiB of text together (always the newest)."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "Pieces were left out. More were found than pieces holds: a narrower\nquery finds the rest. Or more than 100 sends wait for a sync, of which\na list reads the newest 100: a piece listed from the source's table may\nthen be an older send of its id, until a sync has read them."
+        }
+      },
+      "description": "The source's pieces, newest first by arrival, those that arrived together\nby id, each id once, as its newest send has it."
     },
     "v1ListFoundryEventSourceTokensResponse": {
       "type": "object",

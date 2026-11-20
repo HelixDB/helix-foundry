@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 )
@@ -38,15 +39,41 @@ type ReadRequest struct {
 	OntologyVersion string `json:"ontology_version"`
 	// Helix is the read-only proxy: it forwards reads only.
 	Helix HelixTarget `json:"helix"`
-	// AsOf is the date rules compare `today` with, YYYY-MM-DD.
-	AsOf   string     `json:"as_of"`
-	Budget ReadBudget `json:"budget"`
-	Reads  Reads      `json:"reads"`
+	// AskedAt is the day the read was asked, which rules compare `today`
+	// with, YYYY-MM-DD.
+	AskedAt string `json:"asked_at"`
+	// ValidAt is the day to answer as of (YYYY-MM-DD, not after AskedAt),
+	// empty for now (contract 4.28.0): every read but view and evidence then
+	// fails ReadCurrentOnly, and evidence leaves out quotes of documents dated
+	// after it.
+	ValidAt string     `json:"valid_at,omitempty"`
+	Budget  ReadBudget `json:"budget"`
+	Reads   Reads      `json:"reads"`
 	// Visibility is what the reader holds of the load, when it isn't everything:
 	// the agent reads the version and the load as those sources fill them, which
 	// MappingsTOML says.
 	Visibility   *Visibility `json:"visibility,omitempty"`
 	MappingsTOML string      `json:"mappings_toml,omitempty"`
+}
+
+// ParseValidAt reads a day to answer as of (a Read's or an Ask's valid_at,
+// contract 4.28.0), checked against when it is asked: a calendar date,
+// YYYY-MM-DD, not after now's day in UTC, which is the day sent as asked_at
+// (the engine refuses a later one, as no load records the future). The day is
+// its midnight UTC.
+//
+//	ParseValidAt("2026-03-01", now) // 2026-03-01 00:00 UTC
+//	ParseValidAt("2026-3-1", now)   // error: not YYYY-MM-DD
+//	ParseValidAt("2999-01-01", now) // error: after today
+func ParseValidAt(day string, now time.Time) (time.Time, error) {
+	at, err := time.Parse(time.DateOnly, day)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("valid_at %q is not a date, YYYY-MM-DD", day)
+	}
+	if today := now.UTC().Format(time.DateOnly); day > today {
+		return time.Time{}, fmt.Errorf("valid_at %s is after today (%s, UTC): no load records the future", day, today)
+	}
+	return at, nil
 }
 
 // Visibility is what a reader holds of a load it doesn't hold all of (the
@@ -229,6 +256,10 @@ const (
 	// ReadInvalid doesn't fit the ontology: an unknown type, predicate or
 	// constraint, a wrong number of arguments, a limit out of range.
 	ReadInvalid ReadErrorCode = "invalid"
+	// ReadCurrentOnly reads the load as it is now, so it can't answer as of
+	// the request's valid_at (contract 4.28.0): every read but view and
+	// evidence under one.
+	ReadCurrentOnly ReadErrorCode = "current_only"
 )
 
 // ReadFailure is why a read has no answer (read_result.json Failure), one
@@ -248,7 +279,7 @@ type ReadFailure struct {
 // readFailureCodes are the codes a whole read may fail with, and
 // partFailureCodes those part of an entity read may (PartFailure).
 var (
-	readFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadTooBroad, ReadUnknownEntity, ReadInvalid, ReadNotVisible}
+	readFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadTooBroad, ReadUnknownEntity, ReadInvalid, ReadNotVisible, ReadCurrentOnly}
 	partFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadInvalid}
 )
 
@@ -290,13 +321,13 @@ func decodeReadFailure(data json.RawMessage, codes []ReadErrorCode) (ReadFailure
 }
 
 // CheckReadResult checks a Read's result (schema/read_result.json) answers
-// reads: as_of and stats, and one result for each read, in order, either
+// reads: asked_at and stats, and one result for each read, in order, either
 // its answer, of the read's kind, or its failure, whole. An entity answer's
 // failed parts must be whole too. The result goes back to the caller as the
 // agent wrote it; fields this contract doesn't name are left alone.
 func CheckReadResult(data []byte, reads Reads) error {
 	var result struct {
-		AsOf    *string `json:"as_of"`
+		AskedAt *string `json:"asked_at"`
 		Results []struct {
 			OK    json.RawMessage `json:"ok"`
 			Error json.RawMessage `json:"error"`
@@ -310,8 +341,8 @@ func CheckReadResult(data []byte, reads Reads) error {
 		return fmt.Errorf("read read result: %w", err)
 	}
 	switch {
-	case result.AsOf == nil:
-		return errors.New("read result has no as_of")
+	case result.AskedAt == nil:
+		return errors.New("read result has no asked_at")
 	case result.Stats == nil || result.Stats.Instances == nil || result.Stats.WallMS == nil:
 		return errors.New("read result has no stats")
 	case len(result.Results) != reads.Len():

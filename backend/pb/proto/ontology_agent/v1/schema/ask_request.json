@@ -4,7 +4,7 @@
   "description": "One question's request.",
   "type": "object",
   "properties": {
-    "as_of": {
+    "asked_at": {
       "description": "When the question was asked, a date or an RFC 3339 time: the `today` its rules see.",
       "type": "string"
     },
@@ -24,10 +24,10 @@
       "type": "string"
     },
     "focus": {
-      "description": "The entity the user asked it about, if any. It is read before the first step: an\nentity the load holds is the question's first handle, `n1`; one it doesn't hold, or\nthat isn't an entity of the ontology, is said so in the question, which still runs.",
+      "description": "The entity the user asked it about, if any, as a read names one: by its id, its key's\nplain values or a name. It is read before the first step: an entity the load holds is\nthe question's first handle, `n1`; one it doesn't hold, one a key or a name leaves\nambiguous, or one that isn't an entity of the ontology, is said so in the question,\nwhich still runs.",
       "anyOf": [
         {
-          "$ref": "#/$defs/EntityRef"
+          "$ref": "#/$defs/EntityLookup"
         },
         {
           "type": "null"
@@ -86,6 +86,13 @@
       "description": "The question's id, the same on every attempt.",
       "type": "string"
     },
+    "valid_at": {
+      "description": "The time to answer as of, a date (its midnight where the question was asked) or an RFC\n3339 time, not after `asked_at`: entities are read as they were then by valid time,\nhistory and changes as the load had recorded them by then, and documents dated after\nits day are left out (undated ones are read, shown undated). A read that can only show\nthe load as it is now (a query, a search for entities, a Helix read, a rule's proof,\nviolation records, a type's count, the load's overview) isn't offered and is refused.\nAbsent, the question is answered as of now. Refused with a `visibility`, even one that\nholds the whole load: a reader through its sources reads nothing as of a time.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "visibility": {
       "description": "What the asker holds of the load, when it isn't everything: the question sees the\nversion and the load as those sources fill them, and reads nothing raw or historic.",
       "anyOf": [
@@ -112,7 +119,7 @@
     "catalog",
     "question",
     "helix",
-    "as_of",
+    "asked_at",
     "limits",
     "models"
   ],
@@ -291,7 +298,7 @@
       "type": "object",
       "properties": {
         "call_timeout_secs": {
-          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead.",
+          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead; an Ask turn, but\non Ollama, is also cut when no real output (keep-alives aside) arrives for a third of\nthe wall time, and tried once more.",
           "type": "integer",
           "format": "uint32",
           "minimum": 1
@@ -318,23 +325,68 @@
         "call_timeout_secs"
       ]
     },
-    "EntityRef": {
-      "description": "One entity of the load.",
+    "EntityLookup": {
+      "description": "An entity: its type and exactly one of its stored `id` (as reads return it), its `key`'s plain values, or a `name`. With `key` or `name` the type may be left out: the entity is then the one any type holds, and a value several entities share is refused, naming them.",
       "type": "object",
       "properties": {
         "id": {
-          "description": "Its identity in the load: the key's encoding for a keyed type, the normalized name for\na named one.",
+          "description": "Its stored id, as reads return it: a named type's normalized name, a keyed type's key encoding (each value tagged by its type, such as `sapp.example.com` for the string `app.example.com`). For a key's plain value use `key`.",
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/KeyValues"
+        },
+        "name": {
+          "description": "A name in any spelling: a named type's name, or one of a keyed type's names.",
           "type": "string"
         },
         "type": {
-          "description": "Its type.",
+          "description": "The type.",
           "type": "string"
         }
       },
       "additionalProperties": false,
-      "required": [
-        "type",
-        "id"
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "key"
+                ]
+              },
+              {
+                "required": [
+                  "name"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "type",
+            "id"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "required": [
+            "key"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "id"
+            ]
+          },
+          "required": [
+            "name"
+          ]
+        }
       ]
     },
     "HelixTarget": {
@@ -387,6 +439,27 @@
       "required": [
         "question",
         "answer"
+      ]
+    },
+    "KeyValues": {
+      "description": "A key's plain values: the value, or an object of each key property's value.",
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "minProperties": 1
+        }
       ]
     },
     "LoadId": {

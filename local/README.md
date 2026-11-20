@@ -81,7 +81,7 @@ To change one, add its variable to foundry's `environment` in `local/compose.yam
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.5, `foundry` 0.1.4 and `ontology-agent` 0.1.3. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.16.0 for these). To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.5, `foundry` 0.1.4 and `ontology-agent` 0.1.3. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.16.0 for these). Each, and HelixDB, is pinned by its tag and digest, so a tag pushed again never changes what runs. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first: without both set, the build fails with `build tag cannot contain a digest`. A `FOUNDRY_*IMAGE` override runs as given, a plain tag too.
 
 An older `FOUNDRY_IMAGE` or `FOUNDRY_AGENT_IMAGE` left in `local/.env` still starts, and then fails every draft, load and question with a contract mismatch (`the ontology agent speaks contract 4.11.0, not 4.16.0`). Remove the override, or set both to one release's images, and run `docker compose up -d` again.
 
@@ -120,6 +120,8 @@ backup=~/foundry-backup-2026-11-02-1413
   echo backup ok
 )
 ```
+
+A backup taken before these images were pinned by digest lists them by tag alone: a `diff` whose only difference is `@sha256:…` on the same tags is expected, and the images are the same.
 
 Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first, once the check passes. Then restore, in the same shell (it reads `$backup`); it stops at the first step that fails. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
 
@@ -187,7 +189,7 @@ Changes use `helix_foundry_prepare_operation` followed by `helix_foundry_execute
 
 ## The Assistant on your Claude or ChatGPT subscription
 
-Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, on your Claude or ChatGPT subscription, at no cost to the install: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
+Foundry's Assistant runs on the install's AI provider. It can instead run on the Claude Code or Codex you're signed in to on this computer, counting against your own Claude or ChatGPT plan's limits instead of the install's provider: a small helper, outside Docker (your CLIs' logins are this computer's), takes each turn and drives your own `claude` or `codex app-server`, with a token for that turn alone.
 
 1. In Foundry, Settings › AI models, choose your Claude subscription or your ChatGPT subscription (Codex). Codex runs with your own Codex setup (its MCP servers and plugins), so choosing it the first time says what it runs with, and you confirm that once. Then Pair a helper shows a one-time code, good for ten minutes, and the command that pairs a helper with it:
 

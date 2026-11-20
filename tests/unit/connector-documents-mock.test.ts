@@ -8,6 +8,7 @@ import { routes } from "../../mock/routes";
 import type { MockStream } from "../../mock/routes/data-sources";
 import { writeConnectorDocuments } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
+import { transcriptText } from "../../src/shared/transcript";
 
 // A connector's documents in the mock WFE, as the reader release serves
 // them and the writer release writes them: a Granola, Slack, Notion or
@@ -478,6 +479,153 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
         `^# Q4 planning\\n\\nOwner: ada@example\\.com\\nLast modified: 2026-10-27 16:20 UTC\\nFile id: ${id}\\n\\n## Summary\\n`,
       ),
     );
+  });
+
+  it("fills Google Workspace's Transcripts with each .vtt file in Drive, read as its turns", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const transcripts = await setOf("transcripts");
+    expect(transcripts).toMatchObject({
+      name: "Transcripts",
+      documents: 4,
+      connector: { connectorId, stream: "transcripts" },
+    });
+    expect(transcripts!.description).toContain("WebVTT transcript (.vtt file)");
+    const [newest] = (await page(`setId=${transcripts!.id}`)).documents;
+    expect(newest).toMatchObject({
+      name: "Globex renewal call.vtt",
+      mediaType: "text/vtt",
+    });
+    // :content is the file as stored, a WebVTT file with google.go's note;
+    // ontologies read it as its turns.
+    const { text } = (await call("GET", `${DOCS}/${newest!.id}:content`)).body;
+    expect(text).toMatch(
+      /^WEBVTT\n\nNOTE\nGlobex renewal call\.vtt\nOwner: ada@example\.com\nLast modified: 2026-11-06 15:00 UTC\nFile id: 1mockVtt0001\w+\n\n1\n/,
+    );
+    expect(transcriptText(text)).toBe(
+      [
+        "Globex renewal call.vtt",
+        "Owner: ada@example.com",
+        "Last modified: 2026-11-06 15:00 UTC",
+        "File id: 1mockVtt0001aBcDeFgHiJkLmNoPq",
+        "",
+        "[00:00:02] Ada Lovelace: Globex wants a three year renewal starting in January.",
+        "[00:00:09] Grace Hopper: They asked for the same discount Initech has.",
+        "[00:00:16] Ada Lovelace: I'll send Globex the order form today.",
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("Google Workspace's PDFs", () => {
+  // The files themselves, read as an uploaded PDF is once the sync writes
+  // them: its text a page at a time, or why it can't be read.
+  it("keeps each PDF the user may download, read by the document worker", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const pdfs = await setOf("pdfs");
+    // The board pack, which its owner keeps viewers from downloading, is left out.
+    expect(pdfs).toMatchObject({
+      name: "PDFs",
+      documents: 3,
+      connector: { connectorId, stream: "pdfs" },
+    });
+    expect(pdfs!.description).toContain("as the file itself");
+    const first = (await page(`setId=${pdfs!.id}`)).documents;
+    const named = (docs: FoundryDocument[], name: string) =>
+      docs.find((d) => d.name === name)!;
+    expect(first.map((d) => d.name).sort()).toEqual([
+      "Globex order form.pdf",
+      "Pricing terms (edited).pdf",
+      "Signed MSA (scan).pdf",
+    ]);
+    const form = named(first, "Globex order form.pdf"),
+      scan = named(first, "Signed MSA (scan).pdf"),
+      edited = named(first, "Pricing terms (edited).pdf");
+    expect(form).toMatchObject({
+      mediaType: "application/pdf",
+      read: {
+        kind: "FOUNDRY_READ_KIND_PDF",
+        state: "FOUNDRY_FILE_READ_STATE_READING",
+      },
+    });
+    // Its bytes are the file; it has no text until it is read.
+    const bytes = await call("GET", `${DOCS}/${form.id}:bytes`);
+    expect(
+      Buffer.from(bytes.body.data, "base64").subarray(0, 5).toString(),
+    ).toBe("%PDF-");
+    expect((await call("GET", `${DOCS}/${form.id}:content`)).status).not.toBe(
+      200,
+    );
+
+    vi.setSystemTime(Date.now() + 2000);
+    await vi.waitFor(async () => {
+      const [f, s] = await byIds([form.id, scan.id]);
+      expect(f!.read?.state).toBe("FOUNDRY_FILE_READ_STATE_READY");
+      expect(s!.read?.state).toBe("FOUNDRY_FILE_READ_STATE_FAILED");
+    });
+    const [read, failed] = await byIds([form.id, scan.id]);
+    expect(read!.read).toMatchObject({ pages: 2 });
+    expect(failed!.read).toMatchObject({
+      error: { code: "unsupported", message: "Scanned PDF: no text to read" },
+    });
+    expect(
+      (await call("GET", `${DOCS}/${form.id}:content`)).body.text,
+    ).toContain("Customer: Globex");
+
+    // Edited at the source: a new document, read again; the rest stay as read.
+    await sync(connectorId);
+    const second = (await page(`setId=${pdfs!.id}`)).documents;
+    const again = named(second, "Pricing terms (edited).pdf");
+    expect(again.id).not.toBe(edited.id);
+    expect(again.read?.state).toBe("FOUNDRY_FILE_READ_STATE_READING");
+    expect(named(second, "Globex order form.pdf")).toMatchObject({
+      id: form.id,
+      read: { state: "FOUNDRY_FILE_READ_STATE_READY" },
+    });
+    const [old] = await byIds([edited.id]);
+    expect(old).toMatchObject({ status: "deleted", read: null });
+  });
+
+  it("forgets a PDF's read when its connection is deleted mid-read", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const pdfs = await setOf("pdfs");
+    const ids = (await page(`setId=${pdfs!.id}`)).documents.map((d) => d.id);
+    expect(
+      (await call("DELETE", `${WS}/connectors/${connectorId}`)).status,
+    ).toBe(200);
+    // The reads started by the sync end after the delete, and the read time
+    // passes: none comes back.
+    await new Promise((r) => setTimeout(r, 200));
+    vi.setSystemTime(Date.now() + 5000);
+    expect(await setOf("pdfs")).toBeUndefined();
+    for (const d of await byIds(ids))
+      expect(d).toMatchObject({ status: "deleted", read: null });
+  });
+
+  it("drafts from a PDFs set only once one of its PDFs has text", async () => {
+    await connect("Acme Drive", {
+      google: { serviceAccountKey: googleKey, subject: "ada@example.com" },
+    });
+    const pdfs = await setOf("pdfs");
+    const generate = () =>
+      call("POST", `${WS}/ontologies/ont_acme_contracts:generate`, {
+        noConnectors: true,
+        documentSetIds: [pdfs!.id],
+      });
+    // Its PDFs are still being read: the WFE refuses, saying what it needs.
+    const early = await generate();
+    expect(refusal(early)).toEqual([
+      FAILED_PRECONDITION,
+      expect.stringContaining("a PDF whose text has been read"),
+    ]);
+    vi.setSystemTime(Date.now() + 2000);
+    await vi.waitFor(async () => expect((await generate()).status).toBe(200));
   });
 });
 

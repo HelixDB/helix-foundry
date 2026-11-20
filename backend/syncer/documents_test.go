@@ -358,6 +358,7 @@ func day(d int) time.Time { return time.Date(2026, time.October, d, 9, 0, 0, 0, 
 var (
 	notesStream       = connector.Stream{Name: "notes", Table: "notes", Title: "Notes", Description: "Meeting notes.", Format: connector.Markdown}
 	transcriptsStream = connector.Stream{Name: "transcripts", Table: "notes", Title: "Transcripts", Format: connector.PlainText}
+	pdfsStream        = connector.Stream{Name: "pdfs", Table: "notes", Title: "PDFs", Format: connector.PDF}
 )
 
 // noteKind is a changeKind whose tables carry documents. A read writes each
@@ -735,6 +736,57 @@ func TestSyncerDocuments(t *testing.T) {
 			t.Fatalf("text = %q", got)
 		}
 	})
+	// A PDF is read by the document worker from the stored file, so its
+	// bytes are kept as they are: never checked as text, never cut.
+	t.Run("stores a PDF stream's file whole, and drops one over the PDF cap", func(t *testing.T) {
+		pdf := note{id: "n1", version: "1", at: day(1), text: "%PDF-1.7\n\xff\xfe\x00binary" + strings.Repeat("x", 300)}
+		kind := newNoteKind(connector.CaptureFull, pdf, n2)
+		kind.streams = []connector.Stream{pdfsStream}
+		f := newNoteFixture(t, kind)
+		f.syncer.MaxDocumentBytes, f.syncer.MaxPDFBytes = 100, 400
+		truncated, dropped := documentsCounted("truncated"), documentsCounted("dropped")
+		f.run(t, "sync-1")
+		got := f.held(t, "pdfs")
+		if len(got) != 2 || got["n1"] != "pdfs: "+pdf.text || documentsCounted("truncated") != truncated || documentsCounted("dropped") != dropped {
+			t.Fatalf("documents = %q", got)
+		}
+		d := f.store.docs[f.liveID("pdfs", "n1")]
+		if d.MediaType != model.FoundryMediaPDF || d.SizeBytes != int64(len("pdfs: "+pdf.text)) {
+			t.Fatalf("document = %+v", d)
+		}
+		// Grown past the cap at a new version: the held one is removed, not cut.
+		kind.notes["notes"] = []note{edited(pdf, pdf.text+strings.Repeat("y", 100)), n2}
+		f.run(t, "sync-2")
+		if got := f.held(t, "pdfs"); len(got) != 1 || got["n2"] == "" || documentsCounted("dropped")-dropped != 1 || f.store.owed != 1 {
+			t.Fatalf("documents = %q, owed = %d", got, f.store.owed)
+		}
+	})
+	// The store queues a read for each added document only, so a renamed
+	// PDF keeps its read and a changed one is read again.
+	t.Run("changes a PDF in place on the same bytes, and replaces it on new bytes", func(t *testing.T) {
+		pdf := note{id: "n1", version: "1", at: day(1), text: "%PDF-1.7\n\xff\x00one"}
+		kind := newNoteKind(connector.CaptureFull, pdf)
+		kind.streams = []connector.Stream{pdfsStream}
+		f := newNoteFixture(t, kind)
+		f.syncer.MaxPDFBytes = 400
+		f.run(t, "sync-1")
+		id, objects := f.liveID("pdfs", "n1"), f.documents.puts
+		kind.notes["notes"] = []note{edited(pdf, "")}
+		f.run(t, "sync-2")
+		p := f.store.publishes[1]
+		if f.liveID("pdfs", "n1") != id || f.store.docs[id].Source.Version != "2|b" || f.documents.puts != objects ||
+			len(p.Update) != 1 || len(p.Add)+len(p.Remove) != 0 {
+			t.Fatalf("document = %+v, publish = %+v", f.store.docs[id], p)
+		}
+		kind.notes["notes"] = []note{{id: "n1", version: "3", at: day(1), text: "%PDF-1.7\n\xff\x00two"}}
+		f.run(t, "sync-3")
+		p = f.store.publishes[2]
+		added := f.liveID("pdfs", "n1")
+		if added == id || len(p.Add) != 1 || p.Add[0].ID != added || p.Add[0].MediaType != model.FoundryMediaPDF ||
+			!slices.Equal(p.Remove, []string{id}) || f.held(t, "pdfs")["n1"] != "pdfs: %PDF-1.7\n\xff\x00two" {
+			t.Fatalf("publish = %+v", p)
+		}
+	})
 	t.Run("reads a live index of more than one page", func(t *testing.T) {
 		kind := newNoteKind(connector.CaptureFull, n1)
 		f := newNoteFixture(t, kind)
@@ -995,7 +1047,9 @@ func TestSyncerDocumentErrors(t *testing.T) {
 		{"no time", func(k *noteKind) { k.notes["notes"] = []note{{id: "n1", version: "1", text: "x"}} },
 			`stream notes document "n1": its time is missing or out of range`},
 		{"no text", func(k *noteKind) { k.notes["notes"] = []note{{id: "n1", version: "1", at: day(1)}} },
-			`stream notes document "n1": its text is empty or not UTF-8`},
+			`stream notes document "n1": it is empty`},
+		{"text that is not UTF-8", func(k *noteKind) { k.notes["notes"] = []note{{id: "n1", version: "1", text: "caf\xe9", at: day(1)}} },
+			`stream notes document "n1": its text is not UTF-8`},
 		{"a Put without a yes", func(k *noteKind) { k.skipWant = true },
 			`stream notes document "n1": Want did not say yes to it`},
 		{"a Put without a yes the kind ignores", func(k *noteKind) { k.skipWant, k.swallow = true, true },
@@ -1030,11 +1084,16 @@ func TestSyncerDocumentErrors(t *testing.T) {
 		})
 	}
 	t.Run("refuses to write documents without the syncer's limits", func(t *testing.T) {
-		f := newNoteFixture(t, newNoteKind(connector.CaptureFull, n1))
-		f.syncer.MaxPerStream = 0
-		_, err := f.syncer.Run(context.Background(), f.sync)
-		if fl := failure(t, err); fl.Permanent || len(f.store.sets) != 0 {
-			t.Fatalf("failure = %+v, sets = %v", fl, f.store.sets)
+		for name, unset := range map[string]func(*Syncer){
+			"max_per_stream": func(s *Syncer) { s.MaxPerStream = 0 },
+			"max_pdf_bytes":  func(s *Syncer) { s.MaxPDFBytes = 0 },
+		} {
+			f := newNoteFixture(t, newNoteKind(connector.CaptureFull, n1))
+			unset(f.syncer)
+			_, err := f.syncer.Run(context.Background(), f.sync)
+			if fl := failure(t, err); fl.Permanent || len(f.store.sets) != 0 {
+				t.Fatalf("without %s: failure = %+v, sets = %v", name, fl, f.store.sets)
+			}
 		}
 	})
 	t.Run("in a change read", func(t *testing.T) {

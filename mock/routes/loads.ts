@@ -87,6 +87,7 @@ import {
   countWithdraw,
   loadDocuments,
   setExtraction,
+  loadModelReads,
   spentAllowance,
   wakeReads,
 } from "./documents";
@@ -151,7 +152,9 @@ import { sourceId } from "./ontology-agent";
 // phase takes `loadStepMs` (one step per document). Test knobs through POST /__mock/config: `loadOutcome` "fail"
 // (the ingest fails), "sources_changed" (the tables were re-synced while the
 // load ran) or "budget_exhausted" (the spending cap stops it after one
-// document), `documentOutcome` "fail" (reading a document fails),
+// document), `documentOutcome` "fail" (the model fails every document on
+// the provider's quota: the load fails, none read) or "store_fail" (the
+// database fails to store each, retryably: the load is ready),
 // `documentUnmatched` (a sentence stating a relationship no link covers,
 // such as "supplies", is an "unmatched" review), `documentLinked` (a name no
 // row holds exactly links to its first candidate that way, "adjudicated",
@@ -187,7 +190,7 @@ type Outcome = "succeed" | "fail" | "sources_changed" | "budget_exhausted";
 type Knobs = {
   loadStepMs?: number;
   loadOutcome?: Outcome;
-  documentOutcome?: "succeed" | "fail";
+  documentOutcome?: "succeed" | "fail" | "store_fail";
   // A name no row holds exactly links to its first candidate this way, with
   // that link's review.
   documentLinked?: UndoableLink;
@@ -344,7 +347,7 @@ type StoredJob = {
   plan: {
     stepMs: number;
     outcome: Outcome;
-    documentOutcome: "succeed" | "fail";
+    documentOutcome: "succeed" | "fail" | "store_fail";
     deleteOutcome: "succeed" | "fail";
   };
 };
@@ -1600,10 +1603,15 @@ function read(j: StoredJob, documentId: string, at: string) {
     });
     return;
   }
-  if (j.plan.documentOutcome === "fail") {
+  if (j.plan.documentOutcome !== "succeed") {
+    // "fail" as on 2026-11-14: the provider's quota ran out, and every call
+    // fails. "store_fail": the database refused what was read.
     setExtraction(j.loadId, doc.id, {
       status: "failed",
-      error: { code: "model", retryable: true },
+      error:
+        j.plan.documentOutcome === "fail"
+          ? { code: "model", retryable: true, modelFailure: "quota" }
+          : { code: "store", retryable: true },
       ...empty,
       usdMicros: "0",
       finishedAt: at,
@@ -1814,8 +1822,31 @@ function rulesOf(
   );
 }
 
-/** Ends a job: its load's status, retention, and what runs next. */
+/**
+ * Ends a job: its load's status, retention, and what runs next. A load job
+ * the model left documents unread of ends partial, or failed when it read
+ * none, saying how many and why, as the graph worker's does.
+ */
 function finish(j: StoredJob, status: JobStatus, at: number, error = "") {
+  // A load the model left documents unread of: a person's replaces the
+  // current load (FoundryGraphJobOutcome.ModelUnread).
+  let modelUnread = false;
+  if (j.kind === "load" && status === "succeeded") {
+    const u = loadModelReads(j.loadId);
+    const n = [...u.failed.values()].reduce((n, c) => n + c, 0);
+    if (n) {
+      const f = unreadFailure(u.failed),
+        why = unreadWhy(f);
+      modelUnread = true;
+      if (u.read === 0) {
+        status = "failed";
+        error = `none of the load's documents could be read (${n} ${n === 1 ? "document" : "documents"}): ${why}; start a new load to read them`;
+      } else {
+        status = "budget_exhausted";
+        error = `${n} ${n === 1 ? "document wasn't" : "documents weren't"} read: ${why}; ${REREADS.has(f) ? "Helix reads them again on its own while the load is current" : "the next load reads them"}`;
+      }
+    }
+  }
   Object.assign(j, { status, error, finishedAt: iso(at) });
   // What it wrote is swept: the load's violation records come up to date.
   if (j.kind !== "delete" && status !== "failed") {
@@ -1830,7 +1861,7 @@ function finish(j: StoredJob, status: JobStatus, at: number, error = "") {
       state.current.set(j.ontologyId, l.id);
     } else if (status === "budget_exhausted") {
       l.status = "partial";
-      if (!loadById(currentLoadId(j.ontologyId) || ""))
+      if (modelUnread || !loadById(currentLoadId(j.ontologyId) || ""))
         state.current.set(j.ontologyId, l.id);
     } else l.status = "failed";
   }
@@ -2161,9 +2192,90 @@ const toJob = (j: StoredJob): GraphJob => ({
 
 // As the WFE: the newest 20 jobs, with the count and spend of every job.
 export const LISTED_JOBS = 20;
+// The few words for a model failure class, as the WFE's ai.UnreadReason.
+const UNREAD_REASONS: Record<string, string> = {
+  quota: "provider quota",
+  auth: "provider account",
+  permission: "provider account",
+  not_found: "provider account",
+  private_host: "provider account",
+  model_changed: "provider account",
+  unavailable: "provider busy",
+  rate_limited: "provider busy",
+  timeout: "provider busy",
+  context_too_long: "too long for the model",
+  truncated: "too long for the model",
+  refused: "model declined",
+  "": "model failed",
+};
+const unreadReason = (f: string) => UNREAD_REASONS[f] ?? "model error";
+// Why, as the WFE's ai.UnreadMessage says it.
+const unreadWhy = (f: string) =>
+  ({
+    "provider quota": "the model provider's quota or credit ran out",
+    "provider account": "the model provider refused the account or its models",
+    "provider busy": "the model provider was busy",
+    "too long for the model": "they were too long for the model",
+    "model declined": "the model declined them",
+    "model error": "the model rejected the request",
+  })[unreadReason(f)] || "the model failed";
+// The class a load's unread documents are told by, as the WFE's
+// ai.UnreadFailure: the most common of those Helix re-reads (ai.Rereads),
+// else the most common; a tie to the first by name.
+const REREADS = new Set([
+  "",
+  "quota",
+  "auth",
+  "permission",
+  "not_found",
+  "unavailable",
+  "rate_limited",
+  "timeout",
+]);
+const unreadFailure = (failed: Map<string, number>) =>
+  [...failed].sort(
+    (a, b) =>
+      Number(REREADS.has(b[0])) - Number(REREADS.has(a[0])) ||
+      b[1] - a[1] ||
+      a[0].localeCompare(b[0]),
+  )[0]?.[0] || "";
+
+/**
+ * A load's documents the model left unread, as the WFE answers it: none
+ * when it failed none; with a re-read 15 minutes after the load ended for a
+ * current ready or partial load whose provider is to blame.
+ */
+function loadUnread(l: StoredLoad, current: boolean) {
+  const u = loadModelReads(l.id);
+  const failed = [...u.failed.values()].reduce((n, c) => n + c, 0);
+  if (!failed) return undefined;
+  const live = state.jobs.some(
+    (j) =>
+      j.loadId === l.id && (j.status === "queued" || j.status === "running"),
+  );
+  const f = unreadFailure(u.failed),
+    reason = unreadReason(f);
+  const passes = [...u.failed.keys()].some((c) => REREADS.has(c));
+  return {
+    documents: failed + (live ? 0 : u.unrecorded),
+    modelFailure: f,
+    reason,
+    rereadAt:
+      passes &&
+      current &&
+      !live &&
+      l.finishedAt &&
+      (l.status === "ready" || l.status === "partial")
+        ? iso(Date.parse(l.finishedAt) + 15 * 60_000)
+        : null,
+  };
+}
+
 const toLoad = (l: StoredLoad): FoundryLoad => {
   const jobs = state.jobs.filter((j) => j.loadId === l.id);
+  const current = currentLoadId(l.ontologyId) === l.id;
   return {
+    unread: loadUnread(l, current),
     id: l.id,
     versionId: l.versionId,
     version: versionName(l),
@@ -2300,6 +2412,37 @@ export function queueLoad(
  * of readsJson over the load req.params names (workspaceId, ontologyId,
  * loadId): what the dashboards' preview and publish read too.
  */
+/**
+ * Why a day to answer or read as of is refused, as the backend's
+ * ontologyagent.ParseValidAt words it, or undefined for a day it takes: a
+ * calendar date, YYYY-MM-DD, not after today (UTC).
+ */
+export function validAtRefusal(day: string): string | undefined {
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(day)
+    ? new Date(`${day}T00:00:00Z`)
+    : undefined;
+  if (
+    !at ||
+    Number.isNaN(at.getTime()) ||
+    at.toISOString().slice(0, 10) !== day
+  )
+    return `valid_at "${day}" is not a date, YYYY-MM-DD`;
+  const today = now().slice(0, 10);
+  return day > today
+    ? `valid_at ${day} is after today (${today}, UTC): no load records the future`
+    : undefined;
+}
+
+// What can only show the load as it is now, by read kind: under a valid_at
+// every read but view and evidence fails current_only, as the engine's do.
+const CURRENT_ONLY: Record<string, string> = {
+  entity: "an entity read gives what rules derive now",
+  pattern: "a pattern reads facts and rules as they hold now",
+  explain: "a proof is of what rules derive now",
+  violations: "violation records are as the load holds them now",
+  query: "a query reads the load as it is now",
+};
+
 export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
   const s = ontologyOf(req);
   if (!isScope(s)) return s;
@@ -2310,6 +2453,9 @@ export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
     return fail("NOT_FOUND", "load not found");
   const reads = readsOf(readsJson);
   if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
+  const validAt = (req.body as { validAt?: string } | undefined)?.validAt || "";
+  const dayRefusal = validAt ? validAtRefusal(validAt) : undefined;
+  if (dayRefusal) return fail("INVALID_ARGUMENT", dayRefusal);
   advanceLoads(s.o.id);
   const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
   if (!l) return fail("NOT_FOUND", "load not found");
@@ -2340,10 +2486,19 @@ export function readLoad(req: MockRequest, readsJson: unknown): MockReply {
   const model = rulesOf(l, view);
   return ok({
     resultJson: JSON.stringify({
-      as_of: now().slice(0, 10),
-      results: reads.map((r) =>
-        answer(model, r, { errors: knobs.readErrors, view }),
-      ),
+      asked_at: now().slice(0, 10),
+      ...(validAt ? { valid_at: validAt } : {}),
+      results: reads.map((r) => {
+        const kind = Object.keys(r)[0] || "";
+        return validAt && CURRENT_ONLY[kind]
+          ? {
+              error: {
+                code: "current_only",
+                message: `${CURRENT_ONLY[kind]}, so it can't answer as of ${validAt} (valid_at)`,
+              },
+            }
+          : answer(model, r, { errors: knobs.readErrors, view });
+      }),
       stats: { instances: model.facts.size, wall_ms: 1 },
     }),
   } satisfies ReadFoundryGraphResponse);

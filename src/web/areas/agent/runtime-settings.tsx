@@ -65,9 +65,9 @@ const ICONS: Record<AgentRuntime, ReactNode> = {
 const DESCRIPTIONS: Record<AgentRuntime, string> = {
   api: "The provider above. Its turns count toward the workspace’s Founder budget.",
   claude_code:
-    "Claude Code on your computer, signed in to your Claude plan, through Foundry’s helper. It costs the workspace nothing; check that your plan’s terms allow it.",
+    "Runs Claude Code on your computer, through Foundry’s helper, signed in to your own Claude account. Its turns count against your Claude plan’s usage limits, or bill your API account if Claude Code signs in with a key, not the workspace’s Founder budget. Check that your plan’s terms allow it.",
   codex:
-    "Codex on your computer, signed in to your ChatGPT plan, through Foundry’s helper. It runs with your own Codex setup, its shell off. It costs the workspace nothing; its turns count against your ChatGPT plan.",
+    "Runs Codex on your computer, through Foundry’s helper, signed in to your own ChatGPT account. It runs with your own Codex setup, its shell off. Its turns count against your ChatGPT plan’s Codex limits, not the workspace’s Founder budget, and only ever come from this computer.",
 };
 
 /** What Codex runs with, as the owner confirms it and the settings say it after. */

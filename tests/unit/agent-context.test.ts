@@ -6,7 +6,6 @@ import {
   aiCatalog,
   foundryDocsIndex,
   foundryDocsPages,
-  jsonLd,
   llmsFullTxt,
   llmsTxt,
   mcpManifest,
@@ -14,11 +13,9 @@ import {
   setupPrompt,
   type Site,
 } from "@/server/agent-context";
-import { LANDING_COPY, landingMarkdown } from "@/landing/markdown";
 
 // What the hosted site tells agents and crawlers (src/server/agent-context.ts,
-// src/server/agent-routes.ts, src/landing/markdown.ts, src/app/robots.ts and
-// sitemap.ts): what it says, that the tools it names exist, that it reads
+// src/server/agent-routes.ts and src/app/robots.ts): what it says, that the tools it names exist, that it reads
 // Foundry's part of the docs and nothing else, and that only prod is indexed.
 
 const site: Site = {
@@ -168,38 +165,6 @@ describe("llms.txt and llms-full.txt", () => {
   });
 });
 
-describe("the landing page in Markdown", () => {
-  // landing.tsx's text as a reader sees it: entities decoded, JSX's spaces
-  // and line breaks collapsed.
-  const page = readFileSync(
-    join(__dirname, "../../src/landing/landing.tsx"),
-    "utf8",
-  )
-    .replaceAll("&#8217;", "’")
-    .replaceAll("&amp;", "&")
-    .replaceAll('{" "}', " ")
-    .replace(/\s+/g, " ");
-
-  it("says only what the landing page says", () => {
-    const copy = Object.values(LANDING_COPY).flat();
-    expect(copy.length).toBeGreaterThan(10);
-    for (const text of copy) expect(page).toContain(text);
-  });
-
-  it("ends with the setup prompt", () => {
-    const md = landingMarkdown(
-      site.origin,
-      "https://github.com/helixdb/helix-foundry",
-      "PROMPT",
-    );
-    expect(md).toMatch(/^# Helix Foundry\n\n## Your company’s data/);
-    expect(md).toContain(
-      "[llms.txt](https://foundry.example.com/llms.txt) says when to use Foundry",
-    );
-    expect(md).toMatch(/````markdown\nPROMPT\n````\n$/);
-  });
-});
-
 describe("the manifests", () => {
   it("names the MCP, its sign-in and the agent pages", () => {
     expect(protectedResource("https://mcp.helix-db.com/mcp")).toBe(
@@ -226,20 +191,6 @@ describe("the manifests", () => {
       "https://foundry.example.com/llms.txt",
     ]);
   });
-
-  it("gives the landing page's JSON-LD the plans' prices", () => {
-    const ld = jsonLd();
-    expect(ld).toMatchObject({
-      "@type": "SoftwareApplication",
-      name: "Helix Foundry",
-      url: "https://foundry.helix-db.com",
-    });
-    expect(ld.offers.map((o) => [o.name, o.price])).toEqual([
-      ["Foundry Free", "0"],
-      ["Foundry Pro", "100"],
-      ["Foundry Max", "500"],
-    ]);
-  });
 });
 
 /** The agent routes as a build for `appEnv` (and `mode`) loads them. */
@@ -261,7 +212,6 @@ describe("the agent routes", () => {
     for (const [page, type] of [
       ["llms", "text/plain; charset=utf-8"],
       ["llms-full", "text/plain; charset=utf-8"],
-      ["index", "text/markdown; charset=utf-8"],
     ] as const) {
       const res = await agentText(request, page);
       expect(res.status).toBe(200);
@@ -317,41 +267,22 @@ describe("the agent routes", () => {
   });
 });
 
-describe("robots.txt and sitemap.xml", () => {
+describe("robots.txt", () => {
   async function load(appEnv: string, mode = "") {
     vi.stubEnv("NEXT_PUBLIC_APP_ENV", appEnv);
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", mode);
     vi.resetModules();
-    return {
-      robots: (await import("@/app/robots")).default(),
-      sitemap: (await import("@/app/sitemap")).default(),
-    };
+    return (await import("@/app/robots")).default();
   }
 
-  it("lets crawlers read prod's public pages and agent files, and no more", async () => {
-    const { robots, sitemap } = await load("prod");
-    expect(robots).toEqual({
+  it("lets crawlers read prod's agent files, and no more", async () => {
+    expect(await load("prod")).toEqual({
       rules: {
         userAgent: "*",
-        allow: expect.arrayContaining([
-          "/$",
-          "/index.md",
-          "/llms.txt",
-          "/llms-full.txt",
-          "/.well-known/",
-          "/_next/static/",
-        ]),
+        allow: ["/llms.txt", "/llms-full.txt", "/.well-known/", "/favicon.svg"],
         disallow: "/",
       },
-      sitemap: "https://foundry.helix-db.com/sitemap.xml",
     });
-    expect(sitemap).toEqual([
-      {
-        url: "https://foundry.helix-db.com/",
-        changeFrequency: "weekly",
-        priority: 1,
-      },
-    ]);
   });
 
   it("asks crawlers to read nothing anywhere else", async () => {
@@ -359,10 +290,9 @@ describe("robots.txt and sitemap.xml", () => {
       ["dev", ""],
       ["mock", ""],
       ["prod", "local"],
-    ]) {
-      const { robots, sitemap } = await load(appEnv, mode);
-      expect(robots).toEqual({ rules: { userAgent: "*", disallow: "/" } });
-      expect(sitemap).toEqual([]);
-    }
+    ])
+      expect(await load(appEnv, mode)).toEqual({
+        rules: { userAgent: "*", disallow: "/" },
+      });
   });
 });

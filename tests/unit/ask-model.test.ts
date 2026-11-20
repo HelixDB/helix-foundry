@@ -31,6 +31,7 @@ import {
   plainText,
   queryText,
   questionFocus,
+  questionValidAt,
   questionView,
   reduceEvents,
   refusalText,
@@ -40,6 +41,7 @@ import {
   stepInput,
   threadGroups,
   threadsOf,
+  todayUtc,
   toolLabel,
   type AskStep,
   type CitationContext,
@@ -1212,6 +1214,16 @@ describe("the query renderer", () => {
     expect(t.path).toBe(
       'Customer@0 (cus_1, cus_2) matching "acme" where closed_at is empty and email is set and name contains "Corp" and name starts with "Glo" and since < today-30d and tier >= 2 and vip != true ← billed_to ← Invoice → billed_to → Customer@2 where x = null',
     );
+    // Keys' plain values, as the engine takes them since 4.26.0.
+    expect(
+      queryText({
+        start: {
+          type: "Flight",
+          keys: ["AA 100", { number: "BA 1", day: "2026-03-14" }],
+        },
+        return: { count: {} },
+      }).path,
+    ).toBe("Flight (AA 100, BA 1/2026-03-14)");
     expect(t.filters).toEqual([]);
     expect(t.returns).toBe("Count of distinct Customer@2");
     // A count at the last position, as the model may write it.
@@ -2127,8 +2139,9 @@ describe("questions and threads", () => {
       result: failure,
     });
     // Helix's Claude's model failures say what failed, in the WFE's
-    // lowercase words made a sentence: a provider still busy, a request it
-    // rejected (Helix's bug), Helix's model account.
+    // lowercase words made a sentence: a provider still busy, one that
+    // stopped responding, a request it rejected (Helix's bug), Helix's model
+    // account.
     for (const [reason, house, shown] of [
       [
         "model_failed",
@@ -2139,6 +2152,11 @@ describe("questions and threads", () => {
         "model_rate_limited",
         "the model provider is busy; try again in a minute",
         "The model provider is busy; try again in a minute.",
+      ],
+      [
+        "model_timeout",
+        "the model provider stopped responding; ask again",
+        "The model provider stopped responding; ask again.",
       ],
       [
         "model_unsupported",
@@ -2158,7 +2176,8 @@ describe("questions and threads", () => {
         ),
       ).toEqual({ kind: "failed", error: shown, result: r });
     }
-    // With no words of the WFE's, the reason's own text.
+    // With no words of the WFE's, the reason's own text: a call that stopped
+    // responding, tried again, says so as the WFE does.
     const quiet = { ...failure, reason: "model_timeout" } as const;
     expect(
       questionView(
@@ -2166,7 +2185,7 @@ describe("questions and threads", () => {
       ),
     ).toEqual({
       kind: "failed",
-      error: "The model couldn’t be reached, after retries.",
+      error: "The model provider stopped responding; ask again.",
       result: quiet,
     });
     // A workspace's own provider's are the WFE's full sentences, shown as
@@ -2202,6 +2221,20 @@ describe("questions and threads", () => {
       error:
         "Claude refused the API key. An owner can enter a new one in Settings › AI models.",
       result: auth,
+    });
+    // A custom server's timeout names its host, lowercase, as written.
+    expect(
+      questionView(
+        q({
+          status: "failed",
+          error: "llm.example.com stopped responding; ask again.",
+          resultJson: JSON.stringify(quiet),
+        }),
+      ),
+    ).toEqual({
+      kind: "failed",
+      error: "llm.example.com stopped responding; ask again.",
+      result: quiet,
     });
     expect(
       questionView(
@@ -2306,6 +2339,35 @@ describe("questions and threads", () => {
     expect(questionFocus(q({ focusJson: '["Customer","cus_1"]' }))).toBe(
       undefined,
     );
+  });
+
+  // A thread's follow-ups are asked as of its last question's day, as they
+  // are about its last question's focus; a value that isn't a day is none.
+  it("reads the day a thread is answered as of from its last question", () => {
+    const [thread] = threadsOf([
+      q({
+        id: "q2",
+        threadId: "q1",
+        validAt: "2026-03-01",
+        createdAt: "2026-11-18T10:01:00Z",
+      }),
+      q({
+        id: "q1",
+        threadId: "q1",
+        validAt: "2026-03-01",
+        createdAt: "2026-11-18T10:00:00Z",
+      }),
+    ]);
+    expect(questionValidAt(thread!.questions.at(-1))).toBe("2026-03-01");
+    expect(questionValidAt(q({}))).toBe(undefined);
+    expect(questionValidAt(undefined)).toBe(undefined);
+    for (const validAt of ["", "March", "2026-3-1", "2026-03-01T00:00:00Z"])
+      expect(questionValidAt(q({ validAt }))).toBe(undefined);
+  });
+
+  it("dates today in UTC, the latest day a question is asked as of", () => {
+    expect(todayUtc(new Date("2026-11-18T23:30:00-05:00"))).toBe("2026-11-19");
+    expect(todayUtc(new Date("2026-11-18T00:00:00Z"))).toBe("2026-11-18");
   });
 });
 

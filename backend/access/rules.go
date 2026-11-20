@@ -167,6 +167,7 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_RevokeFoundryEventSourceToken_FullMethodName:         Deny,
 	foundryv1.FoundryService_ListFoundryEventSourceTokens_FullMethodName:          Deny,
 	foundryv1.FoundryService_ListFoundryEventBatches_FullMethodName:               Deny,
+	foundryv1.FoundryService_ListFoundryEventPieces_FullMethodName:                Deny,
 	foundryv1.FoundryEventsService_SendFoundryEvents_FullMethodName:               Deny,
 	foundryv1.FoundryEventsService_ValidateFoundryEventSourceToken_FullMethodName: Deny,
 
