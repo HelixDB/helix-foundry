@@ -1,4 +1,96 @@
 {
+  "a long delete": [
+    {
+      "text": "Delete the dashboard “R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Delete the dashboard “R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nR\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Delete",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "danger",
+              "confirm": {
+                "title": {
+                  "type": "plain_text",
+                  "text": "Run this?",
+                  "emoji": true
+                },
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Delete the dashboard “R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D”? Deletes the …",
+                  "verbatim": true
+                },
+                "confirm": {
+                  "type": "plain_text",
+                  "text": "Delete",
+                  "emoji": true
+                },
+                "deny": {
+                  "type": "plain_text",
+                  "text": "Cancel",
+                  "emoji": true
+                },
+                "style": "danger"
+              }
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "a long title": [
     {
       "text": "Set up the workflow “Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name ”",
@@ -25,7 +117,7 @@
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "Saves this workflow and turns it on, and your click approves its steps. You can pause or change it on its page.",
+            "text": "Saves this workflow and turns it on, and the click that runs it approves its steps. You can pause or change it on its page.",
             "verbatim": true
           }
         },
@@ -39,7 +131,7 @@
             },
             {
               "type": "mrkdwn",
-              "text": "Its steps show only in Foundry: read them in this thread there before you run it.",
+              "text": "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it.",
               "verbatim": true
             }
           ]
@@ -49,13 +141,13 @@
           "elements": [
             {
               "type": "button",
-              "action_id": "foundry.approve",
+              "action_id": "foundry.open",
               "text": {
                 "type": "plain_text",
-                "text": "Create and turn on",
+                "text": "Review in Foundry",
                 "emoji": true
               },
-              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "url": "https://foundry.helix-db.com/ask?workspace=01WS\u0026chat=01THREAD",
               "style": "primary"
             },
             {
@@ -75,7 +167,7 @@
           "elements": [
             {
               "type": "mrkdwn",
-              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "text": "Only \u003c@U0ADA0001\u003e can run this, in Foundry.",
               "verbatim": true
             }
           ]
@@ -1221,7 +1313,7 @@
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "Saves this workflow and turns it on, and your click approves its steps. You can pause or change it on its page.",
+            "text": "Saves this workflow and turns it on, and the click that runs it approves its steps. You can pause or change it on its page.",
             "verbatim": true
           }
         },
@@ -1235,7 +1327,7 @@
             },
             {
               "type": "mrkdwn",
-              "text": "Its steps show only in Foundry: read them in this thread there before you run it.",
+              "text": "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it.",
               "verbatim": true
             }
           ]
@@ -1245,13 +1337,13 @@
           "elements": [
             {
               "type": "button",
-              "action_id": "foundry.approve",
+              "action_id": "foundry.open",
               "text": {
                 "type": "plain_text",
-                "text": "Create and turn on",
+                "text": "Review in Foundry",
                 "emoji": true
               },
-              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "url": "https://foundry.helix-db.com/ask?workspace=01WS\u0026chat=01THREAD",
               "style": "primary"
             },
             {
@@ -1271,7 +1363,7 @@
           "elements": [
             {
               "type": "mrkdwn",
-              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "text": "Only \u003c@U0ADA0001\u003e can run this, in Foundry.",
               "verbatim": true
             }
           ]
@@ -5239,7 +5331,7 @@
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "Saves these changes to the workflow, and your click approves its steps.",
+            "text": "Saves these changes to the workflow, and the click that runs it approves its steps.",
             "verbatim": true
           }
         },
@@ -5248,7 +5340,7 @@
           "elements": [
             {
               "type": "mrkdwn",
-              "text": "Its steps show only in Foundry: read them in this thread there before you run it.",
+              "text": "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it.",
               "verbatim": true
             }
           ]
@@ -5258,13 +5350,13 @@
           "elements": [
             {
               "type": "button",
-              "action_id": "foundry.approve",
+              "action_id": "foundry.open",
               "text": {
                 "type": "plain_text",
-                "text": "Save",
+                "text": "Review in Foundry",
                 "emoji": true
               },
-              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "url": "https://foundry.helix-db.com/ask?workspace=01WS\u0026chat=01THREAD",
               "style": "primary"
             },
             {
@@ -5284,7 +5376,7 @@
           "elements": [
             {
               "type": "mrkdwn",
-              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "text": "Only \u003c@U0ADA0001\u003e can run this, in Foundry.",
               "verbatim": true
             }
           ]

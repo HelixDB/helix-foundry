@@ -400,7 +400,7 @@ func (f *follower) post(ctx context.Context, due slack.Due, turnLive bool) (bool
 		if state == nil {
 			state = slack.CardOpen{} // a click runs it now: Run again reads how it stands
 		}
-		m, err := b.site.Card(cardOf(a), f.r.SlackUserID, state)
+		m, err := b.site.Card(cardOf(a), slack.Chat{WorkspaceID: ws, ThreadID: a.ThreadID}, f.r.SlackUserID, state)
 		if err != nil {
 			log.From(ctx).Warn("an action's card can't be drawn; it is left to the site", "action", a.ID, "err", err)
 			return true, nil

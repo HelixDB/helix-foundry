@@ -17,6 +17,9 @@ import (
 
 const cardAction = "01JBACTXN0000000000000000A"
 
+// chat is the Founder thread the cards are in.
+var chat = slack.Chat{WorkspaceID: "01WS", ThreadID: "01THREAD"}
+
 var (
 	sales     = agent.Ref{ID: "ont_1", Name: "Sales"}
 	unnamed   = agent.Ref{ID: "ont_2"}
@@ -157,7 +160,7 @@ func TestCardsCoverEveryOperation(t *testing.T) {
 	for operation := range agent.Operations {
 		displays := cardsOf[operation]
 		require.NotEmpty(t, displays, "%s has no card here", operation)
-		_, err := s.Card(actionCard(t, operation, displays[0]), ada, slack.CardOpen{})
+		_, err := s.Card(actionCard(t, operation, displays[0]), chat, ada, slack.CardOpen{})
 		require.NoError(t, err, operation)
 	}
 	for operation := range cardsOf {
@@ -167,12 +170,27 @@ func TestCardsCoverEveryOperation(t *testing.T) {
 
 func TestCardRefusals(t *testing.T) {
 	s := site(t)
-	_, err := s.Card(actionCard(t, "drop_database", agent.OntologyDisplay{}), ada, slack.CardOpen{})
+	_, err := s.Card(actionCard(t, "drop_database", agent.OntologyDisplay{}), chat, ada, slack.CardOpen{})
 	require.ErrorContains(t, err, `no card for "drop_database"`)
-	_, err = s.Card(agent.ActionCard{Operation: "create_load", Display: json.RawMessage(`[1]`)}, ada, slack.CardOpen{})
+	_, err = s.Card(agent.ActionCard{Operation: "create_load", Display: json.RawMessage(`[1]`)}, chat, ada, slack.CardOpen{})
 	require.ErrorContains(t, err, "read the create_load card")
-	_, err = s.Card(agent.ActionCard{Operation: "create_load"}, ada, slack.CardOpen{})
+	_, err = s.Card(agent.ActionCard{Operation: "create_load"}, chat, ada, slack.CardOpen{})
 	require.Error(t, err)
+	_, err = s.Card(actionCard(t, "create_load", cardsOf["create_load"][0]), chat, ada, nil)
+	require.ErrorContains(t, err, "a card in state <nil>")
+}
+
+// A card Slack can't draw, or whose Run approves workflow steps the card
+// can't show, runs only in Foundry; every other card runs in Slack.
+func TestRunsInFoundry(t *testing.T) {
+	for operation, displays := range cardsOf {
+		for i, display := range displays {
+			want := operation == "create_workflow" || (operation == "update_workflow" && display.(agent.UpdateAutomationDisplay).Steps)
+			require.Equal(t, want, slack.RunsInFoundry(actionCard(t, operation, display)), "%s %d", operation, i)
+		}
+	}
+	require.True(t, slack.RunsInFoundry(actionCard(t, "drop_database", agent.OntologyDisplay{})))
+	require.True(t, slack.RunsInFoundry(agent.ActionCard{Operation: "create_load", Display: json.RawMessage(`[1]`)}))
 }
 
 func TestCards(t *testing.T) {
@@ -185,7 +203,7 @@ func TestCards(t *testing.T) {
 	sort.Strings(operations)
 	for _, operation := range operations {
 		for i, display := range cardsOf[operation] {
-			m, err := s.Card(actionCard(t, operation, display), ada, slack.CardOpen{})
+			m, err := s.Card(actionCard(t, operation, display), chat, ada, slack.CardOpen{})
 			require.NoError(t, err, operation)
 			cases[fmt.Sprintf("%s %d", operation, i)] = []slack.Message{m}
 		}
@@ -200,14 +218,20 @@ func TestCards(t *testing.T) {
 		"dismissed":           slack.CardDismissed{By: grace},
 		"dismissed elsewhere": slack.CardDismissed{},
 	} {
-		m, err := s.Card(load, ada, state)
+		m, err := s.Card(load, chat, ada, state)
 		require.NoError(t, err, name)
 		cases["create_load "+name] = []slack.Message{m}
 	}
 	long := strings.Repeat("Very long name ", 20)
-	m, err := s.Card(actionCard(t, "create_workflow", agent.CreateAutomationDisplay{Name: long}), ada, slack.CardOpen{})
+	m, err := s.Card(actionCard(t, "create_workflow", agent.CreateAutomationDisplay{Name: long}), chat, ada, slack.CardOpen{})
 	require.NoError(t, err)
 	cases["a long title"] = []slack.Message{m}
+	// A delete's confirmation is cut to Block Kit's 300 characters, however
+	// long the name (dashboards' are up to 120) and its escapes.
+	m, err = s.Card(actionCard(t, "delete_dashboard", agent.DashboardDisplay{Dashboard: agent.DashboardRef{Ref: agent.Ref{ID: "dash_3",
+		Name: strings.Repeat("R&D <Q4> ", 14)[:120]}}}), chat, ada, slack.CardOpen{})
+	require.NoError(t, err)
+	cases["a long delete"] = []slack.Message{m}
 	golden(t, "cards", cases)
 
 	// A delete's Run is red and asks first; any other's is green and doesn't.
@@ -220,8 +244,27 @@ func TestCards(t *testing.T) {
 		t.Fatal("no buttons")
 		return slack.Actions{}
 	}
+	confirm := actions(cases["a long delete"][0]).Elements[0].Confirm
+	require.LessOrEqual(t, confirm.Text.Len(), slack.MaxConfirmText)
+	require.Equal(t, slack.Plain("Delete"), confirm.Confirm)
+	require.True(t, strings.HasSuffix(confirm.Text.String(), "…"))
+	// A workflow card whose Run approves its steps runs in Foundry: it opens
+	// its thread there, and has no Run.
+	for _, name := range []string{"create_workflow 0", "update_workflow 0", "a long title"} {
+		buttons := actions(cases[name][0]).Elements
+		require.Len(t, buttons, 2, name)
+		review := buttons[0]
+		require.Equal(t, slack.ActionOpen, review.ActionID, name)
+		require.Equal(t, slack.Plain("Review in Foundry"), review.Text, name)
+		require.Equal(t, origin+"/ask?workspace=01WS&chat=01THREAD", review.URL.String(), name)
+		require.Equal(t, slack.ButtonValue{}, review.Value, name)
+		require.Equal(t, slack.ActionDismiss, buttons[1].ActionID, name)
+	}
 	for _, operation := range operations {
 		run := actions(cases[operation+" 0"][0]).Elements[0]
+		if slack.RunsInFoundry(actionCard(t, operation, cardsOf[operation][0])) {
+			continue
+		}
 		require.Equal(t, slack.ActionApprove, run.ActionID)
 		require.Equal(t, slack.ButtonValue{Action: cardAction, PayloadHash: strings.Repeat("c", 64)}, run.Value)
 		if strings.HasPrefix(operation, "delete_") {
@@ -240,7 +283,7 @@ func ExampleSite_Card() {
 	s, _ := slack.NewSite("https://foundry.helix-db.com")
 	display, _ := json.Marshal(agent.CreateLoadDisplay{Ontology: agent.Ref{ID: "o1", Name: "Sales"}, Version: agent.VersionRef{ID: "v", Number: 2}})
 	m, _ := s.Card(agent.ActionCard{ActionID: "01JBACTXN0000000000000000A", Operation: "create_load", PayloadHash: strings.Repeat("c", 64), Display: display},
-		"U0ADA0001", slack.CardRan{By: "U0ADA0001"})
+		slack.Chat{WorkspaceID: "01WS", ThreadID: "01THREAD"}, "U0ADA0001", slack.CardRan{By: "U0ADA0001"})
 	fmt.Println(m.Text)
 	fmt.Println(m.Blocks[0].(slack.Header).Text)
 	// Output:

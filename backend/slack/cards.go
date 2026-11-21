@@ -15,8 +15,10 @@ import (
 // site's words (src/web/areas/agent/model.ts cardView): a title per
 // operation, the facts of its display, which Foundry resolved from the
 // workspace (never the model's words), what running it does, and Run and
-// Dismiss for its person, a delete's Run asking first. Once clicked, the
-// card says how it ended in place of its buttons.
+// Dismiss for its person, a delete's Run asking first. A card whose Run
+// approves workflow steps the card can't show runs only in Foundry: it
+// links to its thread there instead. Once clicked, the card says how it
+// ended in place of its buttons.
 
 // CardState is where a card stands: a closed set.
 type CardState interface{ cardState() }
@@ -55,6 +57,9 @@ type cardView struct {
 	caution string
 	// run names the Run button: what it does.
 	run string
+	// inFoundry is a card that runs only in Foundry: its Run approves
+	// workflow steps, which show only there.
+	inFoundry bool
 }
 
 // fact is one thing a card names: a label and its value.
@@ -171,9 +176,9 @@ func runtimeOf(id string) struct{ title, on, cli string } {
 	return struct{ title, on, cli string }{id, id, id}
 }
 
-// stepsUnseen warns that a workflow card's steps, which its Run approves,
-// show only in Foundry.
-const stepsUnseen = "Its steps show only in Foundry: read them in this thread there before you run it."
+// stepsInFoundry says why a workflow card whose Run approves its steps
+// runs only in Foundry.
+const stepsInFoundry = "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it."
 
 // sourceModes are how a generation reads an API source.
 var sourceModes = map[string]string{"structured": "as rows", "extraction": "as documents"}
@@ -402,9 +407,9 @@ var cardViews = map[string]func(json.RawMessage) (cardView, error){
 	"create_workflow": view(func(d agent.CreateAutomationDisplay) cardView {
 		return cardView{title: "Set up the workflow “" + d.Name + "”", run: "Create and turn on",
 			facts:   []fact{{"Name", "“" + d.Name + "” (as Founder wrote it)"}},
-			does:    "Saves this workflow and turns it on, and your click approves its steps. You can pause or change it on its page.",
+			does:    "Saves this workflow and turns it on, and the click that runs it approves its steps. You can pause or change it on its page.",
 			cost:    "Its Founder steps spend the workspace’s workflows budget.",
-			caution: stepsUnseen}
+			caution: stepsInFoundry, inFoundry: true}
 	}),
 	"update_workflow": view(func(d agent.UpdateAutomationDisplay) cardView {
 		out := cardView{title: "Change the workflow " + quoted(d.Automation.Ref), run: "Save",
@@ -414,7 +419,7 @@ var cardViews = map[string]func(json.RawMessage) (cardView, error){
 			out.facts = append(out.facts, fact{"New name", "“" + *d.Name + "”"})
 		}
 		if d.Steps {
-			out.does, out.caution = "Saves these changes to the workflow, and your click approves its steps.", stepsUnseen
+			out.does, out.caution, out.inFoundry = "Saves these changes to the workflow, and the click that runs it approves its steps.", stepsInFoundry, true
 		}
 		return out
 	}),
@@ -595,20 +600,49 @@ func cutPlain(text string, max int) Plain {
 	return Plain(string([]rune(text)[:max-1]) + "…")
 }
 
-// Card draws an action's card for its person (a Slack user id) as it
-// stands: its title, its facts, the document's words a review was read
-// from, what running it does, its cost and caution; then Run and Dismiss
-// and who may run it while open (a delete's Run red, asking first),
-// Prepare again once expired, or how it ended. It refuses an operation with
-// no card and a display that isn't its operation's.
-func (s Site) Card(c agent.ActionCard, person string, state CardState) (Message, error) {
+// Chat is a Founder thread of a workspace, which the site shows on its Ask
+// page (/ask?workspace=…&chat=…).
+type Chat struct{ WorkspaceID, ThreadID string }
+
+// Chat is the page of a Founder thread.
+func (s Site) Chat(c Chat) Link {
+	return s.page("/ask", []string{"workspace", c.WorkspaceID, "chat", c.ThreadID}, "")
+}
+
+// cardViewOf is c's card's words; it refuses an operation with no card and
+// a display that isn't its operation's.
+func cardViewOf(c agent.ActionCard) (cardView, error) {
 	words, ok := cardViews[c.Operation]
 	if !ok {
-		return Message{}, fmt.Errorf("slack: no card for %q", c.Operation)
+		return cardView{}, fmt.Errorf("slack: no card for %q", c.Operation)
 	}
 	v, err := words(c.Display)
 	if err != nil {
-		return Message{}, fmt.Errorf("slack: read the %s card: %w", c.Operation, err)
+		return cardView{}, fmt.Errorf("slack: read the %s card: %w", c.Operation, err)
+	}
+	return v, nil
+}
+
+// RunsInFoundry reports whether c runs only in Foundry, so Slack never runs
+// it: a workflow card whose Run approves steps the Slack card can't show
+// (create_workflow, update_workflow with steps), or a card Card can't draw.
+func RunsInFoundry(c agent.ActionCard) bool {
+	v, err := cardViewOf(c)
+	return err != nil || v.inFoundry
+}
+
+// Card draws an action's card for its person (a Slack user id) as it
+// stands: its title, its facts, the document's words a review was read
+// from, what running it does, its cost and caution; then Run and Dismiss
+// and who may run it while open (a delete's Run red, asking first, its
+// confirmation cut to Block Kit's limits), Prepare again once expired, or
+// how it ended. A card that runs only in Foundry (RunsInFoundry) offers
+// Review in Foundry, its thread's page (chat), in place of Run. It refuses
+// an operation with no card and a display that isn't its operation's.
+func (s Site) Card(c agent.ActionCard, chat Chat, person string, state CardState) (Message, error) {
+	v, err := cardViewOf(c)
+	if err != nil {
+		return Message{}, err
 	}
 	blocks := []Block{Header{Text: cutPlain(v.title, MaxHeaderText)}}
 	// No card has more facts than a section has fields (MaxSectionFields).
@@ -648,16 +682,24 @@ func (s Site) Card(c agent.ActionCard, person string, state CardState) (Message,
 		blocks = append(blocks,
 			Context{Elements: []Mrkdwn{s.Text("Expired: it wasn’t run in time. Prepare it again to run it.")}},
 			Actions{Elements: []Button{{ActionID: ActionRefresh, Text: "Prepare again", Value: ButtonValue{Action: c.ActionID}}}})
-	default:
+	case CardOpen:
 		run := Button{ActionID: ActionApprove, Text: cutPlain(v.run, MaxButtonText), Value: ButtonValue{Action: c.ActionID, PayloadHash: c.PayloadHash},
 			Style: StylePrimary}
-		if danger {
+		who := Join(s.Text("Only "), UserMention(person), s.Text(" can run this."))
+		switch {
+		case v.inFoundry:
+			page := s.Chat(chat)
+			run = Button{ActionID: ActionOpen, Text: "Review in Foundry", URL: &page, Style: StylePrimary}
+			who = Join(s.Text("Only "), UserMention(person), s.Text(" can run this, in Foundry."))
+		case danger:
 			run.Style = StyleDanger
-			run.Confirm = &Confirm{Title: "Run this?", Text: Cut(s.Text(v.title+"? "+v.does), MaxSectionText), Confirm: cutPlain(v.run, MaxButtonText),
+			run.Confirm = &Confirm{Title: "Run this?", Text: Cut(s.Text(v.title+"? "+v.does), MaxConfirmText), Confirm: cutPlain(v.run, MaxConfirmButton),
 				Deny: "Cancel", Style: StyleDanger}
 		}
 		blocks = append(blocks, Actions{Elements: []Button{run, {ActionID: ActionDismiss, Text: "Dismiss", Value: ButtonValue{Action: c.ActionID}}}},
-			Context{Elements: []Mrkdwn{Join(s.Text("Only "), UserMention(person), s.Text(" can run this."))}})
+			Context{Elements: []Mrkdwn{who}})
+	default:
+		return Message{}, fmt.Errorf("slack: a card in state %T", state)
 	}
 	return Message{Text: Cut(s.Text(v.title), MaxMessageText), Blocks: blocks}, nil
 }

@@ -161,7 +161,7 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 		state = slack.CardExpired{}
 	}
 	if state != nil {
-		msg, err := b.site.Card(cardOf(action), k.UserID, state)
+		msg, err := b.site.Card(cardOf(action), slack.Chat{WorkspaceID: c.install.WorkspaceID, ThreadID: action.ThreadID}, k.UserID, state)
 		if err != nil {
 			return model.SlackIntakeGaveUp{Error: err.Error()}, nil
 		}
