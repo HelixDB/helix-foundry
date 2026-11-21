@@ -56,15 +56,17 @@ func TestUnknownMethodsDeny(t *testing.T) {
 }
 
 // A grantee only ever reads, apart from asking and cancelling its own
-// questions, talking to Founder in its own threads, and starting and finishing
-// its own workflow runs: no other method whose name says it writes admits
-// one, the runs need the Workflows permission, and Founder's cards stay
-// refused.
+// questions, talking to Founder in its own threads, linking its own Slack
+// account, and starting and finishing its own workflow runs: no other method
+// whose name says it writes admits one, the runs need the Workflows
+// permission, and Founder's cards stay refused.
 func TestGranteesNeverWrite(t *testing.T) {
 	writes := []string{"Create", "Update", "Delete", "Set", "Settle", "Put", "Move", "Revise", "Generate", "Sync", "Test", "Complete",
 		"Revoke", "Stop", "Resume", "Detect", "Send", "Validate", "Start", "Finish", "Assess", "Execute", "Refresh", "Dismiss"}
 	runs := []string{foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName, foundryv1.FoundryService_FinishFoundryWorkflowRun_FullMethodName}
-	threads := []string{foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName, foundryv1.FoundryService_DeleteFoundryAgentThread_FullMethodName}
+	threads := []string{foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName, foundryv1.FoundryService_DeleteFoundryAgentThread_FullMethodName,
+		// Its own Slack account.
+		foundryv1.FoundryService_CreateFoundrySlackLink_FullMethodName, foundryv1.FoundryService_DeleteFoundrySlackLink_FullMethodName}
 	for _, m := range methods() {
 		name := m[strings.LastIndex(m, "/")+1:]
 		for _, w := range writes {

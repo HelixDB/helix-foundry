@@ -74,6 +74,16 @@ var refused = map[string]string{
 	foundry("CreateOntologyVersion"): notCalled,
 	foundry("UpdateFoundryOntology"): notCalled,
 
+	foundry("GetFoundrySlack"):                                   noSlack,
+	foundry("StartFoundrySlackInstall"):                          noSlack,
+	foundry("FinishFoundrySlackInstall"):                         noSlack,
+	foundry("DisconnectFoundrySlack"):                            noSlack,
+	foundry("ListFoundrySlackLinks"):                             noSlack,
+	foundry("PreviewFoundrySlackLink"):                           noSlack,
+	foundry("CreateFoundrySlackLink"):                            noSlack,
+	foundry("DeleteFoundrySlackLink"):                            noSlack,
+	"/helix.foundry.v1.FoundryEventsService/ReceiveSlackRequest": noDoor,
+
 	foundry("DeleteFoundryOntologyDocument"):    noOntologySets,
 	foundry("ListFoundryOntologyDocumentSets"):  noOntologySets,
 	foundry("DeleteFoundryOntologyDocumentSet"): noOntologySets,
@@ -88,4 +98,6 @@ const (
 	noPublicLinks  = "public dashboard links are hosted only, served by a door an install doesn't run"
 	notCalled      = "the local site doesn't call it"
 	noOntologySets = "documents are the workspace's: the site calls the workspace's routes"
+	noSlack        = "Slack reaches a local install through Helix's relay"
+	noDoor         = "Helix receives Slack for a local install"
 )

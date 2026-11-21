@@ -846,6 +846,88 @@ service FoundryService {
   rpc DeleteFoundryTeam(DeleteFoundryTeamRequest) returns (google.protobuf.Empty) {
     option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/access/teams/{team_id}"};
   }
+
+  // Helix Foundry for Slack (foundry.slack): Helix's own Slack app, which
+  // answers a Slack workspace's people as Founder (the Assistant), each
+  // linked Slack user as their own Foundry user. An owner or admin adds it
+  // by Slack's OAuth (start, then finish once Slack returns to the site);
+  // each person links their Slack account from the link the app sends them
+  // in Slack. Wherever foundry.slack is off every method is
+  // FAILED_PRECONDITION, reason FOUNDRY_SLACK_DISABLED.
+  //
+  // The workspace's install, the caller's own link, and whether the
+  // workspace may add the app.
+  rpc GetFoundrySlack(GetFoundrySlackRequest) returns (FoundrySlackResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/slack"};
+  }
+  // Starts adding the app, for an owner or admin: the Slack page to send
+  // them to, whose state is bound to them and the workspace for ten
+  // minutes, once. FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on
+  // the install list), FOUNDRY_SLACK_INSTALLED (it has an install),
+  // FOUNDRY_AGENT_DISABLED (Founder is off).
+  rpc StartFoundrySlackInstall(StartFoundrySlackInstallRequest) returns (StartFoundrySlackInstallResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/slack:start-install"
+      body: "*"
+    };
+  }
+  // Finishes adding the app with what Slack returned to the site: the
+  // state names the workspace, and must be the caller's, unexpired and
+  // unspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner
+  // or admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL
+  // (an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),
+  // FOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN
+  // (another Foundry workspace has the Slack workspace),
+  // FOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last
+  // disconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is
+  // connected). The same Slack workspace again is a reinstall, which keeps
+  // its links.
+  rpc FinishFoundrySlackInstall(FinishFoundrySlackInstallRequest) returns (FoundrySlackResponse) {
+    option (google.api.http) = {
+      post: "/v1/foundry/slack:finish-install"
+      body: "*"
+    };
+  }
+  // Disconnects the workspace's install, for an owner or admin: the app is
+  // removed from the Slack workspace (Helix tries again shortly when Slack
+  // can't be reached), and its links, and what Slack sent, are deleted.
+  rpc DisconnectFoundrySlack(DisconnectFoundrySlackRequest) returns (FoundrySlackResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/slack:disconnect"
+      body: "*"
+    };
+  }
+  // Who is linked, for owners and admins.
+  rpc ListFoundrySlackLinks(ListFoundrySlackLinksRequest) returns (ListFoundrySlackLinksResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/slack/links"};
+  }
+  // What linking the token's Slack user to the caller would do, before it
+  // is spent: the Slack user, and whether they may be linked to the caller.
+  // FAILED_PRECONDITION FOUNDRY_SLACK_LINK_EXPIRED for a token not live in
+  // the workspace's install.
+  rpc PreviewFoundrySlackLink(PreviewFoundrySlackLinkRequest) returns (PreviewFoundrySlackLinkResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/slack/links:preview"
+      body: "*"
+    };
+  }
+  // Links the token's Slack user to the caller, spending the token: their
+  // Slack email must be the caller's, confirmed, and they a full member of
+  // the installed Slack workspace (FAILED_PRECONDITION
+  // FOUNDRY_SLACK_LINK_REFUSED, with the refusal's name in its metadata);
+  // FOUNDRY_SLACK_LINK_EXPIRED as Preview. It replaces the Slack user's
+  // earlier link, and the caller's.
+  rpc CreateFoundrySlackLink(CreateFoundrySlackLinkRequest) returns (FoundrySlackLinkResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/slack/links"
+      body: "*"
+    };
+  }
+  // Unlinks a Slack user: the caller's own, or, for an owner or admin,
+  // anyone's.
+  rpc DeleteFoundrySlackLink(DeleteFoundrySlackLinkRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/slack/links/{slack_user_id}"};
+  }
 }
 
 // GetFoundryUsageRequest reads the workspace's AI spend this calendar month
@@ -2193,6 +2275,10 @@ message SendFoundryAgentMessageRequest {
   FoundryAgentPageContext page_context = 4;
   // At most 64 characters.
   string client_token = 5;
+  // Where its person reads the turn: Foundry's site (UNSPECIFIED) or Slack.
+  // It only narrows the turn (no dashboard runs by itself in Slack), so
+  // any caller may set it.
+  FoundryAgentSurface surface = 7;
 }
 message FoundryAgentTurnResponse {
   FoundryAgentTurn turn = 1;
@@ -2604,4 +2690,62 @@ message ListFoundryAutomationSuggestionsResponse {
 }
 message FoundryAutomationRunResponse {
   FoundryAutomationRun run = 1;
+}
+
+message GetFoundrySlackRequest {
+  string workspace_id = 1;
+}
+message FoundrySlackResponse {
+  FoundrySlack slack = 1;
+}
+message StartFoundrySlackInstallRequest {
+  string workspace_id = 1;
+}
+message StartFoundrySlackInstallResponse {
+  // Slack's page that asks to add the app; it returns to the site's
+  // /slack/installed with a code and the state.
+  string authorize_url = 1;
+}
+message FinishFoundrySlackInstallRequest {
+  string code = 1;
+  string state = 2;
+}
+message DisconnectFoundrySlackRequest {
+  string workspace_id = 1;
+}
+message ListFoundrySlackLinksRequest {
+  string workspace_id = 1;
+}
+message ListFoundrySlackLinksResponse {
+  // Oldest first.
+  repeated FoundrySlackLink links = 1;
+}
+message PreviewFoundrySlackLinkRequest {
+  string workspace_id = 1;
+  // The token the app's link carries in its fragment (#t=).
+  string token = 2;
+}
+message PreviewFoundrySlackLinkResponse {
+  // The installed Slack workspace.
+  string team_name = 1;
+  // The Slack user: their name and handle, and their email with all but
+  // its first character and its domain hidden.
+  string slack_user_id = 2;
+  string slack_name = 3;
+  string slack_handle = 4;
+  string slack_email_masked = 5;
+  // They may be linked to the caller; else refusal says why.
+  bool matches_you = 6;
+  FoundrySlackLinkRefusal refusal = 7;
+}
+message CreateFoundrySlackLinkRequest {
+  string workspace_id = 1;
+  string token = 2;
+}
+message FoundrySlackLinkResponse {
+  FoundrySlackLink link = 1;
+}
+message DeleteFoundrySlackLinkRequest {
+  string workspace_id = 1;
+  string slack_user_id = 2;
 }

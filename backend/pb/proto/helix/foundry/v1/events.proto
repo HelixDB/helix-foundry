@@ -28,6 +28,53 @@ service FoundryEventsService {
   // no snapshot, an unpublished one, a deleted workspace's, or wherever
   // public links are off.
   rpc GetSharedFoundryDashboard(GetSharedFoundryDashboardRequest) returns (GetSharedFoundryDashboardResponse);
+
+  // A request Slack sent Helix Foundry's Slack app (foundry.slack), as the
+  // door took it at /v1/slack/events or /v1/slack/interactivity: its raw
+  // body and signature headers, which the door checked only for form and
+  // the five-minute window. The API verifies the signature with the app's
+  // signing secret, records once what the bot acts on (an event's or a
+  // click's own key), and answers what Slack is to be answered, within
+  // Slack's three seconds and without calling Slack. A request it can't
+  // record is an error, which the door answers 500, so Slack retries an
+  // event; Slack never retries a click. Wherever foundry.slack is off,
+  // every request is answered 404.
+  rpc ReceiveSlackRequest(ReceiveSlackRequestRequest) returns (ReceiveSlackRequestResponse);
+}
+
+// SlackRoute is the door's route a Slack request came to.
+enum SlackRoute {
+  SLACK_ROUTE_UNSPECIFIED = 0;
+  // POST /v1/slack/events: the Events API, a JSON body.
+  SLACK_ROUTE_EVENTS = 1;
+  // POST /v1/slack/interactivity: clicks, a form whose payload is JSON.
+  SLACK_ROUTE_INTERACTIVITY = 2;
+}
+
+message ReceiveSlackRequestRequest {
+  SlackRoute route = 1;
+  // The body exactly as Slack sent it: the signature is over these bytes.
+  bytes body = 2;
+  // X-Slack-Signature: "v0=" and 64 hex digits.
+  string signature = 3;
+  // X-Slack-Request-Timestamp: Unix seconds.
+  string timestamp = 4;
+  // X-Slack-Retry-Num and X-Slack-Retry-Reason, on Slack's retry of an
+  // event: 0 and empty on its first delivery.
+  int32 retry_num = 5;
+  string retry_reason = 6;
+}
+
+// ReceiveSlackRequestResponse is the HTTP answer the door gives Slack.
+message ReceiveSlackRequestResponse {
+  // 200 for every request taken, or one the bot does nothing with; 400 for
+  // a body Slack doesn't send; 401 for a signature that doesn't verify; 404
+  // wherever foundry.slack is off.
+  int32 http_status = 1;
+  // The body's media type; empty with no body.
+  string content_type = 2;
+  // url_verification's challenge, as JSON; empty otherwise.
+  bytes body = 3;
 }
 
 message GetSharedFoundryDashboardRequest {

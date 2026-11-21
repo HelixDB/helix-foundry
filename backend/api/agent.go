@@ -129,6 +129,15 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	t := &foundrymodel.FoundryAgentTurn{
 		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), UserID: userID, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
+	// Where its person reads it only narrows the turn, so any caller sets it.
+	switch req.GetSurface() {
+	case foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_UNSPECIFIED:
+		t.Surface = foundrymodel.FoundryAgentSurfaceSite
+	case foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK:
+		t.Surface = foundrymodel.FoundryAgentSurfaceSlack
+	default:
+		return nil, status.Error(codes.InvalidArgument, "surface is unspecified (Foundry's site) or slack")
+	}
 	var first json.RawMessage
 	// answered is the turn the answers answer.
 	var answered *foundrymodel.FoundryAgentTurn
@@ -170,9 +179,10 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	default:
 		return nil, status.Error(codes.InvalidArgument, "text or answers is required")
 	}
-	// The same client token is the same turn: its kind, and what it says.
+	// The same client token is the same turn: its kind, where it is read,
+	// and what it says.
 	same := func(other *foundrymodel.FoundryAgentTurn) bool {
-		return other.Kind == t.Kind && other.Input == t.Input && reflect.DeepEqual(other.Answers, t.Answers)
+		return other.Kind == t.Kind && other.Surface == t.Surface && other.Input == t.Input && reflect.DeepEqual(other.Answers, t.Answers)
 	}
 	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
 	switch {
@@ -786,6 +796,9 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	out := &foundryv1.FoundryAgentTurn{
 		Id: t.ID, ThreadId: t.ThreadID, Kind: string(t.Kind), Status: string(t.Status), UsdMicros: t.Spend.USDMicros, Steps: int32(t.Steps),
 		LastSeq: int32(t.LastSeq), Attempts: int32(t.Attempts), CreatedAt: timestamppb.New(t.CreatedAt),
+	}
+	if t.Surface == foundrymodel.FoundryAgentSurfaceSlack {
+		out.Surface = foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK
 	}
 	switch t.Kind {
 	case foundrymodel.FoundryAgentTurnMessage:

@@ -24,6 +24,7 @@ const (
 	FoundryEventsService_CreateFoundryReminder_FullMethodName           = "/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder"
 	FoundryEventsService_StopFoundryReminders_FullMethodName            = "/helix.foundry.v1.FoundryEventsService/StopFoundryReminders"
 	FoundryEventsService_GetSharedFoundryDashboard_FullMethodName       = "/helix.foundry.v1.FoundryEventsService/GetSharedFoundryDashboard"
+	FoundryEventsService_ReceiveSlackRequest_FullMethodName             = "/helix.foundry.v1.FoundryEventsService/ReceiveSlackRequest"
 )
 
 // FoundryEventsServiceClient is the client API for FoundryEventsService service.
@@ -49,6 +50,17 @@ type FoundryEventsServiceClient interface {
 	// no snapshot, an unpublished one, a deleted workspace's, or wherever
 	// public links are off.
 	GetSharedFoundryDashboard(ctx context.Context, in *GetSharedFoundryDashboardRequest, opts ...grpc.CallOption) (*GetSharedFoundryDashboardResponse, error)
+	// A request Slack sent Helix Foundry's Slack app (foundry.slack), as the
+	// door took it at /v1/slack/events or /v1/slack/interactivity: its raw
+	// body and signature headers, which the door checked only for form and
+	// the five-minute window. The API verifies the signature with the app's
+	// signing secret, records once what the bot acts on (an event's or a
+	// click's own key), and answers what Slack is to be answered, within
+	// Slack's three seconds and without calling Slack. A request it can't
+	// record is an error, which the door answers 500, so Slack retries an
+	// event; Slack never retries a click. Wherever foundry.slack is off,
+	// every request is answered 404.
+	ReceiveSlackRequest(ctx context.Context, in *ReceiveSlackRequestRequest, opts ...grpc.CallOption) (*ReceiveSlackRequestResponse, error)
 }
 
 type foundryEventsServiceClient struct {
@@ -109,6 +121,16 @@ func (c *foundryEventsServiceClient) GetSharedFoundryDashboard(ctx context.Conte
 	return out, nil
 }
 
+func (c *foundryEventsServiceClient) ReceiveSlackRequest(ctx context.Context, in *ReceiveSlackRequestRequest, opts ...grpc.CallOption) (*ReceiveSlackRequestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReceiveSlackRequestResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_ReceiveSlackRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryEventsServiceServer is the server API for FoundryEventsService service.
 // All implementations should embed UnimplementedFoundryEventsServiceServer
 // for forward compatibility.
@@ -132,6 +154,17 @@ type FoundryEventsServiceServer interface {
 	// no snapshot, an unpublished one, a deleted workspace's, or wherever
 	// public links are off.
 	GetSharedFoundryDashboard(context.Context, *GetSharedFoundryDashboardRequest) (*GetSharedFoundryDashboardResponse, error)
+	// A request Slack sent Helix Foundry's Slack app (foundry.slack), as the
+	// door took it at /v1/slack/events or /v1/slack/interactivity: its raw
+	// body and signature headers, which the door checked only for form and
+	// the five-minute window. The API verifies the signature with the app's
+	// signing secret, records once what the bot acts on (an event's or a
+	// click's own key), and answers what Slack is to be answered, within
+	// Slack's three seconds and without calling Slack. A request it can't
+	// record is an error, which the door answers 500, so Slack retries an
+	// event; Slack never retries a click. Wherever foundry.slack is off,
+	// every request is answered 404.
+	ReceiveSlackRequest(context.Context, *ReceiveSlackRequestRequest) (*ReceiveSlackRequestResponse, error)
 }
 
 // UnimplementedFoundryEventsServiceServer should be embedded to have
@@ -155,6 +188,9 @@ func (UnimplementedFoundryEventsServiceServer) StopFoundryReminders(context.Cont
 }
 func (UnimplementedFoundryEventsServiceServer) GetSharedFoundryDashboard(context.Context, *GetSharedFoundryDashboardRequest) (*GetSharedFoundryDashboardResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSharedFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) ReceiveSlackRequest(context.Context, *ReceiveSlackRequestRequest) (*ReceiveSlackRequestResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReceiveSlackRequest not implemented")
 }
 func (UnimplementedFoundryEventsServiceServer) testEmbeddedByValue() {}
 
@@ -266,6 +302,24 @@ func _FoundryEventsService_GetSharedFoundryDashboard_Handler(srv interface{}, ct
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryEventsService_ReceiveSlackRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReceiveSlackRequestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).ReceiveSlackRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_ReceiveSlackRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).ReceiveSlackRequest(ctx, req.(*ReceiveSlackRequestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryEventsService_ServiceDesc is the grpc.ServiceDesc for FoundryEventsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -292,6 +346,10 @@ var FoundryEventsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSharedFoundryDashboard",
 			Handler:    _FoundryEventsService_GetSharedFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "ReceiveSlackRequest",
+			Handler:    _FoundryEventsService_ReceiveSlackRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

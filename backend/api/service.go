@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,6 +23,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	foundryplan "github.com/helixdb/helix-foundry/backend/plan"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
@@ -86,6 +88,14 @@ type runtimeDeps struct {
 	// AgentHostURL is the pair command's --foundry; empty for the helper's
 	// default.
 	AgentHostURL string
+	// Slack calls Slack's Web API for Settings › Slack (never for
+	// ReceiveSlackRequest), and SlackURL is Slack's web origin, whose OAuth
+	// page an install starts at.
+	Slack    *slack.Client
+	SlackURL string
+	// Emails is nil where the host can't say a user's email, and Slack
+	// accounts are then not linked.
+	Emails UserEmails
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
@@ -115,10 +125,23 @@ func New(d Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	slackURL := strings.TrimRight(d.SlackURL, "/")
+	if slackURL == "" {
+		slackURL = defaultSlackURL
+	}
+	slackLimiter, err := slack.NewLimiter(slackAPIShare)
+	if err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
+	slackClient, err := slack.NewClient(slack.ClientOptions{BaseURL: slackURL + "/api", Limiter: slackLimiter})
+	if err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
 	s := &Service{deps: &runtimeDeps{
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
 		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
 		LocalAI: d.LocalAI, AgentSessions: d.AgentSessions, AgentHosts: d.AgentHosts, AgentHostURL: d.AgentHostURL,
+		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

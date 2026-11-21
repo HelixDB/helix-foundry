@@ -173,6 +173,39 @@
         ]
       }
     },
+    "/v1/foundry/slack:finish-install": {
+      "post": {
+        "summary": "Finishes adding the app with what Slack returned to the site: the\nstate names the workspace, and must be the caller's, unexpired and\nunspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner\nor admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL\n(an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),\nFOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN\n(another Foundry workspace has the Slack workspace),\nFOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last\ndisconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is\nconnected). The same Slack workspace again is a reinstall, which keeps\nits links.",
+        "operationId": "FoundryService_FinishFoundrySlackInstall",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundrySlackResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1FinishFoundrySlackInstallRequest"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/access": {
       "get": {
         "summary": "Helix Foundry source grants. An owner or admin grants a principal (a\nuser, a team, or a service credential: an agent's key) the workspace's\nsources; a principal the front end's own permissions don't admit reads an\nontology's current load, and asks it questions, only while every source\nthat load holds is granted to it (SOURCE_GRANTEE, actor.proto). A\nworkspace that grants nothing behaves as it did without them. A member\ngiven any, or on a team given any, is restricted to them, and stays so\nonce they're taken away, until someone lifts it.",
@@ -6123,6 +6156,261 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/slack": {
+      "get": {
+        "summary": "Helix Foundry for Slack (foundry.slack): Helix's own Slack app, which\nanswers a Slack workspace's people as Founder (the Assistant), each\nlinked Slack user as their own Foundry user. An owner or admin adds it\nby Slack's OAuth (start, then finish once Slack returns to the site);\neach person links their Slack account from the link the app sends them\nin Slack. Wherever foundry.slack is off every method is\nFAILED_PRECONDITION, reason FOUNDRY_SLACK_DISABLED.",
+        "description": "The workspace's install, the caller's own link, and whether the\nworkspace may add the app.",
+        "operationId": "FoundryService_GetFoundrySlack",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundrySlackResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/slack/links": {
+      "get": {
+        "summary": "Who is linked, for owners and admins.",
+        "operationId": "FoundryService_ListFoundrySlackLinks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundrySlackLinksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "post": {
+        "summary": "Links the token's Slack user to the caller, spending the token: their\nSlack email must be the caller's, confirmed, and they a full member of\nthe installed Slack workspace (FAILED_PRECONDITION\nFOUNDRY_SLACK_LINK_REFUSED, with the refusal's name in its metadata);\nFOUNDRY_SLACK_LINK_EXPIRED as Preview. It replaces the Slack user's\nearlier link, and the caller's.",
+        "operationId": "FoundryService_CreateFoundrySlackLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundrySlackLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundrySlackLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/slack/links/{slackUserId}": {
+      "delete": {
+        "summary": "Unlinks a Slack user: the caller's own, or, for an owner or admin,\nanyone's.",
+        "operationId": "FoundryService_DeleteFoundrySlackLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "slackUserId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/slack/links:preview": {
+      "post": {
+        "summary": "What linking the token's Slack user to the caller would do, before it\nis spent: the Slack user, and whether they may be linked to the caller.\nFAILED_PRECONDITION FOUNDRY_SLACK_LINK_EXPIRED for a token not live in\nthe workspace's install.",
+        "operationId": "FoundryService_PreviewFoundrySlackLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PreviewFoundrySlackLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePreviewFoundrySlackLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/slack:disconnect": {
+      "post": {
+        "summary": "Disconnects the workspace's install, for an owner or admin: the app is\nremoved from the Slack workspace (Helix tries again shortly when Slack\ncan't be reached), and its links, and what Slack sent, are deleted.",
+        "operationId": "FoundryService_DisconnectFoundrySlack",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundrySlackResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDisconnectFoundrySlackBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/slack:start-install": {
+      "post": {
+        "summary": "Starts adding the app, for an owner or admin: the Slack page to send\nthem to, whose state is bound to them and the workspace for ten\nminutes, once. FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on\nthe install list), FOUNDRY_SLACK_INSTALLED (it has an install),\nFOUNDRY_AGENT_DISABLED (Founder is off).",
+        "operationId": "FoundryService_StartFoundrySlackInstall",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartFoundrySlackInstallResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceStartFoundrySlackInstallBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/usage": {
       "get": {
         "summary": "Helix Foundry usage: the workspace's AI spend this month, by task",
@@ -6501,6 +6789,14 @@
         }
       }
     },
+    "FoundryServiceCreateFoundrySlackLinkBody": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        }
+      }
+    },
     "FoundryServiceCreateFoundryTeamBody": {
       "type": "object",
       "properties": {
@@ -6544,6 +6840,9 @@
     "FoundryServiceDetectFoundryAIDefaultBody": {
       "type": "object",
       "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
+    },
+    "FoundryServiceDisconnectFoundrySlackBody": {
+      "type": "object"
     },
     "FoundryServiceDismissFoundryAgentActionBody": {
       "type": "object",
@@ -6684,6 +6983,15 @@
       },
       "description": "PreviewFoundryDashboardTileRequest checks a tile and reads it once, as the\ncaller: the tile as a spec writes it (package dashboard)."
     },
+    "FoundryServicePreviewFoundrySlackLinkBody": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "The token the app's link carries in its fragment (#t=)."
+        }
+      }
+    },
     "FoundryServicePublishFoundryDashboardBody": {
       "type": "object",
       "properties": {
@@ -6791,6 +7099,10 @@
         "clientToken": {
           "type": "string",
           "description": "At most 64 characters."
+        },
+        "surface": {
+          "$ref": "#/definitions/v1FoundryAgentSurface",
+          "description": "Where its person reads the turn: Foundry's site (UNSPECIFIED) or Slack.\nIt only narrows the turn (no dashboard runs by itself in Slack), so\nany caller may set it."
         }
       },
       "description": "SendFoundryAgentMessageRequest queues a person's message in their thread,\nor in a new one when thread_id is empty, or their answers to the\nquestions their thread's newest turn asked them. The same client_token\nreturns the turn it queued. A thread with a live turn, or an action\nrunning, is FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the\nuser's hourly messages and answers RESOURCE_EXHAUSTED; the month's budget\nFAILED_PRECONDITION."
@@ -6901,6 +7213,9 @@
           "description": "Makes a retry return the sign-in the first attempt started."
         }
       }
+    },
+    "FoundryServiceStartFoundrySlackInstallBody": {
+      "type": "object"
     },
     "FoundryServiceStartFoundryWorkflowRunBody": {
       "type": "object",
@@ -7127,7 +7442,7 @@
         "NULL_VALUE"
       ],
       "default": "NULL_VALUE",
-      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
+      "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
     },
     "rpcStatus": {
       "type": "object",
@@ -8035,6 +8350,17 @@
       },
       "description": "EventsConnectorConfig is an event source: pieces of data, JSON objects\nwith an id, that people and their agents send to Foundry. It has no\ncredential."
     },
+    "v1FinishFoundrySlackInstallRequest": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      }
+    },
     "v1FoundryAI": {
       "type": "object",
       "properties": {
@@ -8788,6 +9114,15 @@
         }
       }
     },
+    "v1FoundryAgentSurface": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
+        "FOUNDRY_AGENT_SURFACE_SLACK"
+      ],
+      "default": "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
+      "description": "FoundryAgentSurface is where a turn's person reads it, which changes how\nFounder writes and what it runs by itself: a turn in Slack writes for a\nSlack thread and opens nothing for its person (no dashboard runs at once).\n\n - FOUNDRY_AGENT_SURFACE_UNSPECIFIED: Foundry's site.\n - FOUNDRY_AGENT_SURFACE_SLACK: A Slack thread, through Helix Foundry's Slack app."
+    },
     "v1FoundryAgentThread": {
       "type": "object",
       "properties": {
@@ -8903,6 +9238,10 @@
         "answers": {
           "$ref": "#/definitions/v1FoundryAgentAnswers",
           "description": "An answers turn's: the turn it answers, and the person's answers."
+        },
+        "surface": {
+          "$ref": "#/definitions/v1FoundryAgentSurface",
+          "description": "Where its person reads it: Foundry's site (UNSPECIFIED) or Slack. A\ncontinuation turn (an action's result, answers) keeps its turn's."
         }
       },
       "description": "FoundryAgentTurn is one turn of a thread: a person's message, or the result\nof an action they ran."
@@ -11629,6 +11968,114 @@
       },
       "description": "One value documents state for a prop_conflict's property."
     },
+    "v1FoundrySlack": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "installAllowed": {
+          "type": "boolean",
+          "description": "The workspace may add the app: Helix offers it to every workspace, or\nthis one is on the list Helix offers it to until Slack's Marketplace\nreview (foundry.slack.install_allowlist)."
+        },
+        "canManage": {
+          "type": "boolean",
+          "description": "The caller is an owner or admin: they add and disconnect the app and\nsee who is linked."
+        },
+        "install": {
+          "$ref": "#/definitions/v1FoundrySlackInstall",
+          "description": "The workspace's install; unset while it has none."
+        },
+        "myLink": {
+          "$ref": "#/definitions/v1FoundrySlackLink",
+          "description": "The caller's own Slack account in the install; unset while it has none."
+        }
+      },
+      "description": "FoundrySlack is a workspace's Slack: Helix's own Slack app, Helix Foundry,\nwhich answers people in a Slack workspace as Founder, each linked Slack\nuser as their own Foundry user."
+    },
+    "v1FoundrySlackInstall": {
+      "type": "object",
+      "properties": {
+        "teamId": {
+          "type": "string",
+          "description": "The Slack workspace (team) and, inside an Enterprise Grid org, the org."
+        },
+        "teamName": {
+          "type": "string"
+        },
+        "enterpriseId": {
+          "type": "string"
+        },
+        "botUserId": {
+          "type": "string",
+          "description": "The app's bot user there, which people message."
+        },
+        "installedByUserId": {
+          "type": "string",
+          "description": "Who installed it, last: the Foundry user and their name."
+        },
+        "installedByName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it was first installed, and last installed again."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundrySlackInstall is a Slack workspace's install of the app."
+    },
+    "v1FoundrySlackLink": {
+      "type": "object",
+      "properties": {
+        "slackUserId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string",
+          "description": "The Foundry user's name, as Foundry shows it."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundrySlackLink is a Slack user who acts as a Foundry user: the bot\nanswers them, in Slack, as that user."
+    },
+    "v1FoundrySlackLinkRefusal": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED",
+        "FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH",
+        "FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_UNCONFIRMED",
+        "FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER"
+      ],
+      "default": "FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED",
+      "description": "FoundrySlackLinkRefusal is why a Slack user can't be linked to the caller.\n\n - FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED: None: they can be.\n - FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH: The Slack user's email isn't the caller's, or Slack hides it.\n - FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_UNCONFIRMED: Slack hasn't confirmed the Slack user's email.\n - FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER: The Slack user isn't a full member of the installed Slack workspace: a\nguest, a bot, a deactivated account, or someone of another\norganisation or workspace."
+    },
+    "v1FoundrySlackLinkResponse": {
+      "type": "object",
+      "properties": {
+        "link": {
+          "$ref": "#/definitions/v1FoundrySlackLink"
+        }
+      }
+    },
+    "v1FoundrySlackResponse": {
+      "type": "object",
+      "properties": {
+        "slack": {
+          "$ref": "#/definitions/v1FoundrySlack"
+        }
+      }
+    },
     "v1FoundrySyncRules": {
       "type": "object",
       "properties": {
@@ -12951,6 +13398,19 @@
         }
       }
     },
+    "v1ListFoundrySlackLinksResponse": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySlackLink"
+          },
+          "description": "Oldest first."
+        }
+      }
+    },
     "v1ListFoundryWorkflowRunAccessesResponse": {
       "type": "object",
       "properties": {
@@ -13455,6 +13915,35 @@
         }
       }
     },
+    "v1PreviewFoundrySlackLinkResponse": {
+      "type": "object",
+      "properties": {
+        "teamName": {
+          "type": "string",
+          "description": "The installed Slack workspace."
+        },
+        "slackUserId": {
+          "type": "string",
+          "description": "The Slack user: their name and handle, and their email with all but\nits first character and its domain hidden."
+        },
+        "slackName": {
+          "type": "string"
+        },
+        "slackHandle": {
+          "type": "string"
+        },
+        "slackEmailMasked": {
+          "type": "string"
+        },
+        "matchesYou": {
+          "type": "boolean",
+          "description": "They may be linked to the caller; else refusal says why."
+        },
+        "refusal": {
+          "$ref": "#/definitions/v1FoundrySlackLinkRefusal"
+        }
+      }
+    },
     "v1ReadFoundryGraphResponse": {
       "type": "object",
       "properties": {
@@ -13579,6 +14068,15 @@
         }
       },
       "description": "SlackConnectorConfig reads the channels a Slack app was added to."
+    },
+    "v1StartFoundrySlackInstallResponse": {
+      "type": "object",
+      "properties": {
+        "authorizeUrl": {
+          "type": "string",
+          "description": "Slack's page that asks to add the app; it returns to the site's\n/slack/installed with a code and the state."
+        }
+      }
     },
     "v1StripeConnectorConfig": {
       "type": "object",

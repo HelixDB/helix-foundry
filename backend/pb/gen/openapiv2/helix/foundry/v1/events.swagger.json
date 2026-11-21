@@ -161,6 +161,26 @@
         }
       }
     },
+    "v1ReceiveSlackRequestResponse": {
+      "type": "object",
+      "properties": {
+        "httpStatus": {
+          "type": "integer",
+          "format": "int32",
+          "description": "200 for every request taken, or one the bot does nothing with; 400 for\na body Slack doesn't send; 401 for a signature that doesn't verify; 404\nwherever foundry.slack is off."
+        },
+        "contentType": {
+          "type": "string",
+          "description": "The body's media type; empty with no body."
+        },
+        "body": {
+          "type": "string",
+          "format": "byte",
+          "description": "url_verification's challenge, as JSON; empty otherwise."
+        }
+      },
+      "description": "ReceiveSlackRequestResponse is the HTTP answer the door gives Slack."
+    },
     "v1SendFoundryEventsResponse": {
       "type": "object",
       "properties": {
@@ -186,6 +206,16 @@
           "description": "Set from 80% full: how full the source is and what happens at 100%."
         }
       }
+    },
+    "v1SlackRoute": {
+      "type": "string",
+      "enum": [
+        "SLACK_ROUTE_UNSPECIFIED",
+        "SLACK_ROUTE_EVENTS",
+        "SLACK_ROUTE_INTERACTIVITY"
+      ],
+      "default": "SLACK_ROUTE_UNSPECIFIED",
+      "description": "SlackRoute is the door's route a Slack request came to.\n\n - SLACK_ROUTE_EVENTS: POST /v1/slack/events: the Events API, a JSON body.\n - SLACK_ROUTE_INTERACTIVITY: POST /v1/slack/interactivity: clicks, a form whose payload is JSON."
     },
     "v1StopFoundryRemindersResponse": {
       "type": "object"

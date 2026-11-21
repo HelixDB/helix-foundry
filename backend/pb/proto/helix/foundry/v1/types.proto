@@ -2789,6 +2789,19 @@ message FoundryAgentTurn {
   FoundryAgentAsked asked = 16;
   // An answers turn's: the turn it answers, and the person's answers.
   FoundryAgentAnswers answers = 17;
+  // Where its person reads it: Foundry's site (UNSPECIFIED) or Slack. A
+  // continuation turn (an action's result, answers) keeps its turn's.
+  FoundryAgentSurface surface = 18;
+}
+
+// FoundryAgentSurface is where a turn's person reads it, which changes how
+// Founder writes and what it runs by itself: a turn in Slack writes for a
+// Slack thread and opens nothing for its person (no dashboard runs at once).
+enum FoundryAgentSurface {
+  // Foundry's site.
+  FOUNDRY_AGENT_SURFACE_UNSPECIFIED = 0;
+  // A Slack thread, through Helix Foundry's Slack app.
+  FOUNDRY_AGENT_SURFACE_SLACK = 1;
 }
 
 // FoundryAgentAsked is what a turn asked its person: 1 to 4 questions of the
@@ -3238,4 +3251,62 @@ message FoundryAutomationRunNode {
   int64 usd_micros = 6;
   google.protobuf.Timestamp started_at = 7;
   google.protobuf.Timestamp finished_at = 8;
+}
+
+// FoundrySlack is a workspace's Slack: Helix's own Slack app, Helix Foundry,
+// which answers people in a Slack workspace as Founder, each linked Slack
+// user as their own Foundry user.
+message FoundrySlack {
+  string workspace_id = 1;
+  // The workspace may add the app: Helix offers it to every workspace, or
+  // this one is on the list Helix offers it to until Slack's Marketplace
+  // review (foundry.slack.install_allowlist).
+  bool install_allowed = 2;
+  // The caller is an owner or admin: they add and disconnect the app and
+  // see who is linked.
+  bool can_manage = 3;
+  // The workspace's install; unset while it has none.
+  FoundrySlackInstall install = 4;
+  // The caller's own Slack account in the install; unset while it has none.
+  FoundrySlackLink my_link = 5;
+}
+
+// FoundrySlackInstall is a Slack workspace's install of the app.
+message FoundrySlackInstall {
+  // The Slack workspace (team) and, inside an Enterprise Grid org, the org.
+  string team_id = 1;
+  string team_name = 2;
+  string enterprise_id = 3;
+  // The app's bot user there, which people message.
+  string bot_user_id = 4;
+  // Who installed it, last: the Foundry user and their name.
+  string installed_by_user_id = 5;
+  string installed_by_name = 6;
+  // When it was first installed, and last installed again.
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// FoundrySlackLink is a Slack user who acts as a Foundry user: the bot
+// answers them, in Slack, as that user.
+message FoundrySlackLink {
+  string slack_user_id = 1;
+  string user_id = 2;
+  // The Foundry user's name, as Foundry shows it.
+  string user_name = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// FoundrySlackLinkRefusal is why a Slack user can't be linked to the caller.
+enum FoundrySlackLinkRefusal {
+  // None: they can be.
+  FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED = 0;
+  // The Slack user's email isn't the caller's, or Slack hides it.
+  FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH = 1;
+  // Slack hasn't confirmed the Slack user's email.
+  FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_UNCONFIRMED = 2;
+  // The Slack user isn't a full member of the installed Slack workspace: a
+  // guest, a bot, a deactivated account, or someone of another
+  // organisation or workspace.
+  FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER = 3;
 }

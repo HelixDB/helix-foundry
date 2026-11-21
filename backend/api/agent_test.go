@@ -534,6 +534,29 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Input = textInput("something else") })
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
+	t.Run("where its person reads it", func(t *testing.T) {
+		f := newAgentFixture(t)
+		site, err := send(f, nil)
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_UNSPECIFIED, site.GetTurn().GetSurface())
+		assert.Equal(t, foundrymodel.FoundryAgentSurfaceSite, f.store.turns[site.GetTurn().GetId()].Surface)
+		slackTurn := func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.ClientToken, r.Surface = "c2", foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK
+		}
+		inSlack, err := send(f, slackTurn)
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK, inSlack.GetTurn().GetSurface())
+		assert.Equal(t, foundrymodel.FoundryAgentSurfaceSlack, f.store.turns[inSlack.GetTurn().GetId()].Surface)
+		// The same token from another surface is another message.
+		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.Surface = foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.ClientToken, r.Surface = "c3", foundryv1.FoundryAgentSurface(9)
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "a surface the API doesn't know")
+	})
 	t.Run("malformed", func(t *testing.T) {
 		f := newAgentFixture(t)
 		for name, mutate := range map[string]func(*foundryv1.SendFoundryAgentMessageRequest){

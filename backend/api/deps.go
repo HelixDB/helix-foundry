@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -58,4 +59,19 @@ type Deps struct {
 	// install's integration listener, when not at the helper's default
 	// (agent.DefaultHelperFoundry): the pair command names it.
 	AgentHostURL string
+	// SlackURL is Slack's web origin, https://slack.com when empty: an
+	// install of the Slack app starts at its /oauth/v2/authorize, and the
+	// Web API is under its /api. Tests point it at a fake Slack.
+	SlackURL string
+	// Emails reads users' email addresses: linking a Slack account needs its
+	// Slack email to be its Foundry user's. nil where the host can't say,
+	// and Slack accounts are then not linked (UNAVAILABLE).
+	Emails UserEmails
+}
+
+// UserEmails reads users' email addresses.
+type UserEmails interface {
+	// UserEmail is userID's address; store.ErrNotFound when the user is
+	// gone or has none.
+	UserEmail(ctx context.Context, userID string) (string, error)
 }
