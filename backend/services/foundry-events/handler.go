@@ -37,6 +37,8 @@ type backendAPI interface {
 		*foundryv1.StopFoundryRemindersResponse, error)
 	GetSharedFoundryDashboard(context.Context, *foundryv1.GetSharedFoundryDashboardRequest, ...grpc.CallOption) (
 		*foundryv1.GetSharedFoundryDashboardResponse, error)
+	ReceiveSlackRequest(context.Context, *foundryv1.ReceiveSlackRequestRequest, ...grpc.CallOption) (
+		*foundryv1.ReceiveSlackRequestResponse, error)
 }
 
 // handler serves POST /v1/sources/{source}/pieces. It checks a request in this order, cheapest
@@ -70,21 +72,25 @@ type backendAPI interface {
 // its source and token id once admitted, its pieces once read, and how long it took; never the
 // client's address, the token or any of the pieces' content.
 type handler struct {
-	backend   backendAPI
+	backend backendAPI
+	// gate is the sends', reminders' and shared dashboards'; Slack's routes have their own.
 	gate      *gate
 	admission *sendtoken.Admission
-	limits    events.Limits
-	maxBody   int64
-	readFor   time.Duration
-	sendFor   time.Duration
-	logger    *slog.Logger
+	// slack serves Slack's routes; nil while foundry.slack is off, so they are not found.
+	slack   *slackDoor
+	limits  events.Limits
+	maxBody int64
+	readFor time.Duration
+	sendFor time.Duration
+	logger  *slog.Logger
 	// now is the clock of the buckets and the token cache.
 	now func() time.Time
 }
 
 // newHandler is the handler of foundry.events, with its gate, its send-token admission and the
-// piece limits.
-func newHandler(backend backendAPI, cfg config.EventsConfig, logger *slog.Logger, now func() time.Time) *handler {
+// piece limits, and of Slack's routes, with their own gate, while slack (foundry.slack, of which
+// the door reads only Enabled) is on.
+func newHandler(backend backendAPI, cfg config.EventsConfig, slack config.SlackConfig, logger *slog.Logger, now func() time.Time) *handler {
 	lookup := func(ctx context.Context, hash string) (sendtoken.Sender, bool, error) {
 		ctx, cancel := context.WithTimeout(foundryapi.AttachActor(ctx, ports.Actor{Source: ports.SourceEventSource}), lookupFor)
 		defer cancel()
@@ -92,16 +98,25 @@ func newHandler(backend backendAPI, cfg config.EventsConfig, logger *slog.Logger
 		return sendtoken.Sender{TokenID: found.GetTokenId(), WorkspaceID: found.GetWorkspaceId(), ConnectorID: found.GetConnectorId()},
 			found.GetValid(), err
 	}
-	return &handler{
-		backend: backend, gate: newGate(cfg.Endpoint), admission: sendtoken.New(lookup, cfg.Endpoint.ValidatedFor),
+	h := &handler{
+		backend: backend, gate: newGate(cfg.Endpoint.SendGate(), cfg.Endpoint.MaxBodyBytes), admission: sendtoken.New(lookup, cfg.Endpoint.ValidatedFor),
 		limits:  events.Limits{MaxPieces: cfg.MaxPiecesPerSend, MaxBytes: cfg.MaxSendBytes, MaxPieceBytes: cfg.MaxPieceBytes},
 		maxBody: cfg.Endpoint.MaxBodyBytes, readFor: readFor, sendFor: sendFor, logger: logger, now: now,
 	}
+	if slack.Enabled {
+		h.slack = &slackDoor{
+			backend: backend, gate: newGate(cfg.Endpoint.Slack, max(config.SlackEventsBodyBytes, config.SlackInteractivityBodyBytes)),
+			readFor: slackReadFor, answerFor: slackFor, logger: logger, now: now,
+		}
+	}
+	return h
 }
 
 // routes is the role's routes on a mux of its own, which answers another method on one 405,
 // and another path 404: the sends, the site's reminders (reminders) and dashboards' public
-// snapshots (shared), which share the handler's gate. Every request's connection gets readFor from the request's start to read its
+// snapshots (shared), which share the handler's gate, and, while foundry.slack is on, Slack's
+// events and clicks (slackDoor), behind a gate of their own, which bound their body by slackReadFor
+// instead. Every request's connection gets readFor from the request's start to read its
 // body, the mux's refusals' too: the server reads what a handler leaves of a short body before
 // it answers and again before it reuses the connection, with no deadline of its own once the
 // headers are in, so a slow body sent with a 404 or 405 held its connection for as long as it
@@ -113,6 +128,10 @@ func (h *handler) routes() http.Handler {
 	mux.Handle("POST /v1/reminders", rm.route(routeCreate))
 	mux.Handle("POST /v1/reminders/stop", rm.route(routeStop))
 	mux.Handle("GET /v1/shared-dashboards/{token}", newShared(h.backend, h.gate, h.logger, h.now))
+	if h.slack != nil {
+		mux.Handle("POST /v1/slack/events", h.slack.route(slackEvents))
+		mux.Handle("POST /v1/slack/interactivity", h.slack.route(slackInteractivity))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(h.readFor)) // net/http's server supports it; a test's recorder doesn't
 		mux.ServeHTTP(w, r)

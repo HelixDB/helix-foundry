@@ -29,3 +29,16 @@ var sharedRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Requests for dashboards' public snapshots by answer: ok, or the error's code (rate_limited, not_found, " +
 		"backend_unavailable or internal).",
 }, []string{"code"})
+
+// slackRequestsTotal counts Slack's requests by route (events or interactivity) and outcome: ok
+// for a 2xx, unverified for the backend's 401 (a signature it found false), disabled for its 404
+// (foundry.slack off where it runs), refused for its other 4xx, or the door's error code
+// (rate_limited, payload_too_large, unsigned, stale, request_timeout, invalid_arguments,
+// backend_unavailable or internal, each 5xx of the two last). Past 95% failed for an hour, Slack
+// turns the app's events off for every install: alert on the 5xx well before.
+var slackRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_slack_requests_total",
+	Help: "Slack's requests to Helix Foundry's Slack app at the door, by route (events, interactivity) and outcome: ok, unverified, " +
+		"disabled, refused, or the door's code (rate_limited, payload_too_large, unsigned, stale, request_timeout, invalid_arguments, " +
+		"backend_unavailable or internal; the last two answered 500).",
+}, []string{"route", "outcome"})

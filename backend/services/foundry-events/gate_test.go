@@ -13,10 +13,10 @@ import (
 // testGate is a gate of a pod taking 2 requests a second from each address (burst 2) and 2 of
 // them at once, 4 a second (burst 4), 3 at once and 10 bytes of bodies at once, a body at most 4.
 func testGate() *gate {
-	return newGate(config.EventsEndpointConfig{
+	return newGate(config.DoorGateConfig{
 		AddressRequestsPerSecond: 2, AddressBurstRequests: 2, AddressMaxInFlight: 2, RequestsPerSecond: 4, BurstRequests: 4,
-		MaxInFlight: 3, MaxBytesInFlight: 10, MaxBodyBytes: 4,
-	})
+		MaxInFlight: 3, MaxBytesInFlight: 10,
+	}, 4)
 }
 
 // Every bound refuses at once, and a refusal holds nothing.

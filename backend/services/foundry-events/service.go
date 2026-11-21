@@ -1,7 +1,7 @@
 // Package foundryevents is the foundry-events role: Foundry's public HTTP door, to its API
 // sources (connector kind events), beside the MCP's send tool, for the reminders people ask for
-// on the landing page, and for dashboards' public links. It serves three routes. The first is a
-// send's:
+// on the landing page, for dashboards' public links, and for Slack's requests to Helix Foundry's
+// Slack app. It serves four kinds of route. The first is a send's:
 //
 //	POST /v1/sources/{event_source_id}/pieces
 //	Authorization: Bearer hx_ev_…
@@ -30,11 +30,25 @@
 //	GET /v1/shared-dashboards/{token}
 //
 // It forwards the token's SHA-256 to FoundryEventsService.GetSharedFoundryDashboard and answers
-// the snapshot, readable by any page. Another method on a route is 405, and another path 404,
-// from the mux.
+// the snapshot, readable by any page.
+//
+// The fourth is Slack's, while foundry.slack is on (slack.go): the Events API and clicks, sent to
+// Helix Foundry's Slack app,
+//
+//	POST /v1/slack/events          (JSON)
+//	POST /v1/slack/interactivity   (a form: payload=…)
+//	X-Slack-Signature: v0=…
+//	X-Slack-Request-Timestamp: …
+//
+// behind a gate of their own. The door refuses headers no signed request carries, or a time
+// outside Slack's five minutes, and forwards the raw body and headers to
+// FoundryEventsService.ReceiveSlackRequest, which verifies the signature with the app's signing
+// secret, and answers what it answers, url_verification's challenge included.
+//
+// Another method on a route is 405, and another path 404, from the mux.
 //
 // The role holds nothing: no Secret, database, AWS identity or service-account token; not even the
-// site's secret, only passing its hash on. It reaches only FoundryEventsService, and stores
+// site's secret or Slack's signing secret, only passing the site's hash and Slack's signature on. It reaches only FoundryEventsService, and stores
 // nothing of its own: its buckets and token cache live in memory per pod.
 package foundryevents
 
@@ -96,7 +110,7 @@ func New(d Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	ep.RegisterHTTPHandler("/", newHandler(d.Backend, cfg, logger, time.Now).routes())
+	ep.RegisterHTTPHandler("/", newHandler(d.Backend, cfg, d.Cfg.Foundry.Slack, logger, time.Now).routes())
 	return &Service{ep: ep}, nil
 }
 
