@@ -2,6 +2,7 @@ package slack
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -220,24 +221,73 @@ func messages(blocks []Block) []Message {
 	return append(out, message(blocks))
 }
 
-// Questions draws the questions a turn asks its person, each numbered, its
-// options numbered under it, so the person answers by replying in the
-// thread ("1: 2, 2: my own words"). A question from a generation says
-// which; a recommended option is marked, and a question that isn't
-// blocking may be left to the agent. More than MaxBlocks blocks are more
-// messages.
-func (s Site) Questions(asked agent.Asked) []Message {
-	intro := "Founder has a question for you. Reply in this thread to answer."
-	if len(asked.Questions) > 1 {
-		intro = "Founder has " + strconv.Itoa(len(asked.Questions)) + " questions for you. Reply in this thread to answer them, by their numbers."
+// ReplyTo is how a person's reply in a thread reaches the bot, which is
+// how its questions tell them to answer: a closed set (RepliesIn).
+type ReplyTo interface{ replyTo() }
+
+// ReplyPlain is a direct message with the bot, where every reply reaches
+// it.
+type ReplyPlain struct{}
+
+// ReplyMentioning is a channel, where the bot sees only the messages that
+// mention it, as BotUserID: a reply reaches it only by mentioning it.
+type ReplyMentioning struct{ BotUserID string }
+
+func (ReplyPlain) replyTo()      {}
+func (ReplyMentioning) replyTo() {}
+
+// RepliesIn is how a reply in channel reaches the bot, as botUserID: a
+// direct message's (Slack's IM ids start with D) plainly, any other's by
+// mentioning it.
+func RepliesIn(channel, botUserID string) ReplyTo {
+	if strings.HasPrefix(channel, "D") {
+		return ReplyPlain{}
 	}
-	blocks := []Block{Section{Text: s.Text(intro)}}
+	return ReplyMentioning{BotUserID: botUserID}
+}
+
+// Questions draws the questions a turn asks its person, each numbered, its
+// options numbered under it. Founder's own are answered by replying in the
+// thread ("1: 2, 2: my own words"), mentioning the bot outside a direct
+// message (to). A generation's, which a reply in Slack can't answer, are
+// shown for the person to answer on the draft's page in Foundry, which
+// they link to (in workspaceID). A recommended option is marked, and a
+// question of Founder's that isn't blocking may be left to it. More than
+// MaxBlocks blocks are more messages. With no ReplyTo (nil), Founder's own
+// say to mention the app, which reaches the bot anywhere.
+func (s Site) Questions(asked agent.Asked, workspaceID string, to ReplyTo) []Message {
+	several := len(asked.Questions) > 1
+	var intro Mrkdwn
 	if g := asked.Generation; g != nil {
-		from := "From the draft of " + g.OntologyName
+		draft := g.OntologyName
 		if g.GenerationTitle != "" {
-			from += " (" + g.GenerationTitle + ")"
+			draft += " (" + g.GenerationTitle + ")"
 		}
-		blocks = append(blocks, Context{Elements: []Mrkdwn{Cut(s.Text(from+"."), MaxSectionText)}})
+		what, them := "a question", "it"
+		if several {
+			what, them = strconv.Itoa(len(asked.Questions))+" questions", "them"
+		}
+		intro = Cut(s.Text("Founder relays "+what+" from the draft of "+draft+". Answer "+them+
+			" on the draft’s page in Foundry: a reply here doesn’t reach the draft."), MaxSectionText)
+	} else {
+		ask, them := "Founder has a question for you. ", "it"
+		if several {
+			ask, them = "Founder has "+strconv.Itoa(len(asked.Questions))+" questions for you. ", "them, by their numbers"
+		}
+		switch to := to.(type) {
+		case ReplyPlain:
+			intro = s.Text(ask + "Reply in this thread to answer " + them + ".")
+		case ReplyMentioning:
+			intro = Join(s.Text(ask+"Reply in this thread mentioning "), UserMention(to.BotUserID),
+				s.Text(" to answer "+them+". Without the mention, Founder won’t see your reply."))
+		default:
+			intro = s.Text(ask + "Reply in this thread mentioning the app to answer " + them + ".")
+		}
+	}
+	blocks := []Block{Section{Text: intro}}
+	if g := asked.Generation; g != nil {
+		page := s.page("/ontology/"+url.PathEscape(g.OntologyID)+"/generations/"+url.PathEscape(g.GenerationID), []string{"workspace", workspaceID}, "")
+		blocks = append(blocks, Actions{Elements: []Button{{ActionID: ActionOpen, Text: "Answer in Foundry", URL: &page, Style: StylePrimary}}})
 	}
 	for i, q := range asked.Questions {
 		blocks = append(blocks, Divider{})
@@ -247,7 +297,7 @@ func (s Site) Questions(asked agent.Asked) []Message {
 			head = Join(Bold(s.Text(q.Header)), s.Text(": "), head)
 		}
 		lines = append(lines, Join(Bold(s.Text(strconv.Itoa(i+1)+".")), s.Text(" "), head))
-		lines = append(lines, s.optionLines(q)...)
+		lines = append(lines, s.optionLines(q, asked.Generation == nil)...)
 		var text strings.Builder
 		for _, l := range lines {
 			if text.Len() > 0 {
@@ -262,8 +312,9 @@ func (s Site) Questions(asked agent.Asked) []Message {
 	return messages(blocks)
 }
 
-// optionLines are a question's options and how to answer it, a line each.
-func (s Site) optionLines(q agentquestion.Question) []Mrkdwn {
+// optionLines are a question's options, a line each, and, when replied
+// (answered by a reply in the thread), how to answer it.
+func (s Site) optionLines(q agentquestion.Question, replied bool) []Mrkdwn {
 	var lines []Mrkdwn
 	how := "Reply in your own words."
 	if c := q.Choice; c != nil {
@@ -283,6 +334,9 @@ func (s Site) optionLines(q agentquestion.Question) []Mrkdwn {
 		}
 	} else if q.Recommended != "" {
 		lines = append(lines, Join(Italic(s.Text("Suggested:")), s.Text(" "+q.Recommended)))
+	}
+	if !replied {
+		return lines
 	}
 	if !q.Blocking {
 		how += " You may leave it to Founder."

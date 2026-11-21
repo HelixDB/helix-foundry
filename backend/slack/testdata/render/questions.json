@@ -1,23 +1,29 @@
 {
   "a generation's": [
     {
-      "text": "Founder has a question for you. Reply in this thread to answer.\n*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+      "text": "Founder relays a question from the draft of Sales (Contracts). Answer it on the draft’s page in Foundry: a reply here doesn’t reach the draft.\n*1.* What do you call a deal?\n_Suggested:_ An opportunity",
       "blocks": [
         {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "Founder has a question for you. Reply in this thread to answer.",
+            "text": "Founder relays a question from the draft of Sales (Contracts). Answer it on the draft’s page in Foundry: a reply here doesn’t reach the draft.",
             "verbatim": true
           }
         },
         {
-          "type": "context",
+          "type": "actions",
           "elements": [
             {
-              "type": "mrkdwn",
-              "text": "From the draft of Sales (Contracts).",
-              "verbatim": true
+              "type": "button",
+              "action_id": "foundry.open",
+              "text": {
+                "type": "plain_text",
+                "text": "Answer in Foundry",
+                "emoji": true
+              },
+              "url": "https://foundry.helix-db.com/ontology/o1/generations/g1?workspace=w1",
+              "style": "primary"
             }
           ]
         },
@@ -28,7 +34,60 @@
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+            "text": "*1.* What do you call a deal?\n_Suggested:_ An opportunity",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "a generation's in a DM": [
+    {
+      "text": "Founder relays 2 questions from the draft of Sales (Contracts). Answer them on the draft’s page in Foundry: a reply here doesn’t reach the draft.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n*2.* Anything else?",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder relays 2 questions from the draft of Sales (Contracts). Answer them on the draft’s page in Foundry: a reply here doesn’t reach the draft.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.open",
+              "text": {
+                "type": "plain_text",
+                "text": "Answer in Foundry",
+                "emoji": true
+              },
+              "url": "https://foundry.helix-db.com/ontology/o1/generations/g1?workspace=w1",
+              "style": "primary"
+            }
+          ]
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*2.* Anything else?",
             "verbatim": true
           }
         }
@@ -37,23 +96,29 @@
   ],
   "a generation's without a title": [
     {
-      "text": "Founder has a question for you. Reply in this thread to answer.\n*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+      "text": "Founder relays a question from the draft of Sales. Answer it on the draft’s page in Foundry: a reply here doesn’t reach the draft.\n*1.* What do you call a deal?\n_Suggested:_ An opportunity",
       "blocks": [
         {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "Founder has a question for you. Reply in this thread to answer.",
+            "text": "Founder relays a question from the draft of Sales. Answer it on the draft’s page in Foundry: a reply here doesn’t reach the draft.",
             "verbatim": true
           }
         },
         {
-          "type": "context",
+          "type": "actions",
           "elements": [
             {
-              "type": "mrkdwn",
-              "text": "From the draft of Sales.",
-              "verbatim": true
+              "type": "button",
+              "action_id": "foundry.open",
+              "text": {
+                "type": "plain_text",
+                "text": "Answer in Foundry",
+                "emoji": true
+              },
+              "url": "https://foundry.helix-db.com/ontology/o1/generations/g1?workspace=w1",
+              "style": "primary"
             }
           ]
         },
@@ -64,7 +129,7 @@
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+            "text": "*1.* What do you call a deal?\n_Suggested:_ An opportunity",
             "verbatim": true
           }
         }
@@ -130,15 +195,15 @@
       ]
     }
   ],
-  "one": [
+  "four in a channel": [
     {
-      "text": "Founder has a question for you. Reply in this thread to answer.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+      "text": "Founder has 4 questions for you. Reply in this thread mentioning <@U0BOT0001> to answer them, by their numbers. Without the mention, Founder won’t see your reply.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._\n*2.* Which sources?\n   1. Stripe\n   2. Postgres\n   3. Docs\n_Reply with one or more options’ numbers, or in your own words. You may leave it to Founder._\n*3.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._\n*4.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
       "blocks": [
         {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "Founder has a question for you. Reply in this thread to answer.",
+            "text": "Founder has 4 questions for you. Reply in this thread mentioning \u003c@U0BOT0001\u003e to answer them, by their numbers. Without the mention, Founder won’t see your reply.",
             "verbatim": true
           }
         },
@@ -150,6 +215,117 @@
           "text": {
             "type": "mrkdwn",
             "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*2.* Which sources?\n   1. Stripe\n   2. Postgres\n   3. Docs\n_Reply with one or more options’ numbers, or in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*3.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*4.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "one": [
+    {
+      "text": "Founder has a question for you. Reply in this thread to answer it.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread to answer it.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "one in a channel": [
+    {
+      "text": "Founder has a question for you. Reply in this thread mentioning <@U0BOT0001> to answer it. Without the mention, Founder won’t see your reply.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread mentioning \u003c@U0BOT0001\u003e to answer it. Without the mention, Founder won’t see your reply.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "one with no ReplyTo": [
+    {
+      "text": "Founder has a question for you. Reply in this thread mentioning the app to answer it.\n*1.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread mentioning the app to answer it.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
             "verbatim": true
           }
         }

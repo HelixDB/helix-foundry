@@ -208,14 +208,43 @@ func TestQuestions(t *testing.T) {
 	for i := range many {
 		many[i] = open
 	}
-	golden(t, "questions", map[string][]slack.Message{
-		"one":  s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}),
-		"four": s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}),
-		"a generation's": s.Questions(agent.Asked{Questions: []agentquestion.Question{free},
-			Generation: &agent.AskedGeneration{OntologyID: "o1", OntologyName: "Sales", GenerationID: "g1", GenerationTitle: "Contracts", Round: 1}}),
+	dm, channel := slack.RepliesIn("D0ADA0001", "U0BOT0001"), slack.RepliesIn("C0GENERAL", "U0BOT0001")
+	draft := &agent.AskedGeneration{OntologyID: "o1", OntologyName: "Sales", GenerationID: "g1", GenerationTitle: "Contracts", Round: 1}
+	cases := map[string][]slack.Message{
+		"one":                    s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", dm),
+		"four":                   s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}, "w1", dm),
+		"one in a channel":       s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", channel),
+		"four in a channel":      s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}, "w1", channel),
+		"one with no ReplyTo":    s.Questions(agent.Asked{Questions: []agentquestion.Question{open}}, "w1", nil),
+		"a generation's":         s.Questions(agent.Asked{Questions: []agentquestion.Question{free}, Generation: draft}, "w1", channel),
+		"a generation's in a DM": s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, open}, Generation: draft}, "w1", dm),
 		"a generation's without a title": s.Questions(agent.Asked{Questions: []agentquestion.Question{free},
-			Generation: &agent.AskedGeneration{OntologyID: "o1", OntologyName: "Sales", GenerationID: "g1", Round: 1}}),
-		"thirty": s.Questions(agent.Asked{Questions: many}),
-	})
-	require.Len(t, s.Questions(agent.Asked{Questions: many}), 2)
+			Generation: &agent.AskedGeneration{OntologyID: "o1", OntologyName: "Sales", GenerationID: "g1", Round: 1}}, "w1", dm),
+		"thirty": s.Questions(agent.Asked{Questions: many}, "w1", dm),
+	}
+	golden(t, "questions", cases)
+	require.Len(t, cases["thirty"], 2)
+
+	intro := func(name string) string { return cases[name][0].Blocks[0].(slack.Section).Text.String() }
+	// In a channel the bot sees only mentions, so a reply must mention it; a
+	// DM's reply needn't.
+	require.Equal(t, "Founder has a question for you. Reply in this thread mentioning <@U0BOT0001> to answer it. Without the mention, Founder won’t see your reply.",
+		intro("one in a channel"))
+	require.Contains(t, intro("four in a channel"), "<@U0BOT0001> to answer them, by their numbers.")
+	require.Equal(t, "Founder has a question for you. Reply in this thread to answer it.", intro("one"))
+	require.NotContains(t, intro("one"), "<@")
+	// A draft's questions aren't answered by a reply in Slack: they link to
+	// the draft's page, wherever they are asked, and never say to reply.
+	for _, name := range []string{"a generation's", "a generation's in a DM", "a generation's without a title"} {
+		answer := cases[name][0].Blocks[1].(slack.Actions).Elements[0]
+		require.Equal(t, slack.ActionOpen, answer.ActionID, name)
+		require.Equal(t, origin+"/ontology/o1/generations/g1?workspace=w1", answer.URL.String(), name)
+		for _, m := range cases[name] {
+			b, err := json.Marshal(m.Blocks)
+			require.NoError(t, err)
+			require.NotContains(t, string(b), "Reply", name)
+		}
+	}
+	require.Equal(t, "Founder relays 2 questions from the draft of Sales (Contracts). Answer them on the draft’s page in Foundry: a reply here doesn’t reach the draft.",
+		intro("a generation's in a DM"))
 }
