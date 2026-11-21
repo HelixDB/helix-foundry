@@ -11,6 +11,7 @@ import {
   finishSlackInstall,
   installFailed,
   slackKey,
+  slackReturnCopy,
   slackReturnFailure,
 } from "./slack-api";
 import { clearSlackReturn, readSlackReturn } from "./slack-return";
@@ -18,12 +19,13 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // /slack/installed: where Slack returns once an owner or admin allowed
 // Helix Foundry (?code=&state=), or cancelled (?error=). What it carried was
 // moved into this tab, and the URL made bare, before the app made any call
-// (main.tsx, captureSlackReturn), so a sign-in on the way keeps it. Here it
+// (the root layout's SLACK_RETURN_BOOT), so a sign-in on the way keeps it. Here it
 // is finished once (a ref keeps <StrictMode>'s second effect from spending
 // the state again), then the page goes to Settings › Slack in the workspace
 // the state was for. A refusal is said in place, in the WFE's words: another
 // Foundry workspace has the Slack workspace, Helix is still disconnecting
-// it, an org-wide install, a permission left out, an expired state.
+// it, an org-wide install, a permission left out, an expired state. Slack's
+// own ?error= is said in fixed words (slackReturnCopy), never echoed.
 
 type Phase =
   | { kind: "finishing" }
@@ -43,17 +45,7 @@ export function SlackInstalledPage() {
         ? { kind: "lost" }
         : kept.kind === "installed"
           ? { kind: "finishing" }
-          : {
-              kind: "failed",
-              title:
-                slackReturnFailure(kept.error) === "cancelled"
-                  ? "Helix Foundry wasn’t added"
-                  : "Slack didn’t add Helix Foundry",
-              text:
-                slackReturnFailure(kept.error) === "cancelled"
-                  ? "Adding it to Slack was cancelled. Add it again from Settings › Slack whenever you’re ready."
-                  : `Slack said “${kept.error}”. Add it again from Settings › Slack.`,
-            },
+          : { kind: "failed", ...slackReturnCopy(kept.error) },
     ),
     started = useRef(false);
   useTitle("Adding Helix Foundry to Slack");

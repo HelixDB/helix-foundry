@@ -17,6 +17,7 @@ import {
   slackLinksQuery,
   slackQuery,
   slackReason,
+  slackReturnCopy,
   slackReturnFailure,
   slackView,
   startSlackInstall,
@@ -158,6 +159,20 @@ describe("refusals", () => {
     expect(installFailure(new TypeError("Failed to fetch"))).toBe("error");
     expect(slackReturnFailure("access_denied")).toBe("cancelled");
     expect(slackReturnFailure("invalid_scope")).toBe("refused");
+  });
+  it("say Slack's return in fixed words, never echoing its error", () => {
+    expect(slackReturnCopy("access_denied")).toEqual({
+      title: "Helix Foundry wasn’t added",
+      text: "Adding it to Slack was cancelled. Add it again from Settings › Slack whenever you’re ready.",
+    });
+    const forged = "Your workspace is suspended; call 555-0100";
+    for (const error of ["invalid_scope", forged]) {
+      const copy = slackReturnCopy(error);
+      expect(copy.title).toBe("Slack didn’t add Helix Foundry");
+      expect(copy.text).toBe(
+        "Slack didn’t add Helix Foundry. Add it again from Settings › Slack.",
+      );
+    }
   });
   it("name why a link failed, from the refusal in its metadata", () => {
     expect(linkFailure(refusal("FOUNDRY_SLACK_LINK_EXPIRED"))).toBe("expired");

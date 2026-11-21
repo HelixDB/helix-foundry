@@ -214,6 +214,28 @@ export function installFailure(error: unknown): SlackInstallFailure {
 export const slackReturnFailure = (error: string): SlackInstallFailure =>
   error === "access_denied" ? "cancelled" : "refused";
 
+/**
+ * What /slack/installed says of a return that carried no code, in words of
+ * its own: Slack's `error` is never shown, since anyone can send a link
+ * with any text in it.
+ *
+ * @example
+ * slackReturnCopy("access_denied").title; // "Helix Foundry wasn’t added"
+ * slackReturnCopy("invalid_scope").text; // "Slack didn’t add Helix Foundry. Add it again from Settings › Slack."
+ */
+export const slackReturnCopy = (
+  error: string,
+): { title: string; text: string } =>
+  slackReturnFailure(error) === "cancelled"
+    ? {
+        title: "Helix Foundry wasn’t added",
+        text: "Adding it to Slack was cancelled. Add it again from Settings › Slack whenever you’re ready.",
+      }
+    : {
+        title: "Slack didn’t add Helix Foundry",
+        text: "Slack didn’t add Helix Foundry. Add it again from Settings › Slack.",
+      };
+
 /** Reports a failed install's reason, once, as the page shows it. */
 export const installFailed = (reason: SlackInstallFailure) =>
   trackEvent("slack_install_failed", { reason });

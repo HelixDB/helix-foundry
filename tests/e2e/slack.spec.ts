@@ -209,6 +209,24 @@ test("Slack's refusals and a cancel are said in place", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Nothing to finish here" }),
   ).toBeVisible();
+
+  // Slack's other errors are said in fixed words, never echoed; text that
+  // isn't one of Slack's codes is nothing to finish.
+  await page.goto("/slack/installed?error=invalid_scope");
+  await expect(page).toHaveURL(/\/slack\/installed$/);
+  await expect(
+    page.getByRole("heading", { name: "Slack didn’t add Helix Foundry" }),
+  ).toBeVisible();
+  await expect(page.getByText("invalid_scope")).toHaveCount(0);
+  await page.goto(
+    "/slack/installed?error=" +
+      encodeURIComponent("Your workspace is suspended; call 555-0100"),
+  );
+  await expect(page).toHaveURL(/\/slack\/installed$/);
+  await expect(
+    page.getByRole("heading", { name: "Nothing to finish here" }),
+  ).toBeVisible();
+  await expect(page.getByText(/suspended/)).toHaveCount(0);
 });
 
 test("an owner disconnects the app", async ({ page }) => {
