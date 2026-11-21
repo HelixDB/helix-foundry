@@ -1713,3 +1713,189 @@ func (u Unimplemented) ChargeFoundryAutomationSuggestions(context.Context, strin
 	u.unimplemented("ChargeFoundryAutomationSuggestions")
 	return nil
 }
+
+func (u Unimplemented) GetFoundrySlackInstall(context.Context, string) (*model.SlackInstall, error) {
+	u.unimplemented("GetFoundrySlackInstall")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackInstallByTeam(context.Context, string) (*model.SlackInstall, error) {
+	u.unimplemented("GetFoundrySlackInstallByTeam")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackInstallByID(context.Context, string) (*model.SlackInstall, error) {
+	u.unimplemented("GetFoundrySlackInstallByID")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackInstallToken(context.Context, string) (model.SlackSealedToken, error) {
+	u.unimplemented("GetFoundrySlackInstallToken")
+	return model.SlackSealedToken{}, nil
+}
+
+func (u Unimplemented) ListFoundrySlackUninstalls(context.Context, int) ([]*model.SlackInstall, error) {
+	u.unimplemented("ListFoundrySlackUninstalls")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackLink(context.Context, string, string) (*model.SlackLink, error) {
+	u.unimplemented("GetFoundrySlackLink")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundrySlackLinks(context.Context, string) ([]*model.SlackLink, error) {
+	u.unimplemented("ListFoundrySlackLinks")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackLinkToken(context.Context, string) (*model.SlackLinkToken, error) {
+	u.unimplemented("GetFoundrySlackLinkToken")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackThread(context.Context, string, string, string, string) (*model.SlackThread, error) {
+	u.unimplemented("GetFoundrySlackThread")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackReply(context.Context, string) (*model.SlackReply, error) {
+	u.unimplemented("GetFoundrySlackReply")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundrySlackFollows(context.Context, string, string, string) ([]*model.SlackReply, error) {
+	u.unimplemented("ListFoundrySlackFollows")
+	return nil, nil
+}
+
+func (u Unimplemented) CountFoundrySlackFollows(context.Context, string) (int, error) {
+	u.unimplemented("CountFoundrySlackFollows")
+	return 0, nil
+}
+
+func (u Unimplemented) InstallFoundrySlack(context.Context, *model.SlackInstall, func(string) (model.SlackSealedToken, error)) (
+	*model.SlackInstall, bool, error) {
+	u.unimplemented("InstallFoundrySlack")
+	return nil, false, nil
+}
+
+func (u Unimplemented) RevokeFoundrySlackInstall(context.Context, string, string, bool) error {
+	u.unimplemented("RevokeFoundrySlackInstall")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundrySlackUninstalled(context.Context, string) error {
+	u.unimplemented("MarkFoundrySlackUninstalled")
+	return nil
+}
+
+func (u Unimplemented) UninstallFoundrySlackTeam(context.Context, string, string, string, time.Time) (model.SlackUninstallOutcome, error) {
+	u.unimplemented("UninstallFoundrySlackTeam")
+	return "", nil
+}
+
+func (u Unimplemented) PurgeFoundrySlack(context.Context, string) error {
+	u.unimplemented("PurgeFoundrySlack")
+	return nil
+}
+
+func (u Unimplemented) CreateFoundrySlackInstallState(context.Context, string, string, string, time.Duration) error {
+	u.unimplemented("CreateFoundrySlackInstallState")
+	return nil
+}
+
+func (u Unimplemented) SpendFoundrySlackInstallState(context.Context, string, string) (*model.SlackInstallState, error) {
+	u.unimplemented("SpendFoundrySlackInstallState")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundrySlackLinkToken(context.Context, string, string, string, time.Duration) error {
+	u.unimplemented("CreateFoundrySlackLinkToken")
+	return nil
+}
+
+func (u Unimplemented) LinkFoundrySlackUser(context.Context, string, string, string) (*model.SlackLink, error) {
+	u.unimplemented("LinkFoundrySlackUser")
+	return nil, nil
+}
+
+func (u Unimplemented) DeleteFoundrySlackLink(context.Context, string, string) error {
+	u.unimplemented("DeleteFoundrySlackLink")
+	return nil
+}
+
+func (u Unimplemented) CreateFoundrySlackThread(context.Context, *model.SlackThread) error {
+	u.unimplemented("CreateFoundrySlackThread")
+	return nil
+}
+
+func (u Unimplemented) TouchFoundrySlackThread(context.Context, string) error {
+	u.unimplemented("TouchFoundrySlackThread")
+	return nil
+}
+
+func (u Unimplemented) PurgeFoundrySlackThreads(context.Context, time.Duration, int) (int, error) {
+	u.unimplemented("PurgeFoundrySlackThreads")
+	return 0, nil
+}
+
+func (u Unimplemented) QueueFoundrySlackIntake(context.Context, *model.SlackIntake) error {
+	u.unimplemented("QueueFoundrySlackIntake")
+	return nil
+}
+
+func (u Unimplemented) ClaimFoundrySlackIntake(context.Context, time.Duration) (*model.SlackIntake, error) {
+	u.unimplemented("ClaimFoundrySlackIntake")
+	return nil, nil
+}
+
+func (u Unimplemented) SetFoundrySlackIntakeInput(context.Context, string, string, string) error {
+	u.unimplemented("SetFoundrySlackIntakeInput")
+	return nil
+}
+
+func (u Unimplemented) EndFoundrySlackIntake(context.Context, string, string, model.SlackIntakeOutcome) error {
+	u.unimplemented("EndFoundrySlackIntake")
+	return nil
+}
+
+func (u Unimplemented) WakeFoundrySlackIntake(context.Context, string) (int64, error) {
+	u.unimplemented("WakeFoundrySlackIntake")
+	return 0, nil
+}
+
+func (u Unimplemented) HoldFoundrySlackReply(context.Context, *model.SlackReply) (*model.SlackReply, error) {
+	u.unimplemented("HoldFoundrySlackReply")
+	return nil, nil
+}
+
+func (u Unimplemented) StartFoundrySlackReply(context.Context, string, string, string, string) error {
+	u.unimplemented("StartFoundrySlackReply")
+	return nil
+}
+
+func (u Unimplemented) ClaimFoundrySlackReply(context.Context, time.Duration) (*model.SlackReply, error) {
+	u.unimplemented("ClaimFoundrySlackReply")
+	return nil, nil
+}
+
+func (u Unimplemented) UpdateFoundrySlackReply(context.Context, string, string, model.SlackReplyUpdate) error {
+	u.unimplemented("UpdateFoundrySlackReply")
+	return nil
+}
+
+func (u Unimplemented) ReleaseFoundrySlackReply(context.Context, string, string, time.Duration) error {
+	u.unimplemented("ReleaseFoundrySlackReply")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundrySlackReply(context.Context, string, string) error {
+	u.unimplemented("FinishFoundrySlackReply")
+	return nil
+}
+
+func (u Unimplemented) PruneFoundrySlack(context.Context, int) (int64, error) {
+	u.unimplemented("PruneFoundrySlack")
+	return 0, nil
+}

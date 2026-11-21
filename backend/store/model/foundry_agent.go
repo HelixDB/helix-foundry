@@ -98,6 +98,41 @@ const (
 	FoundryAgentTurnAutomation FoundryAgentTurnKind = "automation"
 )
 
+// FoundryAgentSurface is where a turn's person reads it: a closed set. Its
+// prompt and what may run on its own differ by surface. The zero value is
+// the site, where every turn was read before Slack.
+type FoundryAgentSurface uint8
+
+const (
+	// FoundryAgentSurfaceSite is Foundry's website (and an automation's run).
+	FoundryAgentSurfaceSite FoundryAgentSurface = iota
+	// FoundryAgentSurfaceSlack is a Slack thread, through Helix Foundry's bot.
+	FoundryAgentSurfaceSlack
+)
+
+// String is the surface as its column keeps it.
+func (s FoundryAgentSurface) String() string {
+	switch s {
+	case FoundryAgentSurfaceSite:
+		return "site"
+	case FoundryAgentSurfaceSlack:
+		return "slack"
+	}
+	return fmt.Sprintf("FoundryAgentSurface(%d)", uint8(s))
+}
+
+// ParseFoundryAgentSurface reads a surface as its column keeps it, refusing
+// any other.
+func ParseFoundryAgentSurface(s string) (FoundryAgentSurface, error) {
+	switch s {
+	case "site":
+		return FoundryAgentSurfaceSite, nil
+	case "slack":
+		return FoundryAgentSurfaceSlack, nil
+	}
+	return 0, fmt.Errorf("unknown foundry agent surface %q", s)
+}
+
 // FoundryAgentTurnStatus is where a turn is in its life.
 type FoundryAgentTurnStatus string
 
@@ -123,6 +158,9 @@ type FoundryAgentTurn struct {
 	// Runtime is its thread's, which the store copies when it queues the turn.
 	Runtime FoundryAgentRuntime
 	Kind    FoundryAgentTurnKind
+	// Surface is where its person reads it. A continuation (an action's
+	// result) takes its action's turn's, whatever its caller says.
+	Surface FoundryAgentSurface
 	Input   string
 	// AutomationRunID and AutomationNodeID are set exactly on an automation's
 	// turn: the run and step it is.

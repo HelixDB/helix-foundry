@@ -27,7 +27,7 @@ const foundryAgentThreadScans = 10
 
 const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at`
 
-const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, input, automation_run_id, automation_node_id, page_context,
+const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, surface, input, automation_run_id, automation_node_id, page_context,
        asked, answers, status, error, client_token,
        lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
        output_tokens, steps, last_seq, created_at, started_at, finished_at`
@@ -80,6 +80,9 @@ func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAg
 		return fmt.Errorf("foundry agent turn %s isn't of its new thread", t.ID)
 	case limits.PerHour < 1 || limits.CapMicros <= 0:
 		return fmt.Errorf("foundry agent limits must be positive")
+	}
+	if _, err := model.ParseFoundryAgentSurface(t.Surface.String()); err != nil {
+		return fmt.Errorf("foundry agent turn %s: %w", t.ID, err)
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -150,9 +153,9 @@ VALUES (?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread
 			answers = raw
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, runtime, kind, input, page_context, answers, status, client_token, max_usd_micros)
-SELECT ?, ?, ?, ?, runtime, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
-			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
+  (id, workspace_id, thread_id, user_id, runtime, kind, surface, input, page_context, answers, status, client_token, max_usd_micros)
+SELECT ?, ?, ?, ?, runtime, ?, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Surface.String(), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			if live, liveErr := tx.liveFoundryAgentTurn(ctx, t.ThreadID); liveErr == nil && live {
 				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "Founder is still answering in this thread"}
@@ -971,7 +974,9 @@ func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, user
 
 // FinishFoundryAgentAction ends a click that is executing with end and, when
 // continuation is set, queues the action-result turn the agent goes on from
-// with its first event, in the same transaction. continuation.MaxUSDMicros
+// with its first event, in the same transaction. The continuation takes the
+// surface of the action's turn, wherever the click came from, and
+// continuation.Surface is set to it once queued. continuation.MaxUSDMicros
 // is an 'api' turn's cap: on a helper's thread it is stored as 0. The thread is idle (the
 // claim checked, and sends wait for the click), so the turn is live alone;
 // should one be live after all, the click still ends, with no continuation.
@@ -1010,9 +1015,13 @@ func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end m
 		t := continuation
 		// A helper's thread runs on its owner's subscription: its turns' cap is 0.
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
-SELECT ?, ?, ?, ?, runtime, ?, ?, 'queued', IF(runtime='api', ?, 0) FROM foundry_agent_threads WHERE id=?`,
-			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros, t.ThreadID)
+  (id, workspace_id, thread_id, user_id, runtime, kind, surface, input, status, max_usd_micros)
+SELECT ?, ?, ?, ?, th.runtime, ?, src.surface, ?, 'queued', IF(th.runtime='api', ?, 0)
+FROM foundry_agent_threads th
+JOIN foundry_agent_actions a ON a.id=? AND a.thread_id=th.id
+JOIN foundry_agent_turns src ON src.id=a.turn_id
+WHERE th.id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros, id, t.ThreadID)
 		if isDuplicateKey(err) {
 			// A turn went live after all: the click's end stands, and the
 			// agent reads the action's result with the thread's actions.
@@ -1022,6 +1031,13 @@ SELECT ?, ?, ?, ?, runtime, ?, ?, 'queued', IF(runtime='api', ?, 0) FROM foundry
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET updated_at=NOW(6) WHERE id=?`, t.ThreadID); err != nil {
+			return err
+		}
+		var surface string
+		if err := tx.db.QueryRowContext(ctx, `SELECT surface FROM foundry_agent_turns WHERE id=?`, t.ID).Scan(&surface); err != nil {
+			return err
+		}
+		if t.Surface, err = model.ParseFoundryAgentSurface(surface); err != nil {
 			return err
 		}
 		return tx.appendFoundryAgentEvents(ctx, t.ID, []json.RawMessage{firstEvent})
@@ -1119,11 +1135,11 @@ func scanFoundryAgentThread(scanner rowScanner) (*model.FoundryAgentThread, erro
 
 func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	var t model.FoundryAgentTurn
-	var runtime, kind, status string
+	var runtime, kind, surface, status string
 	var pageContext, asked, answers, errText, clientToken, leaseOwner, automationRun, automationNode sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &t.Spend
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &t.Input, &automationRun, &automationNode, &pageContext,
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &surface, &t.Input, &automationRun, &automationNode, &pageContext,
 		&asked, &answers, &status, &errText, &clientToken,
 		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &t.LostMicros, &spend.InputTokens,
 		&spend.OutputTokens, &t.Steps, &t.LastSeq, &t.CreatedAt, &startedAt, &finishedAt); err != nil {
@@ -1133,6 +1149,10 @@ func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 		return nil, err
 	}
 	t.Runtime, t.Kind, t.Status = model.FoundryAgentRuntime(runtime), model.FoundryAgentTurnKind(kind), model.FoundryAgentTurnStatus(status)
+	var err error
+	if t.Surface, err = model.ParseFoundryAgentSurface(surface); err != nil {
+		return nil, fmt.Errorf("read foundry agent turn %s: %w", t.ID, err)
+	}
 	if pageContext.Valid {
 		t.PageContext = json.RawMessage(pageContext.String)
 	}
