@@ -48,6 +48,10 @@ test("an owner adds the app, links their Slack account and unlinks it", async ({
   await addToSlack(page);
   const slack = settingsPanel(page, "Slack");
   await expect(slack).toContainText("Ada Lovelace");
+  // Who added it is a member's name: replay leaves it out whole.
+  await expect(slack.locator("[data-replay-block]")).toHaveText(
+    "Ada Lovelace",
+  );
   await expect(slack.getByRole("button", { name: "Disconnect" })).toBeVisible();
   const mine = settingsPanel(page, "Your Slack account");
   await expect(mine).toContainText("Not linked. Message @Helix Foundry");

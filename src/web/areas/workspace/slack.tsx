@@ -199,7 +199,12 @@ function Installed({
               </>
             ),
           },
-          { label: "Added by", value: install.installedByName },
+          {
+            label: "Added by",
+            value: install.installedByName && (
+              <span data-replay-block>{install.installedByName}</span>
+            ),
+          },
           { label: "Added", value: added && formatDate(added, false) },
         ]}
       />
