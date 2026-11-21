@@ -3,7 +3,7 @@
 // (koanf tags, with HELIX_ environment overrides), so the same settings mean
 // the same thing in every deployment:
 //
-//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify, agent
+//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify, agent, slack
 //	billing.autumn.foundry.* Billing           the plan catalog and the checkout return page
 //	backend.foundry_read.*   Read              where the API reaches foundry-read
 //
@@ -88,7 +88,8 @@ func (l *LiveAIDefault) Store(d DetectedAIDefault) { l.v.Store(&d) }
 // Foundry is the foundry block: connectors and their credentials, syncs,
 // ontologies and their models, documents, graph loads, reads, questions,
 // People enrichment, event sources, the emails Foundry sends and the
-// reminders people ask for on its landing page.
+// reminders people ask for on its landing page, the Assistant, and the
+// Slack app that brings it to Slack.
 type Foundry struct {
 	Connectors  ConnectorsConfig  `koanf:"connectors"`
 	Sync        SyncConfig        `koanf:"sync"`
@@ -107,6 +108,7 @@ type Foundry struct {
 	Agent       AssistantConfig   `koanf:"agent"`
 	Dashboards  DashboardsConfig  `koanf:"dashboards"`
 	Automations AutomationsConfig `koanf:"automations"`
+	Slack       SlackConfig       `koanf:"slack"`
 }
 
 // AutomationsConfig drives automations (package automation,
@@ -812,6 +814,167 @@ func (a AssistantConfig) validate() error {
 	return nil
 }
 
+// SlackConfig is Helix's own Slack app, Helix Foundry (foundry.slack),
+// which brings the Assistant (foundry.agent) to Slack: owners and admins
+// install it into their Slack workspace by OAuth, people link their Slack
+// accounts to their Foundry ones, and the foundry-slack-worker turns their
+// mentions and direct messages into the Assistant's turns and posts what
+// those say. Slack reaches it through the foundry-events door
+// (EventsEndpointConfig.Slack), which holds no secret: the API verifies
+// every request with SigningSecret.
+//
+// Off unless enabled: the door answers Slack's routes not found, the API
+// refuses its methods and the worker idles. Who reads what: the API and the
+// worker need the app's identity and secrets (hosted; Validate), the worker
+// its own settings, and the door only Enabled.
+type SlackConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// InstallAllowlist is the Foundry workspaces that may add the app, until
+	// Slack authorizes its commercial distribution; empty lets every
+	// workspace (InstallAllowed).
+	InstallAllowlist []string `koanf:"install_allowlist"`
+	// ClientID and AppID name the stamp's Slack app; they are not secret.
+	ClientID string `koanf:"client_id"`
+	AppID    string `koanf:"app_id"`
+	// ClientSecret exchanges an install's code for its bot token and
+	// uninstalls it; SigningSecret verifies Slack's requests. Both are
+	// secrets (HELIX_FOUNDRY__SLACK__CLIENT_SECRET,
+	// HELIX_FOUNDRY__SLACK__SIGNING_SECRET), held by a hosted deployment
+	// only: a standalone install reaches Slack through Helix's relay.
+	ClientSecret  string `koanf:"client_secret"`
+	SigningSecret string `koanf:"signing_secret"`
+	// SiteURL is the Foundry site's origin, such as
+	// https://foundry.helix-db.com: Slack returns an install to its
+	// /slack/installed, link prompts open its /slack/link, and only links
+	// under it show as links in Slack.
+	SiteURL string `koanf:"site_url"`
+	// HTTP is the worker's health listener.
+	HTTP ServiceHTTPConfig `koanf:"http"`
+	// PollInterval is how often the worker claims Slack's messages and
+	// reads the turns it follows.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	// Lease is how long a claimed message or followed turn stays the
+	// worker's without a renewal; a follow renews it on every read.
+	Lease time.Duration `koanf:"lease"`
+	// Concurrency is how many messages and follows one worker handles at
+	// once.
+	Concurrency int `koanf:"concurrency"`
+	// MaxAttempts caps a message's attempts to start its turn;
+	// RetryBackoff is the wait before the next, doubling.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+	// APIShare is the share of each of Slack's rate limits (per app, Slack
+	// workspace and method) one worker uses: 1 over the worker's replicas.
+	APIShare float64 `koanf:"api_share"`
+	// BusyWait is how long a message waits on a thread whose turn is still
+	// running before it is turned away: at least a turn's attempt
+	// (AssistantConfig.AttemptTimeout).
+	BusyWait time.Duration `koanf:"busy_wait"`
+	// Retention is how long Slack's data stays.
+	Retention SlackRetentionConfig `koanf:"retention"`
+}
+
+// SlackRetentionConfig is how long Foundry keeps what came from Slack, as
+// little as it can (Slack's API terms): a message's text leaves its intake
+// row once handled, whatever these say.
+type SlackRetentionConfig struct {
+	// Threads is how long after its last message an Assistant thread
+	// started from Slack keeps its text: at most MaxSlackThreadRetention.
+	Threads time.Duration `koanf:"threads"`
+	// Intake is how long a handled message's row stays, so Slack's retries
+	// of it are known: at least MinSlackIntakeRetention.
+	Intake time.Duration `koanf:"intake"`
+	// Replies is how long a reply's row stays after its turn ended.
+	Replies time.Duration `koanf:"replies"`
+}
+
+// MaxSlackThreadRetention bounds foundry.slack.retention.threads: the
+// Slack app's listing and Foundry's privacy policy promise that text from
+// Slack is gone 30 days after a thread's last message.
+const MaxSlackThreadRetention = 30 * 24 * time.Hour
+
+// MinSlackIntakeRetention bounds foundry.slack.retention.intake from below:
+// Slack retries an event for minutes after it is sent, and a retry whose
+// row is gone would be taken as a new message.
+const MinSlackIntakeRetention = time.Hour
+
+// The foundry-events door's caps on Slack's request bodies, by route:
+// Slack's own payloads, which the app doesn't choose. The Slack gate
+// (EventsEndpointConfig.Slack) weighs a body of unknown length as the
+// larger.
+const (
+	SlackEventsBodyBytes        = 512 << 10
+	SlackInteractivityBodyBytes = 1 << 20
+)
+
+// InstallAllowed reports whether the Foundry workspace workspaceID may add
+// the Slack app: any workspace while InstallAllowlist is empty, else those
+// it lists.
+func (s SlackConfig) InstallAllowed(workspaceID string) bool {
+	return len(s.InstallAllowlist) == 0 || slices.Contains(s.InstallAllowlist, workspaceID)
+}
+
+// validate checks what the roles read of an enabled app: the app's
+// identity and secrets where the API or the worker runs hosted (a
+// standalone install holds none: validateLocal), and the worker's own
+// settings where it runs. The door reads Enabled alone. agent is
+// foundry.agent, whose turns a message waits on.
+func (s SlackConfig) validate(roles Roles, local bool, agent AssistantConfig) error {
+	if !s.Enabled {
+		return nil
+	}
+	if (roles.API || roles.SlackWorker) && !local {
+		for _, required := range []struct{ name, value string }{
+			{"client_id", s.ClientID}, {"app_id", s.AppID}, {"client_secret", s.ClientSecret}, {"signing_secret", s.SigningSecret},
+		} {
+			if strings.TrimSpace(required.value) == "" {
+				return fmt.Errorf("foundry.slack.%s must be set when foundry.slack is enabled", required.name)
+			}
+		}
+		switch origin, err := validatedApplicationOrigin(s.SiteURL); {
+		case s.SiteURL == "":
+			return fmt.Errorf("foundry.slack.site_url must be set when foundry.slack is enabled: the Foundry site's origin, such as https://foundry.helix-db.com")
+		case err != nil:
+			return fmt.Errorf("foundry.slack.site_url: %w", err)
+		case origin != s.SiteURL:
+			return fmt.Errorf("foundry.slack.site_url %q must be an origin, such as https://foundry.helix-db.com, with no path", s.SiteURL)
+		}
+		for i, id := range s.InstallAllowlist {
+			switch {
+			case strings.TrimSpace(id) != id || id == "":
+				return fmt.Errorf("foundry.slack.install_allowlist[%d] %q must be a workspace id, with no spaces", i, id)
+			case slices.Contains(s.InstallAllowlist[:i], id):
+				return fmt.Errorf("foundry.slack.install_allowlist lists %q twice", id)
+			}
+		}
+	}
+	if !roles.SlackWorker {
+		return nil
+	}
+	r := s.Retention
+	switch {
+	case s.HTTP.Listen == "":
+		return fmt.Errorf("foundry.slack.http.listen must be set when 'foundry-slack-worker' is in tasks")
+	case s.PollInterval <= 0 || s.Concurrency < 1 || s.MaxAttempts < 1 || s.RetryBackoff <= 0:
+		return fmt.Errorf("foundry.slack poll_interval, concurrency, max_attempts and retry_backoff must be positive")
+	case s.Lease < 30*time.Second:
+		return fmt.Errorf("foundry.slack.lease must be at least 30s")
+	case !(s.APIShare > 0 && s.APIShare <= 1):
+		// Written so NaN is refused too.
+		return fmt.Errorf("foundry.slack.api_share is %v; it must be above 0 and at most 1", s.APIShare)
+	case s.BusyWait < agent.AttemptTimeout():
+		return fmt.Errorf("foundry.slack.busy_wait %s must be at least a turn's attempt, foundry.agent.max_wall_secs plus a minute (%s)",
+			s.BusyWait, agent.AttemptTimeout())
+	case r.Threads <= 0 || r.Threads > MaxSlackThreadRetention:
+		return fmt.Errorf("foundry.slack.retention.threads is %s; it must be above 0 and at most %s", r.Threads, MaxSlackThreadRetention)
+	case r.Intake < MinSlackIntakeRetention:
+		return fmt.Errorf("foundry.slack.retention.intake is %s; it must be at least %s, past Slack's retries", r.Intake, MinSlackIntakeRetention)
+	case r.Replies <= 0:
+		return fmt.Errorf("foundry.slack.retention.replies must be positive")
+	}
+	return nil
+}
+
 // GraphAgentConfig is the ontology agent sidecar of the graph worker.
 type GraphAgentConfig struct {
 	Addr string `koanf:"addr"`
@@ -1132,6 +1295,9 @@ func (s SyncConfig) validateLimits() error {
 // token, looked up again past ValidatedFor. Its bounds are checked only
 // where the role runs (Validate); PublicURL wherever the config loads, since
 // the MCP reads it.
+//
+// Slack's routes (foundry.slack) pass a gate of their own, Slack, so a flood
+// of either never refuses the other.
 type EventsEndpointConfig struct {
 	// GRPC and HTTP are the role's listeners; HTTP takes the pieces.
 	GRPC ServiceGRPCConfig `koanf:"grpc"`
@@ -1169,6 +1335,69 @@ type EventsEndpointConfig struct {
 	// without looking it up again. The backend reads the token again on every
 	// send, so a revoked token's sends are refused at once all the same.
 	ValidatedFor time.Duration `koanf:"validated_for"`
+	// Slack is the gate of Slack's routes, its bodies capped at
+	// SlackEventsBodyBytes and SlackInteractivityBodyBytes. Slack sends from
+	// few addresses, so its address bounds are wide.
+	Slack DoorGateConfig `koanf:"slack"`
+}
+
+// DoorGateConfig is one gate of the foundry-events door: what a pod admits
+// of one class of its routes, apart from the others'. A request is charged
+// to its address's bucket, then takes one of its address's places in
+// flight, then the pod's place, its body's bytes and the pod's bucket; past
+// any bound it is refused, never queued.
+type DoorGateConfig struct {
+	// AddressRequestsPerSecond and AddressBurstRequests bound each client
+	// address's requests on a pod.
+	AddressRequestsPerSecond int `koanf:"address_requests_per_second"`
+	AddressBurstRequests     int `koanf:"address_burst_requests"`
+	// AddressMaxInFlight is how many requests one client address may have
+	// in flight on a pod, held until each is answered: below MaxInFlight,
+	// and that many of the largest bodies below MaxBytesInFlight, so one
+	// address never holds all of a pod's room.
+	AddressMaxInFlight int `koanf:"address_max_in_flight"`
+	// RequestsPerSecond and BurstRequests bound a pod's requests.
+	RequestsPerSecond int `koanf:"requests_per_second"`
+	BurstRequests     int `koanf:"burst_requests"`
+	// MaxInFlight is how many requests a pod serves at once, and
+	// MaxBytesInFlight how many bytes of their bodies it holds, a body of
+	// unknown length weighing the largest a body may be.
+	MaxInFlight      int   `koanf:"max_in_flight"`
+	MaxBytesInFlight int64 `koanf:"max_bytes_in_flight"`
+}
+
+// SendGate is the gate of the door's sends and reminders: the endpoint's
+// own bounds, its bodies capped at MaxBodyBytes.
+func (d EventsEndpointConfig) SendGate() DoorGateConfig {
+	return DoorGateConfig{
+		AddressRequestsPerSecond: d.AddressRequestsPerSecond, AddressBurstRequests: d.AddressBurstRequests, AddressMaxInFlight: d.AddressMaxInFlight,
+		RequestsPerSecond: d.RequestsPerSecond, BurstRequests: d.BurstRequests, MaxInFlight: d.MaxInFlight, MaxBytesInFlight: d.MaxBytesInFlight,
+	}
+}
+
+// validate checks g, named by prefix, for bodies of at most maxBody bytes.
+func (g DoorGateConfig) validate(prefix string, maxBody int64) error {
+	for _, v := range []struct {
+		name  string
+		value int64
+	}{
+		{"address_requests_per_second", int64(g.AddressRequestsPerSecond)}, {"address_burst_requests", int64(g.AddressBurstRequests)},
+		{"address_max_in_flight", int64(g.AddressMaxInFlight)},
+		{"requests_per_second", int64(g.RequestsPerSecond)}, {"burst_requests", int64(g.BurstRequests)},
+		{"max_in_flight", int64(g.MaxInFlight)}, {"max_bytes_in_flight", g.MaxBytesInFlight},
+	} {
+		if v.value <= 0 {
+			return fmt.Errorf("%s.%s must be positive", prefix, v.name)
+		}
+	}
+	switch {
+	case g.MaxBytesInFlight < maxBody:
+		return fmt.Errorf("%s.max_bytes_in_flight must be at least max_body_bytes, or the largest body is always refused", prefix)
+	case g.AddressMaxInFlight >= g.MaxInFlight || int64(g.AddressMaxInFlight)*maxBody >= g.MaxBytesInFlight:
+		return fmt.Errorf("%s.address_max_in_flight is %d; it must be below max_in_flight (%d), and that many bodies of max_body_bytes below max_bytes_in_flight (%d), so one address never holds all of a pod's room",
+			prefix, g.AddressMaxInFlight, g.MaxInFlight, g.MaxBytesInFlight)
+	}
+	return nil
 }
 
 // EventEnvelopeBytes is the least room foundry.events.endpoint.max_body_bytes
@@ -1183,21 +1412,9 @@ const MaxEventValidatedFor = 5 * time.Minute
 // Validate checks the door's bounds where the foundry-events role runs.
 // sendBytes is foundry.events.max_send_bytes, a send's compacted data, which
 // a body must hold with its envelope; a body stays within MaxEventSendBytes,
-// as the request the door forwards it in does.
+// as the request the door forwards it in does. Its Slack gate is checked
+// whether or not foundry.slack is on.
 func (d EventsEndpointConfig) Validate(sendBytes int) error {
-	for _, v := range []struct {
-		name  string
-		value int64
-	}{
-		{"address_requests_per_second", int64(d.AddressRequestsPerSecond)}, {"address_burst_requests", int64(d.AddressBurstRequests)},
-		{"address_max_in_flight", int64(d.AddressMaxInFlight)},
-		{"requests_per_second", int64(d.RequestsPerSecond)}, {"burst_requests", int64(d.BurstRequests)},
-		{"max_in_flight", int64(d.MaxInFlight)}, {"max_bytes_in_flight", d.MaxBytesInFlight},
-	} {
-		if v.value <= 0 {
-			return fmt.Errorf("foundry.events.endpoint.%s must be positive", v.name)
-		}
-	}
 	switch least := int64(sendBytes) + EventEnvelopeBytes; {
 	case d.GRPC.Listen == "" || d.HTTP.Listen == "":
 		return fmt.Errorf("foundry.events.endpoint grpc.listen and http.listen must be set when 'foundry-events' is in services")
@@ -1206,15 +1423,13 @@ func (d EventsEndpointConfig) Validate(sendBytes int) error {
 	case d.MaxBodyBytes < least || d.MaxBodyBytes > MaxEventSendBytes:
 		return fmt.Errorf("foundry.events.endpoint.max_body_bytes is %d; it must be from foundry.events.max_send_bytes plus %d (%d) to %d",
 			d.MaxBodyBytes, EventEnvelopeBytes, least, MaxEventSendBytes)
-	case d.MaxBytesInFlight < d.MaxBodyBytes:
-		return fmt.Errorf("foundry.events.endpoint.max_bytes_in_flight must be at least max_body_bytes, or the largest body is always refused")
-	case d.AddressMaxInFlight >= d.MaxInFlight || int64(d.AddressMaxInFlight)*d.MaxBodyBytes >= d.MaxBytesInFlight:
-		return fmt.Errorf("foundry.events.endpoint.address_max_in_flight is %d; it must be below max_in_flight (%d), and that many bodies of max_body_bytes below max_bytes_in_flight (%d), so one address never holds all of a pod's room",
-			d.AddressMaxInFlight, d.MaxInFlight, d.MaxBytesInFlight)
 	case d.ValidatedFor <= 0 || d.ValidatedFor > MaxEventValidatedFor:
 		return fmt.Errorf("foundry.events.endpoint.validated_for is %s; it must be above 0 and at most %s", d.ValidatedFor, MaxEventValidatedFor)
 	}
-	return nil
+	if err := d.SendGate().validate("foundry.events.endpoint", d.MaxBodyBytes); err != nil {
+		return err
+	}
+	return d.Slack.validate("foundry.events.endpoint.slack", max(SlackEventsBodyBytes, SlackInteractivityBodyBytes))
 }
 
 // EventsConfig drives event sources (connector kind events), which
@@ -1619,6 +1834,10 @@ type Roles struct {
 	// automations and walks their runs, its Assistant steps queued as the
 	// Assistant's turns, so it calls no model itself.
 	AutomationWorker bool
+	// SlackWorker is the foundry-slack-worker: it turns Slack's messages
+	// into the Assistant's turns and posts what they say, so it calls no
+	// model itself.
+	SlackWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
@@ -1696,6 +1915,11 @@ func (c *Config) validateLocal() error {
 	// page, which an install doesn't have.
 	if c.Foundry.Reminders.SecretSHA256 != "" {
 		return fmt.Errorf("local mode takes no reminders: remove foundry.reminders.secret_sha256")
+	}
+	// Slack reaches an install through Helix's relay, which holds the app's
+	// secrets.
+	if c.Foundry.Slack.ClientSecret != "" || c.Foundry.Slack.SigningSecret != "" {
+		return fmt.Errorf("local mode has no Slack app of its own: remove foundry.slack.client_secret and signing_secret")
 	}
 	return nil
 }
@@ -1874,6 +2098,9 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	if err := f.Slack.validate(roles, c.Host.Local, f.Agent); err != nil {
+		return err
+	}
 	if roles.AutomationWorker && f.Automations.Enabled {
 		a := f.Automations
 		switch {
@@ -1952,6 +2179,17 @@ func Defaults() Config {
 			MaxInFlight:              32,
 			MaxBytesInFlight:         32 << 20,
 			ValidatedFor:             30 * time.Second,
+			// Slack sends every install's events from a few addresses, so
+			// one address may take half of a pod's room.
+			Slack: DoorGateConfig{
+				AddressRequestsPerSecond: 100,
+				AddressBurstRequests:     200,
+				AddressMaxInFlight:       32,
+				RequestsPerSecond:        200,
+				BurstRequests:            400,
+				MaxInFlight:              64,
+				MaxBytesInFlight:         64 << 20,
+			},
 		},
 		MaxSourcesPerWorkspace:     20,
 		MaxTokensPerSource:         10,
@@ -2131,6 +2369,20 @@ func Defaults() Config {
 		PauseAfterFailures: 3,
 		FailureBackoff:     5 * time.Minute,
 		StepWait:           5 * time.Second,
+	}, Slack: SlackConfig{
+		HTTP:         ServiceHTTPConfig{Listen: ":8104"},
+		PollInterval: time.Second,
+		Lease:        2 * time.Minute,
+		Concurrency:  16,
+		MaxAttempts:  5,
+		RetryBackoff: 10 * time.Second,
+		APIShare:     0.5,
+		BusyWait:     15 * time.Minute,
+		Retention: SlackRetentionConfig{
+			Threads: MaxSlackThreadRetention,
+			Intake:  7 * 24 * time.Hour,
+			Replies: 7 * 24 * time.Hour,
+		},
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,

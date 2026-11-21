@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,7 +26,7 @@ func helixClaude() AIDefault {
 // every runs each of Foundry's roles but foundry-notify-worker, which needs
 // the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
-	AskWorker: true, EnrichmentWorker: true, HealWorker: true, AgentWorker: true}
+	AskWorker: true, EnrichmentWorker: true, HealWorker: true, AgentWorker: true, SlackWorker: true}
 
 // The defaults, with a model provider and the connectors' key, serve every
 // role; each role's own settings are checked only where it runs.
@@ -672,4 +673,273 @@ func TestFoundryRemindersValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// slackOn is the defaults with the Slack app on and complete, as a hosted
+// stamp sets it.
+func slackOn() Config {
+	c := Defaults()
+	c.Foundry.AI.Default = helixClaude()
+	c.Foundry.Slack.Enabled = true
+	c.Foundry.Slack.ClientID, c.Foundry.Slack.AppID = "1234.5678", "A0123"
+	c.Foundry.Slack.ClientSecret, c.Foundry.Slack.SigningSecret = "client-secret", "signing-secret"
+	c.Foundry.Slack.SiteURL = "https://foundry.helix-db.com"
+	return c
+}
+
+// The app is off by default, and its worker's defaults are the reviewed
+// ones: a second's poll, two minutes' lease, 16 at once, half of each of
+// Slack's limits, and what came from Slack kept 30 days at most.
+func TestSlackDefaults(t *testing.T) {
+	s := Defaults().Foundry.Slack
+	want := SlackConfig{
+		HTTP: ServiceHTTPConfig{Listen: ":8104"}, PollInterval: time.Second, Lease: 2 * time.Minute, Concurrency: 16, MaxAttempts: 5,
+		RetryBackoff: 10 * time.Second, APIShare: 0.5, BusyWait: 15 * time.Minute,
+		Retention: SlackRetentionConfig{Threads: 30 * 24 * time.Hour, Intake: 7 * 24 * time.Hour, Replies: 7 * 24 * time.Hour},
+	}
+	if s.Enabled || s.InstallAllowlist != nil || s.ClientSecret != "" || s.SigningSecret != "" {
+		t.Fatalf("defaults turn the app on or hold a secret: %+v", s)
+	}
+	if s.HTTP != want.HTTP || s.PollInterval != want.PollInterval || s.Lease != want.Lease || s.Concurrency != want.Concurrency ||
+		s.MaxAttempts != want.MaxAttempts || s.RetryBackoff != want.RetryBackoff || s.APIShare != want.APIShare || s.BusyWait != want.BusyWait ||
+		s.Retention != want.Retention {
+		t.Fatalf("defaults = %+v", s)
+	}
+	// Off, nothing of it is read, so the defaults serve every role.
+	off := slackOn()
+	off.Foundry.Slack = Defaults().Foundry.Slack
+	if err := off.Validate(Roles{SlackWorker: true, API: true, Events: true}); err != nil {
+		t.Fatalf("an off app was checked: %v", err)
+	}
+	// The worker's defaults outlast a default turn's attempt.
+	if d := Defaults().Foundry; d.Slack.BusyWait < d.Agent.AttemptTimeout() {
+		t.Fatalf("busy_wait %s is shorter than a turn's attempt %s", d.Slack.BusyWait, d.Agent.AttemptTimeout())
+	}
+}
+
+// On, the API and the worker need the app's identity, its secrets and the
+// site's origin; the worker its own settings; the door, which holds no
+// secret, nothing but its gate. Each bound holds at its edge and refuses past
+// it, and binds only the roles that read it.
+func TestSlackValidate(t *testing.T) {
+	worker, api := Roles{SlackWorker: true}, Roles{API: true}
+	for name, roles := range map[string]Roles{"the API": api, "the worker": worker, "both": {API: true, SlackWorker: true}} {
+		if c := slackOn(); c.Validate(roles) != nil {
+			t.Fatalf("%s, complete: %v", name, c.Validate(roles))
+		}
+	}
+	// The door reads only enabled and its gate: no secret, no site.
+	door := Defaults()
+	door.Foundry.Slack.Enabled = true
+	if err := door.Validate(Roles{Events: true}); err != nil {
+		t.Fatalf("the door with Slack on and no secrets: %v", err)
+	}
+	if err := door.Validate(Roles{}); err != nil {
+		t.Fatalf("a process of no role with Slack on: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackConfig)
+		roles  Roles
+		want   string // empty when valid
+	}{
+		"no client id":           {func(s *SlackConfig) { s.ClientID = "" }, api, "foundry.slack.client_id must be set"},
+		"a blank app id":         {func(s *SlackConfig) { s.AppID = " " }, worker, "foundry.slack.app_id must be set"},
+		"no client secret":       {func(s *SlackConfig) { s.ClientSecret = "" }, api, "foundry.slack.client_secret must be set"},
+		"no signing secret":      {func(s *SlackConfig) { s.SigningSecret = "\t" }, worker, "foundry.slack.signing_secret must be set"},
+		"no site":                {func(s *SlackConfig) { s.SiteURL = "" }, api, "foundry.slack.site_url must be set"},
+		"a site on plain HTTP":   {func(s *SlackConfig) { s.SiteURL = "http://foundry.helix-db.com" }, api, "HTTPS"},
+		"a site with a path":     {func(s *SlackConfig) { s.SiteURL = "https://foundry.helix-db.com/app" }, worker, "foundry.slack.site_url"},
+		"a site's trailing /":    {func(s *SlackConfig) { s.SiteURL = "https://foundry.helix-db.com/" }, api, "must be an origin"},
+		"a site not absolute":    {func(s *SlackConfig) { s.SiteURL = "foundry.helix-db.com" }, api, "not an absolute origin"},
+		"a local site":           {func(s *SlackConfig) { s.SiteURL = "http://localhost:3000" }, api, ""},
+		"a site with a port":     {func(s *SlackConfig) { s.SiteURL = "https://local.foundry.helix-db.com:3000" }, api, ""},
+		"an allowlist":           {func(s *SlackConfig) { s.InstallAllowlist = []string{"ws-1", "ws-2"} }, api, ""},
+		"a blank allowed id":     {func(s *SlackConfig) { s.InstallAllowlist = []string{"ws-1", ""} }, api, "install_allowlist[1]"},
+		"a spaced allowed id":    {func(s *SlackConfig) { s.InstallAllowlist = []string{" ws-1"} }, worker, "install_allowlist[0]"},
+		"an id allowed twice":    {func(s *SlackConfig) { s.InstallAllowlist = []string{"ws-1", "ws-2", "ws-1"} }, api, `lists "ws-1" twice`},
+		"no health listener":     {func(s *SlackConfig) { s.HTTP.Listen = "" }, worker, "foundry.slack.http.listen"},
+		"no poll":                {func(s *SlackConfig) { s.PollInterval = 0 }, worker, "poll_interval"},
+		"no concurrency":         {func(s *SlackConfig) { s.Concurrency = 0 }, worker, "concurrency"},
+		"no attempt":             {func(s *SlackConfig) { s.MaxAttempts = 0 }, worker, "max_attempts"},
+		"no backoff":             {func(s *SlackConfig) { s.RetryBackoff = 0 }, worker, "retry_backoff"},
+		"a lease short of 30s":   {func(s *SlackConfig) { s.Lease = 30*time.Second - 1 }, worker, "foundry.slack.lease must be at least 30s"},
+		"a lease of 30s":         {func(s *SlackConfig) { s.Lease = 30 * time.Second }, worker, ""},
+		"no share":               {func(s *SlackConfig) { s.APIShare = 0 }, worker, "api_share is 0"},
+		"a negative share":       {func(s *SlackConfig) { s.APIShare = -0.5 }, worker, "api_share"},
+		"more than every limit":  {func(s *SlackConfig) { s.APIShare = 1.01 }, worker, "api_share is 1.01"},
+		"no share at all (NaN)":  {func(s *SlackConfig) { s.APIShare = math.NaN() }, worker, "api_share is NaN"},
+		"every limit, one":       {func(s *SlackConfig) { s.APIShare = 1 }, worker, ""},
+		"a wait short of a turn": {func(s *SlackConfig) { s.BusyWait = 5*time.Minute - 1 }, worker, "busy_wait 4m59.999999999s must be at least"},
+		"a wait of a turn":       {func(s *SlackConfig) { s.BusyWait = 5 * time.Minute }, worker, ""},
+		"threads kept no time":   {func(s *SlackConfig) { s.Retention.Threads = 0 }, worker, "retention.threads is 0s"},
+		"threads past 30 days":   {func(s *SlackConfig) { s.Retention.Threads = MaxSlackThreadRetention + 1 }, worker, "at most 720h0m0s"},
+		"threads kept a day":     {func(s *SlackConfig) { s.Retention.Threads = 24 * time.Hour }, worker, ""},
+		"intake gone in retries": {func(s *SlackConfig) { s.Retention.Intake = time.Hour - 1 }, worker, "retention.intake is 59m59.999999999s"},
+		"intake kept an hour":    {func(s *SlackConfig) { s.Retention.Intake = time.Hour }, worker, ""},
+		"replies kept no time":   {func(s *SlackConfig) { s.Retention.Replies = 0 }, worker, "retention.replies must be positive"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := slackOn()
+			tc.mutate(&c.Foundry.Slack)
+			if err := c.Validate(tc.roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			for _, other := range []Roles{{}, {Events: true}, {AgentWorker: true}} {
+				if err := c.Validate(other); err != nil {
+					t.Fatalf("checked without its role (%+v): %v", other, err)
+				}
+			}
+			// Off, nothing of it is read.
+			c.Foundry.Slack.Enabled = false
+			if err := c.Validate(tc.roles); err != nil {
+				t.Fatalf("checked while off: %v", err)
+			}
+		})
+	}
+	// The worker's settings are its own: the API never reads them.
+	c := slackOn()
+	c.Foundry.Slack.Lease, c.Foundry.Slack.Retention = 0, SlackRetentionConfig{}
+	if err := c.Validate(api); err != nil {
+		t.Fatalf("the API checked the worker's settings: %v", err)
+	}
+	// A turn allowed longer needs a longer wait.
+	c = slackOn()
+	c.Foundry.Agent.MaxWallSecs = 900
+	if err := c.Validate(worker); err == nil || !contains(err.Error(), "(16m0s)") {
+		t.Fatalf("a wait shorter than a longer turn = %v", err)
+	}
+}
+
+// A standalone install reaches Slack through Helix's relay: on, its API and
+// worker need no app of their own, and it refuses the app's secrets.
+func TestSlackLocal(t *testing.T) {
+	local := func() Config {
+		c := Defaults()
+		c.Host.Local = true
+		c.Foundry.Sync.DataBucket = "foundry-data"
+		c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "local", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+		c.Read.Address = "127.0.0.1:50068"
+		plans := DefaultPlans()
+		c.Billing.Plans = []PlanConfig{{Code: "local", DisplayName: "Local", Kinds: plans[len(plans)-1].Kinds, Sync: plans[len(plans)-1].Sync}}
+		c.Foundry.Slack.Enabled = true
+		return c
+	}
+	roles := Roles{API: true, SlackWorker: true}
+	if c := local(); c.Validate(roles) != nil {
+		t.Fatalf("an install with Slack on: %v", c.Validate(roles))
+	}
+	for name, mutate := range map[string]func(*SlackConfig){
+		"a client secret":  func(s *SlackConfig) { s.ClientSecret = "client-secret" },
+		"a signing secret": func(s *SlackConfig) { s.SigningSecret = "signing-secret" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := local()
+			mutate(&c.Foundry.Slack)
+			if err := c.Validate(Roles{}); err == nil || !contains(err.Error(), "no Slack app of its own") {
+				t.Fatalf("Validate = %v", err)
+			}
+		})
+	}
+	// Its worker's own settings still bind it.
+	c := local()
+	c.Foundry.Slack.Concurrency = 0
+	if err := c.Validate(roles); err == nil || !contains(err.Error(), "concurrency") {
+		t.Fatalf("Validate = %v", err)
+	}
+}
+
+// Slack's routes have a gate of their own on the door, wide for Slack's few
+// addresses, checked where the door runs whether or not the app is on: each
+// bound holds at its edge and refuses past it, as the send gate's do.
+func TestSlackDoorGate(t *testing.T) {
+	d := Defaults().Foundry.Events.Endpoint
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 100, AddressBurstRequests: 200, AddressMaxInFlight: 32, RequestsPerSecond: 200, BurstRequests: 400,
+		MaxInFlight: 64, MaxBytesInFlight: 64 << 20,
+	}); d.Slack != want {
+		t.Fatalf("defaults = %+v", d.Slack)
+	}
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 50, AddressBurstRequests: 100, AddressMaxInFlight: 8, RequestsPerSecond: 200, BurstRequests: 400,
+		MaxInFlight: 32, MaxBytesInFlight: 32 << 20,
+	}); d.SendGate() != want {
+		t.Fatalf("SendGate() = %+v", d.SendGate())
+	}
+	door := Roles{Events: true}
+	const body = SlackInteractivityBodyBytes
+	for name, tc := range map[string]struct {
+		mutate func(*DoorGateConfig)
+		want   string // empty when valid
+	}{
+		"no address rate":        {func(g *DoorGateConfig) { g.AddressRequestsPerSecond = 0 }, "foundry.events.endpoint.slack.address_requests_per_second must be positive"},
+		"a negative burst":       {func(g *DoorGateConfig) { g.AddressBurstRequests = -1 }, "foundry.events.endpoint.slack.address_burst_requests must be positive"},
+		"no address place":       {func(g *DoorGateConfig) { g.AddressMaxInFlight = 0 }, "foundry.events.endpoint.slack.address_max_in_flight must be positive"},
+		"no pod rate":            {func(g *DoorGateConfig) { g.RequestsPerSecond = 0 }, "foundry.events.endpoint.slack.requests_per_second must be positive"},
+		"no pod burst":           {func(g *DoorGateConfig) { g.BurstRequests = 0 }, "foundry.events.endpoint.slack.burst_requests must be positive"},
+		"no place":               {func(g *DoorGateConfig) { g.MaxInFlight = 0 }, "foundry.events.endpoint.slack.max_in_flight must be positive"},
+		"no bytes":               {func(g *DoorGateConfig) { g.MaxBytesInFlight = 0 }, "foundry.events.endpoint.slack.max_bytes_in_flight must be positive"},
+		"bytes short of a click": {func(g *DoorGateConfig) { g.MaxBytesInFlight = body - 1 }, "foundry.events.endpoint.slack.max_bytes_in_flight must be at least max_body_bytes"},
+		"an address as wide as the pod": {func(g *DoorGateConfig) { g.AddressMaxInFlight = g.MaxInFlight },
+			"foundry.events.endpoint.slack.address_max_in_flight is 64; it must be below max_in_flight (64)"},
+		"an address one place short": {func(g *DoorGateConfig) { g.AddressMaxInFlight = g.MaxInFlight - 1; g.MaxBytesInFlight = 63*body + 1 }, ""},
+		"an address's bodies filling the pod's bytes": {func(g *DoorGateConfig) { g.MaxBytesInFlight = 32 * body },
+			"foundry.events.endpoint.slack.address_max_in_flight is 32"},
+		"an address's bodies a byte short": {func(g *DoorGateConfig) { g.MaxBytesInFlight = 32*body + 1 }, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Defaults()
+			tc.mutate(&c.Foundry.Events.Endpoint.Slack)
+			if err := c.Validate(door); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			if err := c.Validate(Roles{SlackWorker: true}); err != nil {
+				t.Fatalf("checked without the door: %v", err)
+			}
+		})
+	}
+	// The send gate's bounds keep their own names and their order: the
+	// endpoint's own checks, then its gate's, then Slack's.
+	c := Defaults()
+	c.Foundry.Events.Endpoint.MaxInFlight, c.Foundry.Events.Endpoint.Slack.MaxInFlight = 0, 0
+	if err := c.Validate(door); err == nil || err.Error() != "foundry.events.endpoint.max_in_flight must be positive" {
+		t.Fatalf("Validate = %v", err)
+	}
+	c = Defaults()
+	c.Foundry.Events.Endpoint.MaxBodyBytes, c.Foundry.Events.Endpoint.AddressMaxInFlight = MaxEventSendBytes+1, 0
+	if err := c.Validate(door); err == nil || !contains(err.Error(), "foundry.events.endpoint.max_body_bytes is 4194305") {
+		t.Fatalf("Validate = %v", err)
+	}
+	for want, mutate := range map[string]func(*EventsEndpointConfig){
+		"grpc.listen and http.listen must be set": func(e *EventsEndpointConfig) { e.HTTP.Listen, e.Slack.MaxInFlight = "", 0 },
+		"validated_for is 0s":                     func(e *EventsEndpointConfig) { e.ValidatedFor, e.Slack.MaxInFlight = 0, 0 },
+	} {
+		c = Defaults()
+		mutate(&c.Foundry.Events.Endpoint)
+		if err := c.Validate(door); err == nil || !contains(err.Error(), want) {
+			t.Fatalf("Validate = %v, want %q", err, want)
+		}
+	}
+	c = Defaults()
+	c.Foundry.Events.Endpoint.MaxBytesInFlight = c.Foundry.Events.Endpoint.MaxBodyBytes - 1
+	if err := c.Validate(door); err == nil || err.Error() != "foundry.events.endpoint.max_bytes_in_flight must be at least max_body_bytes, or the largest body is always refused" {
+		t.Fatalf("Validate = %v", err)
+	}
+	c = Defaults()
+	c.Foundry.Events.Endpoint.AddressMaxInFlight = 16
+	if err := c.Validate(door); err == nil || err.Error() !=
+		"foundry.events.endpoint.address_max_in_flight is 16; it must be below max_in_flight (32), and that many bodies of max_body_bytes below max_bytes_in_flight (33554432), so one address never holds all of a pod's room" {
+		t.Fatalf("Validate = %v", err)
+	}
+}
+
+// Before Slack authorizes the app's commercial distribution, a stamp lets
+// only its design partners' workspaces add it; with no list, every one.
+func ExampleSlackConfig_InstallAllowed() {
+	open := SlackConfig{}
+	partners := SlackConfig{InstallAllowlist: []string{"ws-acme"}}
+	fmt.Println(open.InstallAllowed("ws-acme"), open.InstallAllowed("ws-globex"))
+	fmt.Println(partners.InstallAllowed("ws-acme"), partners.InstallAllowed("ws-globex"), partners.InstallAllowed(""))
+	// Output:
+	// true true
+	// true false false
 }
