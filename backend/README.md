@@ -52,6 +52,68 @@ On a standalone install, a workspace's owner may run its new threads on the Clau
 
 `foundry.agent.enabled` is off by default: sends are refused (`FOUNDRY_AGENT_DISABLED`) and the worker claims nothing, so a host may list it everywhere. A standalone install turns it on, with its sessions in-process (`local.AgentSessions`). A host that turns it on implements `integration.SessionHost` for the worker's process and the API's (see its doc comment) and passes it as `api.Deps.AgentSessions` and to the worker through dig, with `ports.Databases` for actions on an existing database.
 
+## Slack
+
+Helix Foundry for Slack (`foundry.slack`) brings Founder to Slack through Helix's own distributed Slack app, "Helix Foundry". An owner or admin adds it to a Slack workspace by OAuth v2 from Settings › Slack. Each person links their Slack account to their Foundry user once, and the bot answers their channel mentions and direct messages as that person (`per_person`). It works through Founder's own API (`integration.FounderAPI` on the `Session`), so every check the site's calls pass also applies in Slack. It is hosted only for now: a standalone install refuses every Slack method ("Slack reaches a local install through Helix's relay") and must hold no Slack secret. The Slack data connector is separate and keeps its pasted internal-app tokens.
+
+How a message travels:
+
+1. **Door** (`services/foundry-events/slack.go`): `POST /v1/slack/events` and `POST /v1/slack/interactivity` on the secretless foundry-events door (`ingest.<domain>`), served while `foundry.slack.enabled` is on (404 otherwise). The door checks, in order: the Slack gate (`foundry.events.endpoint.slack`, kept apart from the sends' gate, so a flood on either side never refuses the other), the body cap (512 KiB for events, 1 MiB for clicks), and `slack.Precheck` of `X-Slack-Signature` and `X-Slack-Request-Timestamp` (±5 min), refusing with 400 and no RPC. It then forwards the raw body to `FoundryEventsService.ReceiveSlackRequest` within 2.5 s, since Slack waits 3 s. Any backend error is a 500: Slack retries events at once, after 1 min and after 5 min, but never retries clicks.
+2. **API** (`api/slack.go` `ReceiveSlackRequest`): it verifies the HMAC with `signing_secret` (401 on failure), answers `url_verification`, and parses the request with `slack.ParseEvent` or `slack.ParseInteraction` into closed sets. It finds the install by Slack team and records one `foundry_slack_intake` row, deduplicated by `e:<event_id>` or a hash of the click. It makes no Slack Web API call. `app_uninstalled` and `tokens_revoked` revoke the install right there, unless they are older than the install's last change (a retry after a reinstall).
+3. **Worker** (`foundry-slack-worker`, package `workers/foundry-slack-worker`, role `Roles.SlackWorker`, logic in `slackbot`): it claims intake under a fenced lease, one conversation at a time and in order.
+   - It checks the sender: a full member of the install's team (Grid members by `enterprise_user`). Guests, bots, Slack Connect users and externally shared channels are refused with an ephemeral note.
+   - A sender with no link gets a one-time link (`hx_sl_`, 10 minutes, carried in the URL fragment, sent ephemerally). Linking requires the Slack email to equal the Foundry email.
+   - For a linked sender it opens their `Session` and calls `Founder.SendFoundryAgentMessage` with `surface: SLACK`. The client token comes from the Slack message, so a retry gives the same turn. The turn goes into the Founder thread its Slack thread continues (`foundry_slack_threads`, one per Slack thread and person).
+   - It then follows the turn (`foundry_slack_replies`, leased for the whole follow). One reply message is updated as events arrive, spaced per install. Analyst answers, cards and questions are posted apart, each at least once.
+   - Clicks run, dismiss or re-prepare a card (only the action's person may), stop a turn, or unlink.
+   - Every Web API call goes through `slack.Client`'s `Limiter`: per install and method at `api_share` of Slack's tier, and 1/s per channel for posts. A 429 defers the row or follow by its `Retry-After`; nothing sleeps.
+4. **Sweep** (every 30 s, in the worker): it calls `apps.uninstall` for revoked installs Slack hasn't been told of (until then that team can't install again: `FOUNDRY_SLACK_DISCONNECTING`). It purges Slack-born Founder threads idle past `retention.threads`, or whose install is revoked: their messages, events and actions are deleted and their turns' text is blanked (the turn rows stay for spend). It also prunes intake and replies after 7 days, and link tokens and install states 1 day after they expire (`model.Slack*Kept`).
+
+Package `slack` is pure and holds Slack's side of all this: signature checks, events and clicks, safe mrkdwn (escaped, every mrkdwn object `verbatim: true`, links only under `site_url`, other URLs and domains in inline code), Block Kit, the renderers, the Web API client (every post and update sends `parse=none` and no unfurls) and the limiter. On Founder's side, a turn carries `surface` (`site` or `slack`; a continuation copies its action's). A Slack turn adds `agent.slackPrompt` to the system prompt, and `agent.autoRun` never runs in Slack, so every action is a card. Tables are in `store/migrations/20261213000000_foundry_slack.sql`. A bot token is sealed with the connectors' keyring under its install id (`foundry_slack_install_tokens`) and deleted once Slack knows the app is uninstalled. Hosted must:
+
+- set `Session.Founder` in its `SessionHost` (a `FoundryServiceClient` that forwards the user);
+- run the worker task;
+- route `/v1/slack/` to the door;
+- call `store.PurgeFoundrySlack` when it deletes a workspace.
+
+| Key (`foundry.slack.*`) | Default | Read by |
+| --- | --- | --- |
+| `enabled` | false | all. Off: the door answers 404, the API refuses with `FOUNDRY_SLACK_DISABLED`, the worker idles |
+| `client_id`, `app_id` | | API, worker: the stamp's app (not secret) |
+| `client_secret` (`HELIX_FOUNDRY__SLACK__CLIENT_SECRET`), `signing_secret` (`HELIX_FOUNDRY__SLACK__SIGNING_SECRET`) | | API, worker: **secrets**, hosted only; a standalone install refuses them, and the door must not get them |
+| `site_url` | | API, worker: the site's origin. Installs return to `<site_url>/slack/installed` (it must be one of the manifest's redirect URLs) and link prompts open `/slack/link` |
+| `install_allowlist` | [] (everyone) | API: the workspaces that may add the app until Slack authorizes commercial distribution |
+| `http.listen` | `:8104` | worker health |
+| `poll_interval`, `lease`, `concurrency` | 1s, 2m, 16 | worker (follows run 4 per slot) |
+| `max_attempts`, `retry_backoff` | 5, 10s (doubling) | worker: attempts to start a message's turn |
+| `api_share` | 0.5 | worker: share of each Slack rate tier one replica uses, so 1 over the replica count |
+| `busy_wait` | 15m | worker: how long a message waits behind a busy thread (at least `foundry.agent.max_wall_secs` + 1 min) |
+| `retention.threads` | 720h | worker: at most 30 days (Slack's terms, the listing and the privacy policy) |
+
+The door's Slack gate is `foundry.events.endpoint.slack` (`max_in_flight` 64, `max_bytes_in_flight` 64 MiB, `requests_per_second` 200, `burst_requests` 400, and per address 100/s, burst 200, 32 in flight, since Slack sends every install's events from a few addresses). An install needs `foundry.agent.enabled` too. Metrics, none carrying text or user, channel or workspace ids: `helix_foundry_slack_requests_total{route,outcome}` (door), `helix_foundry_slack_received_total{route,outcome}` (API), `helix_foundry_slack_intake_total{kind,outcome}`, `helix_foundry_slack_follows_total{outcome}`, `helix_foundry_slack_sweep_total{step,outcome}` and `helix_foundry_slack_api_calls_total{method,outcome}` (worker).
+
+### Setting up the Slack apps
+
+`slack/manifest/dev.yaml` and `prod.yaml` define the two apps: "Helix Foundry (dev)", which is unlisted and for Helix's own sandboxes, and "Helix Foundry". `slack/manifest_test.go` keeps their scopes and events equal to `slack.Scopes` and `slack.Subscriptions`. Helix's Slack org owns both apps.
+
+1. At https://api.slack.com/apps, choose **Create New App**, then **From a manifest**, pick Helix's workspace, and paste the YAML file.
+2. Under **Basic Information**, copy the **App ID** and **Client ID** into the stamp's hosted config (`foundry.slack.app_id`, `client_id`), along with `enabled: true`, `site_url` (`https://dev.foundry.helix-db.com` or `https://foundry.helix-db.com`) and `install_allowlist`. Put the **Client Secret** and **Signing Secret** in the stamp's `helixsvc-secrets` as `HELIX_FOUNDRY__SLACK__CLIENT_SECRET` and `HELIX_FOUNDRY__SLACK__SIGNING_SECRET`, for the API and `foundry-slack-worker` pods only. The foundry-events door gets `foundry.slack.enabled` and no secret. The dev and prod apps never share values.
+3. Slack verifies the manifest's request URLs (`https://ingest[.dev].helix-db.com/v1/slack/events` and `/interactivity`) with a signed `url_verification`. That works only once the door routes them and the API holds the signing secret, so after the deploy open **Event Subscriptions** and **Retry** until the URL is verified.
+4. **Manage Distribution**: activate public distribution only to install outside the app's own workspace. For prod that waits for Slack's written sign-off (Commercial Distribution needs Slack Marketplace authorization), and until then `install_allowlist` limits who sees Add to Slack.
+5. Never turn on token rotation (it can't be turned off, and the bot doesn't refresh tokens) or org-wide deploy (the API refuses enterprise installs). To change scopes or events, edit both manifests and `slack.Scopes`/`slack.Subscriptions` together, then paste the manifest under **App Manifest**. Existing installs keep their old scopes until an owner adds the app again, and an install missing a scope is refused (`FOUNDRY_SLACK_SCOPES`).
+
+### Alert runbook: Slack's requests failing
+
+Hosted alerts when the 5xx and timeout share of `helix_foundry_slack_requests_total` passes 20% over 10 minutes. This matters because Slack disables the app's event subscriptions for **every** install when more than 95% of deliveries fail within 60 minutes. Mentions and DMs then stop arriving everywhere, and Slack does not resend what it dropped. Clicks are unaffected but fail just as visibly. Look at the `outcome` label:
+
+- `internal`, `backend_unavailable` or `request_timeout`: the backend or its MySQL is down or slower than 2.5 s. Check `helix_foundry_slack_received_total{outcome="failed"}` (the intake insert) and the backend's logs.
+- `unverified` (401): the API's `signing_secret` isn't the app's (it was regenerated, or the dev and prod secrets are swapped). Fix the secret and roll the API.
+- `disabled` (404): the door has `foundry.slack.enabled` on but the API has it off. Make them agree. Leaving Slack's routes off for an hour with live installs disables the subscriptions too.
+- `rate_limited`: the Slack gate is too tight for the traffic. Raise `foundry.events.endpoint.slack`.
+- `stale`: the door pods' clocks are off. `unsigned` is not Slack (scanners), and Slack's deliveries don't count it.
+
+Once fixed, if Slack has already disabled the subscriptions (the app's **Event Subscriptions** page shows Enable Events off), turn Enable Events back on there and save. Slack sends `url_verification` to the request URL again (**Retry** sends it again) and delivers events once it passes. A message sent meanwhile is lost: people send it again. The worker's own trouble shows elsewhere and doesn't trip Slack: `helix_foundry_slack_intake_total{outcome="failed"}`, `helix_foundry_slack_follows_total{outcome="gave_up"}`, `helix_foundry_slack_api_calls_total{outcome="ratelimited"}` and `helix_foundry_slack_sweep_total{outcome="error"}`.
+
 ## Dashboards
 
 A dashboard (package `dashboard`, tables `foundry_dashboards` and `foundry_dashboard_shares`, `api/dashboards.go`) is a spec of up to 20 tiles in rows of 1 to 3, each one typed query (the read contract's `Query`, the `query` read of `ReadFoundryGraph`, as an Analyst answer records its visuals' queries) of an ontology's current or a pinned load, shown as a table, bars, a line or a figure. It holds queries, never data: the site reads each tile through the load's `:read` as the person viewing it, so a dashboard shows no one more than they may read. Every member sees every dashboard (a grantee of source grants only the pinned ones); a member creates dashboards and changes their own while unpinned; owners and admins change any, pin up to 20 in every member's sidebar, and publish one. A workspace keeps 200. Edits, pins and publishes name the revision they were made from, so what is pinned or published is what its owner saw. An edit checks only the tiles it adds or points at another ontology or load (`Spec.NewTargets`): a tile whose pinned load or ontology went since blocks no other edit. A member deletes their own dashboard only while it is neither pinned nor published.
