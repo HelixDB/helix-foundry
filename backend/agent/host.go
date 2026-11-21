@@ -506,7 +506,7 @@ func (h *Hosts) open(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 		}
 	}
 	return &HostTurn{
-		Turn: turn, System: system(turn.WorkspaceID) + hostSystem(runtime), Prompt: text, Resume: thread.RuntimeSessionID,
+		Turn: turn, System: system(turn.WorkspaceID) + surfacePrompt(turn.Surface) + hostSystem(runtime), Prompt: text, Resume: thread.RuntimeSessionID,
 		History: history(all, turn.ID), MaxSteps: h.Cfg.MaxSteps,
 	}, nil
 }

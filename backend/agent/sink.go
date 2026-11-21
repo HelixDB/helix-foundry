@@ -50,8 +50,8 @@ type actionSink struct {
 var _ integration.ActionSink = (*actionSink)(nil)
 
 // autoRun is what Founder runs without a card: a new dashboard (always unpinned and unpublished:
-// CreateFoundryDashboardRequest has neither field) the person's own message asked for. The dock offers Undo.
-// Everything else (pinning, publishing, loads, deletes, …) stays a card the person clicks.
+// CreateFoundryDashboardRequest has neither field) the person's own message on the site asked for. The dock offers Undo.
+// Everything else (pinning, publishing, loads, deletes, …), and anything in Slack, stays a card the person clicks.
 var autoRun = map[string]func(turn *model.FoundryAgentTurn) bool{
 	"create_dashboard": askedForDashboard,
 }
@@ -59,12 +59,14 @@ var autoRun = map[string]func(turn *model.FoundryAgentTurn) bool{
 // dashboardWord is the word dashboard or dashboards, whole, in any case.
 var dashboardWord = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])dashboards?(?:$|[^\pL\pN_])`)
 
-// askedForDashboard reports whether turn is a message the person wrote that
-// asks for a dashboard: it holds the word dashboard or dashboards, whole, in
-// any case. An automation's turn, an action's result and answers to
-// questions never ask.
+// askedForDashboard reports whether turn is a message the person wrote on
+// the site that asks for a dashboard: it holds the word dashboard or
+// dashboards, whole, in any case. An automation's turn, an action's result
+// and answers to questions never ask, and nor does a message read in Slack,
+// whose words may quote anyone in the channel: there a new dashboard is a
+// card like any other action.
 func askedForDashboard(turn *model.FoundryAgentTurn) bool {
-	return turn.Kind == model.FoundryAgentTurnMessage && dashboardWord.MatchString(turn.Input)
+	return turn.Kind == model.FoundryAgentTurnMessage && turn.Surface == model.FoundryAgentSurfaceSite && dashboardWord.MatchString(turn.Input)
 }
 
 // autoRuns reports whether a runs at once under autoRun: an operation it

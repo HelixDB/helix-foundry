@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
@@ -232,4 +233,56 @@ func MarshalEvent(e Event) (json.RawMessage, error) {
 	}
 	out["type"] = e.eventType()
 	return json.Marshal(out)
+}
+
+// decoders reads each event type of the closed set, keyed by the type
+// MarshalEvent writes.
+var decoders = map[string]func(json.RawMessage) (Event, error){
+	Started{}.eventType():      decodeAs[Started],
+	Said{}.eventType():         decodeAs[Said],
+	TextDelta{}.eventType():    decodeAs[TextDelta],
+	ToolCalled{}.eventType():   decodeAs[ToolCalled],
+	ToolReturned{}.eventType(): decodeAs[ToolReturned],
+	ActionCard{}.eventType():   decodeAs[ActionCard],
+	ActionResult{}.eventType(): decodeAs[ActionResult],
+	Finished{}.eventType():     decodeAs[Finished],
+	Reported{}.eventType():     decodeAs[Reported],
+	Asked{}.eventType():        decodeAs[Asked],
+	Answered{}.eventType():     decodeAs[Answered],
+}
+
+// DecodeEvent reads a turn's stored event (MarshalEvent's) back as the closed
+// set, by value: a Said, a ToolReturned, a Finished, and so on. An event
+// without a type, of a type outside the set, or whose fields don't fit its
+// type is an error. Fields its type doesn't name are ignored, so a newer
+// writer's additions don't stop an older reader; enum fields (a Finished's
+// Reason, a ToolReturned's NotRun) are kept as written, for the reader to
+// word with a default. Numbers inside a tool's output stay exact
+// (json.Number), as MarshalEvent keeps them.
+func DecodeEvent(raw json.RawMessage) (Event, error) {
+	var head struct {
+		Type *string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return nil, fmt.Errorf("agent: event: %w", err)
+	}
+	if head.Type == nil {
+		return nil, fmt.Errorf("agent: event has no type")
+	}
+	decode, ok := decoders[*head.Type]
+	if !ok {
+		return nil, fmt.Errorf("agent: unknown event type %q", *head.Type)
+	}
+	return decode(raw)
+}
+
+// decodeAs reads raw as an E.
+func decodeAs[E Event](raw json.RawMessage) (Event, error) {
+	var e E
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&e); err != nil {
+		return nil, fmt.Errorf("agent: %s event: %w", e.eventType(), err)
+	}
+	return e, nil
 }

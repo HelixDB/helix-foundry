@@ -261,7 +261,8 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 	// The Assistant's tools call this front end's gRPC as the owner, as the
 	// MCP's do; its clicks run them from the API, its turns from the worker.
 	sessions := local.NewAgentSessions(auth, local.LocalService(dir, ep.GatewayConn, fcfg.Foundry.Documents, fcfg.Foundry.Automations.Enabled, cfg.Local.SiteOrigin,
-		logger.With("component", "agent")), directoryv1.NewDirectoryServiceClient(ep.GatewayConn), cfg.Local.SiteToken)
+		logger.With("component", "agent")), foundryv1.NewFoundryServiceClient(ep.GatewayConn), directoryv1.NewDirectoryServiceClient(ep.GatewayConn),
+		cfg.Local.SiteToken)
 	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
 	foundrySvc, err := api.New(api.Deps{
 		Cfg: fcfg, Logger: logger.With("service", "foundry"), DB: st, AWS: awsCfg,

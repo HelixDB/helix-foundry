@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc"
 
+	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
 )
 
@@ -131,15 +133,44 @@ func preparedForPerson(r Recorded) PreparedForPersonOutput {
 	panic(fmt.Sprintf("integration: no output of %T", r))
 }
 
+// FounderAPI is Founder's own RPCs, which Helix Foundry's Slack bot calls as
+// the person a session is of: it starts their turns, reads what a turn
+// showed, and runs, dismisses or prepares again the actions they click, and
+// stops their turns, all through Foundry's API, so every check the site's
+// calls pass (membership, the turn's thread being theirs, the hour's turns,
+// the workspace's budget, a restricted member's reach) holds in Slack too.
+// Every call runs with its Session's Ctx.
+//
+// A host serves it from the same API as the site: hosted Helix with a
+// FoundryServiceClient on its backend connection that forwards the session's
+// user (ports.SourceUser), a standalone install with its own gRPC client
+// carrying the site token, which acts as the install's owner.
+type FounderAPI interface {
+	SendFoundryAgentMessage(context.Context, *foundryv1.SendFoundryAgentMessageRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentTurnResponse, error)
+	ListFoundryAgentTurnEvents(context.Context, *foundryv1.ListFoundryAgentTurnEventsRequest, ...grpc.CallOption) (
+		*foundryv1.ListFoundryAgentTurnEventsResponse, error)
+	ExecuteFoundryAgentAction(context.Context, *foundryv1.ExecuteFoundryAgentActionRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentActionResponse, error)
+	DismissFoundryAgentAction(context.Context, *foundryv1.DismissFoundryAgentActionRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentActionResponse, error)
+	RefreshFoundryAgentAction(context.Context, *foundryv1.RefreshFoundryAgentActionRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentActionResponse, error)
+	CancelFoundryAgentTurn(context.Context, *foundryv1.CancelFoundryAgentTurnRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentTurnResponse, error)
+}
+
+// The backend's own client serves FounderAPI, on either host.
+var _ FounderAPI = foundryv1.FoundryServiceClient(nil)
+
 // Session is the tools one agent turn or one click acts with, as one user:
 // Service and Identity add Foundry's tools to a server, HostTools the host's
 // own (helix_list_projects and helix_list_databases), and every call runs
 // with Ctx, which carries what the host's calls and confirmations need.
+// Founder is Founder's own API as the same user, for a caller that talks to
+// Founder on their behalf (the Slack bot); nil where the host offers none,
+// which such a caller refuses.
 type Session struct {
 	Ctx       context.Context
 	Service   *Service
 	Identity  *Identity
 	HostTools func(*mcp.Server)
+	Founder   FounderAPI
 }
 
 // SessionHost opens a Session for actor, a user, confirming as confirm. It is
@@ -159,7 +190,8 @@ type Session struct {
 // "foundry-agent". It refuses an actor that isn't a user of actor.WorkspaceID,
 // and its Identity is bound to that workspace: Authorize refuses (not found)
 // every request naming another, and Allows allows none, though the user may
-// belong to it, so a turn reads and acts in its own workspace only.
+// belong to it, so a turn reads and acts in its own workspace only. Its
+// Founder (FounderAPI) calls Foundry's API as that same user, with Ctx.
 //
 // A restricted member (source grants) talks to Founder too, read-only, which
 // holds only while the host:
