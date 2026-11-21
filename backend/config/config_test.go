@@ -688,12 +688,12 @@ func slackOn() Config {
 }
 
 // The app is off by default, and its worker's defaults are the reviewed
-// ones: a second's poll, two minutes' lease, 16 at once, half of each of
+// ones: a second's poll, three minutes' lease, 16 at once, half of each of
 // Slack's limits, and what came from Slack kept 30 days at most.
 func TestSlackDefaults(t *testing.T) {
 	s := Defaults().Foundry.Slack
 	want := SlackConfig{
-		HTTP: ServiceHTTPConfig{Listen: ":8104"}, PollInterval: time.Second, Lease: 2 * time.Minute, Concurrency: 16, MaxAttempts: 5,
+		HTTP: ServiceHTTPConfig{Listen: ":8104"}, PollInterval: time.Second, Lease: 3 * time.Minute, Concurrency: 16, MaxAttempts: 5,
 		RetryBackoff: 10 * time.Second, APIShare: 0.5, BusyWait: 15 * time.Minute,
 		Retention: SlackRetentionConfig{Threads: 30 * 24 * time.Hour, Intake: 7 * 24 * time.Hour, Replies: 7 * 24 * time.Hour},
 	}
@@ -762,8 +762,9 @@ func TestSlackValidate(t *testing.T) {
 		"no concurrency":         {func(s *SlackConfig) { s.Concurrency = 0 }, worker, "concurrency"},
 		"no attempt":             {func(s *SlackConfig) { s.MaxAttempts = 0 }, worker, "max_attempts"},
 		"no backoff":             {func(s *SlackConfig) { s.RetryBackoff = 0 }, worker, "retry_backoff"},
-		"a lease short of 30s":   {func(s *SlackConfig) { s.Lease = 30*time.Second - 1 }, worker, "foundry.slack.lease must be at least 30s"},
-		"a lease of 30s":         {func(s *SlackConfig) { s.Lease = 30 * time.Second }, worker, ""},
+		"a lease short of a run": {func(s *SlackConfig) { s.Lease = 3*time.Minute - 1 }, worker, "foundry.slack.lease is 2m59.999999999s"},
+		"the old 2m lease":       {func(s *SlackConfig) { s.Lease = 2 * time.Minute }, worker, "it must be at least 3m0s"},
+		"a lease past a run":     {func(s *SlackConfig) { s.Lease = 3 * time.Minute }, worker, ""},
 		"no share":               {func(s *SlackConfig) { s.APIShare = 0 }, worker, "api_share is 0"},
 		"a negative share":       {func(s *SlackConfig) { s.APIShare = -0.5 }, worker, "api_share"},
 		"more than every limit":  {func(s *SlackConfig) { s.APIShare = 1.01 }, worker, "api_share is 1.01"},

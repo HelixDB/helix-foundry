@@ -854,7 +854,8 @@ type SlackConfig struct {
 	// reads the turns it follows.
 	PollInterval time.Duration `koanf:"poll_interval"`
 	// Lease is how long a claimed message or followed turn stays the
-	// worker's without a renewal; a follow renews it on every read.
+	// worker's without a renewal; a follow renews it on every read, a
+	// message's claim never: at least MinSlackLease.
 	Lease time.Duration `koanf:"lease"`
 	// Concurrency is how many messages and follows one worker handles at
 	// once.
@@ -892,6 +893,13 @@ type SlackRetentionConfig struct {
 // Slack app's listing and Foundry's privacy policy promise that text from
 // Slack is gone 30 days after a thread's last message.
 const MaxSlackThreadRetention = 30 * 24 * time.Hour
+
+// MinSlackLease bounds foundry.slack.lease from below. A message's claim is
+// never renewed, and a card's Run waits for its action for up to
+// model.FoundryAgentExecutingFor, around which come the session and Slack's
+// calls (10 s each at most): a claim that ran out meanwhile would be handled
+// again by another worker, and its reply lost or posted twice.
+const MinSlackLease = model.FoundryAgentExecutingFor + time.Minute
 
 // MinSlackIntakeRetention bounds foundry.slack.retention.intake from below:
 // Slack retries an event for minutes after it is sent, and a retry whose
@@ -957,8 +965,8 @@ func (s SlackConfig) validate(roles Roles, local bool, agent AssistantConfig) er
 		return fmt.Errorf("foundry.slack.http.listen must be set when 'foundry-slack-worker' is in tasks")
 	case s.PollInterval <= 0 || s.Concurrency < 1 || s.MaxAttempts < 1 || s.RetryBackoff <= 0:
 		return fmt.Errorf("foundry.slack poll_interval, concurrency, max_attempts and retry_backoff must be positive")
-	case s.Lease < 30*time.Second:
-		return fmt.Errorf("foundry.slack.lease must be at least 30s")
+	case s.Lease < MinSlackLease:
+		return fmt.Errorf("foundry.slack.lease is %s; it must be at least %s, past a card's run and the Slack calls around it", s.Lease, MinSlackLease)
 	case !(s.APIShare > 0 && s.APIShare <= 1):
 		// Written so NaN is refused too.
 		return fmt.Errorf("foundry.slack.api_share is %v; it must be above 0 and at most 1", s.APIShare)
@@ -2372,7 +2380,7 @@ func Defaults() Config {
 	}, Slack: SlackConfig{
 		HTTP:         ServiceHTTPConfig{Listen: ":8104"},
 		PollInterval: time.Second,
-		Lease:        2 * time.Minute,
+		Lease:        MinSlackLease,
 		Concurrency:  16,
 		MaxAttempts:  5,
 		RetryBackoff: 10 * time.Second,
