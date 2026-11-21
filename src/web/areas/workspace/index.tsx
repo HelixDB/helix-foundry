@@ -24,6 +24,9 @@ import { BillingTab } from "./billing";
 import { EnrichmentTab } from "./enrichment";
 import { publicLinks } from "../dashboards/public-links";
 import { SharingTab } from "./sharing";
+import { SlackTab } from "./slack";
+import { SlackInstalledPage } from "./slack-installed";
+import { SlackLinkPage } from "./slack-link";
 import { DASHBOARD_URL, MembersTab } from "./members";
 import type { SettingsTab } from "./paths";
 import { roleLabel } from "./people";
@@ -83,8 +86,9 @@ type Tab = "general" | SettingsTab;
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI models" },
-  // A local build has no team, access, billing or People enrichment (its
-  // lookups are a hosted service's).
+  // A local build has no team, access, billing, People enrichment (its
+  // lookups are a hosted service's) or Slack (Helix's Slack app reaches a
+  // local install only through Helix's relay).
   ...(LOCAL
     ? []
     : [
@@ -92,6 +96,7 @@ const tabs: { id: Tab; label: string }[] = [
         { id: "access" as const, label: "Access" },
         { id: "billing" as const, label: "Plan & billing" },
         { id: "enrichment" as const, label: "People enrichment" },
+        { id: "slack" as const, label: "Slack" },
       ]),
   // Public dashboard links, where the build has them (never a local one).
   ...(publicLinks ? [{ id: "sharing" as const, label: "Sharing" }] : []),
@@ -144,6 +149,8 @@ function SettingsPage({ tab }: { tab: Tab }) {
           <BillingTab />
         ) : tab === "sharing" ? (
           <SharingTab />
+        ) : tab === "slack" ? (
+          <SlackTab />
         ) : (
           <EnrichmentTab />
         )}
@@ -154,8 +161,9 @@ function SettingsPage({ tab }: { tab: Tab }) {
 
 // /settings, /settings/ai, /settings/members, /settings/access,
 // /settings/billing (where Stripe Checkout returns) and
-// /settings/enrichment, and /settings/sharing where the build has public
-// dashboard links; only /settings and /settings/ai in a local build.
+// /settings/enrichment, /settings/slack, and /settings/sharing where the
+// build has public dashboard links; only /settings and /settings/ai in a
+// local build.
 export function SettingsRoutes() {
   return (
     <Routes>
@@ -170,11 +178,25 @@ export function SettingsRoutes() {
             path="enrichment"
             element={<SettingsPage tab="enrichment" />}
           />
+          <Route path="slack" element={<SettingsPage tab="slack" />} />
         </>
       )}
       {publicLinks && (
         <Route path="sharing" element={<SettingsPage tab="sharing" />} />
       )}
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+}
+
+// /slack/installed, where Slack returns from adding Helix Foundry, and
+// /slack/link, the link it sends a person in Slack: hosted only (main.tsx
+// mounts them outside a local build).
+export function SlackRoutes() {
+  return (
+    <Routes>
+      <Route path="installed" element={<SlackInstalledPage />} />
+      <Route path="link" element={<SlackLinkPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

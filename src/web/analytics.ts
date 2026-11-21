@@ -29,6 +29,10 @@ import type { AgentOperation } from "./areas/agent/model";
 import type { TemplateId } from "./areas/automations/model";
 import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
+import type {
+  SlackInstallFailure,
+  SlackLinkFailure,
+} from "./areas/workspace/slack-api";
 import type { FeedbackKind } from "./feedback";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
@@ -346,6 +350,15 @@ export type AnalyticsEvents = {
   workspace_member_invited: { role: "member" | "admin" };
   people_enrichment_enabled: undefined;
   people_enrichment_disabled: undefined;
+  // Slack (areas/workspace/slack-api.ts): adding Helix's Slack app (leaving
+  // for Slack, then back with it added or why not), a person linking their
+  // Slack account or why they couldn't, and disconnecting it.
+  slack_install_started: undefined;
+  slack_installed: undefined;
+  slack_install_failed: { reason: SlackInstallFailure };
+  slack_linked: undefined;
+  slack_link_refused: { reason: SlackLinkFailure };
+  slack_disconnected: undefined;
   signed_out: undefined;
 
   // The GitHub star prompt (src/web/shell/star-prompt.tsx): shown, with how

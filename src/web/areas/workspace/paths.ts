@@ -9,7 +9,8 @@ export type SettingsTab =
   | "access"
   | "billing"
   | "enrichment"
-  | "sharing";
+  | "sharing"
+  | "slack";
 
 export const workspacePaths = {
   settings: (tab?: SettingsTab) => "/settings" + (tab ? "/" + tab : ""),

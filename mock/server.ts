@@ -11,6 +11,7 @@ import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
 import { handleConnectPage } from "./routes/sign-ins";
+import { handleSlackPage, slackLinkToken } from "./routes/slack";
 import {
   LOCAL_TOKEN,
   SEED_EMAIL,
@@ -47,10 +48,17 @@ import { handleWorkos } from "./workos";
 // assessMs, assessOutcome, automationClockMs, automationStepMs,
 // automationRunsPerDay, automationsDisabled, automationAnswer,
 // automationCount, automationSuggestionsMs, automationSuggestionsOutcome,
-// automationSuggestionsAi }.
+// automationSuggestionsAi, slackAvailable, slackInstallAllowed,
+// slackTeamTaken, slackEmailMismatch }.
 //
 // GET /__mock/password-resets lists the reset links WorkOS would have
 // emailed, oldest first: [{ email, token }] (./routes/auth.ts).
+//
+// POST /__mock/slack/link-token { email, slackUser?, name?, handle?,
+// workspaceId?, guest?, unconfirmed? } is Helix Foundry's message to a
+// person in Slack: a link token and the site's /slack/link URL
+// (./routes/slack.ts). /mock/slack/authorize is Slack's page that asks to
+// add the app.
 //
 // GET /__mock/feedback lists the feedback POST /v1/feedback took
 // (./routes/feedback.ts), which the WFE would tell Helix's team of.
@@ -215,6 +223,15 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify(reply.body));
         return;
       }
+      if (
+        url.pathname === "/__mock/slack/link-token" &&
+        req.method === "POST"
+      ) {
+        const reply = slackLinkToken(JSON.parse(raw || "{}"));
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
       if (url.pathname === "/__mock/feedback" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ feedback: mockFeedback() }));
@@ -252,6 +269,7 @@ const server = createServer(async (req, res) => {
     if (handleBillingPage(req, res, url, raw)) return;
     if (handleConnectPage(req, res, url, raw)) return;
     if (handleDirectoryPage(req, res, url)) return;
+    if (handleSlackPage(req, res, url, raw)) return;
     // Foundry's door's (ingest.helix-db.com) public dashboard snapshots, not
     // the WFE's.
     if (handleSharedDashboard(req, res, url)) return;

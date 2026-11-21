@@ -5582,3 +5582,139 @@ export type CreateServiceCredentialResponse = {
   credential?: ServiceCredential;
   token?: string;
 };
+
+// ---------------------------------------------------------------- Slack
+// Routes under /v1/workspaces/{workspaceId}/foundry/slack... and POST
+// /v1/foundry/slack:finish-install (the state names the workspace): Helix's
+// own Slack app, Helix Foundry, which answers people in one Slack workspace
+// as Founder, each linked Slack user as their own Foundry user. Owners and
+// admins add it by Slack's OAuth (start, then finish once Slack returns to
+// /slack/installed) and disconnect it; each person links their Slack account
+// from the one-time link the app sends them in Slack (/slack/link, its token
+// in the fragment). Hosted only: a local install refuses every route. Where
+// foundry.slack is off, every route is FAILED_PRECONDITION, reason
+// FOUNDRY_SLACK_DISABLED; other refusals carry the reasons below.
+
+/** v1FoundrySlackInstall: a Slack workspace's install of the app. */
+export type FoundrySlackInstall = {
+  // The Slack workspace (team) and, inside an Enterprise Grid org, the org.
+  teamId?: string;
+  teamName?: string;
+  enterpriseId?: string;
+  // The app's bot user there, which people message.
+  botUserId?: string;
+  // Who installed it, last: the Foundry user and their name.
+  installedByUserId?: string;
+  installedByName?: string;
+  // When it was first installed, and last installed again.
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/**
+ * v1FoundrySlackLink: a Slack user who acts as a Foundry user: the bot
+ * answers them, in Slack, as that user.
+ */
+export type FoundrySlackLink = {
+  slackUserId?: string;
+  userId?: string;
+  // The Foundry user's name, as Foundry shows it.
+  userName?: string;
+  createdAt?: string;
+};
+
+/** v1FoundrySlack: a workspace's Slack. */
+export type FoundrySlack = {
+  workspaceId?: string;
+  // The workspace may add the app: Helix offers it to every workspace, or
+  // this one is on the list Helix offers it to until Slack's Marketplace
+  // review (foundry.slack.install_allowlist).
+  installAllowed?: boolean;
+  // The caller is an owner or admin: they add and disconnect the app and
+  // see who is linked.
+  canManage?: boolean;
+  // The workspace's install, and the caller's own Slack account in it;
+  // unset while there is none.
+  install?: FoundrySlackInstall | null;
+  myLink?: FoundrySlackLink | null;
+};
+
+/**
+ * v1FoundrySlackResponse: GET .../foundry/slack, and the answer of
+ * :finish-install and :disconnect.
+ */
+export type FoundrySlackResponse = { slack?: FoundrySlack };
+
+/**
+ * v1StartFoundrySlackInstallResponse: POST .../foundry/slack:start-install
+ * (body {}), owners and admins: Slack's page that asks to add the app,
+ * returning to the site's /slack/installed with a code and the state, which
+ * is bound to the caller and the workspace for ten minutes, once.
+ * FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on the install list),
+ * FOUNDRY_SLACK_INSTALLED (it has an install), FOUNDRY_AGENT_DISABLED
+ * (Founder is off).
+ */
+export type StartFoundrySlackInstallResponse = { authorizeUrl?: string };
+
+/**
+ * v1FinishFoundrySlackInstallRequest: POST /v1/foundry/slack:finish-install,
+ * what Slack returned. The state must be the caller's, unexpired and unspent
+ * (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner or admin.
+ * FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL, FOUNDRY_SLACK_SCOPES,
+ * FOUNDRY_SLACK_REFUSED, FOUNDRY_SLACK_TEAM_TAKEN,
+ * FOUNDRY_SLACK_DISCONNECTING, FOUNDRY_SLACK_INSTALLED. The same Slack
+ * workspace again is a reinstall, which keeps its links.
+ */
+export type FinishFoundrySlackInstallRequest = { code: string; state: string };
+
+/** v1ListFoundrySlackLinksResponse: GET .../foundry/slack/links, owners and admins; oldest first. */
+export type ListFoundrySlackLinksResponse = { links?: FoundrySlackLink[] };
+
+/**
+ * FoundryServicePreviewFoundrySlackLinkBody and
+ * FoundryServiceCreateFoundrySlackLinkBody: POST
+ * .../foundry/slack/links:preview and POST .../foundry/slack/links, the
+ * token the app's link carries in its fragment (#t=). A token not live in
+ * the workspace's install is FAILED_PRECONDITION FOUNDRY_SLACK_LINK_EXPIRED.
+ */
+export type FoundrySlackLinkTokenRequest = { token: string };
+
+/**
+ * v1FoundrySlackLinkRefusal: why a Slack user can't be linked to the
+ * caller. UNSPECIFIED: they can be. EMAIL_MISMATCH: their Slack email isn't
+ * the caller's, or Slack hides it. EMAIL_UNCONFIRMED: Slack hasn't confirmed
+ * it. NOT_A_MEMBER: a guest, a bot, a deactivated account, or someone of
+ * another organisation or workspace.
+ */
+export type FoundrySlackLinkRefusal =
+  | "FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED"
+  | "FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH"
+  | "FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_UNCONFIRMED"
+  | "FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER";
+
+/**
+ * v1PreviewFoundrySlackLinkResponse: what linking the token's Slack user to
+ * the caller would do, before it is spent.
+ */
+export type PreviewFoundrySlackLinkResponse = {
+  // The installed Slack workspace.
+  teamName?: string;
+  // The Slack user: their name and handle, and their email with all but
+  // its first character and its domain hidden ("a•••@acme.com").
+  slackUserId?: string;
+  slackName?: string;
+  slackHandle?: string;
+  slackEmailMasked?: string;
+  // They may be linked to the caller; else `refusal` says why.
+  matchesYou?: boolean;
+  refusal?: FoundrySlackLinkRefusal;
+};
+
+/**
+ * v1FoundrySlackLinkResponse: POST .../foundry/slack/links. It replaces the
+ * Slack user's earlier link, and the caller's; a refused one is
+ * FAILED_PRECONDITION FOUNDRY_SLACK_LINK_REFUSED, the refusal's name in its
+ * metadata (`refusal`). DELETE .../foundry/slack/links/{slackUserId}
+ * unlinks the caller's own, or, for an owner or admin, anyone's.
+ */
+export type FoundrySlackLinkResponse = { link?: FoundrySlackLink };

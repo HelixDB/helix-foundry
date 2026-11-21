@@ -17,6 +17,7 @@ import { eventSourceRoutes } from "./event-sources";
 import { feedbackRoutes } from "./feedback";
 import { reviewRoutes } from "./reviews";
 import { signInRoutes } from "./sign-ins";
+import { slackRoutes } from "./slack";
 import { loadRoutes } from "./loads";
 import { ontologiesRoutes } from "./ontologies";
 import { ontologyRoutes } from "./ontology";
@@ -57,4 +58,5 @@ export const routes: MockRoute[] = [
   ...databaseRoutes,
   ...accessRoutes,
   ...directoryRoutes,
+  ...slackRoutes,
 ].map(guarded);

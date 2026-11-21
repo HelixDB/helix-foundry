@@ -227,6 +227,14 @@ export const mock = {
     // The load holds an approved claim's document with other text than a
     // resend sends (contract 4.17.0): refused in place as document_changed.
     documentChanged?: boolean;
+    // Helix Foundry for Slack (mock/routes/slack.ts): off where the API
+    // runs, the workspace off the install list, the Slack workspace held by
+    // another Foundry workspace, and every Slack user's email someone
+    // else's.
+    slackAvailable?: boolean;
+    slackInstallAllowed?: boolean;
+    slackTeamTaken?: boolean;
+    slackEmailMismatch?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
@@ -271,6 +279,27 @@ export const mock = {
       { method: "POST" },
     );
     if (!res.ok) throw new Error(`prune run: ${res.status}`);
+  },
+  /**
+   * Helix Foundry's message to a person in Slack: a one-time link token of
+   * the workspace's install (Acme's by default) for a Slack user with that
+   * email, and the site's /slack/link URL carrying it in its fragment.
+   */
+  slackLinkToken: async (link: {
+    email: string;
+    slackUser?: string;
+    name?: string;
+    handle?: string;
+    workspaceId?: string;
+    guest?: boolean;
+    unconfirmed?: boolean;
+  }): Promise<{ token: string; url: string }> => {
+    const res = await fetch(`${MOCK}/__mock/slack/link-token`, {
+      method: "POST",
+      body: JSON.stringify(link),
+    });
+    if (!res.ok) throw new Error(`slack link token: ${res.status}`);
+    return res.json();
   },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP

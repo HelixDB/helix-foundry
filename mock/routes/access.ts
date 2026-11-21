@@ -863,6 +863,12 @@ const RULES: Record<string, Rule> = {
   [`DELETE ${W}/agent/threads/{id}`]: "workspace",
   [`GET ${W}/agent/turns/{id}/events`]: "workspace",
   [`POST ${W}/agent/turns/{id}:cancel`]: "workspace",
+  // Slack: a grantee sees the install and links (and unlinks) its own Slack
+  // account; its Slack turns are then read-only Founder, as here.
+  [`GET ${W}/slack`]: "workspace",
+  [`POST ${W}/slack/links:preview`]: "workspace",
+  [`POST ${W}/slack/links`]: "workspace",
+  [`DELETE ${W}/slack/links/{slackUserId}`]: "workspace",
 };
 /**
  * The Foundry routes the WFE gates on reading the ontology's database: a

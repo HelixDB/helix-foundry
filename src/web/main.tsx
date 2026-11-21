@@ -50,6 +50,7 @@ import { myAccessQuery } from "./areas/workspace/access-api";
 import { granteeRedirect } from "./areas/workspace/access-model";
 import { ontologyQueries } from "./areas/ontology/queries";
 import { captureCallback, tabStorage } from "./areas/data/sign-ins";
+import { captureSlackReturn } from "./areas/workspace/slack-return";
 import {
   Loading,
   WorkspaceContext,
@@ -79,6 +80,13 @@ if (typeof window !== "undefined") {
   captureCallback(window.location, tabStorage(), (path) =>
     window.history.replaceState(window.history.state, "", path),
   );
+  // Slack's return from adding Helix Foundry, and the link it sends a person
+  // (its token in the fragment), move into this tab the same way, hosted
+  // only (./areas/workspace/slack-return.ts).
+  if (!LOCAL)
+    captureSlackReturn(window.location, tabStorage(), (path) =>
+      window.history.replaceState(window.history.state, "", path),
+    );
 }
 
 // Each area's index.tsx exports its route components; main.tsx owns the table.
@@ -92,7 +100,9 @@ const data = () => import("./areas/data"),
   dashboards = () => import("./areas/dashboards"),
   automations = () => import("./areas/automations"),
   workspace = () => import("./areas/workspace");
-const SettingsRoutes = area(workspace, "SettingsRoutes");
+const SettingsRoutes = area(workspace, "SettingsRoutes"),
+  // Slack's return from adding Helix Foundry, and its link to a person.
+  SlackRoutes = area(workspace, "SlackRoutes");
 // Data, Ontology, Dashboards and Automations (Workflows, at /workflows) own
 // their whole URL prefix, and the
 // Ontology area also the Explorer's and Ask's: each *Routes component holds
@@ -161,10 +171,11 @@ function ToWorkflows() {
 // offers only the new-ontology wizard, which connects data and uploads
 // documents in place, the pages of the ontology it creates (they open
 // before the list has it), Settings, for the plan a database connection
-// needs, and the callback of a sign-in started from the wizard. One table
-// either way, so a page open as the first ontology arrives stays mounted. A
-// grantee (restricted to what source grants give) is never onboarding, and
-// stays on Ask and its ontologies' overviews (granteeRedirect).
+// needs, the callback of a sign-in started from the wizard, and Slack's
+// return and link pages (hosted). One table either way, so a page open as
+// the first ontology arrives stays mounted. A grantee (restricted to what
+// source grants give) is never onboarding, and stays on Ask, its
+// ontologies' overviews and Slack's link page (granteeRedirect).
 function WorkspaceRoutes({
   onboarding,
   grantee,
@@ -195,6 +206,7 @@ function WorkspaceRoutes({
       <Route path="/workflows/*" element={offered(<AutomationsRoutes />)} />
       <Route path="/automations/*" element={<ToWorkflows />} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
+      {!LOCAL && <Route path="/slack/*" element={<SlackRoutes />} />}
       <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="/connect/github" element={<ConnectGitHub />} />
       <Route path="*" element={offered(<NotFound />)} />

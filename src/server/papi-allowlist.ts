@@ -29,7 +29,8 @@ export type PapiArea =
   | "agent"
   | "dashboards"
   | "automations"
-  | "access";
+  | "access"
+  | "slack";
 export type PapiRoute = {
   area: PapiArea;
   method: HttpMethod;
@@ -840,6 +841,48 @@ export const papiRoutes = [
     area: "access",
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/service-credentials/{id}",
+  },
+
+  // Slack (Settings › Slack, /slack/installed, /slack/link): Helix's own
+  // Slack app. Owners and admins add it (start, then finish once Slack
+  // returns to the site), see who is linked and disconnect it; each person
+  // previews and makes their own link from the token the app sent them, and
+  // unlinks it.
+  {
+    area: "slack",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack:start-install",
+  },
+  { area: "slack", method: "POST", path: "/v1/foundry/slack:finish-install" },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack:disconnect",
+  },
+  {
+    area: "slack",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links:preview",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links",
+  },
+  {
+    area: "slack",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links/{slackUserId}",
   },
 ] as const satisfies readonly PapiRoute[];
 
