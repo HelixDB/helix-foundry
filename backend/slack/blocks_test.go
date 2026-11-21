@@ -89,6 +89,17 @@ func TestMessageCheck(t *testing.T) {
 	text := s.Text("x")
 	long := func(n int) slack.Mrkdwn { return s.Text(strings.Repeat("x", n)) }
 	button := slack.Button{ActionID: slack.ActionDismiss, Text: "Dismiss"}
+	confirming := func(c slack.Confirm) slack.Message {
+		return ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Confirm: &c}}})
+	}
+	longPage, err := s.Page("/" + strings.Repeat("x", slack.MaxButtonURL))
+	require.NoError(t, err)
+	page, err := s.Page("/" + strings.Repeat("x", slack.MaxButtonURL-len(origin)-1))
+	require.NoError(t, err)
+	// Each limit holds at its edge.
+	require.NoError(t, confirming(slack.Confirm{Title: slack.Plain(strings.Repeat("é", slack.MaxConfirmTitle)), Text: long(slack.MaxConfirmText),
+		Confirm: slack.Plain(strings.Repeat("x", slack.MaxConfirmButton)), Deny: slack.Plain(strings.Repeat("x", slack.MaxConfirmButton))}).Check())
+	require.NoError(t, ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionOpen, Text: "x", URL: &page}}}).Check())
 	require.NoError(t, ok().Check())
 	require.NoError(t, ok(slack.Section{Text: long(slack.MaxSectionText)}).Check())
 	many := make([]slack.Block, slack.MaxBlocks)
@@ -97,30 +108,35 @@ func TestMessageCheck(t *testing.T) {
 	}
 	require.NoError(t, ok(many...).Check())
 	for name, m := range map[string]slack.Message{
-		"no text":           {Blocks: []slack.Block{slack.Divider{}}},
-		"text too long":     {Text: long(slack.MaxMessageText + 1)},
-		"too many blocks":   ok(append(many, slack.Divider{})...),
-		"nil block":         ok(nil),
-		"empty section":     ok(slack.Section{}),
-		"long section":      ok(slack.Section{Text: long(slack.MaxSectionText + 1)}),
-		"too many fields":   ok(slack.Section{Fields: make([]slack.Mrkdwn, slack.MaxSectionFields+1)}),
-		"empty field":       ok(slack.Section{Text: text, Fields: []slack.Mrkdwn{{}}}),
-		"long field":        ok(slack.Section{Text: text, Fields: []slack.Mrkdwn{long(slack.MaxFieldText + 1)}}),
-		"bad accessory":     ok(slack.Section{Text: text, Accessory: &slack.Button{ActionID: "x", Text: "x"}}),
-		"empty context":     ok(slack.Context{}),
-		"empty context el":  ok(slack.Context{Elements: []slack.Mrkdwn{{}}}),
-		"long context el":   ok(slack.Context{Elements: []slack.Mrkdwn{long(slack.MaxSectionText + 1)}}),
-		"too much context":  ok(slack.Context{Elements: make([]slack.Mrkdwn, slack.MaxContextItems+1)}),
-		"empty header":      ok(slack.Header{}),
-		"long header":       ok(slack.Header{Text: slack.Plain(strings.Repeat("é", slack.MaxHeaderText+1))}),
-		"no buttons":        ok(slack.Actions{}),
-		"too many buttons":  ok(slack.Actions{Elements: make([]slack.Button, slack.MaxActionElements+1)}),
-		"foreign action":    ok(slack.Actions{Elements: []slack.Button{{ActionID: "other", Text: "x"}}}),
-		"no button text":    ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss}}}),
-		"long button text":  ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: slack.Plain(strings.Repeat("x", slack.MaxButtonText+1))}}}),
-		"long value":        ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Value: slack.ButtonValue{Action: strings.Repeat("x", slack.MaxValue)}}}}),
-		"bad style":         ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Style: "green"}}}),
-		"half confirmation": ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Confirm: &slack.Confirm{Title: "x"}}}}),
+		"no text":            {Blocks: []slack.Block{slack.Divider{}}},
+		"text too long":      {Text: long(slack.MaxMessageText + 1)},
+		"too many blocks":    ok(append(many, slack.Divider{})...),
+		"nil block":          ok(nil),
+		"empty section":      ok(slack.Section{}),
+		"long section":       ok(slack.Section{Text: long(slack.MaxSectionText + 1)}),
+		"too many fields":    ok(slack.Section{Fields: make([]slack.Mrkdwn, slack.MaxSectionFields+1)}),
+		"empty field":        ok(slack.Section{Text: text, Fields: []slack.Mrkdwn{{}}}),
+		"long field":         ok(slack.Section{Text: text, Fields: []slack.Mrkdwn{long(slack.MaxFieldText + 1)}}),
+		"bad accessory":      ok(slack.Section{Text: text, Accessory: &slack.Button{ActionID: "x", Text: "x"}}),
+		"empty context":      ok(slack.Context{}),
+		"empty context el":   ok(slack.Context{Elements: []slack.Mrkdwn{{}}}),
+		"long context el":    ok(slack.Context{Elements: []slack.Mrkdwn{long(slack.MaxSectionText + 1)}}),
+		"too much context":   ok(slack.Context{Elements: make([]slack.Mrkdwn, slack.MaxContextItems+1)}),
+		"empty header":       ok(slack.Header{}),
+		"long header":        ok(slack.Header{Text: slack.Plain(strings.Repeat("é", slack.MaxHeaderText+1))}),
+		"no buttons":         ok(slack.Actions{}),
+		"too many buttons":   ok(slack.Actions{Elements: make([]slack.Button, slack.MaxActionElements+1)}),
+		"foreign action":     ok(slack.Actions{Elements: []slack.Button{{ActionID: "other", Text: "x"}}}),
+		"no button text":     ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss}}}),
+		"long button text":   ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: slack.Plain(strings.Repeat("x", slack.MaxButtonText+1))}}}),
+		"long value":         ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Value: slack.ButtonValue{Action: strings.Repeat("x", slack.MaxValue)}}}}),
+		"bad style":          ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Style: "green"}}}),
+		"half confirmation":  ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionDismiss, Text: "x", Confirm: &slack.Confirm{Title: "x"}}}}),
+		"long confirm title": confirming(slack.Confirm{Title: slack.Plain(strings.Repeat("é", slack.MaxConfirmTitle+1)), Text: text, Confirm: "x", Deny: "x"}),
+		"long confirm text":  confirming(slack.Confirm{Title: "x", Text: long(slack.MaxConfirmText + 1), Confirm: "x", Deny: "x"}),
+		"long confirm":       confirming(slack.Confirm{Title: "x", Text: text, Confirm: slack.Plain(strings.Repeat("x", slack.MaxConfirmButton+1)), Deny: "x"}),
+		"long deny":          confirming(slack.Confirm{Title: "x", Text: text, Confirm: "x", Deny: slack.Plain(strings.Repeat("x", slack.MaxConfirmButton+1))}),
+		"long URL":           ok(slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionOpen, Text: "x", URL: &longPage}}}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Error(t, m.Check())

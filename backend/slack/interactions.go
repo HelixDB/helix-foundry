@@ -24,6 +24,10 @@ const (
 	// ActionLink is the link prompt's URL button. Slack reports its click
 	// too; ParseInteraction leaves it Unhandled (the page does the work).
 	ActionLink = "foundry.link"
+	// ActionOpen is a URL button opening a page of the site where something
+	// is done there (a workflow card's Review in Foundry, a draft's
+	// questions); Unhandled too.
+	ActionOpen = "foundry.open"
 )
 
 // Interaction is a click the bot acts on: a closed set. ParseInteraction

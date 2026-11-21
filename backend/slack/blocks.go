@@ -17,6 +17,10 @@ const (
 	MaxContextItems   = 10   // a context block's elements
 	MaxHeaderText     = 150  // a header's text
 	MaxButtonText     = 75   // a button's text
+	MaxButtonURL      = 3000 // the page a button opens
+	MaxConfirmTitle   = 100  // a confirmation's title
+	MaxConfirmText    = 300  // a confirmation's text
+	MaxConfirmButton  = 30   // a confirmation's confirm and deny buttons
 	MaxActionElements = 25   // an actions block's buttons
 	MaxMessageText    = 3000 // a message's notification text, as the bot cuts it
 )
@@ -242,8 +246,25 @@ func (b Button) check() error {
 		return errors.New("a button value too long")
 	case b.Style != StyleDefault && b.Style != StylePrimary && b.Style != StyleDanger:
 		return fmt.Errorf("a button style %q", b.Style)
-	case b.Confirm != nil && (b.Confirm.Title == "" || b.Confirm.Text.s == "" || b.Confirm.Confirm == "" || b.Confirm.Deny == ""):
+	case b.URL != nil && utf8.RuneCountInString(b.URL.u) > MaxButtonURL:
+		return errors.New("a button URL too long")
+	case b.Confirm != nil:
+		return b.Confirm.check()
+	}
+	return nil
+}
+
+func (c Confirm) check() error {
+	title, yes, no := utf8.RuneCountInString(string(c.Title)), utf8.RuneCountInString(string(c.Confirm)), utf8.RuneCountInString(string(c.Deny))
+	switch {
+	case title == 0 || c.Text.s == "" || yes == 0 || no == 0:
 		return errors.New("a confirmation without its words")
+	case title > MaxConfirmTitle:
+		return fmt.Errorf("a confirmation title of %d characters", title)
+	case c.Text.Len() > MaxConfirmText:
+		return fmt.Errorf("a confirmation text of %d characters", c.Text.Len())
+	case yes > MaxConfirmButton || no > MaxConfirmButton:
+		return fmt.Errorf("a confirmation button of %d characters", max(yes, no))
 	}
 	return nil
 }
