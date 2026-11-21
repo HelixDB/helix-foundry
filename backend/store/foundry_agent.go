@@ -433,6 +433,9 @@ func parseGrantedTargets(raw string) (*model.FoundryAgentThreadGrants, error) {
 
 // DeleteFoundryAgentThread deletes the user's thread and cancels its live
 // turn, charging what that turn reserved; ErrNotFound when it isn't theirs.
+// A thread started from Slack has its Slack-born text purged with it, and
+// its Slack mapping deleted (purgeFoundrySlackThreadsOf), so the Slack
+// sweep never looks for deleted threads.
 func (s *mysqlDB) DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -444,8 +447,10 @@ SET status='cancelled', lease_owner=NULL, lease_until=NULL, usd_micros=usd_micro
 WHERE thread_id=? AND status IN ('queued', 'running')`, id); err != nil {
 			return err
 		}
-		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET deleted_at=NOW(6) WHERE id=?`, id)
-		return err
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET deleted_at=NOW(6) WHERE id=?`, id); err != nil {
+			return err
+		}
+		return tx.purgeFoundrySlackThreadsOf(ctx, id)
 	})
 }
 

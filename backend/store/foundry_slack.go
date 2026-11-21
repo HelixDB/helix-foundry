@@ -40,13 +40,19 @@ const foundrySlackIntakeColumns = `id, install_id, dedupe_key, kind, conversatio
 const foundrySlackReplyColumns = `turn_id, install_id, channel_id, thread_ts, slack_user_id, message_ts, after_seq, posted, status, lease_owner,
        lease_until, next_poll_at, next_update_at, created_at, finished_at`
 
-// dueFoundrySlackThread is a Slack thread mapping whose Founder thread's
+// goneFoundrySlackThread is a Slack thread mapping s whose Founder thread
+// was deleted, or is gone.
+const goneFoundrySlackThread = `NOT EXISTS (SELECT 1 FROM foundry_agent_threads t WHERE t.id=s.agent_thread_id AND t.deleted_at IS NULL)`
+
+// dueFoundrySlackThread is a Slack thread mapping s whose Founder thread's
 // Slack-born text is due for the purge: idle since before its argument (a
 // duration in microseconds), its install revoked or gone, or its Founder
-// thread deleted or gone. It names the mapping s, its install i and its
-// Founder thread t, both left joined.
-const dueFoundrySlackThread = `(s.last_at < NOW(6) - INTERVAL ? MICROSECOND OR i.id IS NULL OR i.revoked_at IS NOT NULL
-  OR t.id IS NULL OR t.deleted_at IS NOT NULL)`
+// thread deleted or gone. It reads the install and the Founder thread in
+// subqueries, so a locking read of s locks s alone: Vitess cannot parse
+// FOR UPDATE OF.
+const dueFoundrySlackThread = `(s.last_at < NOW(6) - INTERVAL ? MICROSECOND
+  OR NOT EXISTS (SELECT 1 FROM foundry_slack_installs i WHERE i.id=s.install_id AND i.revoked_at IS NULL)
+  OR ` + goneFoundrySlackThread + `)`
 
 // --- Installs ---
 
@@ -516,21 +522,21 @@ VALUES (?, ?, ?, ?, ?, ?)`, m.ID, m.InstallID, m.ChannelID, m.ThreadTS, m.SlackU
 		if !isDuplicateKey(err) {
 			return err
 		}
-		var oldID, oldThread string
-		var live bool
-		err = tx.db.QueryRowContext(ctx, `SELECT s.id, s.agent_thread_id, t.id IS NOT NULL AND t.deleted_at IS NULL
-FROM foundry_slack_threads s LEFT JOIN foundry_agent_threads t ON t.id=s.agent_thread_id
-WHERE s.install_id=? AND s.channel_id=? AND s.thread_ts=? AND s.slack_user_id=? FOR UPDATE OF s`,
-			m.InstallID, m.ChannelID, m.ThreadTS, m.SlackUserID).Scan(&oldID, &oldThread, &live)
-		switch {
-		case errors.Is(err, sql.ErrNoRows), err == nil && live:
-			// The id was taken, or the Slack thread already continues a live
-			// Founder thread: one Slack thread never makes two.
-			return ErrConflict
-		case err != nil:
+		var oldID string
+		err = tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_slack_threads WHERE install_id=? AND channel_id=? AND thread_ts=? AND slack_user_id=?`,
+			m.InstallID, m.ChannelID, m.ThreadTS, m.SlackUserID).Scan(&oldID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrConflict // the id was taken
+		}
+		if err != nil {
 			return err
 		}
-		if err := tx.purgeFoundrySlackThread(ctx, oldID, oldThread); err != nil {
+		switch err := tx.purgeDueFoundrySlackThread(ctx, oldID, goneFoundrySlackThread); {
+		case errors.Is(err, ErrNotFound):
+			// The Slack thread already continues a live Founder thread: one
+			// Slack thread never makes two.
+			return ErrConflict
+		case err != nil:
 			return err
 		}
 		return insert(tx)
@@ -544,47 +550,52 @@ func (s *mysqlDB) TouchFoundrySlackThread(ctx context.Context, id string) error 
 }
 
 // PurgeFoundrySlackThreads purges up to limit Slack-born Founder threads
-// whose text is due: idle for idle (model.SlackThreadIdle) since their last
-// Slack message, of a revoked install, or deleted. Each in a transaction of
-// its own: its live turn is cancelled (charging what it reserved); its
-// messages, events and actions are deleted; its turns are kept for the spend
-// sums that read them, with their text (a message's input, answers, what
-// they asked, page context) blanked; the thread is deleted, its title
-// blanked; and its mapping is deleted. It returns how many it purged.
+// whose text is due: of a revoked install, or idle for idle
+// (model.SlackThreadIdle) since their last Slack message. (A Founder thread
+// deleted on the site is purged as it is deleted: DeleteFoundryAgentThread.)
+// Each in a transaction of its own: its live turn is cancelled (charging
+// what it reserved); its messages, events and actions are deleted; its turns
+// are kept for the spend sums that read them, with their text (a message's
+// input, answers, what they asked, page context) blanked; the thread is
+// deleted, its title blanked; and its mapping is deleted. It returns how
+// many it purged.
+//
+// Its candidates are read by index: a revoked install's mappings through the
+// installs' revoked_at and the mappings' install_id, the idle ones through
+// last_at; each is checked again under its locks.
 func (s *mysqlDB) PurgeFoundrySlackThreads(ctx context.Context, idle time.Duration, limit int) (int, error) {
 	if idle <= 0 || limit < 1 {
 		return 0, fmt.Errorf("a Slack thread purge has an idle time and a limit")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id FROM foundry_slack_threads s
-LEFT JOIN foundry_slack_installs i ON i.id=s.install_id LEFT JOIN foundry_agent_threads t ON t.id=s.agent_thread_id
-WHERE `+dueFoundrySlackThread+` ORDER BY s.last_at, s.id LIMIT ?`, idle.Microseconds(), limit)
-	if err != nil {
-		return 0, err
-	}
-	ids, err := scanAll(rows, func(r rowScanner) (string, error) {
-		var id string
-		return id, r.Scan(&id)
-	})
-	if err != nil {
-		return 0, err
+	var ids []string
+	for _, q := range []struct {
+		query string
+		args  []any
+	}{
+		{foundrySlackRevokedThreads, nil},
+		{foundrySlackIdleThreads, []any{idle.Microseconds()}},
+	} {
+		rows, err := s.db.QueryContext(ctx, q.query, append(q.args, limit-len(ids))...)
+		if err != nil {
+			return 0, err
+		}
+		more, err := scanAll(rows, func(r rowScanner) (string, error) {
+			var id string
+			return id, r.Scan(&id)
+		})
+		if err != nil {
+			return 0, err
+		}
+		ids = append(ids, more...)
+		if len(ids) >= limit {
+			break
+		}
 	}
 	purged := 0
 	for _, id := range ids {
 		err := s.WithTx(ctx, func(txDB Store) error {
-			tx := txDB.(*mysqlDB)
-			// Due again under the mapping's lock: a message since the read
-			// keeps it.
-			var agentThread string
-			err := tx.db.QueryRowContext(ctx, `SELECT s.agent_thread_id FROM foundry_slack_threads s
-LEFT JOIN foundry_slack_installs i ON i.id=s.install_id LEFT JOIN foundry_agent_threads t ON t.id=s.agent_thread_id
-WHERE s.id=? AND `+dueFoundrySlackThread+` FOR UPDATE OF s`, id, idle.Microseconds()).Scan(&agentThread)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
-			if err != nil {
-				return err
-			}
-			return tx.purgeFoundrySlackThread(ctx, id, agentThread)
+			// Due again under the locks: a message since the read keeps it.
+			return txDB.(*mysqlDB).purgeDueFoundrySlackThread(ctx, id, dueFoundrySlackThread, idle.Microseconds())
 		})
 		switch {
 		case errors.Is(err, ErrNotFound):
@@ -597,14 +608,74 @@ WHERE s.id=? AND `+dueFoundrySlackThread+` FOR UPDATE OF s`, id, idle.Microsecon
 	return purged, nil
 }
 
-// purgeFoundrySlackThread purges the locked mapping's Founder thread's
-// Slack-born text and deletes the mapping (PurgeFoundrySlackThreads).
-func (s *mysqlDB) purgeFoundrySlackThread(ctx context.Context, mappingID, agentThreadID string) error {
+// foundrySlackRevokedThreads selects up to a limit of the mappings of
+// revoked installs (foundry_slack_installs_sweep_idx, then the mappings'
+// unique key's install_id). An install is never deleted, so none is gone.
+const foundrySlackRevokedThreads = `SELECT s.id FROM foundry_slack_installs i JOIN foundry_slack_threads s ON s.install_id=i.id
+WHERE i.revoked_at IS NOT NULL LIMIT ?`
+
+// foundrySlackIdleThreads selects up to a limit of the mappings idle since
+// before its first argument (microseconds), longest idle first
+// (foundry_slack_threads_last_idx).
+const foundrySlackIdleThreads = `SELECT id FROM foundry_slack_threads WHERE last_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY last_at, id LIMIT ?`
+
+// purgeDueFoundrySlackThread purges the mapping mappingID
+// (purgeFoundrySlackThread) when due, a condition on the mapping s with
+// args, holds under its locks; ErrNotFound when it doesn't, or the mapping
+// is gone. It locks the Founder thread first, then the mapping: the order
+// DeleteFoundryAgentThread takes them in.
+func (s *mysqlDB) purgeDueFoundrySlackThread(ctx context.Context, mappingID, due string, args ...any) error {
+	var agentThread string
+	err := s.db.QueryRowContext(ctx, `SELECT agent_thread_id FROM foundry_slack_threads WHERE id=?`, mappingID).Scan(&agentThread)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
 	var locked string
-	if err := s.db.QueryRowContext(ctx, `SELECT id FROM foundry_agent_threads WHERE id=? FOR UPDATE`, agentThreadID).Scan(&locked); err != nil &&
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM foundry_agent_threads WHERE id=? FOR UPDATE`, agentThread).Scan(&locked); err != nil &&
 		!errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	err = s.db.QueryRowContext(ctx, `SELECT s.id FROM foundry_slack_threads s WHERE s.id=? AND s.agent_thread_id=? AND `+due+` FOR UPDATE`,
+		append([]any{mappingID, agentThread}, args...)...).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return s.purgeFoundrySlackThread(ctx, mappingID, agentThread)
+}
+
+// purgeFoundrySlackThreadsOf purges the Slack-born text of agentThreadID,
+// whose lock the caller holds, and deletes its mappings
+// (DeleteFoundryAgentThread).
+func (s *mysqlDB) purgeFoundrySlackThreadsOf(ctx context.Context, agentThreadID string) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_slack_threads WHERE agent_thread_id=? FOR UPDATE`, agentThreadID)
+	if err != nil {
+		return err
+	}
+	mappings, err := scanAll(rows, func(r rowScanner) (string, error) {
+		var id string
+		return id, r.Scan(&id)
+	})
+	if err != nil {
+		return err
+	}
+	for _, id := range mappings {
+		if err := s.purgeFoundrySlackThread(ctx, id, agentThreadID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// purgeFoundrySlackThread purges the Founder thread's Slack-born text and
+// deletes the mapping (PurgeFoundrySlackThreads); the caller holds the
+// Founder thread's lock and the mapping's.
+func (s *mysqlDB) purgeFoundrySlackThread(ctx context.Context, mappingID, agentThreadID string) error {
 	for _, stmt := range []string{
 		`UPDATE foundry_agent_turns
 SET status='cancelled', lease_owner=NULL, lease_until=NULL, usd_micros=usd_micros+reserved_micros, reserved_micros=0, finished_at=NOW(6)

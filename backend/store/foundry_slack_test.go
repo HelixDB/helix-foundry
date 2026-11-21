@@ -467,17 +467,31 @@ func TestFoundrySlackThreads(t *testing.T) {
 	assert.True(t, dbTrue(t, `SELECT last_at > NOW(6) - INTERVAL 1 MINUTE FROM foundry_slack_threads WHERE id=?`, m.ID))
 	assert.ErrorIs(t, f.db.TouchFoundrySlackThread(ctx, id26("SM-none")), store.ErrNotFound)
 
-	// A deleted Founder thread counts as none, and its mapping is replaced,
-	// its Slack text purged first.
+	// A Founder thread deleted on the site takes its Slack text and its
+	// mapping with it at once.
 	f.settle(t, f.claimed(t))
 	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentUser, f.threadID(1)))
 	_, err = f.db.GetFoundrySlackThread(ctx, i.ID, "C1", m.ThreadTS, "UADA")
 	assert.ErrorIs(t, err, store.ErrNotFound)
+	assert.True(t, dbTrue(t, `SELECT input='' FROM foundry_agent_turns WHERE id=?`, f.turnID(1)), "the deleted thread's text is purged")
+	assert.False(t, dbTrue(t, `SELECT COUNT(*)>0 FROM foundry_slack_threads WHERE id=?`, m.ID), "its mapping is gone")
 	require.NoError(t, f.db.CreateFoundrySlackThread(ctx, f.mapping(3, i.ID, f.threadID(2))))
 	got, err = f.db.GetFoundrySlackThread(ctx, i.ID, "C1", m.ThreadTS, "UADA")
 	require.NoError(t, err)
 	assert.Equal(t, f.threadID(2), got.AgentThreadID)
-	assert.True(t, dbTrue(t, `SELECT input='' FROM foundry_agent_turns WHERE id=?`, f.turnID(1)), "the old thread's text is purged")
+
+	// A Founder thread deleted some other way counts as none, and its mapping
+	// is replaced, its Slack text purged first.
+	f.settle(t, f.claimed(t))
+	dbExec(t, `UPDATE foundry_agent_threads SET deleted_at=NOW(6) WHERE id=?`, f.threadID(2))
+	_, err = f.db.GetFoundrySlackThread(ctx, i.ID, "C1", m.ThreadTS, "UADA")
+	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.NoError(t, f.send(4, 0))
+	require.NoError(t, f.db.CreateFoundrySlackThread(ctx, f.mapping(4, i.ID, f.threadID(4))))
+	got, err = f.db.GetFoundrySlackThread(ctx, i.ID, "C1", m.ThreadTS, "UADA")
+	require.NoError(t, err)
+	assert.Equal(t, f.threadID(4), got.AgentThreadID)
+	assert.True(t, dbTrue(t, `SELECT input='' FROM foundry_agent_turns WHERE id=?`, f.turnID(2)), "the old thread's text is purged")
 }
 
 // purgeable is a Slack-born thread with everything the purge takes: a
@@ -528,14 +542,14 @@ func TestFoundrySlackThreadPurge(t *testing.T) {
 	deleted := f.purgeable(t, 3, i.ID)
 	dbExec(t, `UPDATE foundry_slack_threads SET last_at=NOW(6) - INTERVAL 31 DAY WHERE id=?`, idle.ID)
 	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentUser, deleted.AgentThreadID))
+	assert.True(t, purged(t, deleted.AgentThreadID), "deleted on the site: purged as it is deleted")
 	var spentBefore int64
 	require.NoError(t, testDB.QueryRow(`SELECT SUM(usd_micros) FROM foundry_agent_turns WHERE workspace_id=?`, f.workspaceID).Scan(&spentBefore))
 
 	n, err := f.db.PurgeFoundrySlackThreads(ctx, model.SlackThreadIdle, 10)
 	require.NoError(t, err)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 1, n)
 	assert.True(t, purged(t, idle.AgentThreadID), "idle 30 days")
-	assert.True(t, purged(t, deleted.AgentThreadID), "deleted on the site")
 	assert.False(t, purged(t, fresh.AgentThreadID))
 	_, err = f.db.GetFoundrySlackThread(ctx, i.ID, "C1", fresh.ThreadTS, "UADA")
 	require.NoError(t, err, "a fresh thread stays")
@@ -587,6 +601,19 @@ func TestFoundrySlackThreadPurgeLimit(t *testing.T) {
 	n, err = f.db.PurgeFoundrySlackThreads(ctx, model.SlackThreadIdle, 2)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
+}
+
+// The purge reads its candidates by index, never by walking every mapping.
+func TestFoundrySlackThreadPurgeCandidatesUseIndexes(t *testing.T) {
+	f := newSlackFixture(t, "purgeplan")
+	i := f.installed(t)
+	for n := 1; n <= 3; n++ {
+		f.purgeable(t, n, i.ID)
+	}
+	_, err := testDB.Exec(`ANALYZE TABLE foundry_slack_threads, foundry_slack_installs`)
+	require.NoError(t, err)
+	assert.Equal(t, "foundry_slack_threads_last_idx", explainedKey(t, store.FoundrySlackIdleThreads, model.SlackThreadIdle.Microseconds(), 10))
+	assert.Equal(t, "foundry_slack_installs_sweep_idx", explainedKey(t, store.FoundrySlackRevokedThreads, 10))
 }
 
 // --- Intake ---
