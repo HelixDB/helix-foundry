@@ -715,9 +715,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, in.ID, in.InstallID, in.DedupeKey, string(in.Kind
 
 // ClaimFoundrySlackIntake leases one due intake row for lease, under a fresh
 // LeaseOwner: queued and due, or running under a lease that ran out; and,
-// in a conversation, its oldest open (queued or running) row, so a
-// conversation's messages run one at a time, in the order they came. Nil
-// when none is due.
+// in a conversation, its oldest open (queued or running) row while no other
+// row of it holds a live lease, so a conversation's messages run one at a
+// time, in the order they came. (Rows can commit out of the order of their
+// created_at: an older one that commits while a newer one runs waits for it.)
+// Nil when none is due.
 func (s *mysqlDB) ClaimFoundrySlackIntake(ctx context.Context, lease time.Duration) (*model.SlackIntake, error) {
 	if lease <= 0 {
 		return nil, fmt.Errorf("a Slack intake claim has a lease")
@@ -725,8 +727,9 @@ func (s *mysqlDB) ClaimFoundrySlackIntake(ctx context.Context, lease time.Durati
 	return claimFoundrySlack(ctx, s, `SELECT i.id FROM foundry_slack_intake i
 WHERE ((i.status='queued' AND i.next_attempt_at <= NOW(6)) OR (i.status='running' AND i.lease_until < NOW(6)))
   AND (i.conversation='' OR NOT EXISTS (SELECT 1 FROM foundry_slack_intake o
-    WHERE o.conversation=i.conversation AND o.status IN ('queued', 'running')
-      AND (o.created_at < i.created_at OR (o.created_at = i.created_at AND o.id < i.id))))
+    WHERE o.conversation=i.conversation AND o.status IN ('queued', 'running') AND o.id<>i.id
+      AND ((o.status='running' AND o.lease_until >= NOW(6))
+        OR o.created_at < i.created_at OR (o.created_at = i.created_at AND o.id < i.id))))
 ORDER BY i.next_attempt_at, i.id LIMIT 1 FOR UPDATE SKIP LOCKED`,
 		`UPDATE foundry_slack_intake SET status='running', attempts=attempts+1, lease_owner=?, lease_until=NOW(6) + INTERVAL ? MICROSECOND WHERE id=?`,
 		lease, func(tx *mysqlDB, id string) (*model.SlackIntake, error) {

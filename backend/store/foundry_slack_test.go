@@ -739,6 +739,27 @@ func TestFoundrySlackIntakeConversationOrder(t *testing.T) {
 	f.claimedIntake(t, 6)
 }
 
+// A row that commits after a newer row of its conversation was claimed (its
+// created_at older) waits for that row's live lease: two of a conversation
+// never run at once.
+func TestFoundrySlackIntakeOutOfOrderCommit(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "outoforder")
+	i := f.installed(t)
+	f.queue(t, i.ID, 2, "conv-a")
+	newer := f.claimedIntake(t, 2)
+	f.queue(t, i.ID, 1, "conv-a")
+	dbExec(t, `UPDATE foundry_slack_intake SET created_at=(SELECT c FROM (SELECT created_at - INTERVAL 1 SECOND AS c FROM foundry_slack_intake WHERE id=?) x)
+WHERE id=?`, newer.ID, f.intakeID(1))
+	assert.Nil(t, f.claim(t), "the older row waits while the newer one runs")
+	// Once the newer row's lease ran out, the older row goes first.
+	dbExec(t, `UPDATE foundry_slack_intake SET lease_until=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, newer.ID)
+	older := f.claimedIntake(t, 1)
+	assert.Nil(t, f.claim(t))
+	require.NoError(t, f.db.EndFoundrySlackIntake(ctx, older.ID, *older.LeaseOwner, model.SlackIntakeEnded{}))
+	f.claimedIntake(t, 2)
+}
+
 // A lease that ran out is reclaimed, by the conversation's oldest row first,
 // and the first claim's writes then change nothing.
 func TestFoundrySlackIntakeReclaim(t *testing.T) {
