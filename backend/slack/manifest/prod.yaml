@@ -1,0 +1,48 @@
+# Helix's distributed Slack app "Helix Foundry", production. Create or update
+# the app from this file; slack/manifest_test.go keeps its scopes and events
+# equal to what the bot needs (slack.Scopes, slack.Subscriptions).
+display_information:
+  name: Helix Foundry
+  description: Ask your Foundry ontologies and act on them from Slack.
+features:
+  bot_user:
+    display_name: Helix Foundry
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  agent_view:
+    agent_description: Answers questions from your Helix Foundry ontologies and prepares changes for you to approve.
+    suggested_prompts:
+      - title: What can you do?
+        message: What can you do in Foundry?
+      - title: Ask the data
+        message: Which customers renewed last month?
+oauth_config:
+  redirect_urls:
+    - https://foundry.helix-db.com/slack/installed
+  scopes:
+    bot:
+      - app_mentions:read
+      - im:history
+      - im:write
+      - chat:write
+      - assistant:write
+      - users:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    request_url: https://ingest.helix-db.com/v1/slack/events
+    bot_events:
+      - app_mention
+      - message.im
+      - app_uninstalled
+      - tokens_revoked
+      - agent_session_stopped
+  interactivity:
+    is_enabled: true
+    request_url: https://ingest.helix-db.com/v1/slack/interactivity
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

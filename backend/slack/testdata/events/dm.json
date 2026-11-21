@@ -1,0 +1,32 @@
+{
+  "token": "legacy-verification-token",
+  "team_id": "T0AAA1111",
+  "context_team_id": "T0AAA1111",
+  "context_enterprise_id": null,
+  "api_app_id": "A0FOUNDRY",
+  "event": {
+    "type": "message",
+    "channel_type": "im",
+    "user": "U0ADA0001",
+    "text": "hello &lt;there&gt;",
+    "ts": "1795000010.000100",
+    "team": "T0AAA1111",
+    "channel": "D0DM00001",
+    "event_ts": "1795000010.000100",
+    "client_msg_id": "5b3c"
+  },
+  "type": "event_callback",
+  "event_id": "Ev0DM000001",
+  "event_time": 1795000000,
+  "authorizations": [
+    {
+      "enterprise_id": null,
+      "team_id": "T0AAA1111",
+      "user_id": "U0BOT0001",
+      "is_bot": true,
+      "is_enterprise_install": false
+    }
+  ],
+  "is_ext_shared_channel": false,
+  "event_context": "4-eyJldCI6ImFwcF9tZW50aW9uIn0"
+}
