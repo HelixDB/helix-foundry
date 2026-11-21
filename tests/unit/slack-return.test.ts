@@ -212,7 +212,9 @@ describe("the boot script in <head>", () => {
     return { storage, history };
   }
   it("moves the link's token out of the URL before anything else runs", () => {
-    const { storage, history } = boot(`/slack/link?workspace=ws_acme#t=${TOKEN}`);
+    const { storage, history } = boot(
+      `/slack/link?workspace=ws_acme#t=${TOKEN}`,
+    );
     expect(TOKEN.startsWith(SLACK_LINK_TOKEN_PREFIX)).toBe(true);
     expect(history.replaceState).toHaveBeenCalledWith(
       { idx: 1 },
