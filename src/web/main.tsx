@@ -175,7 +175,8 @@ function ToWorkflows() {
 // return and link pages (hosted). One table either way, so a page open as
 // the first ontology arrives stays mounted. A grantee (restricted to what
 // source grants give) is never onboarding, and stays on Ask, its
-// ontologies' overviews and Slack's link page (granteeRedirect).
+// ontologies' overviews, Slack's link page and Settings › Slack
+// (granteeRedirect).
 function WorkspaceRoutes({
   onboarding,
   grantee,

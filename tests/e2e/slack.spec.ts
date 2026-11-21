@@ -271,6 +271,48 @@ test("members see the setting and link themselves, without managing it", async (
   );
 });
 
+test("a restricted member links themselves and unlinks from Settings › Slack", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await addToSlack(page);
+
+  // Eve's sources restrict her: Settings is hers only for Slack.
+  const eve = await newPage(browser);
+  await signIn(eve, "eve@example.com");
+  await eve.goto(
+    (await mock.slackLinkToken({ email: "eve@example.com", handle: "eve" }))
+      .url,
+  );
+  await eve.getByRole("button", { name: "Link", exact: true }).click();
+  await expect(
+    eve.getByRole("heading", { name: "Your Slack account is linked" }),
+  ).toBeVisible();
+  await eve.getByRole("link", { name: "Open Settings › Slack" }).click();
+  await expect(eve).toHaveURL(/\/settings\/slack$/);
+  await expect(eve.getByRole("tab")).toHaveText(["Slack"]);
+  await expect(settingsPanel(eve, "Slack")).toContainText("Acme Slack");
+  await expect(
+    settingsPanel(eve, "Slack").getByRole("button", { name: "Disconnect" }),
+  ).toHaveCount(0);
+  await expect(settingsPanel(eve, "Linked people")).toHaveCount(0);
+  const mine = settingsPanel(eve, "Your Slack account");
+  await expect(mine).toContainText("U0EVE");
+  await mine.getByRole("button", { name: "Unlink" }).click();
+  await eve
+    .getByRole("dialog", { name: "Unlink your Slack account?" })
+    .getByRole("button", { name: "Unlink" })
+    .click();
+  await expect(mine).toContainText("Not linked.");
+  // Her account menu leads back here; Settings' other tabs send her to Ask.
+  await eve.getByRole("button", { name: "Account" }).click();
+  await expect(eve.getByRole("menuitem", { name: "Slack" })).toBeVisible();
+  await eve.keyboard.press("Escape");
+  await eve.goto("/settings/members");
+  await expect(eve).toHaveURL(/\/ask/);
+});
+
 test("the setting says when Helix doesn't offer the app", async ({ page }) => {
   await signIn(page);
   await mock.configure({ slackInstallAllowed: false });

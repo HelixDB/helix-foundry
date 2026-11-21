@@ -103,11 +103,14 @@ const tabs: { id: Tab; label: string }[] = [
 ];
 
 function SettingsPage({ tab }: { tab: Tab }) {
-  const { name, role } = useWorkspace(),
+  const { name, role, grantee } = useWorkspace(),
     navigate = useNavigate();
-  // Access is owners' and admins'.
-  const shown = tabs.filter(
-    (t) => t.id !== "access" || canManage(role) || tab === "access",
+  // Access is owners' and admins'. A grantee reaches only Slack, to see the
+  // install and unlink their own account (granteeRedirect).
+  const shown = tabs.filter((t) =>
+    grantee
+      ? t.id === "slack"
+      : t.id !== "access" || canManage(role) || tab === "access",
   );
   return (
     <Page>

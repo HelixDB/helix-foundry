@@ -603,9 +603,11 @@ export function restrictedHoldingNothing(
  * overviews, the read-only pages of their shared loads (Records, an
  * entity's page and a document's view) and, with its Usage permission
  * (`workflows`), their Usage pages (old `/workflows` links too, which
- * redirect there). Connectors, Settings, workflows (people's alone, under
- * `/workflows` and the old `/automations`) and making an ontology open Ask; the Explorer's graph opens Records, and an ontology's
- * other pages its overview.
+ * redirect there), and Settings › Slack, where they see the install and
+ * unlink their own Slack account. Connectors, Settings' other tabs,
+ * workflows (people's alone, under `/workflows` and the old `/automations`)
+ * and making an ontology open Ask; the Explorer's graph opens Records, and
+ * an ontology's other pages its overview.
  *
  *     granteeRedirect("/data/connections/c") // "/ask"
  *     granteeRedirect("/explore/o") // "/explore/o/records"
@@ -613,6 +615,8 @@ export function restrictedHoldingNothing(
  *     granteeRedirect("/ontology/o/usage/w", true) // undefined
  *     granteeRedirect("/ontology/o/usage/w") // "/ontology/o"
  *     granteeRedirect("/workflows/a") // "/ask"
+ *     granteeRedirect("/settings/slack") // undefined
+ *     granteeRedirect("/settings/members") // "/ask"
  */
 export function granteeRedirect(
   pathname: string,
@@ -638,8 +642,9 @@ export function granteeRedirect(
         (third === "entities" && fourth)
         ? undefined
         : `/explore/${second}/records`;
-    case "data":
     case "settings":
+      return second === "slack" && third === undefined ? undefined : "/ask";
+    case "data":
     case "workflows":
     case "automations":
       return "/ask";
