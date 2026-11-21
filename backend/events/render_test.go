@@ -307,6 +307,26 @@ func TestRenderTitle(t *testing.T) {
 	}
 }
 
+// Head ends the document's own lines, its heading, id and time: what follows
+// is the piece's, its fields and its text.
+func TestRenderHead(t *testing.T) {
+	schema := storedSchema(t, `{"reply":"string","status":"string"}`)
+	for name, c := range map[string]struct{ row, head, rest string }{
+		"a piece with fields and text": {`"reply":"Hello\nworld","status":"open"`, "# Hello\n\n- Piece: p\n", "- status: open\n\nHello\nworld"},
+		"a piece of no text":           {`"status":"open"`, "# p\n\n- Piece: p\n", "- status: open\n"},
+		"a piece of no field":          {`"reply":"Hello"`, "# Hello\n\n- Piece: p\n", "\nHello"},
+	} {
+		r := render(t, pieceRow(c.row), schema, "reply")
+		if string(r.Body[:r.Head]) != c.head || string(r.Body[r.Head:]) != c.rest {
+			t.Errorf("%s: head %q, then %q", name, r.Body[:r.Head], r.Body[r.Head:])
+		}
+	}
+	timed := render(t, `{"id":"p","received_at":"2026-10-24T12:00:00.000000Z","occurred_at":"2026-10-23T09:30:00Z","reply":"Hello"}`, schema, "reply")
+	if string(timed.Body[:timed.Head]) != "# Hello\n\n- Piece: p\n- Occurred: 2026-10-23T09:30:00Z\n" {
+		t.Fatalf("head %q", timed.Body[:timed.Head])
+	}
+}
+
 func TestRenderRefuses(t *testing.T) {
 	s := storedSchema(t, `{"n":"number","reply":"string"}`)
 

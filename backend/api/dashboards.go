@@ -626,13 +626,13 @@ func (s *Service) readDashboardTiles(ctx context.Context, o *foundrymodel.Foundr
 			return nil, err
 		}
 		var result struct {
-			AsOf    string            `json:"as_of"`
+			AskedAt string            `json:"asked_at"`
 			Results []json.RawMessage `json:"results"`
 		}
 		if err := json.Unmarshal([]byte(resp.GetResultJson()), &result); err != nil || len(result.Results) != len(group) {
 			return nil, status.Error(codes.Internal, "the graph read's result doesn't answer each tile")
 		}
-		read := dashboardRead{loadID: loadID, asOf: result.AsOf, outcomes: make(map[string]json.RawMessage, len(group))}
+		read := dashboardRead{loadID: loadID, asOf: result.AskedAt, outcomes: make(map[string]json.RawMessage, len(group))}
 		for i, t := range group {
 			read.outcomes[t.ID] = result.Results[i]
 		}

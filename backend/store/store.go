@@ -119,6 +119,7 @@ type ReadStore interface {
 	ListOntologyVersions(ctx context.Context, ontologyID string, limit int) ([]*model.OntologyVersion, error)
 	GetActiveOntologyGeneration(ctx context.Context, ontologyID string) (*model.OntologyGeneration, error)
 	ListDueFoundryRefreshes(ctx context.Context, afterDue time.Time, afterID string, limit int) ([]*model.FoundryOntology, error)
+	ListFoundryRereads(ctx context.Context, classes []string, afterID string, limit int) ([]*model.FoundryOntology, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListOntologyGenerations(ctx context.Context, ontologyID string, limit int) ([]*model.OntologyGeneration, error)
 
@@ -160,6 +161,7 @@ type ReadStore interface {
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
 	ListFoundryLoads(ctx context.Context, ontologyID string) ([]*model.FoundryLoad, error)
 	ListFoundryLoadJobs(ctx context.Context, loadIDs []string, newest int) (map[string]model.FoundryLoadJobs, error)
+	ListFoundryLoadUnread(ctx context.Context, loadIDs []string) (map[string]model.FoundryLoadUnread, error)
 	GetActiveFoundryGraphJob(ctx context.Context, ontologyID string) (*model.FoundryGraphJob, error)
 	GetLatestFoundryGraphJob(ctx context.Context, ontologyID string, kind model.FoundryGraphJobKind) (*model.FoundryGraphJob, error)
 	GetFoundryGraphJob(ctx context.Context, ontologyID, id string) (*model.FoundryGraphJob, error)
@@ -381,6 +383,8 @@ type Store interface {
 	PutFoundryDataLayout(ctx context.Context, l *model.FoundryDataLayout, expectedRevision int64) error
 	CreateFoundryLoad(ctx context.Context, job *model.FoundryGraphJob) error
 	QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error)
+	QueueFoundryReread(ctx context.Context, workspaceID, ontologyID string, classes []string, job *model.FoundryGraphJob,
+		budget model.FoundryGraphBudget, now time.Time) (bool, error)
 	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID, syncID string, tables []string, refreshEvery time.Duration) error
 	SetFoundryOntologyAutoRefresh(ctx context.Context, workspaceID, id string, on bool) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error

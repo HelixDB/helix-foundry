@@ -40,6 +40,11 @@ type queue struct {
 	forgotten  []string
 	expired    []*model.ConnectorChangeBatch
 	refreshes  []*model.FoundryOntology
+	// rereads are the ontologies owed a re-read, in id order; rereadable
+	// those QueueFoundryReread queues, and reread what it was offered.
+	rereads    []*model.FoundryOntology
+	rereadable map[string]bool
+	reread     []rereadOffer
 	queueable  map[string]bool
 	// offered are the ontologies a refresh was offered to the queue for, and
 	// kinds the job each was offered as.
@@ -190,6 +195,34 @@ func (q *queue) QueueFoundryRefresh(_ context.Context, _, ontologyID string, job
 	q.offered = append(q.offered, ontologyID)
 	q.kinds = append(q.kinds, job.Kind)
 	return q.queueable[ontologyID], nil
+}
+
+// rereadOffer is one QueueFoundryReread call.
+type rereadOffer struct {
+	ontology string
+	classes  []string
+	budget   model.FoundryGraphBudget
+	at       time.Time
+}
+
+// ListFoundryRereads pages q.rereads by id.
+func (q *queue) ListFoundryRereads(_ context.Context, classes []string, afterID string, limit int) ([]*model.FoundryOntology, error) {
+	var out []*model.FoundryOntology
+	for _, o := range q.rereads {
+		if o.ID > afterID && len(out) < limit {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+func (q *queue) QueueFoundryReread(_ context.Context, _, ontologyID string, classes []string, job *model.FoundryGraphJob,
+	budget model.FoundryGraphBudget, now time.Time) (bool, error) {
+	if job.ID == "" {
+		return false, errors.New("a re-read needs a job id")
+	}
+	q.reread = append(q.reread, rereadOffer{ontologyID, classes, budget, now})
+	return q.rereadable[ontologyID], nil
 }
 
 // objects is a bucket recording deletes.
@@ -888,6 +921,41 @@ func TestFoundrySyncRefresh(t *testing.T) {
 		newTask(q, nil).refresh(context.Background())
 		if len(q.offered) != 3 {
 			t.Fatalf("offered %d refreshes, want all 3 across pages of 2", len(q.offered))
+		}
+	})
+}
+
+func TestFoundrySyncReread(t *testing.T) {
+	// Each ontology owed a re-read is offered to the queue, past a batch,
+	// with the classes that pass on their own, this month's budget and now:
+	// the queue checks under the ontology's lock that one is due.
+	t.Run("offers each ontology owed a re-read", func(t *testing.T) {
+		q := newQueue()
+		cur := "l1"
+		q.rereads = []*model.FoundryOntology{
+			{ID: "o1", WorkspaceID: "w", CurrentLoadID: &cur}, {ID: "o2", WorkspaceID: "w", CurrentLoadID: &cur},
+			{ID: "o3", WorkspaceID: "w", CurrentLoadID: &cur},
+		}
+		q.rereadable = map[string]bool{"o2": true}
+		before := testutil.ToFloat64(rereadsQueued)
+		newTask(q, nil).reread(context.Background())
+		if len(q.reread) != 3 || q.reread[0].ontology != "o1" || q.reread[2].ontology != "o3" {
+			t.Fatalf("offered = %+v", q.reread)
+		}
+		o := q.reread[0]
+		if !slices.Contains(o.classes, "quota") || !slices.Contains(o.classes, "rate_limited") || slices.Contains(o.classes, "unsupported") ||
+			!o.at.Equal(now) || o.budget.CapMicros != 100_000_000 || !o.budget.Since.Equal(time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)) {
+			t.Fatalf("offer = %+v", o)
+		}
+		if testutil.ToFloat64(rereadsQueued)-before != 1 {
+			t.Fatal("the queued re-read wasn't counted")
+		}
+	})
+	t.Run("offers nothing when no load is owed one", func(t *testing.T) {
+		q := newQueue()
+		newTask(q, nil).reread(context.Background())
+		if len(q.reread) != 0 {
+			t.Fatalf("offered = %+v", q.reread)
 		}
 	})
 }

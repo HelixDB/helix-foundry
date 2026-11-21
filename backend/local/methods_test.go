@@ -51,6 +51,7 @@ var refused = map[string]string{
 	foundry("ListFoundryEventSourceTokens"):                                  noSenders,
 	foundry("RevokeFoundryEventSourceToken"):                                 noSenders,
 	foundry("ListFoundryEventBatches"):                                       noSenders,
+	foundry("ListFoundryEventPieces"):                                        noSenders,
 	"/helix.foundry.v1.FoundryEventsService/SendFoundryEvents":               noSenders,
 	"/helix.foundry.v1.FoundryEventsService/ValidateFoundryEventSourceToken": noSenders,
 	"/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder":           noReminders,

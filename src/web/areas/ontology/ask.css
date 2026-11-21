@@ -181,6 +181,17 @@
   flex: 0 1 auto;
   min-width: 0;
 }
+/* The as-of date: the label draws the box, as for the pickers. */
+.ak-as-of input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-base);
+}
 /* Positioned, so absolutely placed descendants (screen reader text) stay
    inside the scroller instead of stretching the page. */
 .ak-scroll {

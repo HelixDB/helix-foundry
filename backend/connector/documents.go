@@ -9,12 +9,26 @@ import (
 	"unicode/utf8"
 )
 
-// Format is how loads read a document (model.FoundryReadText).
+// Format is the type a stream's documents are stored as, and so how loads
+// read them (model.FoundryMediaType.ReadKind): a text format as its text, and
+// PDF as the text the document worker reads from it once, as it reads an
+// uploaded PDF's.
 type Format uint8
 
 const (
 	Markdown  Format = iota + 1 // text/markdown
 	PlainText                   // text/plain
+	// WebVTT is a transcript's cues (text/vtt), as a meeting's recording
+	// exports them: a stream of them is read as its turns, a line each
+	// with its start and speaker (transcript.Text), as an uploaded .vtt is.
+	// A kind may say where a transcript comes from in a NOTE block
+	// (transcript.WithNote).
+	WebVTT
+	// PDF is a PDF file (application/pdf), stored as the source gives it.
+	// The document worker reads its text once, as it reads an uploaded
+	// PDF's: a load waits for that read, and one that fails (a scan with no
+	// text, an encrypted or damaged file) is recorded failed with its code.
+	PDF
 )
 
 // MediaType is the type a document of the format is stored as; "" for none.
@@ -24,6 +38,10 @@ func (f Format) MediaType() string {
 		return "text/markdown"
 	case PlainText:
 		return "text/plain"
+	case WebVTT:
+		return "text/vtt"
+	case PDF:
+		return "application/pdf"
 	}
 	return ""
 }
@@ -98,14 +116,18 @@ func (s Stream) Problem() string {
 	return ""
 }
 
-// Document is the text of one row of a stream's table, as the source has it now.
+// Document is the body of one row of a stream's table, as the source has it now.
 type Document struct {
 	ExternalID string    // the row's key value: 1-255 printable ASCII bytes, no space
 	Version    string    // 1-128 printable ASCII bytes; changes whenever Text may, including the kind's rendering (prefix a render revision)
 	At         time.Time // the item's time at the source (Granola: the note's created_at); orders the stream; non-zero
 	Title      string    // cleaned to document.ValidName; ExternalID when empty
 	URL        string    // absolute https, at most 2048 bytes; anything else is stored as none
-	Text       []byte    // non-empty UTF-8; cut at foundry.documents.max_bytes at a line, with a marker
+	// Text is the document's bytes, non-empty. A text format's are UTF-8,
+	// cut at foundry.documents.max_bytes at a line, with a marker; a PDF's
+	// are the file whole, never cut: one over foundry.documents.max_pdf_bytes
+	// is taken back as Drop takes one.
+	Text []byte
 }
 
 // DocumentWriter takes one read's documents. Like a RowWriter, it is used
@@ -117,7 +139,8 @@ type DocumentWriter interface {
 	// come with a newer At), or, in a full read, when the stream's cap is
 	// reached (over_cap).
 	Want(stream, externalID, version string) bool
-	// Put takes a document Want said yes to, once.
+	// Put takes a document Want said yes to, once. A PDF stream's document
+	// over foundry.documents.max_pdf_bytes is dropped (Drop) instead.
 	Put(ctx context.Context, stream string, doc Document) error
 	// Drop takes back a document Want said yes to, in place of its Put: the
 	// source has it but it can't be a document now (a body emptied, a file

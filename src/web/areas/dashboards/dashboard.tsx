@@ -168,6 +168,7 @@ function useTileStates(spec: DashboardSpec | undefined) {
       kind: "drawn",
       output: drawn.output,
       query: drawn.query,
+      unfilled: drawn.unfilled,
       ontologyId: read.ontologyId,
       loadId: read.loadId,
     };

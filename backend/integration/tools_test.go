@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // everyTool is a user's identity on a host that grants everything, so every
@@ -117,6 +118,7 @@ func TestEntryToolsSayWhatTheyAreFor(t *testing.T) {
 		toolFoundryAsk:            "Answer a question about a business from its Foundry ontology, with every claim citing",
 		toolFoundryReadGraph:      "Look up exact records in a business's Foundry ontology:",
 		toolFoundrySendPieces:     "Remember something for later in a business's Foundry ontology:",
+		toolFoundryRecall:         "Recall what was remembered in a business's Foundry API source:",
 	} {
 		assert.True(t, strings.HasPrefix(tools[name], lead), name)
 	}
@@ -198,6 +200,109 @@ func TestListConnectorsReadsBatchesOnlyOnAHostWithAPISources(t *testing.T) {
 		assert.NotContains(t, authorized, "ListFoundryEventBatches")
 		assert.Zero(t, b.batches)
 		assert.Nil(t, out.Connectors[1].EventSource)
+	}
+}
+
+// piecesBackend answers a list of an API source's pieces, keeping the request.
+type piecesBackend struct {
+	foundryv1.FoundryServiceClient
+	req *foundryv1.ListFoundryEventPiecesRequest
+	err error
+	// pieces, when set, are the answer's, none left out.
+	pieces []*foundryv1.FoundryEventSourcePiece
+}
+
+func (b *piecesBackend) ListFoundryEventPieces(_ context.Context, req *foundryv1.ListFoundryEventPiecesRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryEventPiecesResponse, error) {
+	b.req = req
+	if b.err != nil {
+		return nil, b.err
+	}
+	if b.pieces != nil {
+		return &foundryv1.ListFoundryEventPiecesResponse{Pieces: b.pieces}, nil
+	}
+	return &foundryv1.ListFoundryEventPiecesResponse{Truncated: true, Pieces: []*foundryv1.FoundryEventSourcePiece{
+		{Id: "n-2", ReceivedAt: timestamppb.New(time.Date(2026, 11, 17, 9, 30, 0, 0, time.UTC)), Title: "Short emails", Text: "# Short emails\n\n- Piece: n-2\n\nShort emails"},
+		{Id: "n-1", ReceivedAt: timestamppb.New(time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)), Title: "Long emails", Text: "# Long emails\n", Synced: true},
+	}}, nil
+}
+
+// Recall is a user's read of a Workspace's API source: the registry's check of the backend's
+// list, which takes the query and the limit as given.
+func TestRecallListsAnAPISourcesPieces(t *testing.T) {
+	b := &piecesBackend{}
+	var authorized []string
+	var grant Grant
+	identity := &Identity{Authorize: func(_ context.Context, _ any, g Grant, methods ...string) error {
+		authorized, grant = methods, g
+		return nil
+	}}
+	s := &Service{Foundry: b, Events: true}
+	call := &Call{}
+	out, count, err := s.RecallFoundryPieces(context.Background(), identity, call, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1", Query: "emails", Limit: 5})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ListFoundryEventPieces"}, authorized)
+	assert.Equal(t, foundryUserOnly, grant)
+	assert.Equal(t, "connector", call.ResourceKind)
+	assert.Equal(t, "source-1", call.ResourceID)
+	assert.True(t, proto.Equal(&foundryv1.ListFoundryEventPiecesRequest{WorkspaceId: "workspace-1", ConnectorId: "source-1", Query: "emails", Limit: 5}, b.req))
+	assert.Equal(t, 2, count)
+	assert.Equal(t, RecallOutput{ContentTrust: contentTrustUntrusted, EventSourceID: "source-1", Truncated: true, Pieces: []RecalledPieceOutput{
+		{ID: "n-2", ReceivedAt: "2026-11-17T09:30:00Z", Title: "Short emails", Text: "# Short emails\n\n- Piece: n-2\n\nShort emails"},
+		{ID: "n-1", ReceivedAt: "2026-11-16T09:30:00Z", Title: "Long emails", Text: "# Long emails\n", Synced: true},
+	}}, out)
+
+	// An agent's context holds less than the backend lists: the newest notes within 64 KiB of
+	// text, and always the newest, saying the rest were left out.
+	long := strings.Repeat("x", 40<<10)
+	b.pieces = []*foundryv1.FoundryEventSourcePiece{{Id: "n-3", Text: long}, {Id: "n-2", Text: long}, {Id: "n-1", Text: "short"}}
+	out, count, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "n-3", out.Pieces[0].ID)
+	assert.True(t, out.Truncated)
+	b.pieces = []*foundryv1.FoundryEventSourcePiece{{Id: "n-9", Text: strings.Repeat("x", 100<<10)}}
+	out, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.NoError(t, err)
+	assert.Len(t, out.Pieces, 1)
+	assert.False(t, out.Truncated)
+	b.pieces = []*foundryv1.FoundryEventSourcePiece{}
+	out, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.NoError(t, err)
+	assert.Equal(t, []RecalledPieceOutput{}, out.Pieces, "no notes is an empty list, not null")
+
+	// An id that is no id never reaches the backend, and a denial is the registry's.
+	b.req = nil
+	_, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "not an id"})
+	require.ErrorIs(t, err, errCodeInvalidArguments)
+	identity.Authorize = func(context.Context, any, Grant, ...string) error { return errCodeNotFound }
+	_, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.ErrorIs(t, err, errCodeNotFound)
+	assert.Nil(t, b.req)
+
+	// The backend's refusal of a source with no text field reaches the agent in its words.
+	identity.Authorize = func(context.Context, any, Grant, ...string) error { return nil }
+	b.err = status.Error(codes.FailedPrecondition, "this API source has no text field")
+	_, _, err = s.RecallFoundryPieces(context.Background(), identity, &Call{}, RecallInput{WorkspaceID: "workspace-1", EventSourceID: "source-1"})
+	require.ErrorContains(t, err, "this API source has no text field")
+}
+
+// Recall reads a Workspace's API source, so only a user who may browse the Workspace gets it,
+// on a host with API sources: never a service key, a send token or an agent registration.
+func TestRecallIsAUsersOnAHostWithAPISources(t *testing.T) {
+	sendToken := &Identity{EventSource: &EventSourceIdentity{WorkspaceID: "workspace-1", ConnectorID: "source-1"}, HasPermission: func(Permission) bool { return false }}
+	serviceKey := &Identity{ServiceKey: true, WorkspaceID: "workspace-1", HasPermission: func(Permission) bool { return true }}
+	for name, tc := range map[string]struct {
+		s        *Service
+		identity *Identity
+		want     bool
+	}{
+		"a user on a host with API sources": {&Service{FoundryURL: "https://foundry.example", Events: true}, everyTool(), true},
+		"a user on a host without them":     {&Service{FoundryURL: "https://foundry.example"}, everyTool(), false},
+		"a service key":                     {&Service{FoundryURL: "https://foundry.example", Events: true}, serviceKey, false},
+		"a send token":                      {&Service{FoundryURL: "https://foundry.example", Events: true}, sendToken, false},
+	} {
+		_, listed := listedTools(t, tc.s, tc.identity)[toolFoundryRecall]
+		assert.Equal(t, tc.want, listed, name)
 	}
 }
 
@@ -1110,5 +1215,57 @@ func TestEveryWorkspaceInputDefaultsItsWorkspaceID(t *testing.T) {
 	} {
 		*in.Workspace() = "workspace-1"
 		assert.Contains(t, mustJSON(t, in), `"workspace_id":"workspace-1"`, "%T", in)
+	}
+}
+
+// What the MCP's ask takes as a focus is what the backend's ParseFocus takes:
+// an entity by its id, its key's plain values or a name (contract 4.27.0).
+func TestFoundryEntityInputIsAFocus(t *testing.T) {
+	var fromJSON FoundryEntityInput
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"Ticket","key":42}`), &fromJSON))
+	for _, in := range []FoundryEntityInput{
+		{Type: "Customer", ID: "scus_1"},
+		{Type: "Site", Key: "app.example.com"},
+		{Key: map[string]any{"flight": "AA 100", "day": "2026-03-14"}},
+		{Name: "Acme Corp"},
+		fromJSON,
+	} {
+		raw, err := json.Marshal(in)
+		require.NoError(t, err)
+		_, err = ontologyagent.ParseFocus(string(raw))
+		assert.NoError(t, err, "%s", raw)
+	}
+	for _, in := range []FoundryEntityInput{
+		{Type: "Customer"},
+		{Type: "Customer", ID: "scus_1", Name: "Acme"},
+		{ID: "scus_1"},
+		{Key: 1.5},
+	} {
+		raw, _ := json.Marshal(in)
+		_, err := ontologyagent.ParseFocus(string(raw))
+		assert.Error(t, err, "%s", raw)
+	}
+}
+
+// A load the model left documents unread of says so, how many, why and when Helix reads them
+// again, so an agent never reports it as complete; one with none says nothing.
+func TestGetLoadSaysWhatTheModelLeftUnread(t *testing.T) {
+	at := time.Date(2026, 11, 14, 12, 41, 0, 0, time.UTC)
+	load := &foundryv1.FoundryLoad{Id: "load-1", VersionId: "version-1", Status: "partial", Current: true,
+		Unread: &foundryv1.FoundryLoadUnread{Documents: 9, ModelFailure: "quota", Reason: "provider quota", RereadAt: timestamppb.New(at)}}
+	arguments := map[string]any{"workspace_id": "workspace-1", "ontology_id": "ontology-1", "load_id": "load-1"}
+	out := called(t, &Service{Foundry: &loadBackend{load: load}}, toolFoundryGetLoad, arguments)
+	assert.Equal(t, map[string]any{"documents": 9.0, "model_failure": "quota", "reason": "provider quota", "reread_at": "2026-11-14T12:41:00Z"},
+		out["load"].(map[string]any)["unread"])
+
+	out = called(t, &Service{Foundry: &loadBackend{load: &foundryv1.FoundryLoad{Id: "load-1", Status: "ready"}}}, toolFoundryGetLoad, arguments)
+	assert.NotContains(t, out["load"], "unread")
+
+	tools, err := connect(t, &Service{}, reader()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	for _, tool := range tools.Tools {
+		if tool.Name == toolFoundryGetLoad {
+			assert.Contains(t, mustJSON(t, tool.OutputSchema), "is not complete")
+		}
 	}
 }

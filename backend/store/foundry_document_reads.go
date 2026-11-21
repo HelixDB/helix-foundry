@@ -90,15 +90,20 @@ const pdfReadEnded = ` (d.media_type<>'` + string(model.FoundryMediaPDF) + `' OR
 // those whose text is there to read (model.FoundryDocument.TextKey).
 const pdfReadSucceeded = ` (d.media_type<>'` + string(model.FoundryMediaPDF) + `' OR r.status='succeeded')`
 
-// queueFoundryFileRead queues the standard read of document id when it is a
-// table file or a PDF, which the document worker reads once; a read already
-// there stays as it is.
-func (s *mysqlDB) queueFoundryFileRead(ctx context.Context, id string) error {
+// queueFoundryFileRead queues the standard read of each document of ids
+// that is a table file or a PDF, which the document worker reads once: an
+// upload's, when it completes, and a connector's new documents, as a sync
+// publishes them. A read already there stays as it is.
+func (s *mysqlDB) queueFoundryFileRead(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
 	types := model.FoundryMediaTypesRead(model.FoundryReadTable, model.FoundryReadPDF)
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO foundry_document_reads (document_id, mode, workspace_id, status)
-SELECT id, 'standard', workspace_id, 'queued' FROM foundry_documents WHERE id=? AND media_type IN (`+idPlaceholders(len(types))+`)
-ON DUPLICATE KEY UPDATE document_id=foundry_document_reads.document_id`, append([]any{id}, mediaTypeArgs(types)...)...)
+SELECT id, 'standard', workspace_id, 'queued' FROM foundry_documents
+WHERE id IN (`+idPlaceholders(len(ids))+`) AND media_type IN (`+idPlaceholders(len(types))+`)
+ON DUPLICATE KEY UPDATE document_id=foundry_document_reads.document_id`, append(toAnySlice(ids), mediaTypeArgs(types)...)...)
 	return err
 }
 
@@ -209,7 +214,7 @@ func (s *mysqlDB) failLapsedFoundryFileRead(ctx context.Context, spent *lapsedFi
 	doc := spent.document
 	pdf := doc.MediaType.ReadKind() == model.FoundryReadPDF
 	message := fmt.Sprintf("Helix could not finish reading this file in %d tries: it stopped the reader or ran past its time; "+
-		"check the file and upload it again", spent.attempts)
+		"check the file, then upload it again or change it at its source", spent.attempts)
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		var ontologies []*model.FoundryOntology

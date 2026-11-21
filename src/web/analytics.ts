@@ -107,6 +107,19 @@ export type AutomationCall =
   | "cancel";
 
 /**
+ * How long a step of the sample company's tour took, in whole seconds: the
+ * step's own time (`seconds`), for its load the wait for a worker to pick the
+ * load up (`queued_seconds`), and the sample's whole time to the step's end
+ * from its database's connection (`total_seconds`). A page that didn't watch
+ * the step end (one opened later) sends none, nor a time Helix didn't give.
+ */
+export type SampleTiming = {
+  seconds?: number;
+  queued_seconds?: number;
+  total_seconds?: number;
+};
+
+/**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,
  * refused as asked (a 4xx: a cap, a plan, a precondition), or it failed.
  */
@@ -152,24 +165,16 @@ export type AnalyticsEvents = {
   ontology_step_shown: { step: WizardStepId; first: boolean };
   ontology_create_failed: { reason: "no_subscription" | Refusal };
 
-  // The landing page's copy buttons: the agent's setup prompt, or a local
-  // install's (visitors who take them never open sign-in).
-  setup_prompt_copied: { setup: "agent" | "local" };
-  // The landing page on a phone: a reminder to try Foundry on a computer
-  // set up (again: the address already had them), or why it wasn't; then a
-  // visit from a reminder's link or the README's (?via=).
-  reminder_requested: { again: boolean };
-  reminder_refused: { reason: "invalid" | "rate_limit" | "error" };
-  landing_returned: { via: "email" | "github" };
-
-  // The sample company: Use the sample, then its tour reaching each step.
+  // The sample company: Use the sample, then its tour reaching each step,
+  // with how long each took: its data (by the page's clock), its draft made
+  // into a version, and its load (by Helix's).
   sample_clicked: undefined;
-  sample_data_ready: undefined;
-  sample_ontology_ready: undefined;
-  sample_loaded: undefined;
+  sample_data_ready: SampleTiming;
+  sample_ontology_ready: SampleTiming;
+  sample_loaded: SampleTiming;
   sample_ask_opened: undefined;
   // The tour's first question answered, then Connect your own data.
-  sample_answered: undefined;
+  sample_answered: SampleTiming;
   sample_own_data_clicked: undefined;
 
   // The workspace's own data.
@@ -408,7 +413,7 @@ const TRACK_URL = "https://basket.databuddy.cc/track";
 
 /**
  * Sends an event before the page may leave (for WorkOS, Stripe, a
- * provider's sign-in, or the app from the landing page). The tracker holds custom events for up to 5 s and
+ * provider's sign-in). The tracker holds custom events for up to 5 s and
  * loses what it still holds when the page unloads (its build of Oct 2026),
  * and a call made before it loads waits in the SDK's queue, which the
  * navigation drops. So this waits for the tracker, at most a second, then

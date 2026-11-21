@@ -322,8 +322,9 @@ type HostTurn struct {
 }
 
 // hostSystem is what a CLI's model is told beside the Assistant's prompt.
-// Claude Code has Foundry's tools alone; Codex runs with the person's own
-// setup too, so its model is told to leave that alone.
+// Claude Code keeps its own system prompt, which this follows, with
+// Foundry's tools alone; Codex runs with the person's own setup too, so its
+// model is told to leave that alone.
 func hostSystem(runtime model.FoundryAgentRuntime) string {
 	if runtime == model.FoundryAgentRuntimeCodex {
 		return `
@@ -332,7 +333,7 @@ You run inside Codex on the person's computer, on their ChatGPT plan. Foundry's 
 	}
 	return `
 
-You run inside a command-line agent on the person's computer, on their own subscription. Your only tools are Foundry's, reached through the MCP server named foundry: use them as described above, under their names there. You have no shell, no files and no web access, and you need none: everything you know of this workspace comes from those tools.`
+You run inside Claude Code on the person's computer, signed in to their own Claude account. Your only tools here are Foundry's, reached through the MCP server named foundry: use them as described above, under their names there. Claude Code's own instructions, above Foundry's, speak of tools for coding that this session doesn't offer: you have no shell, no files and no web access, and you need none, since everything you know of this workspace comes from Foundry's tools. Where Claude Code's instructions on tone or format differ from Foundry's, follow Foundry's.`
 }
 
 // labels names each helper's runtime for people.

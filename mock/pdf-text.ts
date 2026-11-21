@@ -52,7 +52,7 @@ export async function readPdfText(bytes: Buffer): Promise<PdfRead> {
   if (opened instanceof Error)
     return unsupported(
       opened.name === "PasswordException"
-        ? "the PDF is encrypted; upload it without a password"
+        ? "the PDF is encrypted; save it without a password"
         : "the file is damaged or is not a PDF",
     );
   if (!opened.numPages) return unsupported("the PDF has no pages");

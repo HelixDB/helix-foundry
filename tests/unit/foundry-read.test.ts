@@ -10,9 +10,11 @@ import {
   parseQueryResult,
   parseReadResult,
   parseStepPred,
+  parseUnfilled,
   parseVia,
   parseViolationsResult,
   predString,
+  unfilledText,
 } from "@/shared/foundry-read";
 import { contractErrors } from "../../mock/agent-contract";
 
@@ -29,7 +31,7 @@ const fits = (value: unknown, def = "Answer") =>
 describe("the read envelope", () => {
   it("keeps each outcome in order, a failure's code and fields checked", () => {
     const body = {
-      as_of: "2026-10-19",
+      asked_at: "2026-10-19",
       results: [
         { ok: { kind: "pattern", rows: [] } },
         { error: { code: "budget", message: "too deep", limit: 2000000 } },
@@ -60,7 +62,7 @@ describe("the read envelope", () => {
         }),
       ),
     ).toEqual({
-      asOf: "2026-10-19",
+      askedAt: "2026-10-19",
       results: [
         { ok: true, value: { kind: "pattern", rows: [] } },
         {
@@ -116,9 +118,55 @@ describe("the read envelope", () => {
     expect(parseReadResult("[]")).toBeUndefined();
     expect(parseReadResult('{"results":{}}')).toBeUndefined();
     expect(parseReadResult('{"results":[]}')).toMatchObject({
-      asOf: "",
+      askedAt: "",
       results: [],
       stats: { instances: 0, wallMs: 0 },
+    });
+  });
+
+  it("keeps the day a read was as of, and current_only failures", () => {
+    const body = {
+      asked_at: "2026-11-18",
+      valid_at: "2026-03-01",
+      results: [
+        {
+          ok: {
+            kind: "view",
+            ontology_toml: "o",
+            mappings_toml: "m",
+            partial: [],
+          },
+        },
+        {
+          error: {
+            code: "current_only",
+            message:
+              "a query reads the load as it is now, so it can't answer as of 2026-03-01 (valid_at)",
+          },
+        },
+      ],
+      stats: { instances: 0, wall_ms: 1 },
+    };
+    expect(contractErrors("read_result", body)).toEqual([]);
+    const parsed = parseReadResult(JSON.stringify(body));
+    expect(parsed).toMatchObject({
+      askedAt: "2026-11-18",
+      validAt: "2026-03-01",
+    });
+    expect(parsed?.results[1]).toEqual({
+      ok: false,
+      error: {
+        code: "current_only",
+        message:
+          "a query reads the load as it is now, so it can't answer as of 2026-03-01 (valid_at)",
+      },
+    });
+    expect(
+      parseReadResult(JSON.stringify({ ...body, valid_at: null })),
+    ).not.toHaveProperty("validAt");
+    expect(parseFailure({ code: "current_only" })).toEqual({
+      code: "current_only",
+      message: "The read failed.",
     });
   });
 
@@ -128,7 +176,7 @@ describe("the read envelope", () => {
         { ok: true, value: { kind: "pattern", rows: [] } },
         parsePatternResult,
       ),
-    ).toEqual({ ok: true, value: { rows: [] } });
+    ).toEqual({ ok: true, value: { rows: [], unfilled: [] } });
     // An answer of another kind doesn't parse as this one.
     expect(
       outcomeOf(
@@ -339,6 +387,7 @@ describe("an entity read", () => {
           failure: { code: "invalid", message: "The read failed." },
         },
       ],
+      unfilled: [],
     });
     expect(parseEntityResult([])).toBeUndefined();
     expect(parseEntityResult({ kind: "entity" })).toBeUndefined();
@@ -351,6 +400,7 @@ describe("an entity read", () => {
       flags: [],
       violations: [],
       errors: [],
+      unfilled: [],
     });
   });
 });
@@ -400,6 +450,7 @@ describe("a pattern read", () => {
           rules: [],
         },
       ],
+      unfilled: [],
     });
   });
 });
@@ -507,7 +558,11 @@ describe("an explain read", () => {
     // A fact that doesn't hold has no root.
     const none = { kind: "explain", steps: [], root: null };
     fits(none);
-    expect(parseExplainResult(none)).toEqual({ steps: [], root: null });
+    expect(parseExplainResult(none)).toEqual({
+      steps: [],
+      root: null,
+      unfilled: [],
+    });
   });
 
   it("refuses half a proof: a bad step, a premise or root out of range, a cycle", () => {
@@ -568,10 +623,15 @@ describe("a violations read", () => {
         },
       ],
       next: "k1",
+      unfilled: [],
     });
     const last = { kind: "violations", records: [], next: null };
     fits(last);
-    expect(parseViolationsResult(last)).toEqual({ records: [], next: null });
+    expect(parseViolationsResult(last)).toEqual({
+      records: [],
+      next: null,
+      unfilled: [],
+    });
     expect(parseViolationsResult(null)).toBeUndefined();
   });
 });
@@ -657,6 +717,29 @@ describe("an evidence read", () => {
         i.kind === "quote" ? i.value : null,
       ),
     ).toEqual(["net_30", 30, undefined]);
+  });
+
+  it("flags a quote of an undated document, read as of a day", () => {
+    const quote = {
+      kind: "quote",
+      doc_id: "doc_1",
+      section: 0,
+      start: 0,
+      end: 12,
+      quote: "Net 30 terms",
+      confidence: 0.9,
+    };
+    const ok = {
+      kind: "evidence",
+      items: [{ ...quote, undated: true }, quote, { ...quote, undated: false }],
+    };
+    fits(ok);
+    expect(
+      parseEvidenceResult({
+        ...ok,
+        items: [...ok.items, { ...quote, undated: "yes" }],
+      })?.items.map((i) => i.kind === "quote" && i.undated),
+    ).toEqual([true, undefined, undefined, undefined]);
   });
 });
 
@@ -752,6 +835,7 @@ describe("a query read", () => {
         },
       ],
       total: 7,
+      unfilled: [],
     });
     // An edge or row that isn't well formed is left out.
     expect(
@@ -775,7 +859,12 @@ describe("a query read", () => {
           total: 1,
         },
       }),
-    ).toEqual({ kind: "rows", rows: [{ cells: [1], edges: [] }], total: 1 });
+    ).toEqual({
+      kind: "rows",
+      rows: [{ cells: [1], edges: [] }],
+      total: 1,
+      unfilled: [],
+    });
   });
 
   it("keeps a count, and refuses other answers", () => {
@@ -786,7 +875,11 @@ describe("a query read", () => {
       stats,
     };
     fits(ok);
-    expect(parseQueryResult(ok)).toEqual({ kind: "count", count: 3 });
+    expect(parseQueryResult(ok)).toEqual({
+      kind: "count",
+      count: 3,
+      unfilled: [],
+    });
     for (const bad of [
       { kind: "query", result: { kind: "count", count: -1 } },
       { kind: "query", result: { kind: "rows", rows: [] } },
@@ -799,5 +892,117 @@ describe("a query read", () => {
       null,
     ])
       expect(parseQueryResult(bad)).toBeUndefined();
+  });
+});
+
+describe("rules over empty properties (4.29.0)", () => {
+  const never = {
+    rule: "rule:no_expansion_hold",
+    negated: false,
+    type: "Account",
+    prop: "freeze_date",
+    filled: 0,
+    of: 157,
+    note: "never filled in this load",
+  };
+  const low = {
+    rule: "constraint:untiered",
+    negated: false,
+    type: "Account",
+    prop: "tier",
+    filled: 3,
+    of: 157,
+    note: "filled on 3 of 157 in this load",
+  };
+  const account = { type: "Account", id: "sacme" };
+
+  it("rides on every rule-derived answer, and fits the contract", () => {
+    const entity = {
+      kind: "entity",
+      entity: account,
+      derived: [],
+      flags: [{ name: "no_expansion_hold", rules: ["rule:no_expansion_hold"] }],
+      violations: [],
+      errors: [],
+      unfilled: [never, low],
+    };
+    fits(entity);
+    expect(parseEntityResult(entity)?.unfilled).toEqual([never, low]);
+    const pattern = {
+      kind: "pattern",
+      rows: [{ args: [account], holder: null, basis: "derived", rules: [] }],
+      unfilled: [never],
+    };
+    fits(pattern);
+    expect(parsePatternResult(pattern)?.unfilled).toEqual([never]);
+    const explain = {
+      kind: "explain",
+      steps: [],
+      root: null,
+      unfilled: [never],
+    };
+    fits(explain);
+    expect(parseExplainResult(explain)?.unfilled).toEqual([never]);
+    const page = {
+      kind: "violations",
+      records: [],
+      next: null,
+      unfilled: [low],
+    };
+    fits(page);
+    expect(parseViolationsResult(page)?.unfilled).toEqual([low]);
+  });
+
+  it("is empty where an engine says nothing, and keeps only well-formed entries", () => {
+    expect(
+      parseEntityResult({ kind: "entity", entity: account })?.unfilled,
+    ).toEqual([]);
+    expect(parseUnfilled(undefined)).toEqual([]);
+    expect(
+      parseUnfilled({
+        unfilled: [
+          never,
+          { ...never, filled: 200 },
+          { ...never, note: undefined },
+          { ...never, of: -1 },
+          { ...never, negated: "no" },
+          "never filled",
+          low,
+        ],
+      }),
+    ).toEqual([never, low]);
+  });
+
+  it("reads as a sentence naming the rule and the field", () => {
+    expect(unfilledText(never)).toBe(
+      "“no_expansion_hold” reads Account.freeze_date under “not”, and it is never filled in this load: that “not” checked nothing there.",
+    );
+    expect(unfilledText(low)).toBe(
+      "“untiered” reads Account.tier under “not”, and it is filled on 3 of 157 in this load: that “not” checked nothing there.",
+    );
+    // A query's `not_holds` negates the rule itself.
+    expect(
+      unfilledText({ ...never, rule: "rule:on_hold", negated: true }),
+    ).toBe(
+      "“on_hold” fails where Account.freeze_date is empty, and it is never filled in this load: “not on_hold” checked nothing there.",
+    );
+  });
+
+  it("rides on a query's answer, its count or its rows", () => {
+    const count = {
+      kind: "query",
+      query_echo: { start: { type: "Account" }, return: { count: {} } },
+      result: { kind: "count", count: 157 },
+      stats: { matched: 0, patterns: 0, terminal: "store" },
+      unfilled: [never],
+    };
+    expect(parseQueryResult(count)).toEqual({
+      kind: "count",
+      count: 157,
+      unfilled: [never],
+    });
+    expect(
+      parseQueryResult({ ...count, unfilled: undefined })?.unfilled,
+    ).toEqual([]);
   });
 });

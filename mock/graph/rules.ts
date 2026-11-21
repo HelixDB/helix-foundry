@@ -13,6 +13,7 @@ import {
 } from "../../src/shared/foundry-read";
 import { contractErrors } from "../agent-contract";
 import type { QueryExpr } from "../../src/shared/wfe";
+import { normName } from "./extract";
 import type { LoadGraph, MockNode } from "./store";
 import {
   MAX_SETTLED_ROWS,
@@ -71,6 +72,8 @@ export type Program = {
   // from it (it has `names`, or is known by its name).
   props: Map<string, Set<string>>;
   names: Map<string, string[]>;
+  // Each type's key props, in the order the ontology declares them.
+  keys: Map<string, string[]>;
   searchable: Set<string>;
   // Pred strings ("link:x", "relation:x") of what may never self-loop.
   binary: Set<string>;
@@ -267,6 +270,7 @@ export function compile(ontologyToml: string): Program {
       ]),
     ),
     names: new Map(tables(doc.types).map(([n, t]) => [n, texts(t.names)])),
+    keys: new Map(tables(doc.types).map(([n, t]) => [n, texts(t.key)])),
     searchable: new Set(
       tables(doc.types)
         .filter(([, t]) => texts(t.names).length > 0 || !texts(t.key).length)
@@ -510,14 +514,78 @@ export function refOf(n: MockNode): EntityRef {
   };
 }
 
-/** The load's entity an EntityRef names, if it holds one. */
-function nodeOf(m: Model, ref: unknown): MockNode | undefined {
-  const r = ref as Partial<EntityRef> | null;
-  if (!r || typeof r.type !== "string" || typeof r.id !== "string")
+/**
+ * The load's entity a lookup names, if it holds exactly one: by its id; by
+ * its key's plain values (the mock keys a row by them as they are, a key of
+ * several props by its values joined with `/`); or by a name in any spelling,
+ * a named type's or one of a keyed type's names. With a key or a name and no
+ * type, among every type, as the engine finds it.
+ */
+function keyText(m: Model, type: string, k: unknown): string | undefined {
+  if (typeof k !== "object" || !k) return String(k).trim();
+  const props = m.program.keys.get(type) || [];
+  const values = k as Record<string, unknown>;
+  if (
+    props.length !== Object.keys(values).length ||
+    props.some((p) => values[p] === undefined)
+  )
     return undefined;
-  const n =
-    m.g.find(r.type, "entity_key", r.id) || m.g.find(r.type, "norm_name", r.id);
-  return n && isEntity(n, m.program) ? n : undefined;
+  return props.map((p) => String(values[p])).join("/");
+}
+
+function lookupOf(m: Model, ref: unknown): MockNode[] {
+  const r = ref as Partial<
+    Record<"type" | "id" | "name", unknown> & { key: unknown }
+  > | null;
+  if (!r || typeof r !== "object") return [];
+  const held = (n: MockNode | undefined) =>
+    n && isEntity(n, m.program) ? n : undefined;
+  if (typeof r.id === "string") {
+    const n =
+      typeof r.type === "string"
+        ? held(
+            m.g.find(r.type, "entity_key", r.id) ||
+              m.g.find(r.type, "norm_name", r.id),
+          )
+        : undefined;
+    return n ? [n] : [];
+  }
+  const types = typeof r.type === "string" ? [r.type] : [...m.program.types];
+  const found = new Set<MockNode>();
+  for (const t of types) {
+    const key = r.key === undefined ? undefined : keyText(m, t, r.key);
+    const at: [string, string][] =
+      key !== undefined
+        ? [["entity_key", key]]
+        : r.key !== undefined
+          ? []
+          : typeof r.name === "string"
+            ? [
+                "norm_name",
+                ...(m.program.names.get(t) || []).map((p) => `${p}__nn`),
+              ].map((p) => [p, normName(String(r.name))] as [string, string])
+            : [];
+    // Every match, not the first: two of a type sharing a name is ambiguous.
+    for (const n of m.g.nodes())
+      if (
+        n.label === t &&
+        held(n) &&
+        at.some(([prop, value]) => n.props[prop] === value)
+      )
+        found.add(n);
+  }
+  return [...found];
+}
+
+/** What a read's lookups resolved to, as the reader sees them (see `answer`). */
+const resolved = new WeakMap<object, MockNode>();
+
+/** The one entity a lookup names: as the read resolved it, or if it names exactly one. */
+function nodeOf(m: Model, ref: unknown): MockNode | undefined {
+  if (ref && typeof ref === "object" && resolved.has(ref))
+    return resolved.get(ref);
+  const found = lookupOf(m, ref);
+  return found.length === 1 ? found[0] : undefined;
 }
 
 /**
@@ -783,16 +851,27 @@ export function answer(
                 : [read.evidence.entity]
               : [];
   for (const r of named) {
-    const ref = r as EntityRef;
-    if (!m.program.types.has(ref.type))
+    const ref = r as Partial<EntityRef>;
+    if (ref.type !== undefined && !m.program.types.has(ref.type))
       return invalid(`\`${ref.type}\` is not a type`);
-    const held = nodeOf(m, ref);
-    // One the reader may not see is one the load doesn't hold, for it.
-    if (!held || (view && !entityVisible(m, view, held)))
+    // One the reader may not see is one the load doesn't hold, for it; several are refused.
+    const found = lookupOf(m, ref).filter(
+      (n) => !view || entityVisible(m, view, n),
+    );
+    if (found.length > 1)
+      return invalid(
+        `${JSON.stringify(ref)} names more than one entity, such as ${found
+          .slice(0, 5)
+          .map((n) => JSON.stringify(refOf(n)))
+          .join(", ")}; give its \`type\`, or its \`id\``,
+      );
+    const held = found[0];
+    if (held && r && typeof r === "object") resolved.set(r, held);
+    if (!held)
       return {
         error: {
           code: "unknown_entity",
-          message: `the load holds no ${ref.type} ${ref.id}`,
+          message: `the load holds no ${ref.id !== undefined ? `${ref.type} ${ref.id}` : JSON.stringify(ref)}`,
         },
       };
   }
@@ -1162,16 +1241,11 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
         ? `relation:${s.via}`
         : `derived:${s.via}`,
   );
-  const { ids = null, text = null } = q.start;
-  if (ids && text) return bad("/start", "a start takes ids or text, not both");
-  if (
-    text !== null &&
-    (!words(text).length || !m.program.searchable.has(q.start.type))
-  )
-    return bad(
-      "/start/text",
-      "a text search needs a word and a type with names",
-    );
+  const { ids = null, keys = null, text = null } = q.start;
+  if ([ids, keys, text].filter((x) => x !== null).length > 1)
+    return bad("/start/text", "give one of `ids`, `keys` and `text`");
+  if (text !== null && !words(text).length)
+    return bad("/start/text", "the text has no word to search for");
   const ret = q.return;
   const last = steps.length;
   const groupLimit = (pointer: string, limit: number) =>
@@ -1233,10 +1307,24 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       n.label === q.start.type &&
       isEntity(n, m.program) &&
       (!ids || ids.includes(refOf(n).id)) &&
+      (!keys ||
+        keys.some((k) => keyText(m, q.start.type, k) === n.props.entity_key)) &&
       passes(n, q.start.where || []),
   );
+  // A text search's matches, best first, by rank: exact (a name, or the key),
+  // then names it begins, then shared words, as the engine ranks them.
+  const rank = new Map<number, number>();
   if (text !== null) {
     const want = new Set(words(text));
+    const norm = normName(text);
+    const tier = (n: MockNode) => {
+      const names = [
+        n.props.norm_name,
+        ...(m.program.names.get(n.label) || []).map((p) => n.props[`${p}__nn`]),
+      ].filter((v): v is string => typeof v === "string");
+      if (names.includes(norm) || n.props.entity_key === text.trim()) return 0;
+      return names.some((v) => v.startsWith(`${norm} `)) ? 1 : 2;
+    };
     // Query words its name or names props hold.
     const score = (n: MockNode) => {
       const have = new Set(
@@ -1248,13 +1336,15 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       return [...want].filter((w) => have.has(w)).length;
     };
     start = start
-      .map((n) => [n, score(n)] as const)
-      .filter(([, s]) => s > 0)
+      .map((n) => [n, tier(n), score(n)] as const)
+      .filter(([, t, s]) => t === 0 || s > 0)
       .sort(
-        ([a, x], [b, y]) => y - x || canonical(a).localeCompare(canonical(b)),
+        ([a, t, x], [b, u, y]) =>
+          t - u || y - x || canonical(a).localeCompare(canonical(b)),
       )
       .slice(0, 100)
       .map(([n]) => n);
+    start.forEach((n, i) => rank.set(n.id, i));
   }
   // Every path: a node per position, and the fact each step went along.
   type Path = { nodes: number[]; facts: Fact[] };
@@ -1317,6 +1407,7 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       type: q.start.type,
       where: (q.start.where || []).map((c) => ({ value: null, ...c })),
       ids,
+      ...(keys ? { keys } : {}),
       text,
     },
     steps: steps.map((s) => ({
@@ -1395,6 +1486,10 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
                 : 1;
       if (c) return order_by.desc ? -c : c;
     }
+    // A text search's rows keep its ranks.
+    const r =
+      (rank.get(a.nodes[0]!) ?? Infinity) - (rank.get(b.nodes[0]!) ?? Infinity);
+    if (r) return r;
     return entityOrder(a).localeCompare(entityOrder(b));
   });
   // For a reader who sees only some of them: of every row within reach, those

@@ -12,7 +12,11 @@ import type {
   VisualKind,
 } from "../../../shared/wfe";
 import { DASHBOARD_REFUSALS } from "../../../shared/wfe";
-import type { Outcome } from "../../../shared/foundry-read";
+import {
+  parseUnfilled,
+  type Outcome,
+  type Unfilled,
+} from "../../../shared/foundry-read";
 import { isRecord } from "../../../shared/json";
 import { parseOutput, parseQuery } from "../ontology/ask-model";
 
@@ -347,7 +351,13 @@ export function loadReads(
 
 /** What a tile shows: its query's output, drawn by the query as the engine read it, or why there is none. */
 export type TileDraw =
-  | { kind: "drawn"; output: QueryOutput; query: OntologyQuery }
+  | {
+      kind: "drawn";
+      output: QueryOutput;
+      query: OntologyQuery;
+      // Rules it rests on that checked an empty field (contract 4.29.0).
+      unfilled: Unfilled[];
+    }
   | { kind: "failed"; message: string };
 
 /**
@@ -370,7 +380,12 @@ export function tileDraw(
     echoed = isRecord(v) ? parseQuery(v.query_echo) : undefined,
     own = parseQuery(query);
   return isRecord(v) && v.kind === "query" && output && (echoed || own)
-    ? { kind: "drawn", output, query: (echoed || own)! }
+    ? {
+        kind: "drawn",
+        output,
+        query: (echoed || own)!,
+        unfilled: parseUnfilled(v),
+      }
     : { kind: "failed", message: "The read’s answer is malformed." };
 }
 

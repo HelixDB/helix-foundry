@@ -91,6 +91,18 @@ const notes: FoundryDocumentSet = {
     stream: "notes",
   },
 };
+// A Google Workspace connection's PDFs.
+const drivePdfs: FoundryDocumentSet = {
+  id: "set_pdfs",
+  name: "PDFs",
+  documents: 3,
+  connector: {
+    connectorId: "gw",
+    connectorKind: "google",
+    connectorName: "Acme Drive",
+    stream: "pdfs",
+  },
+};
 const draft = (
   over: Partial<Pick<DraftChoices, "connectorIds" | "eventSources" | "setIds">>,
 ) => ({
@@ -1033,5 +1045,35 @@ describe("startingEventSources", () => {
     expect(ontologyPaths.generate("o1", { goal: "x" })).toBe(
       "/ontology/o1/generate?goal=x",
     );
+  });
+});
+
+describe("generationSources with a connection's set of PDFs", () => {
+  // The site doesn't list a connection's documents, so it can't tell its
+  // PDFs read from those still being read or that can't be: the set counts
+  // as its documents, and the WFE refuses a generation whose PDFs none of
+  // which has been read, saying why.
+  it("counts a PDFs set by its documents, as any connection's set", () => {
+    expect(
+      generationSources(
+        draft({ connectorIds: new Set(), setIds: new Set(["set_pdfs"]) }),
+        facts([], { sets: [drivePdfs] }),
+      ),
+    ).toEqual({
+      state: { kind: "ready", summary: "Acme Drive / PDFs: 3 documents" },
+      request: { noConnectors: true, documentSetIds: ["set_pdfs"] },
+    });
+  });
+  it("blocks on an empty one, as on any set holding nothing", () => {
+    expect(
+      generationSources(
+        draft({ connectorIds: new Set(), setIds: new Set(["set_pdfs"]) }),
+        facts([], { sets: [{ ...drivePdfs, documents: 0 }] }),
+      ).state,
+    ).toEqual({
+      kind: "blocked",
+      reason:
+        "Choose a synced connector, or a set holding documents Foundry reads.",
+    });
   });
 });

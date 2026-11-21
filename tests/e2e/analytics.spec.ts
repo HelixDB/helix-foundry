@@ -3,7 +3,7 @@ import { dataTree, expect, signIn, test } from "./support/mock";
 
 // Databuddy, the hosted site's product analytics (src/web/telemetry.tsx),
 // loads only in a stamp's own build (next.config.ts): the mock's build, on
-// the landing page, sign-in and the app, loads no tracker or replay recorder
+// sign-in and the app, loads no tracker or replay recorder
 // and sends nothing.
 // tests/e2e/local checks a local build the same way.
 
@@ -29,8 +29,6 @@ function databuddyRequests(page: Page) {
 
 test("loads no tracker in a build that isn't a stamp's", async ({ page }) => {
   const sent = databuddyRequests(page);
-  await page.goto("/");
-  await expect(page.locator("#schema-root")).toBeVisible();
   await page.goto("/login");
   await signIn(page);
   await expect(page).toHaveURL(/\/ask\//);

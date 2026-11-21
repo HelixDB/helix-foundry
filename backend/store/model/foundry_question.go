@@ -46,8 +46,11 @@ type FoundryQuestion struct {
 	Question string
 	// Focus is what the user asked about, passed to the agent as it came;
 	// nil when the question has none.
-	Focus  json.RawMessage
-	Status FoundryQuestionStatus
+	Focus json.RawMessage
+	// ValidAt is the day it is answered as of (midnight UTC; the as_of
+	// column), nil for when it was asked.
+	ValidAt *time.Time
+	Status  FoundryQuestionStatus
 	// Result is the agent's AskResult, set once the question is answered or
 	// cannot be, and kept for a failed one whose agent sent one.
 	Result        json.RawMessage

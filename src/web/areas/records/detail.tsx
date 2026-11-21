@@ -31,6 +31,7 @@ import {
   parseEntityId,
   provenanceText,
   snippet,
+  UNDATED,
   valueText,
   type EntityRow,
   type Evidence,
@@ -192,6 +193,7 @@ export function RecordDetail({
             >
               Open in {docName(ev.documentId)}
             </Link>
+            {ev.undated && <span title={UNDATED}> · undated</span>}
           </small>
         </span>
       </li>

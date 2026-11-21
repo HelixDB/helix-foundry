@@ -207,20 +207,24 @@ const (
 	FoundryMediaJSONL     FoundryMediaType = "application/x-ndjson"
 	FoundryMediaParquet   FoundryMediaType = "application/vnd.apache.parquet"
 	FoundryMediaPDF       FoundryMediaType = "application/pdf"
+	// FoundryMediaVTT is a WebVTT transcript, of a meeting or a call: read
+	// as its turns, a line each with its start and speaker
+	// (transcript.Text), not as the cues it is stored as.
+	FoundryMediaVTT FoundryMediaType = "text/vtt"
 )
 
 // FoundryMediaTypes are the types Foundry stores, in a fixed order.
 func FoundryMediaTypes() []FoundryMediaType {
 	return []FoundryMediaType{
 		FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText, FoundryMediaJSON, FoundryMediaCSV,
-		FoundryMediaTSV, FoundryMediaJSONL, FoundryMediaParquet, FoundryMediaPDF,
+		FoundryMediaTSV, FoundryMediaJSONL, FoundryMediaParquet, FoundryMediaPDF, FoundryMediaVTT,
 	}
 }
 
 // FoundryMediaTypesRead are the types Foundry stores that ontologies read
 // as one of kinds, in FoundryMediaTypes' order.
 //
-//	FoundryMediaTypesRead(FoundryReadText) // text/markdown, text/mdx, text/plain
+//	FoundryMediaTypesRead(FoundryReadText) // text/markdown, text/mdx, text/plain, text/vtt
 func FoundryMediaTypesRead(kinds ...FoundryReadKind) []FoundryMediaType {
 	var out []FoundryMediaType
 	for _, t := range FoundryMediaTypes() {
@@ -235,8 +239,8 @@ func FoundryMediaTypesRead(kinds ...FoundryReadKind) []FoundryMediaType {
 type FoundryReadKind string
 
 const (
-	// FoundryReadText is read as text, by extraction: Markdown, MDX and
-	// plain text.
+	// FoundryReadText is read as text, by extraction: Markdown, MDX, plain
+	// text and WebVTT transcripts.
 	FoundryReadText FoundryReadKind = "text"
 	// FoundryReadTable loads as a table of its own, through mappings, whose
 	// source id is the document's id: CSV, TSV, JSON, JSONL and Parquet. The
@@ -254,7 +258,7 @@ const (
 // store.
 func (t FoundryMediaType) ReadKind() FoundryReadKind {
 	switch t {
-	case FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText:
+	case FoundryMediaMarkdown, FoundryMediaMDX, FoundryMediaPlainText, FoundryMediaVTT:
 		return FoundryReadText
 	case FoundryMediaJSON, FoundryMediaCSV, FoundryMediaTSV, FoundryMediaJSONL, FoundryMediaParquet:
 		return FoundryReadTable
@@ -286,6 +290,8 @@ func (t FoundryMediaType) Format() string {
 		return "Parquet"
 	case FoundryMediaPDF:
 		return "PDF"
+	case FoundryMediaVTT:
+		return "WebVTT"
 	}
 	return ""
 }
@@ -599,6 +605,11 @@ type FoundryExtractionError struct {
 	Code FoundryExtractionErrorCode
 	// Retryable means a later load may succeed: the next one sends it again.
 	Retryable bool
+	// ModelFailure is how the model failed a document of code model: the
+	// engine's model failure class (quota, rate_limited, unavailable, ...).
+	// Empty for every other code, and for a model failure recorded before
+	// Foundry kept the class.
+	ModelFailure string
 }
 
 // FoundryExtractionCounts are what one document put in the database.
@@ -1018,6 +1029,13 @@ type FoundryGraphJobOutcome struct {
 	// recorded, those deleted since included, and is deleted otherwise
 	// (FinishFoundryGraphJob). Any other job ignores them.
 	HeldSets []string
+	// ModelUnread, only with Status budget_exhausted, means the model left
+	// documents unread, not a budget: a workspace's own provider refused its
+	// key or quota, or the model failed documents the run sent. A load job's
+	// partial load a person started then replaces the current load, as a
+	// ready one would, so they are read again (QueueFoundryReread); one a
+	// budget stopped waits for a person.
+	ModelUnread bool
 	// Next is what an ended job may queue after it; a retry ignores it.
 	Next FoundryGraphNext
 }

@@ -564,6 +564,21 @@ message FoundryEventBatch {
   bool synced = 8;
 }
 
+// FoundryEventSourcePiece is a piece an event source holds, as the document
+// a sync makes of it.
+message FoundryEventSourcePiece {
+  // The piece's id in its source.
+  string id = 1;
+  // When its newest send arrived.
+  google.protobuf.Timestamp received_at = 2;
+  // The document's name: the first line of the piece's text, else its id.
+  string title = 3;
+  // The document, Markdown: the piece's fields, then its text.
+  string text = 4;
+  // A sync has read it: it is in the source's table.
+  bool synced = 5;
+}
+
 // FoundryEventSourceToken is a send-only credential of one event source.
 message FoundryEventSourceToken {
   string id = 1;
@@ -905,8 +920,9 @@ message FoundryOntologyCounts {
 // sets: one a person uploaded, or the text of one row of a connector's table
 // (source), which the connector's syncs write into its set. Ontologies read
 // text/markdown, text/mdx (as Markdown, with its code blanked to spaces; it
-// is never compiled or run) and text/plain as text, extracted through
-// routes. Each text/csv,
+// is never compiled or run), text/plain and text/vtt (a WebVTT transcript, as
+// its turns: a line each with its start, speaker and words) as text,
+// extracted through routes. Each text/csv,
 // text/tab-separated-values, application/json, application/x-ndjson and
 // application/vnd.apache.parquet document is read once, at upload, as a
 // table of its own, which a version's mappings name by the document's id; it
@@ -918,7 +934,8 @@ message FoundryDocument {
   string name = 2;
   // text/markdown, text/mdx, text/plain, application/json, text/csv,
   // text/tab-separated-values, application/x-ndjson,
-  // application/vnd.apache.parquet or application/pdf. A rename keeps it.
+  // application/vnd.apache.parquet, application/pdf or text/vtt. A rename
+  // keeps it.
   string media_type = 3;
   int64 size_bytes = 4;
   // Lowercase hex SHA-256 of the bytes.
@@ -989,7 +1006,8 @@ enum FoundryFileReadState {
   // it once its read ends.
   FOUNDRY_FILE_READ_STATE_READING = 2;
   // It can't be read: error says why, and a load records the PDF failed
-  // with the same code. Upload a fixed file.
+  // with the same code. Upload a fixed file, or fix a connection's at its
+  // source for its next sync to read again.
   FOUNDRY_FILE_READ_STATE_FAILED = 3;
 }
 
@@ -1209,6 +1227,12 @@ message FoundryExtractionError {
   string code = 1;
   // Whether a later load may succeed.
   bool retryable = 2;
+  // How the model failed, when code is model: the model failure class
+  // (quota, rate_limited, unavailable, timeout, auth, permission, not_found,
+  // context_too_long, unsupported, truncated, malformed, refused, ...).
+  // Empty for every other code, and for a model failure recorded before
+  // Foundry kept the class.
+  string model_failure = 3;
 }
 
 // FoundryDocumentUpload is a presigned PUT of a document's bytes. Send exactly
@@ -1294,6 +1318,33 @@ message FoundryLoad {
   // see every set. While a job of the load runs, the counts may be a few
   // seconds old.
   repeated FoundryLoadDocumentSet document_sets = 16;
+  // Its documents the model left unread: unset when the model failed none.
+  // A ready or partial load with them reads "ready, N documents not read
+  // (reason)"; a failed load whose every document the model failed says so
+  // in its load job's error.
+  FoundryLoadUnread unread = 17;
+}
+
+// FoundryLoadUnread is a load's documents the model failed: never read, so
+// the load holds none of their names or facts, and never counted as read.
+message FoundryLoadUnread {
+  // How many: those the model failed, and, once no job writes the load,
+  // those no job recorded (a run the model stopped leaves them).
+  int32 documents = 1;
+  // The model failure class most of them failed with (quota,
+  // rate_limited, unavailable, ...); empty when most were recorded before
+  // Foundry kept the class.
+  string model_failure = 2;
+  // A few words for it: provider quota, provider account, provider busy,
+  // too long for the model, model declined, model error, or model failed
+  // when its class wasn't kept.
+  string reason = 3;
+  // When Helix reads them again on its own: set for the current load whose
+  // failures pass (a provider's quota or account, or a busy provider) while
+  // re-reads go on, 15 minutes after the job that left them, then doubling
+  // up to 6 hours, for about a week. Unset when a person or the next job
+  // into the load reads them; a re-read may start up to a minute after.
+  google.protobuf.Timestamp reread_at = 4;
 }
 
 // FoundryLoadDocumentSet is what a load made of the documents of one document
@@ -1474,6 +1525,8 @@ message FoundryQuestion {
   int32 attempts = 16;
   // What a running question holds back of the month's budget: its cap.
   int64 reserved_micros = 17;
+  // The day it is answered as of, YYYY-MM-DD; empty for when it was asked.
+  string valid_at = 18;
 }
 
 // FoundryQuestionBudget is a workspace's questions budget this calendar

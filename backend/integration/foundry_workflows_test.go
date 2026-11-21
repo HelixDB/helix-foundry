@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -212,4 +213,39 @@ func TestTrackedToolsPassTheRun(t *testing.T) {
 		`{` + workflowIDs + `,"load_id":"load-1","reads":[{"entity":{"type":"C","id":"1"}}],"use_case_run_id":"not an id"}`)})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
+}
+
+// read_graph and ask hand valid_at, the day to answer as of, to the backend as given (it checks the
+// day), and a question echoes its day; neither sends one when it isn't asked for.
+func TestToolsPassTheDayToAnswerAsOf(t *testing.T) {
+	var read *foundryv1.ReadFoundryGraphRequest
+	var asked *foundryv1.AskFoundryQuestionRequest
+	identity := everyTool()
+	identity.Authorize = func(_ context.Context, r any, _ Grant, _ ...string) error {
+		switch r := r.(type) {
+		case *foundryv1.ReadFoundryGraphRequest:
+			read = r
+		case *foundryv1.AskFoundryQuestionRequest:
+			asked = r
+		}
+		return nil
+	}
+	reads := `"load_id":"load-1","reads":[{"evidence":{"entity":{"type":"C","id":"1"}}}]`
+	session := connect(t, &Service{Foundry: &graphBackend{}}, identity)
+	callTool(t, session, toolFoundryReadGraph, `{`+workflowIDs+`,`+reads+`,"valid_at":"2026-03-01"}`)
+	require.NotNil(t, read)
+	assert.Equal(t, "2026-03-01", read.GetValidAt())
+	callTool(t, session, toolFoundryReadGraph, `{`+workflowIDs+`,`+reads+`}`)
+	assert.Empty(t, read.GetValidAt())
+
+	b := &questionBackend{question: &foundryv1.FoundryQuestion{Id: "q-1", ThreadId: "q-1", LoadId: "load-1", Status: "answered", ValidAt: "2026-03-01"}}
+	session = connect(t, &Service{Foundry: b, Wait: time.Millisecond, Polls: []time.Duration{time.Millisecond}}, identity)
+	out := callTool(t, session, toolFoundryAsk, `{`+workflowIDs+`,"question":"Who?","client_token":"t-1","valid_at":"2026-03-01"}`)
+	require.NotNil(t, asked)
+	assert.Equal(t, "2026-03-01", asked.GetValidAt())
+	assert.Equal(t, "2026-03-01", out["valid_at"])
+	b.question.ValidAt = ""
+	out = callTool(t, session, toolFoundryAsk, `{`+workflowIDs+`,"question":"Who?","client_token":"t-2"}`)
+	assert.Empty(t, asked.GetValidAt())
+	assert.NotContains(t, out, "valid_at", "a question as of now says no day")
 }

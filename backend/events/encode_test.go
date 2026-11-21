@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,6 +304,72 @@ func TestDecodeLine(t *testing.T) {
 		l, err := DecodeLine([]byte(`{"id":"o-1","received_at":"2026-10-23T18:25:01.123456Z","data":{}}` + "\n"))
 		if err != nil || l.ID() != "o-1" {
 			t.Fatalf("got %v, %v", l, err)
+		}
+	})
+}
+
+func TestLines(t *testing.T) {
+	received := time.Date(2026, 10, 23, 18, 25, 1, 123456000, time.UTC)
+	send := validSend(t, Piece{ID: "o-17", Data: []byte(`{"amount":12.5}`)}, Piece{ID: "o-18", Data: []byte(`{"amount":3}`)})
+	obj, err := EncodeLines(send, received)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := Batch{ID: "b-1", Seq: 1, Key: "k", Pieces: send.Pieces(), Bytes: send.Bytes()}
+	packed := func(t *testing.T, body string) []byte {
+		t.Helper()
+		var buf bytes.Buffer
+		w := gzip.NewWriter(&buf)
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+
+	t.Run("decodes a stored send's lines in the order sent", func(t *testing.T) {
+		lines, err := Lines(bytes.NewReader(obj.Body), batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(lines) != 2 || lines[0].ID() != "o-17" || lines[1].ID() != "o-18" || !lines[1].ReceivedAt().Equal(received) {
+			t.Fatalf("lines = %+v", lines)
+		}
+	})
+
+	// No send stores an object other than its row's lines and bytes: reading
+	// it again cannot bring its pieces back.
+	t.Run("is corrupt for an object no send wrote", func(t *testing.T) {
+		body := gunzip(t, obj.Body)
+		longer, fewer := batch, batch
+		longer.Bytes, fewer.Pieces = batch.Bytes-1, batch.Pieces-1
+		for name, tc := range map[string]struct {
+			object []byte
+			batch  Batch
+		}{
+			"empty":                    {nil, batch},
+			"not gzip":                 {[]byte("this is not a gzip stream"), batch},
+			"a broken checksum":        {append(slices.Clone(obj.Body[:len(obj.Body)-8]), 0, 0, 0, 0, 0, 0, 0, 0), batch},
+			"longer than its row":      {obj.Body, longer},
+			"shorter than its row":     {packed(t, body[:len(body)-1]), batch},
+			"fewer lines than its row": {obj.Body, fewer},
+			"no last newline":          {packed(t, body[:len(body)-1]+" "), batch},
+			"a line no send writes":    {packed(t, strings.Replace(body, `"id":"o-17"`, `"id":"o 17"`, 1)), batch},
+		} {
+			if _, err := Lines(bytes.NewReader(tc.object), tc.batch); !errors.Is(err, ErrCorrupt) {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+	})
+
+	// A stream cut short reads the same whether the object or the
+	// connection was cut, so it is the read's error, to try again.
+	t.Run("is the read's error for a stream cut short", func(t *testing.T) {
+		_, err := Lines(bytes.NewReader(obj.Body[:len(obj.Body)-9]), batch)
+		if err == nil || errors.Is(err, ErrCorrupt) || !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("a cut stream = %v", err)
 		}
 	})
 }

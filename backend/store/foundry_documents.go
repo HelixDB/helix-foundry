@@ -266,7 +266,7 @@ func (s *mysqlDB) CompleteFoundryDocumentUpload(ctx context.Context, workspaceID
 WHERE id=? AND workspace_id=? AND status='pending_upload'`, id, workspaceID); err != nil {
 			return err
 		}
-		if err := tx.queueFoundryFileRead(ctx, id); err != nil {
+		if err := tx.queueFoundryFileRead(ctx, []string{id}); err != nil {
 			return err
 		}
 		var setID string
@@ -631,7 +631,7 @@ func (s *mysqlDB) countUnrecordedFoundryDocuments(ctx context.Context, loadID st
 	return n, err
 }
 
-const foundryExtractionColumns = `load_id, document_id, ontology_id, workspace_id, job_id, status, duplicate_of, error_code, error_retryable,
+const foundryExtractionColumns = `load_id, document_id, ontology_id, workspace_id, job_id, status, duplicate_of, error_code, error_retryable, model_failure,
        sections, entities, mentions, facts, reviews, unresolved, rejected, usd_micros, input_tokens, output_tokens,
        artifact_key, finished_at, attributes, attribute_reviews, prop_conflicts, created, identifiers_unverified, attributes_over_entries, resolved_user, resolved_adjudicated, resolved_identifier, resolved_name, resolved_alias, resolved_created, resolved_carried, names`
 
@@ -720,11 +720,11 @@ func scanFoundryDocument(scanner rowScanner) (*model.FoundryDocument, error) {
 func scanFoundryExtraction(scanner rowScanner) (*model.FoundryDocumentExtraction, error) {
 	var e model.FoundryDocumentExtraction
 	var status string
-	var duplicateOf, errorCode, artifactKey sql.NullString
+	var duplicateOf, errorCode, modelFailure, artifactKey sql.NullString
 	var retryable sql.NullBool
 	var names []byte
 	c := &e.Counts
-	if err := scanner.Scan(&e.LoadID, &e.DocumentID, &e.OntologyID, &e.WorkspaceID, &e.JobID, &status, &duplicateOf, &errorCode, &retryable,
+	if err := scanner.Scan(&e.LoadID, &e.DocumentID, &e.OntologyID, &e.WorkspaceID, &e.JobID, &status, &duplicateOf, &errorCode, &retryable, &modelFailure,
 		&c.Sections, &c.Entities, &c.Mentions, &c.Facts, &c.Reviews, &c.Unresolved, &c.Rejected,
 		&e.USDMicros, &e.InputTokens, &e.OutputTokens, &artifactKey, &e.FinishedAt, &c.Attributes, &c.AttributeReviews, &c.PropConflicts, &c.Created, &c.IdentifiersUnverified, &c.AttributesOverEntries, &c.ResolvedUser, &c.ResolvedAdjudicated, &c.ResolvedIdentifier, &c.ResolvedName, &c.ResolvedAlias, &c.ResolvedCreated, &c.ResolvedCarried, &names); err != nil {
 		if err == sql.ErrNoRows {
@@ -737,7 +737,8 @@ func scanFoundryExtraction(scanner rowScanner) (*model.FoundryDocumentExtraction
 		e.DuplicateOf = &duplicateOf.String
 	}
 	if errorCode.Valid {
-		e.Error = &model.FoundryExtractionError{Code: model.FoundryExtractionErrorCode(errorCode.String), Retryable: retryable.Bool}
+		e.Error = &model.FoundryExtractionError{Code: model.FoundryExtractionErrorCode(errorCode.String), Retryable: retryable.Bool,
+			ModelFailure: modelFailure.String}
 	}
 	if artifactKey.Valid {
 		e.ArtifactKey = &artifactKey.String

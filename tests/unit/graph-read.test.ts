@@ -21,7 +21,7 @@ const answer = () =>
   Response.json(
     {
       resultJson: JSON.stringify({
-        as_of: "2026-11-02",
+        asked_at: "2026-11-02",
         results: [{ ok: { kind: "view", ontology_toml: "", partial: [] } }],
         stats: { instances: 0, wall_ms: 1 },
       }),

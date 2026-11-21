@@ -74,7 +74,8 @@ type reader struct {
 //  4. Bind the ontology's live database and register the binding on the
 //     read-only proxy for the call's life: the budget's wall time plus
 //     readTail.
-//  5. Call the sidecar's Read with the default budget, as of today (UTC).
+//  5. Call the sidecar's Read with the default budget, asked today (UTC), as
+//     of the request's valid_at when it has one (a day not after today).
 //  6. Relay its result, at most MaxResultBytes, once it answers each read
 //     in order, with an answer of its kind or a failure.
 func (r *reader) Read(ctx context.Context, req *foundryreadv1.ReadRequest) (*foundryreadv1.ReadResponse, error) {
@@ -84,6 +85,12 @@ func (r *reader) Read(ctx context.Context, req *foundryreadv1.ReadRequest) (*fou
 	reads, err := ontologyagent.ParseReads(req.GetReadsJson())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	now := r.now()
+	if day := req.GetValidAt(); day != "" {
+		if _, err := ontologyagent.ParseValidAt(day, now); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
 	}
 	release, ok := r.limit.acquire(req.GetWorkspaceId())
 	if !ok {
@@ -125,7 +132,7 @@ func (r *reader) Read(ctx context.Context, req *foundryreadv1.ReadRequest) (*fou
 		Helix: ontologyagent.HelixTarget{
 			URL: r.proxy.URL(), Token: token, MaxRequestBytes: graphproxy.MaxRequestBytes, TimeoutSecs: helixTimeoutSecs,
 		},
-		AsOf: r.now().UTC().Format(time.DateOnly), Budget: budget, Reads: reads,
+		AskedAt: now.UTC().Format(time.DateOnly), ValidAt: req.GetValidAt(), Budget: budget, Reads: reads,
 		Visibility: visibility, MappingsTOML: req.GetMappingsToml(),
 	})
 	if err != nil {

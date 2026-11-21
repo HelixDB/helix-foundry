@@ -8,8 +8,8 @@ import { MASK_PATTERNS } from "../shared/usage";
 import { DATABUDDY_CLIENT_ID, stopSending, trackingAllowed } from "./analytics";
 import * as localUsage from "./local-usage";
 
-// Databuddy's tracker, on the hosted site's pages: the landing page, sign-in
-// and the app (both root layouts mount it). Without a client id (the mock,
+// Databuddy's tracker, on the hosted site's pages: sign-in and the app (its
+// root layout mounts it). Without a client id (the mock,
 // e2e, `pnpm dev`), and in a local build, whose tracker would send nothing
 // from localhost (its events go through its site: ./local-usage.ts), the
 // import below is dropped from the build.

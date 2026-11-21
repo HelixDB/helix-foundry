@@ -1354,8 +1354,8 @@ export type FoundryEventSourcePick = {
  * Drafts from every synced table of the chosen connectors (all when empty,
  * none with `noConnectors`) and the chosen document sets: each set's table
  * files that have been read are tables of their own (files still being read
- * are left out), and its Markdown, MDX, text and PDFs whose text is read
- * may be routed. It needs one source of either kind: a synced table, a
+ * are left out), and its Markdown, MDX, text, WebVTT and PDFs whose text is
+ * read may be routed. It needs one source of either kind: a synced table, a
  * table file, or a set holding text (FAILED_PRECONDITION without one); tables and table files together count
  * toward the stamp's cap. A goal is at most 2000 characters; one live
  * generation per ontology (ALREADY_EXISTS).
@@ -1699,16 +1699,18 @@ export type ListOntologiesResponse = {
 
 // ---------------------------------------------------------------- Data: documents
 // Routes under /v1/workspaces/{workspaceId}/foundry/documents...: files of
-// the workspace (Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet and
-// PDF), each in one of its document sets (folders of the Data tree). Text
+// the workspace (Markdown, MDX, text, JSON, CSV, TSV, JSONL, Parquet, PDF
+// and WebVTT), each in one of its document sets (folders of the Data tree). Text
 // holds 1 byte to 1 MiB (foundry.documents.max_bytes), a table file or a PDF
 // 3 MiB (max_table_bytes, max_pdf_bytes). The bytes go straight to storage
 // through a presigned PUT, never through /papi. Statuses are lowercase
 // names. How ontologies read a document is its `read.kind`:
-// - text (Markdown, MDX, text): a load reads the documents of the sets its
-//   version's scope names (OntologyVersion.documentSetIds), for what its
-//   routes say they fill; MDX as Markdown, its code blanked to spaces of the
-//   same length, never compiled or run.
+// - text (Markdown, MDX, text, WebVTT): a load reads the documents of the
+//   sets its version's scope names (OntologyVersion.documentSetIds), for
+//   what its routes say they fill; MDX as Markdown, its code blanked to
+//   spaces of the same length, never compiled or run; a WebVTT transcript as
+//   its turns, a line each with its start, speaker and words
+//   (src/shared/transcript.ts).
 // - table (CSV, TSV, JSON, JSONL, Parquet): read once, when its upload
 //   completes, as a table of its own that a version's mappings name by the
 //   document's id. Never extracted, it joins no load's documents.
@@ -1734,7 +1736,7 @@ export type ListOntologiesResponse = {
 /**
  * v1WfeServiceCreateFoundryDocumentBody.mediaType, mapped from the file's
  * extension: .md and .markdown, .mdx, .txt, .json, .csv, .tsv, .jsonl and
- * .ndjson, .parquet, .pdf. A rename may change the extension; the type stays.
+ * .ndjson, .parquet, .pdf, .vtt. A rename may change the extension; the type stays.
  */
 export type DocumentMediaType =
   | "text/markdown"
@@ -1745,7 +1747,8 @@ export type DocumentMediaType =
   | "text/tab-separated-values"
   | "application/x-ndjson"
   | "application/vnd.apache.parquet"
-  | "application/pdf";
+  | "application/pdf"
+  | "text/vtt";
 
 /** v1FoundryDocument.status: the upload lifecycle. */
 export type DocumentStatus = "pending_upload" | "uploaded" | "deleted";
@@ -1769,6 +1772,10 @@ export type ExtractionError = {
   code?: "too_large" | "unsupported" | "model" | "store";
   // The next load tries again.
   retryable?: boolean;
+  // How the model failed it, when code is model: quota, rate_limited,
+  // unavailable, timeout, auth, ... (AgentModelFailure). Unset for every
+  // other code, and for a failure recorded before Foundry kept the class.
+  modelFailure?: string;
 };
 
 /** v1FoundryDocumentExtraction: what an ontology's current load read from it. */
@@ -2038,8 +2045,9 @@ export type UpdateDocumentRequest = { name: string };
 
 /**
  * helixwfev1GetFoundryDocumentContentResponse: GET .../documents/{id}:content,
- * an uploaded text document's text (Markdown, MDX, text, JSON, CSV, TSV or
- * JSONL, at most its type's cap; bytes that are not UTF-8 read as U+FFFD),
+ * an uploaded text document's text (Markdown, MDX, text, JSON, CSV, TSV,
+ * JSONL or WebVTT, as uploaded, at most its type's cap; bytes that are not
+ * UTF-8 read as U+FFFD),
  * and a PDF's text once its read is READY, its pages separated by a form
  * feed (`\f`), at most 1 MiB. FAILED_PRECONDITION for a document that isn't
  * uploaded, a PDF whose read isn't READY ("the PDF's text is still being
@@ -2293,6 +2301,26 @@ export type FoundryLoad = {
   // Foundry recorded a load's documents, and for a grantee. A few seconds
   // old at most while a job of the load runs.
   documentSets?: FoundryLoadDocumentSet[];
+  // Its documents the model failed to read; unset when it failed none.
+  unread?: FoundryLoadUnread | null;
+};
+
+/**
+ * v1FoundryLoadUnread: a load's documents the model failed. None of their
+ * names or facts are in the load, so it is never complete with them: a
+ * ready or partial load reads "ready, N documents not read (reason)".
+ */
+export type FoundryLoadUnread = {
+  // How many: those the model failed, and once no job writes the load,
+  // those no job reached.
+  documents?: number;
+  // The model failure class most of them failed with; unset when unknown.
+  modelFailure?: string;
+  // A few words for why: "provider quota", "provider busy", ...
+  reason?: string;
+  // When Helix reads them again on its own; unset when the next job into
+  // the load or a new load reads them.
+  rereadAt?: string | null;
 };
 
 /**
@@ -2357,7 +2385,14 @@ export type ListLoadsResponse = { loads?: FoundryLoad[] };
  * one deleted (NOT_FOUND), one being deleted (FAILED_PRECONDITION), and more
  * reads at once than the workspace may run (RESOURCE_EXHAUSTED).
  */
-export type ReadFoundryGraphRequest = { readsJson: string };
+export type ReadFoundryGraphRequest = {
+  readsJson: string;
+  // The day to read as of, YYYY-MM-DD, not after today (UTC); missing for
+  // now (contract 4.28.0). Every read but view and evidence then fails
+  // `current_only`, and evidence leaves out quotes of documents dated after
+  // it and flags an undated document's quote `undated`.
+  validAt?: string;
+};
 
 /** helixwfev1ReadFoundryGraphResponse: the engine's ReadResult as JSON. */
 export type ReadFoundryGraphResponse = { resultJson?: string };
@@ -2392,6 +2427,8 @@ export type FoundryQuestion = {
   question?: string;
   // What "Ask about this" asked about: an EntityRef as JSON, empty for none.
   focusJson?: string;
+  // The day it is answered as of, YYYY-MM-DD; missing for when it was asked.
+  validAt?: string;
   status?: QuestionStatus;
   // The engine's AskResult JSON (snake_case): set once answered or
   // cannot_answer, and for a failed question whose agent sent one.
@@ -2451,6 +2488,12 @@ export type AskQuestionRequest = {
   question: string;
   focusJson?: string;
   clientToken: string;
+  // The day to answer as of, YYYY-MM-DD, not after today (UTC); missing
+  // for now. Entities are read as they were then and documents dated after
+  // it left out; reads that can only show the load now aren't offered.
+  // INVALID_ARGUMENT for a day that isn't one, is later, or isn't its thread's;
+  // FAILED_PRECONDITION for anyone who reads the load through grants.
+  validAt?: string;
 };
 
 /**
@@ -2540,6 +2583,9 @@ export type OntologyQuery = {
     type: string;
     where?: QueryWhere[];
     ids?: string[] | null;
+    // Keys' plain values (contract 4.27.0): the value alone for a key of one
+    // property, or an object of each key property's value.
+    keys?: (string | number | Record<string, string | number>)[] | null;
     text?: string | null;
   };
   steps?: {

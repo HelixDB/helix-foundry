@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/dig"
 
+	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -64,6 +65,9 @@ type syncQueue interface {
 	DeleteConnectorChangeBatch(ctx context.Context, id string) error
 	ListDueFoundryRefreshes(ctx context.Context, afterDue time.Time, afterID string, limit int) ([]*model.FoundryOntology, error)
 	QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error)
+	ListFoundryRereads(ctx context.Context, classes []string, afterID string, limit int) ([]*model.FoundryOntology, error)
+	QueueFoundryReread(ctx context.Context, workspaceID, ontologyID string, classes []string, job *model.FoundryGraphJob,
+		budget model.FoundryGraphBudget, now time.Time) (bool, error)
 	ListStrandedConnectorCursors(ctx context.Context, kinds []string, limit int) ([]*model.Connector, error)
 	ListFoundryDocumentPurges(ctx context.Context, before time.Time, limit int) ([]*model.FoundryDocumentPurge, error)
 	DeleteFoundryDocumentPurge(ctx context.Context, documentID string) error
@@ -192,6 +196,7 @@ func New(d Deps) (*Task, error) {
 		MaxBytes:         d.Cfg.Foundry.Sync.MaxTableBytes,
 		Documents:        documents,
 		MaxDocumentBytes: d.Cfg.Foundry.Documents.MaxBytes,
+		MaxPDFBytes:      d.Cfg.Foundry.Documents.MaxPDFBytes,
 		MaxPerStream:     d.Cfg.Foundry.Documents.MaxPerStream,
 		PurgeGrace:       d.Cfg.Foundry.Sync.ReplacedSnapshotGrace,
 		MonthBudget:      d.Cfg.Foundry.Graph.MonthBudget,
@@ -219,7 +224,7 @@ func (t *Task) Start(ctx context.Context) error {
 		for _, tick := range []struct {
 			every time.Duration
 			fn    func(context.Context)
-		}{{t.cfg.SchedulePoll, t.schedule}, {t.cfg.SchedulePoll, t.keepAccounts}, {t.cfg.RefreshPoll, t.refresh}, {sweepEvery, t.sweep},
+		}{{t.cfg.SchedulePoll, t.schedule}, {t.cfg.SchedulePoll, t.keepAccounts}, {t.cfg.RefreshPoll, t.refresh}, {t.cfg.RefreshPoll, t.reread}, {sweepEvery, t.sweep},
 			{sweepEvery, t.purgeEvents}, {releaseEvery, t.release}} {
 			side.Add(1)
 			go func() {
@@ -560,6 +565,45 @@ func (t *Task) refresh(ctx context.Context) {
 		}
 		last := due[len(due)-1]
 		afterDue, afterID = *last.RefreshDueAt, last.ID
+	}
+}
+
+// reread queues a re-read of each current load's documents the model left
+// unread for a reason that passes on its own (ai.RereadFailures: the
+// provider's quota or account, or a busy provider) once it is due:
+// 15 minutes after the job that left them, then twice as long after each
+// re-read that left some still unread, up to 6 hours, for about a week
+// (model.FoundryLoadUnread.RereadAt). An ontology with a live job waits for
+// its end; a month whose budget for work no one started is spent waits for
+// the next. Choosing this over a "read again" action a person takes: the
+// failure is the provider's, which no owner fixes on Helix's key, a
+// re-read the model refuses again costs nothing, and a person may never
+// notice (the loads of 2026-11-14 sat unread for days).
+func (t *Task) reread(ctx context.Context) {
+	classes := ai.RereadFailures()
+	afterID := ""
+	for ctx.Err() == nil {
+		owed, err := t.queue.ListFoundryRereads(ctx, classes, afterID, t.cfg.ScheduleBatch)
+		if err != nil {
+			log.From(ctx).Error("list foundry re-reads failed", "err", err)
+			return
+		}
+		for _, o := range owed {
+			queued, err := t.queue.QueueFoundryReread(ctx, o.WorkspaceID, o.ID, classes, &model.FoundryGraphJob{ID: id.New()},
+				t.deps.Cfg.Foundry.Graph.MonthBudget(t.now()), t.now())
+			if err != nil {
+				log.From(ctx).Warn("queue foundry re-read failed", "ontology", o.ID, "err", err)
+				continue
+			}
+			if queued {
+				rereadsQueued.Inc()
+				log.From(ctx).Info("queued a re-read of documents the model left unread", "ontology", o.ID, "load", *o.CurrentLoadID)
+			}
+		}
+		if len(owed) < t.cfg.ScheduleBatch {
+			return
+		}
+		afterID = owed[len(owed)-1].ID
 	}
 }
 

@@ -6,7 +6,8 @@ import { isRecord } from "./json";
 // .../loads/{loadId}:read takes the reads as JSON (`readsJson`, each a
 // ReadItem) and returns the engine's ReadResult as JSON (`resultJson`). The
 // backend fills in the rest of the engine's ReadRequest (database, load,
-// ontology, budget, `as_of`). The rules are evaluated when the read runs,
+// ontology, budget, `asked_at`, and `valid_at` when a read is as of a day).
+// The rules are evaluated when the read runs,
 // never stored: a derived fact or flag holds for this load now, or the read
 // says why it couldn't tell.
 //
@@ -23,6 +24,18 @@ export const MAX_READS = 20;
  * type) or norm_name (a type known by its name). The type says which.
  */
 export type EntityRef = { type: string; id: string };
+
+/**
+ * An entity as a request may name one (contract 4.27.0): by its id, as reads
+ * return it; by its key's plain values, the value alone for a key of one
+ * property or an object of each key property's value; or by a name in any
+ * spelling. With a key or a name the type may be left out. The site names
+ * entities by id; the MCP's reads and questions may use any of them.
+ */
+export type EntityLookup =
+  | EntityRef
+  | { type?: string; key: string | number | Record<string, string | number> }
+  | { type?: string; name: string };
 
 /** A stated fact: a link between two entities. */
 export type FactRef = { link: string; subject: EntityRef; object: EntityRef };
@@ -133,7 +146,10 @@ export type ReadFailure =
   | { code: "budget" | "hub"; message: string; limit: number }
   | { code: "too_broad"; message: string; limit: number; count: number }
   | { code: "unknown_entity"; message: string }
-  | { code: "not_visible" | "invalid"; message: string; pointer?: string };
+  | { code: "not_visible" | "invalid"; message: string; pointer?: string }
+  // Read as of a day (contract 4.28.0's `valid_at`): it shows the load only
+  // as it is now, so it is refused rather than answered as of now.
+  | { code: "current_only"; message: string };
 export type ReadErrorCode = ReadFailure["code"];
 /** Why one pred (or the live violations) of an entity read has no answer. */
 export type PartFailure =
@@ -175,12 +191,32 @@ export type LiveViolation = {
  */
 export type PartError = { part: Pred | "violations"; failure: PartFailure };
 
+/**
+ * A rule the answer depends on that reads, under `not`, a property few or
+ * none of its type's entities have in the load (contract 4.29.0): the rule
+ * holds there because the property is empty, so it checked nothing. `rule`
+ * is `rule:<name>` or `constraint:<name>`; `filled` of `of` entities have
+ * the property (under 5%); `note` says so in words.
+ */
+export type Unfilled = {
+  rule: string;
+  // The read negates the rule itself (a query's `not_holds`): the rule's own
+  // test of the property fails where it is empty.
+  negated: boolean;
+  type: string;
+  prop: string;
+  filled: number;
+  of: number;
+  note: string;
+};
+
 export type EntityResult = {
   entity: EntityRef;
   derived: DerivedFact[];
   flags: Flag[];
   violations: LiveViolation[];
   errors: PartError[];
+  unfilled: Unfilled[];
 };
 
 export type PatternRow = {
@@ -189,7 +225,7 @@ export type PatternRow = {
   basis: "stated" | Basis;
   rules: string[];
 };
-export type PatternResult = { rows: PatternRow[] };
+export type PatternResult = { rows: PatternRow[]; unfilled: Unfilled[] };
 
 /**
  * How a proof step holds: stated in the data (its evidence is the fact's),
@@ -216,7 +252,11 @@ export type ExplainStep = {
   test?: string;
 };
 /** A proof; `root` is null when the fact doesn't hold. */
-export type ExplainResult = { steps: ExplainStep[]; root: number | null };
+export type ExplainResult = {
+  steps: ExplainStep[];
+  root: number | null;
+  unfilled: Unfilled[];
+};
 
 /** A stored violation record (StoredViolation). */
 export type ViolationRecord = {
@@ -232,12 +272,14 @@ export type ViolationRecord = {
 export type ViolationsResult = {
   records: ViolationRecord[];
   next: string | null;
+  unfilled: Unfilled[];
 };
 
 /**
  * Stored evidence: a quote's offsets are UTF-8 bytes into its section. A
  * quote read for a property carries the value it states (document data,
- * never markup); a fact's quote has none.
+ * never markup); a fact's quote has none. Read as of a day, a quote whose
+ * document gives no date is `undated`: it may be from after that day.
  */
 export type EvidenceItem =
   | {
@@ -256,6 +298,7 @@ export type EvidenceItem =
       quote: string;
       confidence: number;
       value?: string | number | boolean;
+      undated?: true;
     };
 export type EvidenceResult = { items: EvidenceItem[] };
 
@@ -280,8 +323,9 @@ export type QueryResult =
       // For a query narrowed to what a reader holds, the rows shown: the
       // answer says nothing of the rest.
       total: number;
+      unfilled: Unfilled[];
     }
-  | { kind: "count"; count: number };
+  | { kind: "count"; count: number; unfilled: Unfilled[] };
 
 /**
  * A view read's answer: the version's two files as the reader sees them, and
@@ -299,7 +343,9 @@ export type Outcome<T> =
   | { ok: false; error: ReadFailure };
 export type ReadStats = { instances: number; wallMs: number };
 export type ReadResult = {
-  asOf: string;
+  // The day it was asked, and the day it was read as of when it was.
+  askedAt: string;
+  validAt?: string;
   results: Outcome<unknown>[];
   stats: ReadStats;
 };
@@ -365,7 +411,8 @@ export function parseFailure(v: unknown): ReadFailure {
         ? MALFORMED
         : { code: "too_broad", message, limit, count: n };
     case "unknown_entity":
-      return { code: "unknown_entity", message };
+    case "current_only":
+      return { code: v.code, message };
     case "not_visible":
     case "invalid": {
       const pointer = str(v.pointer);
@@ -381,7 +428,7 @@ export function parseFailure(v: unknown): ReadFailure {
  * an `ok` (still raw) or a failure. The results are in the reads' order.
  *
  * @example
- * parseReadResult('{"as_of":"2026-10-19","results":[{"error":{"code":"budget","message":"too deep","limit":64}}],"stats":{"instances":0,"wall_ms":3}}')
+ * parseReadResult('{"asked_at":"2026-10-19","results":[{"error":{"code":"budget","message":"too deep","limit":64}}],"stats":{"instances":0,"wall_ms":3}}')
  *   ?.results[0]; // { ok: false, error: { code: "budget", message: "too deep", limit: 64 } }
  */
 export function parseReadResult(json: string): ReadResult | undefined {
@@ -393,8 +440,10 @@ export function parseReadResult(json: string): ReadResult | undefined {
   }
   if (!isRecord(body) || !Array.isArray(body.results)) return undefined;
   const stats = isRecord(body.stats) ? body.stats : {};
+  const validAt = str(body.valid_at);
   return {
-    asOf: str(body.as_of) || "",
+    askedAt: str(body.asked_at) || "",
+    ...(validAt ? { validAt } : {}),
     results: body.results.map(
       (r): Outcome<unknown> =>
         isRecord(r) && "ok" in r
@@ -429,6 +478,52 @@ export function outcomeOf<T>(
         error: { code: "invalid", message: "The read's result is malformed." },
       }
     : { ok: true, value };
+}
+
+/**
+ * An answer's `unfilled`: each well-formed entry, none when absent (an
+ * engine before 4.29.0, or nothing to say).
+ *
+ * @example
+ * parseUnfilled({ unfilled: [{ rule: "rule:no_hold", negated: false, type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }] });
+ *   // [{ rule: "rule:no_hold", negated: false, type: "Account", prop: "freeze_date", filled: 0, of: 157, note: "never filled in this load" }]
+ */
+export function parseUnfilled(ok: unknown): Unfilled[] {
+  if (!isRecord(ok)) return [];
+  return list(ok.unfilled).flatMap((u): Unfilled[] => {
+    if (!isRecord(u)) return [];
+    const rule = str(u.rule),
+      type = str(u.type),
+      prop = str(u.prop),
+      filled = count(u.filled),
+      of = count(u.of),
+      note = str(u.note),
+      negated = u.negated;
+    return typeof negated === "boolean" &&
+      rule &&
+      type &&
+      prop &&
+      note &&
+      filled !== undefined &&
+      of !== undefined &&
+      filled <= of
+      ? [{ rule, negated, type, prop, filled, of, note }]
+      : [];
+  });
+}
+
+/**
+ * An `unfilled` entry as a person reads it.
+ *
+ * @example
+ * unfilledText({ rule: "constraint:untiered", negated: false, type: "Account", prop: "tier", filled: 3, of: 157, note: "filled on 3 of 157 in this load" });
+ *   // "“untiered” reads Account.tier under “not”, and it is filled on 3 of 157 in this load: that “not” checked nothing there."
+ */
+export function unfilledText(u: Unfilled): string {
+  const rule = u.rule.replace(/^(?:rule|constraint):/, "");
+  return u.negated
+    ? `“${rule}” fails where ${u.type}.${u.prop} is empty, and it is ${u.note}: “not ${rule}” checked nothing there.`
+    : `“${rule}” reads ${u.type}.${u.prop} under “not”, and it is ${u.note}: that “not” checked nothing there.`;
 }
 
 /** An entity read's `ok`: its derived facts, flags, live violations and failed parts. */
@@ -472,6 +567,7 @@ export function parseEntityResult(ok: unknown): EntityResult | undefined {
         ? [{ part, failure: failure as PartFailure }]
         : [];
     }),
+    unfilled: parseUnfilled(ok),
   };
 }
 
@@ -488,6 +584,7 @@ export function parsePatternResult(ok: unknown): PatternResult | undefined {
         ? [{ args, holder, basis: b, rules: strings(r.rules) }]
         : [];
     }),
+    unfilled: parseUnfilled(ok),
   };
 }
 
@@ -562,7 +659,9 @@ export function parseExplainResult(ok: unknown): ExplainResult | undefined {
     state.set(i, "done");
     return fine;
   };
-  return steps.every((_, i) => acyclic(i)) ? { steps, root } : undefined;
+  return steps.every((_, i) => acyclic(i))
+    ? { steps, root, unfilled: parseUnfilled(ok) }
+    : undefined;
 }
 
 /** A violations read's `ok`: a page of stored records in key order. */
@@ -591,6 +690,7 @@ export function parseViolationsResult(
         : [];
     }),
     next: str(ok.next) || null,
+    unfilled: parseUnfilled(ok),
   };
 }
 
@@ -641,6 +741,7 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
               (typeof value === "number" && Number.isFinite(value))
                 ? { value }
                 : {}),
+              ...(e.undated === true ? { undated: true as const } : {}),
             },
           ]
         : [];
@@ -654,13 +755,15 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
  * edge that isn't is left out.
  *
  * @example
- * parseQueryResult({ kind: "query", result: { kind: "count", count: 3 } }); // { kind: "count", count: 3 }
+ * parseQueryResult({ kind: "query", result: { kind: "count", count: 3 } }); // { kind: "count", count: 3, unfilled: [] }
  */
 export function parseQueryResult(ok: unknown): QueryResult | undefined {
   const r = isKind(ok, "query") ? ok.result : undefined;
   if (isKind(r, "count")) {
     const n = count(r.count);
-    return n === undefined ? undefined : { kind: "count", count: n };
+    return n === undefined
+      ? undefined
+      : { kind: "count", count: n, unfilled: parseUnfilled(ok) };
   }
   if (!isKind(r, "rows") || !Array.isArray(r.rows)) return undefined;
   const total = count(r.total);
@@ -688,6 +791,7 @@ export function parseQueryResult(ok: unknown): QueryResult | undefined {
         : [],
     ),
     total,
+    unfilled: parseUnfilled(ok),
   };
 }
 

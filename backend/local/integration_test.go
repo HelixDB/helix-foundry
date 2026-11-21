@@ -30,7 +30,7 @@ import (
 // (Service.PublicDashboards). An unlisted one fails its tool at every call, so
 // this keeps them in step.
 func TestToolsUseOnlyServedMethods(t *testing.T) {
-	hostedOnly := map[string]bool{"ListFoundryEventBatches": true, "SendFoundryEvents": true,
+	hostedOnly := map[string]bool{"ListFoundryEventBatches": true, "ListFoundryEventPieces": true, "SendFoundryEvents": true,
 		"PublishFoundryDashboard": true, "UnpublishFoundryDashboard": true}
 	files, err := filepath.Glob("../integration/*.go")
 	require.NoError(t, err)
