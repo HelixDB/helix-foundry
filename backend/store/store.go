@@ -255,6 +255,7 @@ type ReadStore interface {
 	// Helix Foundry for Slack: installs, links, threads and replies (foundry_slack.go)
 	GetFoundrySlackInstall(ctx context.Context, workspaceID string) (*model.SlackInstall, error)
 	GetFoundrySlackInstallByTeam(ctx context.Context, teamID string) (*model.SlackInstall, error)
+	GetFoundrySlackInstallByEnterprise(ctx context.Context, enterpriseID string) (*model.SlackInstall, error)
 	GetFoundrySlackInstallByID(ctx context.Context, id string) (*model.SlackInstall, error)
 	GetFoundrySlackInstallToken(ctx context.Context, installID string) (model.SlackSealedToken, error)
 	ListFoundrySlackUninstalls(ctx context.Context, limit int) ([]*model.SlackInstall, error)

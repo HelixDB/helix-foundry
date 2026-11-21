@@ -1724,6 +1724,11 @@ func (u Unimplemented) GetFoundrySlackInstallByTeam(context.Context, string) (*m
 	return nil, nil
 }
 
+func (u Unimplemented) GetFoundrySlackInstallByEnterprise(context.Context, string) (*model.SlackInstall, error) {
+	u.unimplemented("GetFoundrySlackInstallByEnterprise")
+	return nil, nil
+}
+
 func (u Unimplemented) GetFoundrySlackInstallByID(context.Context, string) (*model.SlackInstall, error) {
 	u.unimplemented("GetFoundrySlackInstallByID")
 	return nil, nil

@@ -39,7 +39,9 @@ CREATE TABLE foundry_slack_installs (
   UNIQUE KEY foundry_slack_installs_workspace_uq (live_workspace),
   KEY foundry_slack_installs_sweep_idx (revoked_at, uninstalled_at),
   KEY foundry_slack_installs_team_idx (team_id, uninstalled_at),
-  KEY foundry_slack_installs_workspace_idx (workspace_id)
+  KEY foundry_slack_installs_workspace_idx (workspace_id),
+  -- A click from another workspace of a Grid org finds the org's install.
+  KEY foundry_slack_installs_enterprise_idx (enterprise_id, revoked_at)
 );
 
 -- A hosted install's bot token, sealed with the connectors' keyring under the

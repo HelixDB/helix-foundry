@@ -97,6 +97,29 @@ func (s *slackStore) GetFoundrySlackInstallByTeam(_ context.Context, team string
 	return s.live(func(i *model.SlackInstall) bool { return i.TeamID == team })
 }
 
+func (s *slackStore) GetFoundrySlackInstallByEnterprise(_ context.Context, org string) (*model.SlackInstall, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fail != nil {
+		return nil, s.fail
+	}
+	var found *model.SlackInstall
+	for _, i := range s.installs {
+		if i.RevokedAt != nil || org == "" || i.EnterpriseID != org {
+			continue
+		}
+		if found != nil {
+			return nil, foundrystore.ErrConflict
+		}
+		c := *i
+		found = &c
+	}
+	if found == nil {
+		return nil, foundrystore.ErrNotFound
+	}
+	return found, nil
+}
+
 func (s *slackStore) GetFoundrySlackInstallToken(_ context.Context, id string) (model.SlackSealedToken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -671,6 +694,29 @@ func TestReceiveSlackClicks(t *testing.T) {
 		f := newSlackFixture(t)
 		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "approve.json")))
 		assert.Empty(t, f.db.intake)
+	})
+	t.Run("a Grid click from another workspace of the org", func(t *testing.T) {
+		// approve_grid.json is clicked from T0GRIDWS01's session in a channel
+		// the org's workspaces share; the app is installed in another of them.
+		f := newSlackFixture(t)
+		install := f.db.install(t, f.keys, model.SlackPerPerson{})
+		install.TeamID, install.EnterpriseID = "T0GRIDWS02", "E0ACME001"
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "approve_grid.json")))
+		require.Len(t, f.db.intake, 1, "the org's one install takes it")
+		assert.Equal(t, install.ID, f.db.intake[0].InstallID)
+
+		f.db.intake = nil
+		f.db.installs = append(f.db.installs, &model.SlackInstall{ID: "inst-2", WorkspaceID: "ws-2", TeamID: "T0GRIDWS03", EnterpriseID: "E0ACME001"})
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "approve_grid.json")))
+		assert.Empty(t, f.db.intake, "with two installs in the org, the click can't be told apart")
+
+		f.db.installs = f.db.installs[:1]
+		install.EnterpriseID = "E0OTHER01"
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "approve_grid.json")))
+		assert.Empty(t, f.db.intake, "another org's install never takes it")
+		install.EnterpriseID = ""
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "approve_grid.json")))
+		assert.Empty(t, f.db.intake, "nor an install outside any org")
 	})
 	t.Run("a store that fails", func(t *testing.T) {
 		f := newSlackFixture(t)

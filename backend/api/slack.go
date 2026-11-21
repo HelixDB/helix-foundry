@@ -242,10 +242,19 @@ func (s *Service) receiveSlackClick(ctx context.Context, body []byte) (*foundryv
 		return slackOK(), "ignored", nil
 	}
 	install, err := s.deps.DB.GetFoundrySlackInstallByTeam(ctx, c.TeamID)
-	if errors.Is(err, foundrystore.ErrNotFound) {
-		return slackOK(), "unknown_team", nil
+	if errors.Is(err, foundrystore.ErrNotFound) && c.EnterpriseID != "" {
+		// In a Grid org a click names the workspace the clicker's session is
+		// in, which in a channel several of the org's workspaces share may
+		// not be the install's (a click carries no authorizations, as an
+		// event does): the org's one live install takes it, and the worker
+		// acts only for a clicker linked to that install. With several, the
+		// click can't be told apart, and is left.
+		install, err = s.deps.DB.GetFoundrySlackInstallByEnterprise(ctx, c.EnterpriseID)
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound) || errors.Is(err, foundrystore.ErrConflict):
+		return slackOK(), "unknown_team", nil
+	case err != nil:
 		return nil, "", err
 	}
 	payload, err := slack.InteractionPayload(in)
