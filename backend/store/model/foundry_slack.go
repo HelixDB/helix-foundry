@@ -341,7 +341,8 @@ type SlackReply struct {
 	// AfterSeq is the turn's last event shown.
 	AfterSeq int
 	// Posted is what else was posted, by key ("q:<question>", "a:<action>",
-	// "k:<asking turn>"): the message's ts, or SlackPostPending.
+	// "k:<asking turn>", and "m:<n>" for the reply's n-th message past its
+	// first, once the first filled): the message's ts, or SlackPostPending.
 	Posted       map[string]string
 	Status       SlackReplyStatus
 	LeaseOwner   *string
@@ -394,10 +395,10 @@ func (u SlackReplyUpdate) Validate() error {
 	return nil
 }
 
-// validSlackPostKey reports "q:", "a:" or "k:" and an id.
+// validSlackPostKey reports "q:", "a:", "k:" or "m:" and an id.
 func validSlackPostKey(k string) bool {
 	kind, id, ok := strings.Cut(k, ":")
-	return ok && (kind == "q" || kind == "a" || kind == "k") && ValidSlackID(id)
+	return ok && (kind == "q" || kind == "a" || kind == "k" || kind == "m") && ValidSlackID(id)
 }
 
 // SlackRefusalReason is why an install was refused: a closed set the API
