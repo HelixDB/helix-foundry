@@ -1,0 +1,509 @@
+{
+  "a generation's": [
+    {
+      "text": "Founder has a question for you. Reply in this thread to answer.\n*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread to answer.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "From the draft of Sales (Contracts).",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "a generation's without a title": [
+    {
+      "text": "Founder has a question for you. Reply in this thread to answer.\n*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread to answer.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "From the draft of Sales.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "four": [
+    {
+      "text": "Founder has 4 questions for you. Reply in this thread to answer them, by their numbers.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._\n*2.* Which sources?\n   1. Stripe\n   2. Postgres\n   3. Docs\n_Reply with one or more options’ numbers, or in your own words. You may leave it to Founder._\n*3.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._\n*4.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has 4 questions for you. Reply in this thread to answer them, by their numbers.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*2.* Which sources?\n   1. Stripe\n   2. Postgres\n   3. Docs\n_Reply with one or more options’ numbers, or in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*3.* What do you call a deal?\n_Suggested:_ An opportunity\n_Reply in your own words._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*4.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "one": [
+    {
+      "text": "Founder has a question for you. Reply in this thread to answer.\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread to answer.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "thirty": [
+    {
+      "text": "Founder has 30 questions for you. Reply in this thread to answer them, by their numbers.\n*1.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*2.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*3.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*4.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*5.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*6.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*7.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*8.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*9.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*10.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*11.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*12.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*13.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*14.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*15.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*16.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*17.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*18.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*19.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*20.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*21.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*22.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*23.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*24.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has 30 questions for you. Reply in this thread to answer them, by their numbers.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*2.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*3.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*4.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*5.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*6.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*7.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*8.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*9.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*10.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*11.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*12.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*13.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*14.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*15.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*16.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*17.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*18.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*19.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*20.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*21.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*22.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*23.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*24.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        }
+      ]
+    },
+    {
+      "text": "*25.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*26.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*27.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*28.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*29.* Anything else?\n_Reply in your own words. You may leave it to Founder._\n*30.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*25.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*26.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*27.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*28.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*29.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*30.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ]
+}
