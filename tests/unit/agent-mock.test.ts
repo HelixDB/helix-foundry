@@ -581,6 +581,29 @@ describe("messages", () => {
   });
 });
 
+describe("a turn's surface", () => {
+  it("keeps Slack's, on the turn, the thread's read and its continuation", async () => {
+    const SLACK = "FOUNDRY_AGENT_SURFACE_SLACK";
+    const site = await send("What ontologies do I have?");
+    expect(site.body.turn.surface).toBeUndefined();
+    const sent = await send("Load Customer contracts", { surface: SLACK });
+    expect(sent.body.turn.surface).toBe(SLACK);
+    await events(sent.body.turn.id);
+    const thread = await call("GET", `${A}/threads/${sent.body.thread.id}`);
+    expect(thread.body.turns.map((t: any) => t.surface)).toEqual([SLACK]);
+    const action = thread.body.actions[0];
+    const ran = await call("POST", `${A}/actions/${action.id}:execute`, {
+      payloadHash: action.payloadHash,
+    });
+    expect(ran.body.continuation).toMatchObject({
+      kind: "action_result",
+      surface: SLACK,
+    });
+    const bad = await send("Hi", { surface: "FOUNDRY_AGENT_SURFACE_EMAIL" });
+    expect(bad.status).toBe(400);
+  });
+});
+
 describe("a local install", () => {
   afterEach(() => {
     vi.unstubAllEnvs();

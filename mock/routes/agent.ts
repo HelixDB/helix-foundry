@@ -31,6 +31,7 @@ import type {
   Connector,
   ConnectorKind,
   FoundryAccessTarget,
+  FoundryAgentSurface,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
   FoundryAgentAnswers,
@@ -338,6 +339,9 @@ type StoredTurn = {
   asked: FoundryAgentAsked | null;
   answers: FoundryAgentAnswers | null;
   pageContext: AgentPageContext | null;
+  // Where its person reads it; a continuation (an action's result, answers)
+  // keeps its turn's.
+  surface: FoundryAgentSurface;
   clientToken: string;
   status: FoundryAgentTurnStatus;
   error: string;
@@ -565,6 +569,7 @@ const toTurn = (t: StoredTurn): FoundryAgentTurn => ({
   finishedAt: t.finishedAt,
   ...(t.asked && { asked: structuredClone(t.asked) }),
   ...(t.answers && { answers: structuredClone(t.answers) }),
+  ...(t.surface === "FOUNDRY_AGENT_SURFACE_SLACK" && { surface: t.surface }),
 });
 const toAction = (a: StoredAction): FoundryAgentAction => ({
   id: a.id,
@@ -4453,7 +4458,7 @@ function queueTurn(
     StoredTurn,
     "kind" | "text" | "actionId" | "pageContext" | "clientToken" | "script"
   > &
-    Partial<Pick<StoredTurn, "answers">>,
+    Partial<Pick<StoredTurn, "answers" | "surface">>,
   first?: AgentEvent,
 ) {
   const at = Date.now(),
@@ -4461,6 +4466,7 @@ function queueTurn(
   const t: StoredTurn = {
     asked: null,
     answers: null,
+    surface: "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
     ...turn,
     id: id("turn"),
     threadId: thread.id,
@@ -4571,6 +4577,7 @@ function execute(req: MockRequest, userId: string) {
       pageContext: null,
       clientToken: "",
       script: [],
+      surface: state.turns.find((t) => t.id === a.turnId)?.surface,
     },
     {
       type: "action_result",
@@ -4651,6 +4658,7 @@ export const agentRoutes: MockRoute[] = [
         Record<"threadId" | "text" | "clientToken", string> & {
           answers: Partial<FoundryAgentAnswers>;
           pageContext: AgentPageContext;
+          surface: string;
         }
       >;
       const text = (body.text || "").trim(),
@@ -4664,6 +4672,14 @@ export const agentRoutes: MockRoute[] = [
         );
       if (body.threadId && !ID.test(body.threadId))
         return fail("INVALID_ARGUMENT", "thread_id is malformed");
+      // Any caller may set it (it only narrows the turn); an unknown value
+      // is the gateway's 400.
+      if (
+        body.surface !== undefined &&
+        body.surface !== "FOUNDRY_AGENT_SURFACE_UNSPECIFIED" &&
+        body.surface !== "FOUNDRY_AGENT_SURFACE_SLACK"
+      )
+        return fail("INVALID_ARGUMENT", "surface is not a FoundryAgentSurface");
       if (replying && body.text !== undefined)
         return fail("INVALID_ARGUMENT", "text or answers, not both");
       if (!replying && (!text || [...text].length > MAX_TEXT))
@@ -4915,6 +4931,11 @@ export const agentRoutes: MockRoute[] = [
           pageContext,
           clientToken: token,
           script: [],
+          surface: reply
+            ? reply.asking.surface
+            : body.surface === "FOUNDRY_AGENT_SURFACE_SLACK"
+              ? body.surface
+              : "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
           ...(reply && {
             answers: { turnId: reply.asking.id, answers: reply.answers },
           }),

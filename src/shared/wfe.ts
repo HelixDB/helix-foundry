@@ -2883,6 +2883,16 @@ export type AgentPageContext = {
  */
 export type AgentRuntime = "api" | "claude_code" | "codex";
 
+/**
+ * v1FoundryAgentSurface: where a turn's person reads it: Foundry's site
+ * (UNSPECIFIED, also when missing) or a Slack thread, through Helix
+ * Foundry's Slack app. A Slack-born thread is deleted 30 days after its
+ * last activity.
+ */
+export type FoundryAgentSurface =
+  | "FOUNDRY_AGENT_SURFACE_UNSPECIFIED"
+  | "FOUNDRY_AGENT_SURFACE_SLACK";
+
 /** v1FoundryAgentThread */
 export type FoundryAgentThread = {
   id: string;
@@ -2923,6 +2933,9 @@ export type FoundryAgentTurn = {
   asked?: FoundryAgentAsked | null;
   // An answers turn's: the turn it answers, and the person's answers.
   answers?: FoundryAgentAnswers | null;
+  // Where its person reads it; a continuation (an action's result, answers)
+  // keeps its turn's.
+  surface?: FoundryAgentSurface;
 };
 
 /**
