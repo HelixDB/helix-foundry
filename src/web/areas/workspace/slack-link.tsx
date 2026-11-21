@@ -27,8 +27,8 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // /slack/link: a person links their Slack account to their Foundry account
 // from the one-time link Helix Foundry sent them in Slack
 // (/slack/link?workspace=<id>#t=<token>). The token was moved into this tab,
-// and the fragment cleared, before the app made any call (main.tsx,
-// captureSlackReturn), so a sign-in on the way keeps it and it never
+// and the fragment cleared, before any of the site's scripts ran (the root
+// layout's SLACK_RETURN_BOOT), so a sign-in on the way keeps it and it never
 // reaches a server's logs or the tracker. The page says who would act as
 // whom, from a preview that spends nothing, and Link is offered only when
 // the Slack account's confirmed email is the caller's.

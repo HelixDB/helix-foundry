@@ -50,7 +50,6 @@ import { myAccessQuery } from "./areas/workspace/access-api";
 import { granteeRedirect } from "./areas/workspace/access-model";
 import { ontologyQueries } from "./areas/ontology/queries";
 import { captureCallback, tabStorage } from "./areas/data/sign-ins";
-import { captureSlackReturn } from "./areas/workspace/slack-return";
 import {
   Loading,
   WorkspaceContext,
@@ -75,18 +74,13 @@ import {
 // A provider's return from connecting a source by signing in brings a
 // single-use code in the URL: it moves into this tab's sign-in, and the URL
 // becomes the bare callback, before any call (./areas/data/sign-ins.ts).
+// Slack's returns move earlier still, in the root layout's <head>
+// (./areas/workspace/slack-return.ts, SLACK_RETURN_BOOT).
 if (typeof window !== "undefined") {
   applyTheme(readTheme());
   captureCallback(window.location, tabStorage(), (path) =>
     window.history.replaceState(window.history.state, "", path),
   );
-  // Slack's return from adding Helix Foundry, and the link it sends a person
-  // (its token in the fragment), move into this tab the same way, hosted
-  // only (./areas/workspace/slack-return.ts).
-  if (!LOCAL)
-    captureSlackReturn(window.location, tabStorage(), (path) =>
-      window.history.replaceState(window.history.state, "", path),
-    );
 }
 
 // Each area's index.tsx exports its route components; main.tsx owns the table.

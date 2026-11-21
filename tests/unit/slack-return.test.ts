@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  SLACK_LINK_TOKEN_PREFIX,
+  SLACK_RETURN_BOOT,
   SLACK_RETURN_TTL_MS,
   captureSlackReturn,
   clearSlackReturn,
@@ -152,6 +154,90 @@ describe("Slack's return from adding the app", () => {
     expect(captureSlackReturn(at("/slack/installed"), storage, replace)).toBe(
       false,
     );
+  });
+});
+
+describe("Slack's error", () => {
+  it("is kept only as one of Slack's codes: a forged sentence is nothing", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    expect(
+      captureSlackReturn(
+        at("/slack/installed", "?error=invalid_scope"),
+        storage,
+        replace,
+        NOW,
+      ),
+    ).toBe(true);
+    expect(readSlackReturn(storage, "install_error", NOW)?.error).toBe(
+      "invalid_scope",
+    );
+    for (const error of [
+      "Your%20workspace%20is%20suspended",
+      "Access_Denied",
+      "a".repeat(65),
+    ]) {
+      expect(
+        captureSlackReturn(
+          at("/slack/installed", `?error=${error}`),
+          storage,
+          replace,
+          NOW,
+        ),
+        error,
+      ).toBe(false);
+      expect(replace).toHaveBeenLastCalledWith("/slack/installed");
+      expect(readSlackReturn(storage, "install_error", NOW)).toBeNull();
+    }
+    // Nor is one written by hand read back.
+    storage.setItem(
+      "foundry.slack.return.v1",
+      JSON.stringify({ kind: "install_error", error: "call us", at: NOW }),
+    );
+    expect(readSlackReturn(storage, "install_error", NOW)).toBeNull();
+  });
+});
+
+describe("the boot script in <head>", () => {
+  /** Runs SLACK_RETURN_BOOT as the page's <head> does, on `href`. */
+  function boot(href: string, storage: Storage = new Memory()) {
+    const u = new URL(href, "https://foundry.example"),
+      history = { state: { idx: 1 }, replaceState: vi.fn() };
+    // Its own scope: it names nothing of this module's.
+    new Function("location", "history", "sessionStorage", SLACK_RETURN_BOOT)(
+      { pathname: u.pathname, search: u.search, hash: u.hash },
+      history,
+      storage,
+    );
+    return { storage, history };
+  }
+  it("moves the link's token out of the URL before anything else runs", () => {
+    const { storage, history } = boot(`/slack/link?workspace=ws_acme#t=${TOKEN}`);
+    expect(TOKEN.startsWith(SLACK_LINK_TOKEN_PREFIX)).toBe(true);
+    expect(history.replaceState).toHaveBeenCalledWith(
+      { idx: 1 },
+      "",
+      "/slack/link?workspace=ws_acme",
+    );
+    expect(readSlackReturn(storage, "link")?.token).toBe(TOKEN);
+  });
+  it("moves Slack's code and state out of the URL", () => {
+    const { storage, history } = boot("/slack/installed?code=c1&state=s1");
+    expect(history.replaceState).toHaveBeenCalledWith(
+      { idx: 1 },
+      "",
+      "/slack/installed",
+    );
+    expect(readSlackReturn(storage, "installed")).toMatchObject({
+      code: "c1",
+      state: "s1",
+    });
+  });
+  it("leaves every other page alone, and never throws", () => {
+    const { storage, history } = boot("/ask?code=c#t=x");
+    expect(history.replaceState).not.toHaveBeenCalled();
+    expect(storage.length).toBe(0);
+    expect(() => boot(`/slack/link#t=${TOKEN}`, blocked)).not.toThrow();
   });
 });
 
