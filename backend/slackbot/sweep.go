@@ -21,9 +21,10 @@ const (
 // Sweep does what no message starts (the spec's §8.2 and §12): it tells
 // Slack of the uninstalls it wasn't told of yet (apps.uninstall), so their
 // teams may install again; purges the Slack-born Founder threads idle past
-// foundry.slack.retention.threads, of a revoked install, or deleted; and
-// prunes the intake, replies, link tokens and install states Slack's terms
-// let go. Each step goes on whatever another's failure; each is counted.
+// foundry.slack.retention.threads or of a revoked install; and prunes the
+// intake and replies past foundry.slack.retention.intake and .replies, and
+// the link tokens and install states Slack's terms let go. Each step goes on
+// whatever another's failure; each is counted.
 func (b *Bot) Sweep(ctx context.Context) {
 	installs, err := b.db.ListFoundrySlackUninstalls(ctx, sweepUninstalls)
 	if err != nil {
@@ -40,7 +41,7 @@ func (b *Bot) Sweep(ctx context.Context) {
 	default:
 		sweeps.WithLabelValues("purge", "purged").Add(float64(n))
 	}
-	switch n, err := b.db.PruneFoundrySlack(ctx, sweepPrune); {
+	switch n, err := b.db.PruneFoundrySlack(ctx, b.cfg.Retention.Intake, b.cfg.Retention.Replies, sweepPrune); {
 	case err != nil:
 		sweeps.WithLabelValues("prune", "error").Inc()
 		log.From(ctx).Error("prune Slack's rows failed", "err", err)

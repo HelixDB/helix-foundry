@@ -1900,7 +1900,7 @@ func (u Unimplemented) FinishFoundrySlackReply(context.Context, string, string) 
 	return nil
 }
 
-func (u Unimplemented) PruneFoundrySlack(context.Context, int) (int64, error) {
+func (u Unimplemented) PruneFoundrySlack(context.Context, time.Duration, time.Duration, int) (int64, error) {
 	u.unimplemented("PruneFoundrySlack")
 	return 0, nil
 }

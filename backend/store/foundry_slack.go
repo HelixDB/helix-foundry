@@ -950,21 +950,22 @@ WHERE turn_id=? AND status='following' AND lease_owner=?`, turnID, owner)
 // --- Retention ---
 
 // PruneFoundrySlack deletes, up to limit rows of each, what Slack's
-// retention lets go: intake rows older than model.SlackIntakeKept, replies
-// done for model.SlackRepliesKept, and link tokens and install states
+// retention lets go: intake rows older than intake
+// (foundry.slack.retention.intake), replies done for replies
+// (foundry.slack.retention.replies), and link tokens and install states
 // expired for model.SlackSecretsKept. It returns how many rows it deleted.
-func (s *mysqlDB) PruneFoundrySlack(ctx context.Context, limit int) (int64, error) {
-	if limit < 1 {
-		return 0, fmt.Errorf("a Slack prune has a limit")
+func (s *mysqlDB) PruneFoundrySlack(ctx context.Context, intake, replies time.Duration, limit int) (int64, error) {
+	if intake <= 0 || replies <= 0 || limit < 1 {
+		return 0, fmt.Errorf("a Slack prune keeps intake and replies a while, and has a limit")
 	}
 	var deleted int64
 	for _, p := range []struct {
 		q    string
 		kept time.Duration
 	}{
-		{`DELETE FROM foundry_slack_intake WHERE created_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY created_at LIMIT ?`, model.SlackIntakeKept},
+		{`DELETE FROM foundry_slack_intake WHERE created_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY created_at LIMIT ?`, intake},
 		{`DELETE FROM foundry_slack_replies WHERE status='done' AND finished_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY finished_at LIMIT ?`,
-			model.SlackRepliesKept},
+			replies},
 		{`DELETE FROM foundry_slack_link_tokens WHERE expires_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY expires_at LIMIT ?`, model.SlackSecretsKept},
 		{`DELETE FROM foundry_slack_install_states WHERE expires_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY expires_at LIMIT ?`,
 			model.SlackSecretsKept},

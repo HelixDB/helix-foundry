@@ -556,7 +556,7 @@ type Store interface {
 	UpdateFoundrySlackReply(ctx context.Context, turnID, owner string, u model.SlackReplyUpdate) error
 	ReleaseFoundrySlackReply(ctx context.Context, turnID, owner string, after time.Duration) error
 	FinishFoundrySlackReply(ctx context.Context, turnID, owner string) error
-	PruneFoundrySlack(ctx context.Context, limit int) (int64, error)
+	PruneFoundrySlack(ctx context.Context, intake, replies time.Duration, limit int) (int64, error)
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error

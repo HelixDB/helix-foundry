@@ -763,7 +763,9 @@ func (brokenStore) ListFoundrySlackUninstalls(context.Context, int) ([]*model.Sl
 func (brokenStore) PurgeFoundrySlackThreads(context.Context, time.Duration, int) (int, error) {
 	return 0, errBroken
 }
-func (brokenStore) PruneFoundrySlack(context.Context, int) (int64, error) { return 0, errBroken }
+func (brokenStore) PruneFoundrySlack(context.Context, time.Duration, time.Duration, int) (int64, error) {
+	return 0, errBroken
+}
 func (brokenStore) ClaimFoundrySlackIntake(context.Context, time.Duration) (*model.SlackIntake, error) {
 	return nil, errBroken
 }

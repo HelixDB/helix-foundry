@@ -28,13 +28,9 @@ type SlackSharedBot struct{ CredentialID string }
 func (SlackPerPerson) slackIdentityMode() {}
 func (SlackSharedBot) slackIdentityMode() {}
 
-// Retention of Slack's data (the spec's §12): minimise, never train.
+// Retention of Slack's data (the spec's §12): minimise, never train. How
+// long intake and replies stay is foundry.slack.retention's.
 const (
-	// SlackIntakeKept is how long an intake row is kept, its payload gone
-	// once processed: long enough that Slack's retries find it.
-	SlackIntakeKept = 7 * 24 * time.Hour
-	// SlackRepliesKept is how long a reply row is kept after its follow ends.
-	SlackRepliesKept = 7 * 24 * time.Hour
 	// SlackSecretsKept is how long a link token or install state is kept
 	// after it expires.
 	SlackSecretsKept = 24 * time.Hour

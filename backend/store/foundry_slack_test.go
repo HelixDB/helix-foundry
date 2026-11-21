@@ -996,37 +996,48 @@ func TestFoundrySlackReplies(t *testing.T) {
 
 // --- Retention and a deleted workspace ---
 
+// The prune keeps intake and replies as long as foundry.slack.retention
+// says, not a fixed week.
 func TestFoundrySlackPrune(t *testing.T) {
 	ctx := context.Background()
 	f := newSlackFixture(t, "prune")
 	i := f.installed(t)
-	_, err := f.db.PruneFoundrySlack(ctx, 0)
-	assert.Error(t, err)
+	for _, bad := range []struct {
+		intake, replies time.Duration
+		limit           int
+	}{{time.Hour, time.Hour, 0}, {0, time.Hour, 10}, {time.Hour, 0, 10}} {
+		_, err := f.db.PruneFoundrySlack(ctx, bad.intake, bad.replies, bad.limit)
+		assert.Error(t, err, "%+v", bad)
+	}
 	f.queue(t, i.ID, 1, "conv-a")
 	f.queue(t, i.ID, 2, "conv-b")
 	require.NoError(t, f.db.CreateFoundrySlackLinkToken(ctx, i.ID, "UADA", sha("old"), time.Minute))
 	require.NoError(t, f.db.CreateFoundrySlackLinkToken(ctx, i.ID, "UGRACE", sha("new"), time.Minute))
 	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("old"), time.Minute))
 	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("new"), time.Minute))
-	for n := 1; n <= 2; n++ {
+	for n := 1; n <= 3; n++ {
 		_, err := f.db.HoldFoundrySlackReply(ctx, f.reply(i.ID, n))
 		require.NoError(t, err)
 	}
-	dbExec(t, `UPDATE foundry_slack_intake SET created_at=NOW(6) - INTERVAL 8 DAY WHERE id=?`, f.intakeID(1))
+	// Past an intake retention of 2 hours and a replies retention of 1, well
+	// within a week.
+	dbExec(t, `UPDATE foundry_slack_intake SET created_at=NOW(6) - INTERVAL 3 HOUR WHERE id=?`, f.intakeID(1))
+	dbExec(t, `UPDATE foundry_slack_intake SET created_at=NOW(6) - INTERVAL 90 MINUTE WHERE id=?`, f.intakeID(2))
 	dbExec(t, `UPDATE foundry_slack_link_tokens SET expires_at=NOW(6) - INTERVAL 25 HOUR WHERE token_hash=?`, sha("old"))
 	dbExec(t, `UPDATE foundry_slack_install_states SET expires_at=NOW(6) - INTERVAL 25 HOUR WHERE state_hash=?`, sha("old"))
-	dbExec(t, `UPDATE foundry_slack_replies SET status='done', finished_at=NOW(6) - INTERVAL 8 DAY WHERE turn_id=?`, f.turnID(1))
+	dbExec(t, `UPDATE foundry_slack_replies SET status='done', finished_at=NOW(6) - INTERVAL 90 MINUTE WHERE turn_id=?`, f.turnID(1))
+	dbExec(t, `UPDATE foundry_slack_replies SET status='done', finished_at=NOW(6) - INTERVAL 30 MINUTE WHERE turn_id=?`, f.turnID(3))
 	dbExec(t, `UPDATE foundry_slack_replies SET created_at=NOW(6) - INTERVAL 8 DAY WHERE turn_id=?`, f.turnID(2))
 
-	n, err := f.db.PruneFoundrySlack(ctx, 100)
+	n, err := f.db.PruneFoundrySlack(ctx, 2*time.Hour, time.Hour, 100)
 	require.NoError(t, err)
 	assert.EqualValues(t, 4, n)
 	assert.True(t, dbTrue(t, `SELECT
-  (SELECT COUNT(*)=1 FROM foundry_slack_intake) AND (SELECT COUNT(*)=1 FROM foundry_slack_link_tokens WHERE token_hash=?)
+  (SELECT COUNT(*)=1 FROM foundry_slack_intake WHERE id=?) AND (SELECT COUNT(*)=1 FROM foundry_slack_link_tokens WHERE token_hash=?)
   AND (SELECT COUNT(*)=1 FROM foundry_slack_install_states WHERE state_hash=?)
-  AND (SELECT COUNT(*)=1 FROM foundry_slack_replies WHERE turn_id=?)`, sha("new"), sha("new"), f.turnID(2)),
+  AND (SELECT COUNT(*)=2 FROM foundry_slack_replies WHERE turn_id IN (?, ?))`, f.intakeID(2), sha("new"), sha("new"), f.turnID(2), f.turnID(3)),
 		"what is young, and a reply still followed, stay")
-	n, err = f.db.PruneFoundrySlack(ctx, 100)
+	n, err = f.db.PruneFoundrySlack(ctx, 2*time.Hour, time.Hour, 100)
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
