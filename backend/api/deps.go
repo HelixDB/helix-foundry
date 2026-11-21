@@ -64,8 +64,10 @@ type Deps struct {
 	// Web API is under its /api. Tests point it at a fake Slack.
 	SlackURL string
 	// Emails reads users' email addresses: linking a Slack account needs its
-	// Slack email to be its Foundry user's. nil where the host can't say,
-	// and Slack accounts are then not linked (UNAVAILABLE).
+	// Slack email to be its Foundry user's. A hosted API with foundry.slack
+	// enabled needs it (New refuses to start without it); a standalone
+	// install leaves it nil, since its front end refuses every Slack method
+	// until Slack reaches it through Helix's relay.
 	Emails UserEmails
 }
 

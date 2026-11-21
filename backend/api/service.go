@@ -93,18 +93,24 @@ type runtimeDeps struct {
 	// page an install starts at.
 	Slack    *slack.Client
 	SlackURL string
-	// Emails is nil where the host can't say a user's email, and Slack
-	// accounts are then not linked.
+	// Emails is nil only where Slack accounts aren't linked: foundry.slack
+	// off, or a standalone install (New).
 	Emails UserEmails
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
-// plan catalog, foundry-read client (connected lazily) and event sends.
+// plan catalog, foundry-read client (connected lazily) and event sends. A
+// hosted API with foundry.slack enabled needs Deps.Emails, without which no
+// Slack account could be linked.
 func New(d Deps) (*Service, error) {
 	if d.DB == nil || d.Cfg == nil {
 		return nil, errors.New("api: store and configuration are required")
 	}
 	cfg := d.Cfg
+	if cfg.Foundry.Slack.Enabled && !cfg.Host.Local && d.Emails == nil {
+		return nil, errors.New("api: foundry.slack is enabled but the host reads no user's email (Deps.Emails): " +
+			"no Slack account could be linked")
+	}
 	connectorKeys, err := connector.NewKeyring(cfg.Foundry.Connectors)
 	if err != nil {
 		return nil, err
