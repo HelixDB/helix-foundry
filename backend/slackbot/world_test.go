@@ -437,9 +437,15 @@ type sessions struct {
 	refused map[string]error
 }
 
+// Session opens actor's session unless refused names them: a person by
+// their user id, a bot by its credential's.
 func (s *sessions) Session(ctx context.Context, actor ports.Actor, _ integration.ConfirmMode) (integration.Session, error) {
+	who := actor.UserID
+	if who == "" {
+		who = actor.ServiceCredentialID
+	}
 	s.mu.Lock()
-	err := s.refused[actor.UserID]
+	err := s.refused[who]
 	s.mu.Unlock()
 	if err != nil {
 		return integration.Session{}, err
@@ -477,7 +483,7 @@ var slackTables = []string{"foundry_slack_installs", "foundry_slack_install_toke
 	"foundry_agent_turns", "foundry_agent_events", "foundry_agent_messages", "foundry_agent_actions", "foundry_questions", "foundry_ontologies",
 	"foundry_slack_slots", "foundry_slack_feeds", "foundry_slack_feed", "foundry_slack_feed_channels", "foundry_slack_feed_days",
 	"foundry_slack_backfill", "foundry_slack_backfill_threads", "foundry_slack_gap_budget", "connectors", "connector_syncs",
-	"connector_replaced_snapshots", "workspaces"}
+	"connector_replaced_snapshots", "foundry_slack_thread_people", "workspaces"}
 
 // newWorld is a workspace with an install of team, Ada and Grace linked,
 // and a bot on it; with mutates its options first.

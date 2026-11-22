@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
+	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
@@ -223,10 +226,15 @@ func memberOf(u slack.User, install *model.SlackInstall, userTeam string) bool {
 }
 
 // message handles a mention or a direct message (the spec's §8.5): it
-// checks who wrote it and where, renders its text once, then, for a linked
-// person, sends it to Founder as them in the Founder thread its Slack thread
-// continues, and posts the reply the follower takes over. Someone not
-// linked gets a link prompt.
+// checks who wrote it and where, renders its text once, then sends it to
+// Founder in the Founder thread its Slack thread continues, and posts the
+// reply the follower takes over. per_person, it goes as the sender's linked
+// person, in their own thread (someone not linked gets a link prompt); in
+// bot mode (§9.5), as the install's bot, in the Slack thread's one thread,
+// for anyone in the Slack workspace within
+// foundry.slack.bot.per_user_per_hour, its text saying who wrote it, and the
+// sender then counts among the thread's people, whose replies reach the bot
+// unmentioned.
 func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOutcome, error) {
 	tell := func(text string) (model.SlackIntakeOutcome, error) {
 		if err := b.tell(ctx, c.bot, m.at.ChannelID, m.at.ThreadTS, m.user, b.say(text)); err != nil {
@@ -244,10 +252,23 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	if err != nil || !memberOf(u, c.install, m.userTeam) {
 		return tell("Helix Foundry answers members of " + c.install.TeamName + " only.")
 	}
+	shared, isBot := c.install.Mode.(model.SlackSharedBot)
 	input := ""
 	if c.in.Input != nil {
 		input = *c.in.Input
 	} else {
+		if isBot {
+			// Counted from the row's own time, so a retry counts the same.
+			n, err := b.db.CountFoundrySlackUserMessages(ctx, c.install.ID, m.user, c.in.ID, time.Hour)
+			switch {
+			case err != nil:
+				return nil, fmt.Errorf("count the sender's messages: %w", err)
+			case n >= b.cfg.Bot.PerUserPerHour && m.unmentioned:
+				return model.SlackIntakeEnded{}, nil
+			case n >= b.cfg.Bot.PerUserPerHour:
+				return tell(fmt.Sprintf("You've sent me %d messages in the last hour, the most one person may: try again later.", n))
+			}
+		}
 		names := map[string]string{}
 		for i, mentioned := range slack.MentionedUsers(m.text) {
 			if i >= maxMentionNames || mentioned == c.install.BotUserID {
@@ -257,15 +278,21 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 				names[mentioned] = who.Shown()
 			}
 		}
-		input = slack.InputText(m.text, c.install.BotUserID, func(id string) string { return names[id] })
-		switch {
-		case input == "" && m.unmentioned:
-			return model.SlackIntakeEnded{}, nil
-		case input == "":
-			return tell("Ask me something about your Foundry data.")
-		case utf8.RuneCountInString(input) > maxInputChars:
-			return tell(fmt.Sprintf("That message is too long for Founder: keep it under %d characters.", maxInputChars))
+		text := slack.InputText(m.text, c.install.BotUserID, func(id string) string { return names[id] })
+		// The bot's thread is everyone's: its text says who wrote it.
+		prefix := ""
+		if isBot {
+			prefix = "[Slack] " + speaker(u) + " wrote:\n"
 		}
+		switch room := maxInputChars - utf8.RuneCountInString(prefix); {
+		case text == "" && m.unmentioned:
+			return model.SlackIntakeEnded{}, nil
+		case text == "":
+			return tell("Ask me something about your Foundry data.")
+		case utf8.RuneCountInString(text) > room:
+			return tell(fmt.Sprintf("That message is too long for Founder: keep it under %d characters.", room))
+		}
+		input = prefix + text
 		switch err := b.db.SetFoundrySlackIntakeInput(ctx, c.in.ID, c.owner, input); {
 		case errors.Is(err, store.ErrNotFound):
 			return nil, errLost
@@ -273,23 +300,30 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 			return nil, fmt.Errorf("keep the message's input: %w", err)
 		}
 	}
-	link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, m.user)
-	switch {
-	case errors.Is(err, store.ErrNotFound) && m.unmentioned:
-		return model.SlackIntakeEnded{}, nil
-	case errors.Is(err, store.ErrNotFound):
-		if err := b.linkPrompt(ctx, c, m); err != nil {
-			return nil, err
+	// principal is whom the turn is for, person the Slack user whose
+	// Founder thread the Slack thread continues ("" for the bot's).
+	var principal model.FoundryAgentPrincipal = model.AgentBot(shared)
+	person := ""
+	if !isBot {
+		link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, m.user)
+		switch {
+		case errors.Is(err, store.ErrNotFound) && m.unmentioned:
+			return model.SlackIntakeEnded{}, nil
+		case errors.Is(err, store.ErrNotFound):
+			if err := b.linkPrompt(ctx, c, m.at.ChannelID, m.at.ThreadTS, m.user, linkToAsk); err != nil {
+				return nil, err
+			}
+			return model.SlackIntakeEnded{}, nil
+		case err != nil:
+			return nil, fmt.Errorf("read the link: %w", err)
 		}
-		return model.SlackIntakeEnded{}, nil
-	case err != nil:
-		return nil, fmt.Errorf("read the link: %w", err)
+		principal, person = model.AgentPerson{UserID: link.UserID}, m.user
 	}
-	session, done, err := b.session(ctx, c, link, m.at.ChannelID, m.at.ThreadTS)
+	session, done, err := b.session(ctx, c, principal, m.user, m.at.ChannelID, m.at.ThreadTS)
 	if done || err != nil {
 		return model.SlackIntakeEnded{}, err
 	}
-	thread, err := b.db.GetFoundrySlackThread(ctx, c.install.ID, m.at.ChannelID, m.at.ThreadTS, m.user)
+	thread, err := b.db.GetFoundrySlackThread(ctx, c.install.ID, m.at.ChannelID, m.at.ThreadTS, person)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("read the thread: %w", err)
 	}
@@ -311,11 +345,14 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		}
 	case status.Code(err) == codes.InvalidArgument && status.Convert(err).Message() == "client_token was already used for another message":
 		// An earlier attempt sent it: follow its turn.
-		if turn, err = b.db.GetFoundryAgentTurnByClientToken(ctx, c.install.WorkspaceID, model.AgentPerson{UserID: link.UserID}, req.ClientToken); err != nil {
+		if turn, err = b.db.GetFoundryAgentTurnByClientToken(ctx, c.install.WorkspaceID, principal, req.ClientToken); err != nil {
 			return nil, fmt.Errorf("find the message's turn: %w", err)
 		}
 	case reasonOf(err) == "FOUNDRY_AGENT_THREAD_BUSY":
 		return b.busy(ctx, c, m, thread)
+	case isBot && status.Code(err) == codes.PermissionDenied:
+		// The API no longer takes the key as the install's bot.
+		return tell(botOff)
 	case refusedInWords(err):
 		return tell(sentence(err))
 	default:
@@ -327,27 +364,53 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		}
 		return b.retry(c.in, fmt.Errorf("send the message: %w", err)), nil
 	}
-	switch {
-	case thread == nil:
-		mapping := &model.SlackThread{ID: id.New(), InstallID: c.install.ID, ChannelID: m.at.ChannelID, ThreadTS: m.at.ThreadTS, SlackUserID: m.user,
+	if thread == nil {
+		thread = &model.SlackThread{ID: id.New(), InstallID: c.install.ID, ChannelID: m.at.ChannelID, ThreadTS: m.at.ThreadTS, SlackUserID: person,
 			AgentThreadID: turn.ThreadID}
-		switch err := b.db.CreateFoundrySlackThread(ctx, mapping); {
+		switch err := b.db.CreateFoundrySlackThread(ctx, thread); {
 		case errors.Is(err, store.ErrConflict):
 			// The conversation's rows run one at a time, so no other sender
 			// mapped it: a bug, and the mapping kept is the first.
 			log.From(ctx).Error("a Slack thread was mapped twice; the first mapping is kept", "agent_thread", turn.ThreadID)
+			if thread, err = b.db.GetFoundrySlackThread(ctx, c.install.ID, m.at.ChannelID, m.at.ThreadTS, person); err != nil {
+				return nil, fmt.Errorf("read the thread mapped first: %w", err)
+			}
 		case err != nil:
 			return nil, fmt.Errorf("map the thread: %w", err)
 		}
-	default:
-		if err := b.db.TouchFoundrySlackThread(ctx, thread.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("touch the thread: %w", err)
+	} else if err := b.db.TouchFoundrySlackThread(ctx, thread.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("touch the thread: %w", err)
+	}
+	if isBot {
+		switch err := b.db.AddFoundrySlackThreadPerson(ctx, thread.ID, m.user); {
+		case errors.Is(err, store.ErrNotFound):
+			// Its mapping went (bot mode turned off meanwhile): no reply of
+			// theirs reaches the bot unmentioned there.
+		case err != nil:
+			return nil, fmt.Errorf("record who spoke in the thread: %w", err)
 		}
 	}
 	if err := b.startReply(ctx, c, turn.ID, m.at.ChannelID, m.at.ThreadTS, m.user); err != nil {
 		return nil, err
 	}
 	return model.SlackIntakeEnded{}, nil
+}
+
+// botOff is what someone talking to the install's bot is told once its key
+// no longer works: Founder refuses it, revoked, changed, or bot mode off.
+const botOff = "Bot mode is off: an owner or admin can turn it on again in Settings › Slack."
+
+// speaker is a Slack user's name as a bot's turn says who wrote it: on one
+// line, without control characters, at most maxSpeakerChars.
+func speaker(u slack.User) string {
+	name := strings.Join(strings.FieldsFunc(u.Shown(), func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
+	if utf8.RuneCountInString(name) > maxSpeakerChars {
+		name = string([]rune(name)[:maxSpeakerChars-1]) + "…"
+	}
+	if name == "" {
+		return u.ID
+	}
+	return name
 }
 
 // busy waits for a busy thread's live turn (the follower wakes the row when
@@ -379,13 +442,31 @@ func (b *Bot) busy(ctx context.Context, c claim, m said, thread *model.SlackThre
 	return model.SlackIntakeDeferred{After: wait, Error: "the thread is busy"}, nil
 }
 
-// session opens the linked person's Session in the install's workspace. A
-// person who is no longer a member (PermissionDenied) is unlinked and told
-// so; a workspace gone (NotFound) revokes the install, whose sweep tells
-// Slack. done is true for both: the row ends.
-func (b *Bot) session(ctx context.Context, c claim, link *model.SlackLink, channel, threadTS string) (integration.Session, bool, error) {
-	s, err := b.sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: link.UserID, WorkspaceID: c.install.WorkspaceID},
-		integration.ConfirmByCaller{})
+// session opens principal's Session in the install's workspace: a linked
+// person's (ConfirmByCaller), or the install's bot's, a grantee session of
+// its key (ConfirmByAdmin; the bot only calls Founder's API with it, so it
+// holds no proposal sink). A person who is no longer a member
+// (PermissionDenied) is unlinked, as slackUser, and told so; a bot whose
+// key the host refuses tells slackUser bot mode is off; a workspace gone
+// (NotFound) revokes the install, whose sweep tells Slack. done is true for
+// these: the row ends.
+func (b *Bot) session(ctx context.Context, c claim, principal model.FoundryAgentPrincipal, slackUser, channel, threadTS string) (
+	integration.Session, bool, error) {
+	ws := c.install.WorkspaceID
+	var (
+		actor   ports.Actor
+		confirm integration.ConfirmMode
+	)
+	switch p := principal.(type) {
+	case model.AgentPerson:
+		actor, confirm = ports.Actor{Source: ports.SourceUser, UserID: p.UserID, WorkspaceID: ws}, integration.ConfirmByCaller{}
+	case model.AgentBot:
+		actor, confirm = ports.Actor{Source: ports.SourceGrantee, ServiceCredentialID: p.CredentialID, WorkspaceID: ws}, integration.ConfirmByAdmin{}
+	default:
+		return integration.Session{}, false, fmt.Errorf("a session for %T", principal)
+	}
+	s, err := b.sessions.Session(ctx, actor, confirm)
+	_, isBot := principal.(model.AgentBot)
 	switch status.Code(err) {
 	case codes.OK:
 		if s.Founder == nil {
@@ -393,33 +474,46 @@ func (b *Bot) session(ctx context.Context, c claim, link *model.SlackLink, chann
 		}
 		return s, false, nil
 	case codes.PermissionDenied:
-		if err := b.db.DeleteFoundrySlackLink(ctx, c.install.ID, link.SlackUserID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if isBot {
+			log.From(ctx).Info("the host refused a Slack bot's key", "workspace_id", ws, "err", err)
+			return s, true, b.tell(ctx, c.bot, channel, threadTS, slackUser, b.say(botOff))
+		}
+		if err := b.db.DeleteFoundrySlackLink(ctx, c.install.ID, slackUser); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return s, false, fmt.Errorf("unlink a former member: %w", err)
 		}
-		log.From(ctx).Info("unlinked a Slack user no longer in the workspace", "workspace_id", c.install.WorkspaceID)
-		return s, true, b.tell(ctx, c.bot, channel, threadTS, link.SlackUserID,
+		log.From(ctx).Info("unlinked a Slack user no longer in the workspace", "workspace_id", ws)
+		return s, true, b.tell(ctx, c.bot, channel, threadTS, slackUser,
 			b.say("You're no longer in the Foundry workspace "+c.install.TeamName+" is connected to, so your link was removed."))
 	case codes.NotFound:
-		if err := b.db.RevokeFoundrySlackInstall(ctx, c.install.WorkspaceID, c.install.ID, false); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := b.db.RevokeFoundrySlackInstall(ctx, ws, c.install.ID, false); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return s, false, fmt.Errorf("revoke the install of a workspace gone: %w", err)
 		}
-		log.From(ctx).Info("revoked the Slack install of a workspace gone", "workspace_id", c.install.WorkspaceID)
+		log.From(ctx).Info("revoked the Slack install of a workspace gone", "workspace_id", ws)
 		return s, true, nil
 	}
-	return s, false, fmt.Errorf("open the person's session: %w", err)
+	return s, false, fmt.Errorf("open the session: %w", err)
 }
+
+// linkToAsk and linkToApprove are what a link prompt says it is for: a
+// person's messages (per_person), or an owner's or admin's approvals of the
+// bot's proposals (bot mode).
+const (
+	linkToAsk     = "Link your Slack account to your Foundry account, and I'll answer you as you."
+	linkToApprove = "Link your Slack account to your Foundry account to review and run the bot's proposals as yourself."
+)
 
 // linkPrompt sends a Slack user who isn't linked a one-time link to link
 // their account, live linkTokenTTL, its token in the URL's fragment, which
-// no server logs: ephemerally in a channel, in the direct message itself.
-func (b *Bot) linkPrompt(ctx context.Context, c claim, m said) error {
+// no server logs: ephemerally in a channel, in the direct message itself;
+// why is what linking is for.
+func (b *Bot) linkPrompt(ctx context.Context, c claim, channel, threadTS, user, why string) error {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
 	token := linkTokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(token))
-	switch err := b.db.CreateFoundrySlackLinkToken(ctx, c.install.ID, m.user, hex.EncodeToString(sum[:]), linkTokenTTL); {
+	switch err := b.db.CreateFoundrySlackLinkToken(ctx, c.install.ID, user, hex.EncodeToString(sum[:]), linkTokenTTL); {
 	case errors.Is(err, store.ErrNotFound):
 		return nil // the install was revoked meanwhile
 	case err != nil:
@@ -429,12 +523,12 @@ func (b *Bot) linkPrompt(ctx context.Context, c claim, m said) error {
 	if err != nil {
 		return err
 	}
-	text := b.site.Text("Link your Slack account to your Foundry account, and I'll answer you as you. This link works once, for 10 minutes.")
+	text := b.site.Text(why + " This link works once, for 10 minutes.")
 	msg := slack.Message{Text: text, Blocks: []slack.Block{
 		slack.Section{Text: text},
 		slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionLink, Text: "Link your account", URL: &page, Style: slack.StylePrimary}}},
 	}}
-	return b.tell(ctx, c.bot, m.at.ChannelID, m.at.ThreadTS, m.user, msg)
+	return b.tell(ctx, c.bot, channel, threadTS, user, msg)
 }
 
 // hold records turnID's reply in a Slack thread, if it has none, held for

@@ -81,9 +81,9 @@ func (d QuestionsDue) Key() string { return "k:" + d.TurnID }
 // the bot post apart from it, nil for nothing. Started sets the status to
 // "Thinking…", a tool call to the tool's title (never its input), Said adds
 // its text, Finished ends the reply; a tool result naming an Analyst
-// question is an AnswerDue, an action card a CardDue and Asked a
-// QuestionsDue. Every other event (text deltas, results, reports, answers)
-// changes nothing.
+// question is an AnswerDue, an action card a CardDue, a bot's proposal a
+// ProposalDue and Asked a QuestionsDue. Every other event (text deltas,
+// results, reports, answers) changes nothing.
 func (r *Reply) Apply(e agent.Event) Due {
 	switch e := e.(type) {
 	case agent.Started:
@@ -100,6 +100,8 @@ func (r *Reply) Apply(e agent.Event) Due {
 		}
 	case agent.ActionCard:
 		return CardDue{Card: e}
+	case agent.Proposed:
+		return ProposalDue{Proposed: e}
 	case agent.Asked:
 		return QuestionsDue{TurnID: r.TurnID, Asked: e}
 	case agent.Finished:

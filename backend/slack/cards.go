@@ -41,10 +41,21 @@ type CardExpired struct{}
 // CardDismissed is a card dismissed, by By ("" when not in Slack).
 type CardDismissed struct{ By string }
 
+// CardReview is a bot's proposal as an owner or admin reviews it, drawn as
+// them, in a message only they see: Run, which runs it as them (As, their
+// name in Foundry), naming the workflow steps reviewed (SpecHash, "" for
+// none). A card whose steps show only in Foundry has no Run: Slack can't
+// show what it approves.
+type CardReview struct {
+	As       string
+	SpecHash string
+}
+
 func (CardOpen) cardState()      {}
 func (CardRan) cardState()       {}
 func (CardExpired) cardState()   {}
 func (CardDismissed) cardState() {}
+func (CardReview) cardState()    {}
 
 // cardView is a card's words.
 type cardView struct {
@@ -179,6 +190,10 @@ func runtimeOf(id string) struct{ title, on, cli string } {
 // stepsInFoundry says why a workflow card whose Run approves its steps
 // runs only in Foundry.
 const stepsInFoundry = "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it."
+
+// stepsUnshown says why a workflow proposal whose run approves its steps
+// doesn't run from Slack, where its steps can't show.
+const stepsUnshown = "Its steps show only in Foundry, so it can’t run from Slack: ask Founder for it in Foundry, as yourself."
 
 // sourceModes are how a generation reads an API source.
 var sourceModes = map[string]string{"structured": "as rows", "extraction": "as documents"}
@@ -637,7 +652,9 @@ func RunsInFoundry(c agent.ActionCard) bool {
 // and who may run it while open (a delete's Run red, asking first, its
 // confirmation cut to Block Kit's limits), Prepare again once expired, or
 // how it ended. A card that runs only in Foundry (RunsInFoundry) offers
-// Review in Foundry, its thread's page (chat), in place of Run. It refuses
+// Review in Foundry, its thread's page (chat), in place of Run. Reviewed
+// (CardReview), it is a bot's proposal drawn as its reviewer: Run as them
+// alone, or, for one that runs only in Foundry, no Run and why. It refuses
 // an operation with no card and a display that isn't its operation's.
 func (s Site) Card(c agent.ActionCard, chat Chat, person string, state CardState) (Message, error) {
 	v, err := cardViewOf(c)
@@ -655,6 +672,10 @@ func (s Site) Card(c agent.ActionCard, chat Chat, person string, state CardState
 		blocks = append(blocks, Section{Text: Cut(Join(Bold(s.Text("Quote")), Mrkdwn{s: "\n"}, Italic(s.Text(quote))), MaxSectionText)})
 	}
 	blocks = append(blocks, Section{Text: s.Text(v.does)})
+	if _, review := state.(CardReview); review && v.inFoundry {
+		// No thread in Foundry shows a bot's proposal either.
+		v.caution = stepsUnshown
+	}
 	var notes []Mrkdwn
 	for _, note := range []string{v.cost, v.caution} {
 		if note != "" {
@@ -698,6 +719,23 @@ func (s Site) Card(c agent.ActionCard, chat Chat, person string, state CardState
 		}
 		blocks = append(blocks, Actions{Elements: []Button{run, {ActionID: ActionDismiss, Text: "Dismiss", Value: ButtonValue{Action: c.ActionID}}}},
 			Context{Elements: []Mrkdwn{who}})
+	case CardReview:
+		if v.inFoundry {
+			break // Slack can't show what its Run approves: stepsUnshown says so
+		}
+		run := Button{ActionID: ActionRun, Text: cutPlain(v.run, MaxButtonText),
+			Value: ButtonValue{Action: c.ActionID, PayloadHash: c.PayloadHash, SpecHash: state.SpecHash}, Style: StylePrimary}
+		if danger {
+			run.Style = StyleDanger
+			run.Confirm = &Confirm{Title: "Run this?", Text: Cut(s.Text(v.title+"? "+v.does), MaxConfirmText), Confirm: cutPlain(v.run, MaxConfirmButton),
+				Deny: "Cancel", Style: StyleDanger}
+		}
+		as := "Runs as you"
+		if name := strings.TrimSpace(state.As); name != "" {
+			as += " (" + name + ")"
+		}
+		blocks = append(blocks, Actions{Elements: []Button{run}},
+			Context{Elements: []Mrkdwn{Cut(s.Text(as+". Nothing runs until you click "+v.run+"."), MaxSectionText)}})
 	default:
 		return Message{}, fmt.Errorf("slack: a card in state %T", state)
 	}
@@ -710,4 +748,90 @@ func by(s Site, userID string) Mrkdwn {
 		return Mrkdwn{}
 	}
 	return Join(s.Text(" by "), UserMention(userID))
+}
+
+// ProposalDue is an action a Slack install's bot proposed
+// (Site.Proposal): its card is posted once, in the thread, apart from the
+// reply.
+type ProposalDue struct{ Proposed agent.Proposed }
+
+// Key is "a:" and the action's id.
+func (d ProposalDue) Key() string { return "a:" + d.Proposed.ActionID }
+
+// Proposal is a bot's proposal as its card in the channel shows it: the
+// action and its operation alone. What it acts on shows only to the owner
+// or admin who reviews it, drawn as them (Site.Card, CardReview), never
+// what the bot read.
+type Proposal struct {
+	ActionID, Operation, PayloadHash string
+}
+
+// proposalTitles is each operation a bot may propose (agent.BotOperations)
+// as its card's fixed title.
+var proposalTitles = map[string]string{
+	"create_ontology":     "Create an ontology",
+	"generate_ontology":   "Draft a new version of an ontology",
+	"set_current_version": "Make a version current",
+	"create_load":         "Load a version",
+	"set_current_load":    "Make a load current",
+	"revise_version":      "Edit a version",
+	"sync_connector":      "Sync a connection",
+	"add_sample_data":     "Add the sample company’s data",
+	"create_document_set": "Create a document set",
+	"update_document_set": "Rename or describe a document set",
+	"move_document":       "Move a document",
+	"settle_review":       "Settle a review",
+	"create_dashboard":    "Make a dashboard",
+	"update_dashboard":    "Change a dashboard",
+	"delete_dashboard":    "Delete a dashboard",
+	"pin_dashboard":       "Pin or unpin a dashboard",
+	"publish_dashboard":   "Publish a dashboard at a public link",
+	"unpublish_dashboard": "Unpublish a dashboard",
+	"create_workflow":     "Set up a workflow",
+	"update_workflow":     "Change a workflow",
+	"pause_workflow":      "Pause a workflow",
+	"resume_workflow":     "Turn a workflow back on",
+	"delete_workflow":     "Delete a workflow",
+	"run_workflow":        "Run a workflow now",
+}
+
+// Proposal draws a bot's proposal in its thread, for everyone in it: its
+// operation's fixed title and who asked for it (asker, a Slack user id; ""
+// when unknown); then, while it waits (CardOpen), Review and Dismiss for an
+// owner or admin; once it ran, by whom and whether it succeeded, never its
+// result or error, which only its runner reads; expired; or dismissed, by
+// whom. It refuses an operation a bot can't propose and CardReview, which
+// is Card's.
+func (s Site) Proposal(p Proposal, asker string, state CardState) (Message, error) {
+	title, ok := proposalTitles[p.Operation]
+	if !ok {
+		return Message{}, fmt.Errorf("slack: no proposal card for %q", p.Operation)
+	}
+	who := s.Text("Proposed by the bot.")
+	if asker != "" {
+		who = Join(s.Text("Proposed for "), UserMention(asker), s.Text("."))
+	}
+	blocks := []Block{Header{Text: Plain(title)}}
+	switch state := state.(type) {
+	case CardOpen:
+		blocks = append(blocks,
+			Actions{Elements: []Button{
+				{ActionID: ActionReview, Text: "Review", Value: ButtonValue{Action: p.ActionID, PayloadHash: p.PayloadHash}, Style: StylePrimary},
+				{ActionID: ActionDismiss, Text: "Dismiss", Value: ButtonValue{Action: p.ActionID}},
+			}},
+			Context{Elements: []Mrkdwn{Join(who, s.Text(" An owner or admin reviews and runs it as themselves."))}})
+	case CardRan:
+		ran := Join(s.Text("Run"), by(s, state.By), s.Text(": succeeded."))
+		if state.Failed {
+			ran = Join(s.Text("Run"), by(s, state.By), s.Text(": it didn’t succeed."))
+		}
+		blocks = append(blocks, Context{Elements: []Mrkdwn{Join(who, s.Text(" "), ran)}})
+	case CardExpired:
+		blocks = append(blocks, Context{Elements: []Mrkdwn{Join(who, s.Text(" Expired: no one ran it in time. Ask again to propose it again."))}})
+	case CardDismissed:
+		blocks = append(blocks, Context{Elements: []Mrkdwn{Join(who, s.Text(" Dismissed"), by(s, state.By), s.Text("."))}})
+	default:
+		return Message{}, fmt.Errorf("slack: a proposal in state %T", state)
+	}
+	return Message{Text: Cut(s.Text(title), MaxMessageText), Blocks: blocks}, nil
 }

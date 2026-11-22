@@ -198,7 +198,7 @@ func (f *follower) step(ctx context.Context) (bool, error) {
 				}
 				due := f.reply.Apply(e)
 				switch due.(type) {
-				case slack.CardDue, slack.QuestionsDue:
+				case slack.CardDue, slack.ProposalDue, slack.QuestionsDue:
 					f.waiting = true
 				}
 				// Each due once: Founder polls a question with get_question,
@@ -222,19 +222,31 @@ func (f *follower) step(ctx context.Context) (bool, error) {
 			f.due = nil
 		}
 		if !turn.Status.Live() && f.seq >= turn.LastSeq && f.reply.End == nil {
+			_, isBot := turn.Principal.(model.AgentBot)
 			switch turn.Status {
 			case model.FoundryAgentTurnCancelled:
+				// A bot's turn may be stopped by an owner or admin, not only
+				// its reply's person.
 				f.reply.End = slack.Stopped{By: f.r.SlackUserID}
+				if isBot {
+					f.reply.End = slack.Stopped{}
+				}
 			case model.FoundryAgentTurnFailed:
 				why := ""
 				if turn.Error != nil {
 					why = *turn.Error
 				}
+
 				f.reply.End = slack.Finished{Finished: agent.Finished{Status: string(turn.Status), Reason: agent.StopFailed, Error: why}}
 			default:
 				f.reply.End = slack.Finished{Finished: agent.Finished{Status: string(turn.Status), Reason: agent.StopAnswered}}
 			}
 		}
+	}
+	// A bot whose key Foundry refused says what to do about it.
+	if e, ok := f.reply.End.(slack.Finished); ok && e.Reason == agent.StopFailed && e.Error == agent.BotKeyRefused {
+		e.Error += ". " + botOff
+		f.reply.End = e
 	}
 	live := f.reply.End == nil
 	if !live && f.endedAt.IsZero() {
@@ -417,7 +429,8 @@ func (f *follower) refused(ctx context.Context, key string, why error) error {
 // post posts what an event has the bot post apart from the reply, once:
 // an Analyst question's answer once it has ended (false, nothing posted,
 // while it is live, until questionWait after the turn ended), the card of
-// an action as the store has it now, or the questions the turn asks. One
+// an action, or of a bot's proposal, as the store has it now, or the
+// questions the turn asks. One
 // whose question, action or drawing is gone is dropped; one past Block
 // Kit's limits, or that Slack refuses for good while the reply's thread
 // still takes posts, is recorded refused (SlackPostRefused) and dropped.
@@ -466,6 +479,24 @@ func (f *follower) post(ctx context.Context, due slack.Due, turnLive bool) (bool
 		m, err := b.site.Card(cardOf(a), slack.Chat{WorkspaceID: ws, ThreadID: a.ThreadID}, f.r.SlackUserID, state)
 		if err != nil {
 			log.From(ctx).Warn("an action's card can't be drawn; it is left to the site", "action", a.ID, "err", err)
+			return true, nil
+		}
+		msgs = []slack.Message{m}
+	case slack.ProposalDue:
+		a, err := b.db.GetFoundryAgentAction(ctx, ws, d.Proposed.ActionID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return true, nil
+		case err != nil:
+			return false, fmt.Errorf("read the proposal: %w", err)
+		}
+		state := cardState(a, "", b.now())
+		if state == nil {
+			state = slack.CardOpen{} // a run goes on: it redraws the card once it ends
+		}
+		m, err := b.site.Proposal(slack.Proposal{ActionID: a.ID, Operation: a.Operation, PayloadHash: a.PayloadHash}, f.r.SlackUserID, state)
+		if err != nil {
+			log.From(ctx).Warn("a proposal's card can't be drawn; it is dropped", "action", a.ID, "err", err)
 			return true, nil
 		}
 		msgs = []slack.Message{m}

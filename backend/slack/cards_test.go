@@ -290,3 +290,121 @@ func ExampleSite_Card() {
 	// Load v2 of “Sales”
 	// Load v2 of “Sales”
 }
+
+// Every operation a bot may propose has a proposal card, and nothing else
+// does.
+func TestProposalsCoverEveryBotOperation(t *testing.T) {
+	s := site(t)
+	for operation := range agent.Operations {
+		_, err := s.Proposal(slack.Proposal{ActionID: cardAction, Operation: operation, PayloadHash: strings.Repeat("c", 64)}, ada, slack.CardOpen{})
+		if agent.BotOperations[operation] {
+			require.NoError(t, err, operation)
+		} else {
+			require.ErrorContains(t, err, "no proposal card", operation)
+		}
+	}
+	proposal := slack.Proposal{ActionID: cardAction, Operation: "create_load", PayloadHash: strings.Repeat("c", 64)}
+	for _, state := range []slack.CardState{nil, slack.CardReview{}} {
+		_, err := s.Proposal(proposal, ada, state)
+		require.ErrorContains(t, err, "a proposal in state", "%T", state)
+	}
+}
+
+// A proposal's card in its thread names the operation and who asked, never
+// what it acts on; reviewed, the card is drawn in full for its reviewer,
+// with Run as them, or, for workflow steps Slack can't show, no Run.
+func TestProposals(t *testing.T) {
+	s := site(t)
+	cases := map[string][]slack.Message{}
+	proposal := slack.Proposal{ActionID: cardAction, Operation: "create_load", PayloadHash: strings.Repeat("c", 64)}
+	for name, c := range map[string]struct {
+		asker string
+		state slack.CardState
+	}{
+		"open":                {ada, slack.CardOpen{}},
+		"open, asker unknown": {"", slack.CardOpen{}},
+		"ran":                 {ada, slack.CardRan{By: grace}},
+		"ran elsewhere":       {ada, slack.CardRan{}},
+		"failed":              {ada, slack.CardRan{By: grace, Failed: true, Error: "the version <isn't> done"}},
+		"expired":             {ada, slack.CardExpired{}},
+		"dismissed":           {ada, slack.CardDismissed{By: grace}},
+	} {
+		m, err := s.Proposal(proposal, c.asker, c.state)
+		require.NoError(t, err, name)
+		require.Equal(t, "Load a version", m.Text.String(), name)
+		require.NotContains(t, m.Text.String()+fmt.Sprint(m.Blocks), "Sales", "what it acts on never shows in the thread")
+		require.NotContains(t, fmt.Sprint(m.Blocks), "isn't", "nor why a run failed")
+		cases["proposal "+name] = []slack.Message{m}
+	}
+	review := func(operation string, display any, state slack.CardReview) slack.Message {
+		m, err := s.Card(actionCard(t, operation, display), chat, ada, state)
+		require.NoError(t, err)
+		return m
+	}
+	spec := strings.Repeat("5", 64)
+	cases["review"] = []slack.Message{review("create_load", cardsOf["create_load"][0], slack.CardReview{As: "Grace Hopper"})}
+	cases["review without a name"] = []slack.Message{review("pause_workflow", cardsOf["pause_workflow"][0], slack.CardReview{})}
+	cases["review of a delete"] = []slack.Message{review("delete_dashboard", cardsOf["delete_dashboard"][0], slack.CardReview{As: "Grace Hopper"})}
+	cases["review of a workflow's steps"] = []slack.Message{review("create_workflow", cardsOf["create_workflow"][0],
+		slack.CardReview{As: "Grace Hopper", SpecHash: spec})}
+	cases["review of a workflow's name"] = []slack.Message{review("update_workflow", agent.UpdateAutomationDisplay{Automation: renewals,
+		Name: text("Renewals, weekly")}, slack.CardReview{As: "Grace Hopper"})}
+	golden(t, "proposals", cases)
+
+	buttons := func(m slack.Message) []slack.Button {
+		for _, b := range m.Blocks {
+			if a, ok := b.(slack.Actions); ok {
+				return a.Elements
+			}
+		}
+		return nil
+	}
+	open := buttons(cases["proposal open"][0])
+	require.Equal(t, []slack.Button{
+		{ActionID: slack.ActionReview, Text: "Review", Value: slack.ButtonValue{Action: cardAction, PayloadHash: strings.Repeat("c", 64)},
+			Style: slack.StylePrimary},
+		{ActionID: slack.ActionDismiss, Text: "Dismiss", Value: slack.ButtonValue{Action: cardAction}},
+	}, open)
+	for _, name := range []string{"proposal ran", "proposal failed", "proposal expired", "proposal dismissed"} {
+		require.Empty(t, buttons(cases[name][0]), name)
+	}
+	run := buttons(cases["review"][0])
+	require.Len(t, run, 1, "Run alone: nothing runs until it is clicked")
+	require.Equal(t, slack.Button{ActionID: slack.ActionRun, Text: "Load", Value: slack.ButtonValue{Action: cardAction,
+		PayloadHash: strings.Repeat("c", 64)}, Style: slack.StylePrimary}, run[0])
+	require.Contains(t, fmt.Sprint(cases["review"][0].Blocks), "Runs as you (Grace Hopper).")
+	require.Contains(t, fmt.Sprint(cases["review without a name"][0].Blocks), "Runs as you. Nothing runs")
+	del := buttons(cases["review of a delete"][0])[0]
+	require.Equal(t, slack.StyleDanger, del.Style)
+	require.NotNil(t, del.Confirm)
+	require.Empty(t, buttons(cases["review of a workflow's steps"][0]), "Slack can't show the steps it approves")
+	require.Contains(t, fmt.Sprint(cases["review of a workflow's steps"][0].Blocks), "can’t run from Slack")
+	require.NotContains(t, fmt.Sprint(cases["review of a workflow's steps"][0].Blocks), "in this thread in Foundry", "no Foundry thread shows it")
+	name := buttons(cases["review of a workflow's name"][0])
+	require.Len(t, name, 1, "an edit without steps runs")
+	require.Equal(t, slack.ActionRun, name[0].ActionID)
+
+	// A review carries the steps it showed back to Run.
+	m := review("update_workflow", agent.UpdateAutomationDisplay{Automation: renewals, Name: text("x")}, slack.CardReview{SpecHash: spec})
+	require.Equal(t, spec, buttons(m)[0].Value.SpecHash)
+}
+
+// A bot's proposal event is posted once, under its action's key.
+func TestProposalDue(t *testing.T) {
+	r := slack.Reply{TurnID: turn}
+	due := r.Apply(agent.Proposed{ActionID: cardAction, Operation: "create_load"})
+	require.Equal(t, slack.ProposalDue{Proposed: agent.Proposed{ActionID: cardAction, Operation: "create_load"}}, due)
+	require.Equal(t, "a:"+cardAction, due.Key())
+	require.Equal(t, slack.Reply{TurnID: turn}, r, "the reply itself doesn't change")
+}
+
+func ExampleSite_Proposal() {
+	s, _ := slack.NewSite("https://foundry.helix-db.com")
+	m, _ := s.Proposal(slack.Proposal{ActionID: "01JBACTXN0000000000000000A", Operation: "create_load", PayloadHash: strings.Repeat("c", 64)},
+		"U0ADA0001", slack.CardRan{By: "U0GRACE01"})
+	fmt.Println(m.Text)
+	fmt.Println(m.Blocks[1].(slack.Context).Elements[0])
+	// Output:
+	// Load a version
+	// Proposed for <@U0ADA0001>. Run by <@U0GRACE01>: succeeded.
+}

@@ -1,8 +1,13 @@
 // Package slackbot is Helix Foundry's Slack bot (foundry.slack) as the
 // foundry-slack-worker runs it: it turns what Slack sent, which the API
 // recorded in intake (ReceiveSlackRequest), into Founder's turns, as the
-// Slack user's linked Foundry user (per_person), and shows those turns in
-// Slack as they go.
+// Slack user's linked Foundry user (per_person) or as the install's shared
+// bot (bot mode: a service credential of the workspace, one Founder thread
+// per Slack thread, anyone in the Slack workspace talking to it within
+// foundry.slack.bot.per_user_per_hour), and shows those turns in Slack as
+// they go. A bot's proposals are reviewed and run in two clicks by an owner
+// or admin who linked their Slack account, as themselves (agent.Proposals):
+// Review draws the card as them in a message only they see, Run runs it.
 //
 //   - HandleNext claims the oldest due intake row, one conversation's
 //     messages at a time and in order, under a fenced lease: a message is
@@ -44,11 +49,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -76,6 +83,9 @@ const (
 	maxMentionNames = 5
 	// maxInputChars is the most a message Founder takes holds.
 	maxInputChars = 4000
+	// maxSpeakerChars is the most of a Slack user's name a bot's turn
+	// says wrote it.
+	maxSpeakerChars = 80
 	// linkTokenTTL is how long a link prompt's token lives.
 	linkTokenTTL = 10 * time.Minute
 	// linkTokenPrefix starts a link prompt's token (the API's).
@@ -128,6 +138,13 @@ type Store interface {
 	GetFoundryQuestion(ctx context.Context, ontologyID, id string) (*model.FoundryQuestion, error)
 	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
 	MarkFoundrySlackThreadBot(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+	ListFoundrySlackLinks(ctx context.Context, installID string) ([]*model.SlackLink, error)
+
+	// Bot mode: who spoke in a bot's thread, a Slack user's messages in
+	// the hour, and an owner's or admin's no to a proposal.
+	AddFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) error
+	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
+	DismissFoundryAgentProposal(ctx context.Context, workspaceID, id, deciderID string) (*model.FoundryAgentAction, error)
 
 	// The Slack data connector's backfill and sweeps (backfill.go), and
 	// the fold's own (connector.SlackFeedStore).
@@ -154,6 +171,16 @@ type Store interface {
 
 var _ Store = store.Store(nil)
 
+// Approver reviews and runs a bot's proposals as an owner or admin
+// (agent.Proposals): Review draws its card and checks it as them, Run runs
+// it as them, once.
+type Approver interface {
+	Review(ctx context.Context, workspaceID, actionID, approverID string) (agent.ProposalReview, error)
+	Run(ctx context.Context, workspaceID, actionID, payloadHash, specHash, approverID string) (agent.ProposalRun, error)
+}
+
+var _ Approver = agent.Proposals{}
+
 // Options are what a Bot runs with.
 type Options struct {
 	DB Store
@@ -175,6 +202,12 @@ type Options struct {
 	// WebAPI is Slack's Web API the backfill reads history from:
 	// https://slack.com/api when empty.
 	WebAPI string
+	// People says who owns or administers a workspace, and their names:
+	// bot mode's approvers, and who else may stop the bot's turns. Nil, as
+	// Proposals, refuses every approval.
+	People ports.People
+	// Proposals reviews and runs the bot's proposals as their approver.
+	Proposals Approver
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 }
@@ -189,6 +222,9 @@ type Bot struct {
 	site     slack.Site
 	cfg      config.SlackConfig
 	now      func() time.Time
+	// people and proposals are bot mode's approvals; nil refuses them.
+	people    ports.People
+	proposals Approver
 
 	mu sync.Mutex
 	// users is what users.info said, by install and user, kept userTTL.
@@ -226,7 +262,7 @@ func New(o Options) (*Bot, error) {
 	if now == nil {
 		now = time.Now
 	}
-	b := &Bot{db: o.DB, sessions: o.Sessions, slack: o.Slack, keys: o.Keys, site: site, cfg: o.Cfg, now: now,
+	b := &Bot{db: o.DB, sessions: o.Sessions, slack: o.Slack, keys: o.Keys, site: site, cfg: o.Cfg, now: now, people: o.People, proposals: o.Proposals,
 		users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}, webAPI: o.WebAPI}
 	if o.Objects != nil && o.Cfg.Feed.Enabled {
 		f, bf := o.Cfg.Feed, o.Cfg.Backfill

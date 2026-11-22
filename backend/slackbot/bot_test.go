@@ -546,7 +546,7 @@ func TestUnlinkClick(t *testing.T) {
 	w.click(slack.Run{Clicked: w.clicked(grace, general, ts(1), ts(8)), ActionID: id.New(), PayloadHash: strings.Repeat("a", 64)}, grace)
 	w.settle()
 	assert.True(t, w.told(grace, "Unlinked"))
-	assert.True(t, w.told(grace, "isn't on for this Slack workspace"))
+	assert.True(t, w.told(grace, "Bot mode is off for this Slack workspace"))
 }
 
 func TestRateLimitsDeferNeverLose(t *testing.T) {

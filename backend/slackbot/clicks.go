@@ -49,15 +49,23 @@ func cardState(a *model.FoundryAgentAction, by string, now time.Time) slack.Card
 	return nil
 }
 
-// click handles a click (the spec's §8.9): Run, Dismiss and Prepare again
-// on a card, by the action's own person; Stop on a reply, by its person;
-// Unlink, of the clicker's own link. Review and Run of a bot's proposal are
-// bot mode's, which no L1 install has.
+// click handles a click (the spec's §8.9 and §9.4): Run, Dismiss and
+// Prepare again on a card, by the action's own person; Review, Run and
+// Dismiss of a bot's proposal, by a linked owner or admin; Stop on a reply,
+// by its person (in bot mode, an owner or admin too); Unlink, of the
+// clicker's own link.
 func (b *Bot) click(ctx context.Context, c claim, in slack.Interaction) (model.SlackIntakeOutcome, error) {
 	switch in := in.(type) {
 	case slack.Approve:
 		return b.cardClick(ctx, c, in.Clicked, in.ActionID, approveCall(in.PayloadHash), true)
 	case slack.Dismiss:
+		proposal, err := b.isProposal(ctx, c, in.ActionID)
+		if err != nil {
+			return nil, err
+		}
+		if proposal {
+			return b.dismissProposal(ctx, c, in)
+		}
 		return b.cardClick(ctx, c, in.Clicked, in.ActionID, dismissCall, false)
 	case slack.Refresh:
 		return b.cardClick(ctx, c, in.Clicked, in.ActionID, refreshCall, false)
@@ -66,11 +74,25 @@ func (b *Bot) click(ctx context.Context, c claim, in slack.Interaction) (model.S
 	case slack.Unlink:
 		return b.unlink(ctx, c, in.Clicked)
 	case slack.Review:
-		return b.clickTell(ctx, c, in.Clicked, "Approving a bot's proposals isn't on for this Slack workspace.")
+		return b.reviewProposal(ctx, c, in)
 	case slack.Run:
-		return b.clickTell(ctx, c, in.Clicked, "Approving a bot's proposals isn't on for this Slack workspace.")
+		return b.runProposal(ctx, c, in)
 	}
 	return model.SlackIntakeEnded{}, nil
+}
+
+// isProposal reports whether actionID is a bot's proposal in the install's
+// workspace; one that is gone isn't.
+func (b *Bot) isProposal(ctx context.Context, c claim, actionID string) (bool, error) {
+	a, err := b.db.GetFoundryAgentAction(ctx, c.install.WorkspaceID, actionID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("read the action: %w", err)
+	}
+	_, bot := a.Principal.(model.AgentBot)
+	return bot, nil
 }
 
 // clickTell tells the clicker text where they clicked, and ends the row.
@@ -141,17 +163,11 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 	case action.Principal != model.AgentPerson{UserID: link.UserID}:
 		return b.clickTell(ctx, c, k, notYours)
 	}
-	if !inDM(k.ChannelID) {
-		shared, err := b.slack.ExtShared(ctx, c.bot, k.ChannelID)
-		switch {
-		case slack.IsCode(err, "missing_scope"):
-			return b.clickTell(ctx, c, k, "Helix Foundry needs to be added to Slack again to act in channels: an owner or admin of your Foundry "+
-				"workspace can do it in Settings › Slack.")
-		case err != nil:
-			return nil, fmt.Errorf("conversations.info: %w", err)
-		case shared:
-			return b.clickTell(ctx, c, k, "Helix Foundry doesn't act in channels shared with other organisations. Message me directly instead.")
+	if refusal, err := b.sharedChannel(ctx, c, k); refusal != "" || err != nil {
+		if err != nil {
+			return nil, err
 		}
+		return b.clickTell(ctx, c, k, refusal)
 	}
 	var resp *foundryv1.FoundryAgentActionResponse
 	reason := ""
@@ -160,7 +176,7 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 			return nil, err
 		}
 	} else {
-		session, done, err := b.session(ctx, c, link, k.ChannelID, threadOf(k))
+		session, done, err := b.session(ctx, c, action.Principal, k.UserID, k.ChannelID, threadOf(k))
 		if done || err != nil {
 			return model.SlackIntakeEnded{}, err
 		}
@@ -233,6 +249,27 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 	return model.SlackIntakeEnded{}, nil
 }
 
+// sharedChannel is why nothing acts where k was clicked, "" for nothing:
+// outside a direct message it asks Slack whether the channel is shared
+// with another organisation (conversations.info), where Helix Foundry acts
+// on nothing, or can't tell (an install without the scope).
+func (b *Bot) sharedChannel(ctx context.Context, c claim, k slack.Clicked) (string, error) {
+	if inDM(k.ChannelID) {
+		return "", nil
+	}
+	shared, err := b.slack.ExtShared(ctx, c.bot, k.ChannelID)
+	switch {
+	case slack.IsCode(err, "missing_scope"):
+		return "Helix Foundry needs to be added to Slack again to act in channels: an owner or admin of your Foundry " +
+			"workspace can do it in Settings › Slack.", nil
+	case err != nil:
+		return "", fmt.Errorf("conversations.info: %w", err)
+	case shared:
+		return "Helix Foundry doesn't act in channels shared with other organisations. Message me directly instead.", nil
+	}
+	return "", nil
+}
+
 // heldContinuation is the turn the agent goes on from a's result in, when
 // a click in Slack held its reply without posting it; "" for none.
 func (b *Bot) heldContinuation(ctx context.Context, a *model.FoundryAgentAction) (string, error) {
@@ -261,7 +298,7 @@ func (b *Bot) heldContinuation(ctx context.Context, a *model.FoundryAgentAction)
 	return "", nil
 }
 
-// stopClick stops the turn a reply's Stop names, for the reply's person.
+// stopClick stops the turn a reply's Stop names, for whom stop lets.
 func (b *Bot) stopClick(ctx context.Context, c claim, in slack.Stop) (model.SlackIntakeOutcome, error) {
 	r, err := b.db.GetFoundrySlackReply(ctx, in.TurnID)
 	switch {
@@ -275,15 +312,23 @@ func (b *Bot) stopClick(ctx context.Context, c claim, in slack.Stop) (model.Slac
 		return nil, err
 	}
 	if !stopped {
-		return b.clickTell(ctx, c, in.Clicked, "Only the person who asked can stop this.")
+		return b.clickTell(ctx, c, in.Clicked, b.onlyStoppers(c)+" can stop this.")
 	}
 	return model.SlackIntakeEnded{}, nil
 }
 
+// onlyStoppers is who may stop the install's turns, as a sentence's start.
+func (b *Bot) onlyStoppers(c claim) string {
+	if _, bot := c.install.Mode.(model.SlackSharedBot); bot {
+		return "Only the person who asked, or an owner or admin of the Foundry workspace,"
+	}
+	return "Only the person who asked"
+}
+
 // sessionStopped stops the turns Slack's stop button stopped: those
-// followed in its thread whose person clicked it. Someone who has none
-// there is told they can't; while anyone else's turn goes on, the thread
-// shows Founder working.
+// followed in its thread that its clicker may stop. Someone who may stop
+// none there is told they can't; while anyone else's turn goes on, the
+// thread shows Founder working.
 func (b *Bot) sessionStopped(ctx context.Context, c claim, e slack.SessionStopped) (model.SlackIntakeOutcome, error) {
 	follows, err := b.db.ListFoundrySlackFollows(ctx, c.install.ID, e.At.ChannelID, e.At.ThreadTS)
 	if err != nil {
@@ -298,7 +343,7 @@ func (b *Bot) sessionStopped(ctx context.Context, c claim, e slack.SessionStoppe
 		mine, others = mine || stopped, others || !stopped
 	}
 	if others && !mine {
-		if err := b.tell(ctx, c.bot, e.At.ChannelID, e.At.ThreadTS, e.UserID, b.say("Only the person who asked can stop Founder's answer.")); err != nil {
+		if err := b.tell(ctx, c.bot, e.At.ChannelID, e.At.ThreadTS, e.UserID, b.say(b.onlyStoppers(c)+" can stop Founder's answer.")); err != nil {
 			return nil, err
 		}
 	}
@@ -309,30 +354,43 @@ func (b *Bot) sessionStopped(ctx context.Context, c claim, e slack.SessionStoppe
 	return model.SlackIntakeEnded{}, nil
 }
 
-// stop cancels r's turn as its person, when clicker is that person, linked
-// to the turn's user: false, and nothing done, for anyone else. The thread's
-// agent session goes back to active; the follower shows who stopped it.
+// stop cancels r's turn as its principal, when clicker may: the reply's
+// person, linked to the turn's own person, or, for the install's bot's
+// turn, the person whose message it answers or a linked owner or admin of
+// the workspace. false, and nothing done, for anyone else. The thread's
+// agent session goes back to active; the follower shows it stopped.
 func (b *Bot) stop(ctx context.Context, c claim, r *model.SlackReply, clicker string) (bool, error) {
-	if r.SlackUserID != clicker {
-		return false, nil
-	}
-	link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, clicker)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("read the link: %w", err)
-	}
 	turn, err := b.db.GetFoundryAgentTurn(ctx, c.install.WorkspaceID, r.TurnID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return true, nil
+		return r.SlackUserID == clicker, nil // nothing left to stop
 	case err != nil:
 		return false, fmt.Errorf("read the turn: %w", err)
-	case turn.Principal != model.AgentPerson{UserID: link.UserID}:
+	}
+	switch p := turn.Principal.(type) {
+	case model.AgentPerson:
+		if r.SlackUserID != clicker {
+			return false, nil
+		}
+		link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, clicker)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return false, nil
+		case err != nil:
+			return false, fmt.Errorf("read the link: %w", err)
+		case link.UserID != p.UserID:
+			return false, nil
+		}
+	case model.AgentBot:
+		if r.SlackUserID != clicker {
+			if _, ok, err := b.admin(ctx, c, clicker); !ok || err != nil {
+				return false, err
+			}
+		}
+	default:
 		return false, nil
 	}
-	session, done, err := b.session(ctx, c, link, r.ChannelID, r.ThreadTS)
+	session, done, err := b.session(ctx, c, turn.Principal, clicker, r.ChannelID, r.ThreadTS)
 	if done || err != nil {
 		return true, err
 	}

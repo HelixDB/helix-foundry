@@ -26,10 +26,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.uber.org/dig"
 
+	"github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
 	"github.com/helixdb/helix-foundry/backend/slack"
@@ -65,6 +67,12 @@ type Deps struct {
 	// AWS reaches the data bucket that holds the feeds' day mirror
 	// (foundry.sync.data_bucket), hosted with foundry.slack.feed on.
 	AWS aws.Config `optional:"true"`
+	// People says who owns or administers a workspace: bot mode's
+	// approvers. Without it no one approves a bot's proposals.
+	People ports.People `optional:"true"`
+	// Databases says whose a database is, for a create_ontology proposal
+	// on one; without it such a proposal is refused at Review.
+	Databases ports.Databases `optional:"true"`
 }
 
 // bot is what the worker runs: *slackbot.Bot.
@@ -116,6 +124,12 @@ func New(d Deps) (*Task, error) {
 		return nil, fmt.Errorf("foundry-slack-worker: %w", err)
 	}
 	o := slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg}
+	if d.People != nil {
+		// Bot mode's proposals, reviewed and run as an owner or admin; the
+		// turn the bot goes on in is capped as any Founder turn.
+		o.People = d.People
+		o.Proposals = agent.Proposals{DB: d.DB, Sessions: d.Sessions, Databases: d.Databases, MaxMicros: d.Cfg.Foundry.Agent.MaxMicros()}
+	}
 	// The feed's mirror sits beside the sync's snapshots. A standalone
 	// install reaches Slack through Helix's relay, which isn't built yet:
 	// its backfill waits for it.
