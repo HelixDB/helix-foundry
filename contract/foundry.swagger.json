@@ -7999,10 +7999,10 @@
       "properties": {
         "apiKey": {
           "type": "string",
-          "description": "Attio access token (64 characters) with read scopes; write-only."
+          "description": "Attio access token (64 characters), made under Workspace settings ›\nDevelopers with read scopes; write-only."
         }
       },
-      "description": "AttioConnectorConfig reads an Attio workspace: its objects' records, its\nlists' entries, notes, tasks and workspace members, as far as the token's\nscopes allow."
+      "description": "AttioConnectorConfig reads an Attio workspace's CRM: its workspace\nmembers, objects and their records, lists and their entries, notes (each\nalso a Markdown document) and tasks, as far as the token's scopes allow."
     },
     "v1AuthorizeConnectorSignInResponse": {
       "type": "object",
