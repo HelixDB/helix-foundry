@@ -1058,3 +1058,25 @@ func TestWorkflowCardsRunOnlyInFoundry(t *testing.T) {
 	updates := w.slack.of("chat.update")
 	assert.Contains(t, updates[len(updates)-1].text(), "Review in Foundry", "the card redrawn with its link")
 }
+
+func TestSweepGivesUpOnAnUninstallSlackWontTake(t *testing.T) {
+	uninstalled := func(w *world) bool {
+		got, err := w.db.GetFoundrySlackInstallByID(w.ctx, w.install.ID)
+		require.NoError(t, err)
+		return got.UninstalledAt != nil
+	}
+	revoked := func(t *testing.T, ago time.Duration, answer string) *world {
+		w := newWorld(t)
+		require.NoError(t, w.db.RevokeFoundrySlackInstall(w.ctx, w.ws, w.install.ID, false))
+		_, err := testDB.Exec(`UPDATE foundry_slack_installs SET revoked_at=NOW(6) - INTERVAL ? MICROSECOND`, ago.Microseconds())
+		require.NoError(t, err)
+		w.slack.queue("apps.uninstall", http.StatusOK, "", answer)
+		w.bot.Sweep(w.ctx)
+		return w
+	}
+	assert.True(t, uninstalled(revoked(t, 0, `{"ok":false,"error":"no_permission"}`)), "refused for good: its team may install again")
+	assert.False(t, uninstalled(revoked(t, 0, `{"ok":false,"error":"bad_client_secret"}`)), "the app's credentials, fixed by an operator")
+	assert.False(t, uninstalled(revoked(t, 0, `{"ok":false,"error":"internal_error"}`)), "Slack's fault, tried again")
+	assert.True(t, uninstalled(revoked(t, 25*time.Hour, `{"ok":false,"error":"bad_client_secret"}`)), "past its patience")
+	assert.True(t, uninstalled(revoked(t, 25*time.Hour, `{"ok":false,"error":"internal_error"}`)), "past its patience")
+}
