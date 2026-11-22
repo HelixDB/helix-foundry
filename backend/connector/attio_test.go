@@ -1058,7 +1058,7 @@ func TestAttioSync(t *testing.T) {
 		}
 	})
 
-	// Each next page repeats the last rows of the one before.
+	// Each next page repeats the last five rows of the one before.
 	t.Run("pages through every record by offset, writing each once", func(t *testing.T) {
 		var records []string
 		for i := range 1100 {
@@ -1079,7 +1079,7 @@ func TestAttioSync(t *testing.T) {
 		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "companies"}, sink); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(offsets, []int{0, 500 - attioOverlap, 1000 - 2*attioOverlap}) || len(sink.rows) != 1100 {
+		if !slices.Equal(offsets, []int{0, 495, 990}) || len(sink.rows) != 1100 {
 			t.Fatalf("offsets = %v, rows = %d", offsets, len(sink.rows))
 		}
 		if sink.rows[0]["name"] != nil || sink.rows[0]["record_id"] != "rec_0000" || len(sink.rows[0]) != 6 {
@@ -1100,9 +1100,10 @@ func TestAttioSync(t *testing.T) {
 				q := attioQueryOf(t, r)
 				page := records[min(q.Offset, len(records)):min(q.Offset+q.Limit, len(records))]
 				if q.Offset == 0 {
-					// After the first page, attioOverlap of its records go.
+					// After the first page, five of its records go: as
+					// many as the overlap repeats, so a smaller one skips.
 					page = slices.Clone(page)
-					for _, i := range []int{3, 17, 40, 250, 499}[:attioOverlap] {
+					for _, i := range []int{3, 17, 40, 250, 499} {
 						deleted[fmt.Sprintf("rec_%04d", i)] = true
 					}
 					records = slices.DeleteFunc(records, func(raw string) bool {
