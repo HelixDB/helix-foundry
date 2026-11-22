@@ -110,6 +110,30 @@ func (s *mysqlDB) IsFoundrySlackBotCredential(ctx context.Context, credentialID 
 	return n > 0, err
 }
 
+// ListFoundrySlackRetiredBots returns up to limit revoked installs that
+// still name a bot's key (their Mode a model.SlackSharedBot), longest
+// revoked first (foundry_slack_installs_bot_idx): Slack's uninstall, the
+// worker's revoke of a gone workspace, a purge and a disconnect each leave
+// the key on the row, for the sweep to revoke with its source grants and
+// then ForgetFoundrySlackBot.
+func (s *mysqlDB) ListFoundrySlackRetiredBots(ctx context.Context, limit int) ([]*model.SlackInstall, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundrySlackInstallColumns+`
+FROM foundry_slack_installs WHERE bot_credential_id IS NOT NULL AND revoked_at IS NOT NULL ORDER BY revoked_at, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, scanFoundrySlackInstall)
+}
+
+// ForgetFoundrySlackBot clears the bot's key credentialID from the revoked
+// install installID once the sweep revoked it, which lifts the host's lock
+// on the key (IsFoundrySlackBotCredential); ErrNotFound when the install
+// isn't revoked or names no such key.
+func (s *mysqlDB) ForgetFoundrySlackBot(ctx context.Context, installID, credentialID string) error {
+	return execOrNotFound(ctx, s.db, `UPDATE foundry_slack_installs SET bot_credential_id=NULL
+WHERE id=? AND bot_credential_id=? AND revoked_at IS NOT NULL`, installID, credentialID)
+}
+
 // AddFoundrySlackThreadPerson records that slackUserID spoke to the bot in
 // the bot-mode Slack thread threadID (a mapping with no Slack user); again
 // changes nothing. ErrNotFound when threadID is no such mapping.

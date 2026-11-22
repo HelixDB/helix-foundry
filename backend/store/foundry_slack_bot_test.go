@@ -120,6 +120,42 @@ func TestFoundrySlackMode(t *testing.T) {
 	assert.True(t, is)
 	_, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackPerPerson{})
 	assert.ErrorIs(t, err, store.ErrNotFound, "a revoked install")
+
+	// The sweep finds it, revokes it, and forgets it, which lifts the lock.
+	retired, err := f.db.ListFoundrySlackRetiredBots(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, retired, 1)
+	assert.Equal(t, i.ID, retired[0].ID)
+	assert.Equal(t, model.SlackSharedBot{CredentialID: id26("CRED-two")}, retired[0].Mode)
+	none, err := f.db.ListFoundrySlackRetiredBots(ctx, 0)
+	require.NoError(t, err)
+	assert.Empty(t, none, "up to its limit")
+	assert.ErrorIs(t, f.db.ForgetFoundrySlackBot(ctx, i.ID, id26("CRED-other")), store.ErrNotFound, "another key")
+	require.NoError(t, f.db.ForgetFoundrySlackBot(ctx, i.ID, id26("CRED-two")))
+	assert.ErrorIs(t, f.db.ForgetFoundrySlackBot(ctx, i.ID, id26("CRED-two")), store.ErrNotFound, "forgotten already")
+	is, err = f.db.IsFoundrySlackBotCredential(ctx, id26("CRED-two"))
+	require.NoError(t, err)
+	assert.False(t, is)
+	retired, err = f.db.ListFoundrySlackRetiredBots(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, retired)
+}
+
+// A live install's bot is no retired one, and its key isn't forgotten.
+func TestFoundrySlackRetiredBotsAreRevokedInstalls(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "retired")
+	i := f.installed(t)
+	bot := f.bot()
+	_, err := f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot(bot))
+	require.NoError(t, err)
+	retired, err := f.db.ListFoundrySlackRetiredBots(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, retired)
+	assert.ErrorIs(t, f.db.ForgetFoundrySlackBot(ctx, i.ID, bot.CredentialID), store.ErrNotFound)
+	live, err := f.db.IsFoundrySlackBot(ctx, f.workspaceID, bot.CredentialID)
+	require.NoError(t, err)
+	assert.True(t, live)
 }
 
 // Who spoke to the bot is kept per bot-mode Slack thread.

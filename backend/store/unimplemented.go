@@ -1995,6 +1995,16 @@ func (u Unimplemented) IsFoundrySlackBotCredential(context.Context, string) (boo
 	return false, nil
 }
 
+func (u Unimplemented) ListFoundrySlackRetiredBots(context.Context, int) ([]*model.SlackInstall, error) {
+	u.unimplemented("ListFoundrySlackRetiredBots")
+	return nil, nil
+}
+
+func (u Unimplemented) ForgetFoundrySlackBot(context.Context, string, string) error {
+	u.unimplemented("ForgetFoundrySlackBot")
+	return nil
+}
+
 func (u Unimplemented) IsFoundrySlackThreadPerson(context.Context, string, string) (bool, error) {
 	u.unimplemented("IsFoundrySlackThreadPerson")
 	return false, nil

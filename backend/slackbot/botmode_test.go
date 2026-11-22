@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -382,6 +383,79 @@ func TestBotThreadWhoseSourcesWereTakenEnds(t *testing.T) {
 	w.botMessage(grace, general, ts(3), ts(3), "<@U0BOT> how many renewals?")
 	w.settle()
 	assert.NotEqual(t, first.ThreadID, w.last().ThreadID)
+}
+
+// botKeys is the host's bots' keys: those it revoked, and a failure to
+// give.
+type botKeys struct {
+	mu      sync.Mutex
+	revoked []string
+	fail    error
+}
+
+func (k *botKeys) Create(context.Context, string, string, string) (string, error) {
+	return "", errors.New("the sweep makes no key")
+}
+
+func (k *botKeys) Get(context.Context, string, string) (ports.BotCredential, error) {
+	return ports.BotCredential{}, errors.New("the sweep reads no key")
+}
+
+func (k *botKeys) Revoke(_ context.Context, _, credentialID string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.fail != nil {
+		return k.fail
+	}
+	k.revoked = append(k.revoked, credentialID)
+	return nil
+}
+
+// Slack's own uninstall leaves the bot's key on the revoked install: the
+// sweep revokes it where the host makes keys, drops its source grants, and
+// forgets it, which lifts the host's lock; a failure is tried again.
+func TestSweepRevokesARemovedInstallsBotKey(t *testing.T) {
+	keys := &botKeys{fail: errBroken}
+	w, _, _ := newBotWorld(t, func(o *Options) { o.BotKeys = keys })
+	bot := access.Principal{Kind: access.PrincipalServiceCredential, ID: botCred}
+	require.NoError(t, w.db.SetFoundryAccessGrants(w.ctx, w.ws, bot, []access.Target{access.EnrichmentTarget()}, nil))
+	outcome, err := w.db.UninstallFoundrySlackTeam(w.ctx, team, id.New(), model.SlackEventDedupe("Ev"+id.New()), time.Now().Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, model.SlackUninstallDone, outcome)
+	grants := func() int {
+		got, err := w.db.ListFoundryAccessGrants(w.ctx, w.ws, []access.Principal{bot})
+		require.NoError(t, err)
+		return len(got)
+	}
+
+	w.bot.Sweep(w.ctx)
+	locked, err := w.db.IsFoundrySlackBotCredential(w.ctx, botCred)
+	require.NoError(t, err)
+	assert.True(t, locked, "the host refused: the key stays named for the next sweep")
+	assert.Equal(t, 1, grants())
+
+	keys.mu.Lock()
+	keys.fail = nil
+	keys.mu.Unlock()
+	w.bot.Sweep(w.ctx)
+	assert.Equal(t, []string{botCred}, keys.revoked)
+	assert.Zero(t, grants(), "its source grants go with it")
+	locked, err = w.db.IsFoundrySlackBotCredential(w.ctx, botCred)
+	require.NoError(t, err)
+	assert.False(t, locked)
+	w.bot.Sweep(w.ctx)
+	assert.Len(t, keys.revoked, 1, "once")
+}
+
+// Without the host's keys (a standalone install, which makes none) the
+// sweep leaves a revoked install's bot key be.
+func TestSweepLeavesBotKeysWithoutTheHosts(t *testing.T) {
+	w, _, _ := newBotWorld(t)
+	require.NoError(t, w.db.RevokeFoundrySlackInstall(w.ctx, w.ws, w.install.ID, true))
+	w.bot.Sweep(w.ctx)
+	locked, err := w.db.IsFoundrySlackBotCredential(w.ctx, botCred)
+	require.NoError(t, err)
+	assert.True(t, locked)
 }
 
 func TestProposalsAreReviewedAndRunByAnOwnerOrAdmin(t *testing.T) {

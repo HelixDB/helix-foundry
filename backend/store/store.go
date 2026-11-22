@@ -269,9 +269,12 @@ type ReadStore interface {
 	CountFoundrySlackFollows(ctx context.Context, installID string) (int, error)
 	ListFoundrySlackThreadMappings(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackThread, error)
 	// Bot mode (L2): whether a credential is a workspace's live bot, or any
-	// install's, and who has spoken to the bot in a thread.
+	// install's; the bots' keys of revoked installs, for the sweep to revoke
+	// and forget; and who has spoken to the bot in a thread.
 	IsFoundrySlackBot(ctx context.Context, workspaceID, credentialID string) (bool, error)
 	IsFoundrySlackBotCredential(ctx context.Context, credentialID string) (bool, error)
+	ListFoundrySlackRetiredBots(ctx context.Context, limit int) ([]*model.SlackInstall, error)
+	ForgetFoundrySlackBot(ctx context.Context, installID, credentialID string) error
 	IsFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) (bool, error)
 	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
 

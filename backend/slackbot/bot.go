@@ -29,7 +29,8 @@
 //     only a message from a channel shared with another organisation is
 //     refused; the sweep tells conversations when their install is offline
 //     and when what they sent expired (relay.go).
-//   - Sweep tells Slack of uninstalls it missed, purges Slack-born Founder
+//   - Sweep tells Slack of uninstalls it missed, revokes the keys of
+//     revoked installs' bots, purges Slack-born Founder
 //     threads past their retention, prunes what Slack's terms let go and
 //     what the feeds' mirror holds, deletes the data connectors of installs
 //     removed past their retention, flips staged switches to the app once
@@ -62,6 +63,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
@@ -157,8 +159,12 @@ type Store interface {
 	ListFoundrySlackLinks(ctx context.Context, installID string) ([]*model.SlackLink, error)
 
 	// Bot mode: who spoke in a bot's thread, a Slack user's messages in
-	// the hour, and an owner's or admin's no to a proposal.
+	// the hour, an owner's or admin's no to a proposal, and the keys of
+	// revoked installs' bots, revoked with their source grants.
 	AddFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) error
+	ListFoundrySlackRetiredBots(ctx context.Context, limit int) ([]*model.SlackInstall, error)
+	ForgetFoundrySlackBot(ctx context.Context, installID, credentialID string) error
+	DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error
 	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
 	DismissFoundryAgentProposal(ctx context.Context, workspaceID, id, deciderID string) (*model.FoundryAgentAction, error)
 
@@ -240,6 +246,10 @@ type Options struct {
 	People ports.People
 	// Proposals reviews and runs the bot's proposals as their approver.
 	Proposals Approver
+	// BotKeys revokes the keys of revoked installs' bots, hosted, where
+	// bot mode makes them; nil leaves them be (a standalone install, which
+	// makes none).
+	BotKeys ports.BotCredentials
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 }
@@ -264,6 +274,8 @@ type Bot struct {
 	// people and proposals are bot mode's approvals; nil refuses them.
 	people    ports.People
 	proposals Approver
+	// botKeys revokes retired bots' keys; nil leaves them be.
+	botKeys ports.BotCredentials
 
 	mu sync.Mutex
 	// users is what users.info said, by install and user, kept userTTL.
@@ -303,7 +315,7 @@ func New(o Options) (*Bot, error) {
 		now = time.Now
 	}
 	b := &Bot{db: o.DB, sessions: o.Sessions, slack: o.Slack, keys: o.Keys, site: site, cfg: o.Cfg, now: now, people: o.People, proposals: o.Proposals,
-		users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}, transport: Direct{DB: o.DB, Keys: o.Keys, WebAPI: o.WebAPI},
+		botKeys: o.BotKeys, users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}, transport: Direct{DB: o.DB, Keys: o.Keys, WebAPI: o.WebAPI},
 		updateGap: updateGap}
 	if o.Relayed != nil {
 		// Every call of a relayed install shares its link's calls a minute:

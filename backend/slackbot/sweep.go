@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/slack"
@@ -35,7 +36,8 @@ const (
 // the channel messages a relayed install never took into gaps (relay); it
 // tells Slack of the
 // uninstalls it wasn't told of yet (apps.uninstall), relayed installs of a
-// revoked link among them, so their teams may install again; purges the Slack-born Founder threads idle past
+// revoked link among them, so their teams may install again; revokes the
+// keys of revoked installs' bots, with their source grants; purges the Slack-born Founder threads idle past
 // foundry.slack.retention.threads or of a revoked install; prunes the
 // intake and replies past foundry.slack.retention.intake and .replies, the
 // link tokens and install states Slack's terms let go, and the feeds'
@@ -53,6 +55,16 @@ func (b *Bot) Sweep(ctx context.Context) {
 	}
 	for _, install := range installs {
 		sweeps.WithLabelValues("uninstall", b.uninstall(ctx, install)).Inc()
+	}
+	if b.botKeys != nil {
+		bots, err := b.db.ListFoundrySlackRetiredBots(ctx, sweepUninstalls)
+		if err != nil {
+			sweeps.WithLabelValues("bot_key", "error").Inc()
+			log.From(ctx).Error("list the revoked Slack installs' bots failed", "err", err)
+		}
+		for _, install := range bots {
+			sweeps.WithLabelValues("bot_key", b.retireBot(ctx, install)).Inc()
+		}
 	}
 	switch n, err := b.db.PurgeFoundrySlackThreads(ctx, b.cfg.Retention.Threads, sweepThreads); {
 	case err != nil:
@@ -258,6 +270,34 @@ func (b *Bot) flip(ctx context.Context, feed *model.SlackFeed) string {
 	}
 	logger.Info("a staged Slack connector reads through Helix's Slack app now")
 	return "flipped"
+}
+
+// retireBot revokes the key of a revoked install's bot, which Slack's
+// uninstall, the worker's revoke of a gone workspace, a purge or a
+// disconnect left on it: the host revokes it, its source grants are
+// dropped, then the install forgets it, which lifts the host's lock on it.
+// It names the outcome: revoked, or error, tried at the next sweep.
+func (b *Bot) retireBot(ctx context.Context, install *model.SlackInstall) string {
+	bot, ok := install.Mode.(model.SlackSharedBot)
+	if !ok {
+		log.From(ctx).Error("the store listed a revoked Slack install with no bot key as a retired bot", "install_id", install.ID)
+		return "error"
+	}
+	logger := log.From(ctx).With("install_id", install.ID, "credential_id", bot.CredentialID)
+	if err := b.botKeys.Revoke(ctx, install.WorkspaceID, bot.CredentialID); err != nil {
+		logger.Warn("revoke a revoked Slack install's bot key failed; the next sweep tries again", "err", err)
+		return "error"
+	}
+	err := b.db.DeleteFoundryAccessPrincipal(ctx, install.WorkspaceID, access.Principal{Kind: access.PrincipalServiceCredential, ID: bot.CredentialID})
+	if err == nil {
+		err = b.db.ForgetFoundrySlackBot(ctx, install.ID, bot.CredentialID)
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		logger.Warn("forget a revoked Slack install's bot key failed; the next sweep tries again", "err", err)
+		return "error"
+	}
+	logger.Info("revoked the bot key of a revoked Slack install")
+	return "revoked"
 }
 
 // uninstall tells Slack a revoked install is gone, with its token, and

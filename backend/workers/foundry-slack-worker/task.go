@@ -73,6 +73,10 @@ type Deps struct {
 	// Databases says whose a database is, for a create_ontology proposal
 	// on one; without it such a proposal is refused at Review.
 	Databases ports.Databases `optional:"true"`
+	// BotCredentials revokes the keys of revoked installs' bots, hosted,
+	// where bot mode makes them; without it they stay, locked, until
+	// revoked by hand.
+	BotCredentials ports.BotCredentials `optional:"true"`
 	// Relayed reaches Slack through Helix's relay: a standalone install's
 	// (package local/relay), whose installs hold no token here. Nil hosted.
 	Relayed *slackbot.Relayed `optional:"true"`
@@ -131,7 +135,7 @@ func New(d Deps) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("foundry-slack-worker: %w", err)
 	}
-	o := slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg, Relayed: d.Relayed}
+	o := slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg, Relayed: d.Relayed, BotKeys: d.BotCredentials}
 	if d.People != nil {
 		// Bot mode's proposals, reviewed and run as an owner or admin; the
 		// turn the bot goes on in is capped as any Founder turn.
