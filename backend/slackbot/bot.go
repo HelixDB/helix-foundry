@@ -23,6 +23,12 @@
 //   - Backfill reads the Slack data connector's history (foundry.slack.feed)
 //     a page at a time, on Slack's one call a minute per method and
 //     workspace, into the feed's buffer, and folds it into the day mirror.
+//   - A relayed install (model.SlackServesRelay) serves a standalone
+//     Foundry linked to its workspace, whose own worker runs its bot: the
+//     API queues its requests as deliveries its install claims, and here
+//     only a message from a channel shared with another organisation is
+//     refused; the sweep tells conversations when their install is offline
+//     and when what they sent expired (relay.go).
 //   - Sweep tells Slack of uninstalls it missed, purges Slack-born Founder
 //     threads past their retention, prunes what Slack's terms let go and
 //     what the feeds' mirror holds, deletes the data connectors of installs
@@ -167,6 +173,13 @@ type Store interface {
 	EndFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, status model.SlackBackfillStatus, message string) error
 	SpendFoundrySlackGap(ctx context.Context, feedID string, max int) (bool, error)
 	FoundrySlackBackfillProgress(ctx context.Context, feedID string) (model.SlackBackfillProgress, error)
+
+	// The relay (relay.go): what waits for linked standalone installs that
+	// are offline, or waited too long, and the channel messages they never
+	// took.
+	NoticeFoundryRelayOffline(ctx context.Context, offline, every time.Duration, limit int) ([]*model.RelayDelivery, error)
+	ExpireFoundryRelayDeliveries(ctx context.Context, grace time.Duration, limit int) ([]*model.RelayDelivery, error)
+	ExpireFoundryRelayFeed(ctx context.Context, ttl time.Duration, limit int) (int, error)
 }
 
 var _ Store = store.Store(nil)

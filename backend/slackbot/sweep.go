@@ -27,10 +27,14 @@ const (
 	uninstallPatience = 24 * time.Hour
 )
 
-// Sweep does what no message starts (the spec's §8.2 and §12, and the
-// connector spec's §5.4, §7.3, §7.5 and §12): it tells Slack of the
-// uninstalls it wasn't told of yet (apps.uninstall), so their teams may
-// install again; purges the Slack-born Founder threads idle past
+// Sweep does what no message starts (the spec's §8.2, §10.3 and §12, and
+// the connector spec's §5.4, §7.3, §7.5, §11 and §12): it tells the
+// conversations waiting for an offline linked install that they wait, and
+// those whose deliveries expired that they weren't delivered, and turns
+// the channel messages a relayed install never took into gaps (relay); it
+// tells Slack of the
+// uninstalls it wasn't told of yet (apps.uninstall), relayed installs of a
+// revoked link among them, so their teams may install again; purges the Slack-born Founder threads idle past
 // foundry.slack.retention.threads or of a revoked install; prunes the
 // intake and replies past foundry.slack.retention.intake and .replies, the
 // link tokens and install states Slack's terms let go, and the feeds'
@@ -40,6 +44,7 @@ const (
 // closes yesterday's days once a day. Each step goes on whatever another's
 // failure; each is counted.
 func (b *Bot) Sweep(ctx context.Context) {
+	b.relay(ctx)
 	installs, err := b.db.ListFoundrySlackUninstalls(ctx, sweepUninstalls)
 	if err != nil {
 		sweeps.WithLabelValues("uninstall", "error").Inc()

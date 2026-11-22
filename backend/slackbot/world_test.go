@@ -483,7 +483,8 @@ var slackTables = []string{"foundry_slack_installs", "foundry_slack_install_toke
 	"foundry_agent_turns", "foundry_agent_events", "foundry_agent_messages", "foundry_agent_actions", "foundry_questions", "foundry_ontologies",
 	"foundry_slack_slots", "foundry_slack_feeds", "foundry_slack_feed", "foundry_slack_feed_channels", "foundry_slack_feed_days",
 	"foundry_slack_backfill", "foundry_slack_backfill_threads", "foundry_slack_gap_budget", "connectors", "connector_syncs",
-	"connector_replaced_snapshots", "foundry_slack_thread_people", "workspaces"}
+	"connector_replaced_snapshots", "foundry_slack_thread_people", "foundry_relay_links", "foundry_relay_codes", "foundry_relay_deliveries",
+	"foundry_relay_feed", "foundry_relay_channels", "foundry_relay_users", "foundry_relay_usage", "foundry_slack_access_requests", "workspaces"}
 
 // newWorld is a workspace with an install of team, Ada and Grace linked,
 // and a bot on it; with mutates its options first.

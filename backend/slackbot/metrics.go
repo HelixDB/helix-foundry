@@ -19,9 +19,11 @@ var (
 	}, []string{"outcome"})
 	sweeps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "helix_foundry_slack_sweep_total",
-		Help: "What the Slack worker's sweep did, by step (uninstall, purge, prune, prune_feed, orphan, feeds, close, flip) and outcome: " +
-			"uninstalled, abandoned (taken as uninstalled without Slack's word), deferred, purged and pruned (rows), deleted and unbound " +
-			"(connectors of removed installs), busy, gone, closed (feeds), flipped, waiting, or error.",
+		Help: "What the Slack worker's sweep did, by step (relay_offline, relay_expire, relay_feed, uninstall, purge, prune, prune_feed, " +
+			"orphan, feeds, close, flip) and outcome: told (a relay notice posted), limited (a relay notice rate-limited, not tried again), " +
+			"unreadable (a relay delivery's conversation), expired (relay feed rows made gaps), uninstalled, abandoned (taken as " +
+			"uninstalled without Slack's word), deferred, purged and pruned (rows), deleted and unbound (connectors of removed installs), " +
+			"busy, gone, closed (feeds), flipped, waiting, or error.",
 	}, []string{"step", "outcome"})
 	backfills = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "helix_foundry_slack_backfill_total",

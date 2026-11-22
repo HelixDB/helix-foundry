@@ -105,7 +105,8 @@ func (b *Bot) handleClaimed(ctx context.Context, in *model.SlackIntake) {
 // handle handles a claimed row and says how its claim ends, or errLost once
 // its lease was lost; held is set to the turn whose reply it held. A row
 // whose install is gone, or that the bot can't read, ends; a Slack rate
-// limit defers it by its Retry-After.
+// limit defers it by its Retry-After. A relayed install's row is its
+// install's to answer, but a refusal (relayedIntake).
 func (b *Bot) handle(ctx context.Context, in *model.SlackIntake, held *string) (model.SlackIntakeOutcome, error) {
 	if in.Attempts > maxClaims {
 		return model.SlackIntakeGaveUp{Error: fmt.Sprintf("claimed %d times without ending", in.Attempts)}, nil
@@ -129,6 +130,13 @@ func (b *Bot) handle(ctx context.Context, in *model.SlackIntake, held *string) (
 		return model.SlackIntakeGaveUp{Error: err.Error()}, nil
 	}
 	c := claim{in: in, owner: *in.LeaseOwner, install: install, bot: bot, held: held}
+	if _, relayed := install.Destination.(model.SlackServesRelay); relayed {
+		outcome, err := b.relayedIntake(ctx, c, p)
+		if err != nil {
+			return b.failed(c, err)
+		}
+		return outcome, nil
+	}
 	var outcome model.SlackIntakeOutcome
 	switch in.Kind {
 	case model.SlackIntakeEvent:
@@ -243,7 +251,7 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		return model.SlackIntakeEnded{}, nil
 	}
 	if m.at.ExtShared {
-		return tell("Helix Foundry doesn't answer in channels shared with other organisations. Message me directly instead.")
+		return tell(sharedRefusal)
 	}
 	u, err := b.user(ctx, c.bot, m.user)
 	if err != nil && !slack.IsCode(err, "user_not_found") {
