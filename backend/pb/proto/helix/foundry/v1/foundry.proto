@@ -53,6 +53,18 @@ service FoundryService {
       body: "*"
     };
   }
+  // A Slack connection through Helix's Slack app (SlackAppCredential) is
+  // refused with FAILED_PRECONDITION, by reason: FOUNDRY_SLACK_FEED_DISABLED
+  // (not offered here), FOUNDRY_SLACK_APP_NOT_INSTALLED,
+  // FOUNDRY_SLACK_APP_SCOPES (add the app again),
+  // FOUNDRY_SLACK_APP_ADMIN (no Slack admin or owner installed it),
+  // FOUNDRY_SLACK_APP_BOT_UNKNOWN (add the app again),
+  // FOUNDRY_SLACK_APP_IN_USE (another connection reads the Slack workspace),
+  // FOUNDRY_SLACK_APP_ENTERPRISE (a connection reads a workspace of the
+  // Slack organisation), FOUNDRY_SLACK_APP_NOTICE (the storage notice
+  // accepted isn't the current one). UpdateConnector refuses the same when
+  // it switches to the app; a connection with a token switches in stages:
+  // it syncs by its token until the app has read the history.
   rpc CreateConnector(CreateConnectorRequest) returns (ConnectorResponse) {
     option (google.api.http) = {
       post: "/v1/workspaces/{workspace_id}/foundry/connectors"
@@ -862,8 +874,11 @@ service FoundryService {
   }
   // Starts adding the app, for an owner or admin: the Slack page to send
   // them to, whose state is bound to them and the workspace for ten
-  // minutes, once. FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on
-  // the install list), FOUNDRY_SLACK_INSTALLED (it has an install),
+  // minutes, once. With an install that lacks permissions what Helix
+  // offers here needs (FoundrySlackInstall.missing_scopes), it is a
+  // reinstall asking for them. FAILED_PRECONDITION:
+  // FOUNDRY_SLACK_NOT_OFFERED (not on the install list),
+  // FOUNDRY_SLACK_INSTALLED (it has an install lacking nothing),
   // FOUNDRY_AGENT_DISABLED (Founder is off).
   rpc StartFoundrySlackInstall(StartFoundrySlackInstallRequest) returns (StartFoundrySlackInstallResponse) {
     option (google.api.http) = {
@@ -881,7 +896,9 @@ service FoundryService {
   // FOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last
   // disconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is
   // connected). The same Slack workspace again is a reinstall, which keeps
-  // its links.
+  // its links. It reads the bot's id (auth.test) and whether its installer
+  // is a Slack admin or owner (users.info), which a Slack connection through
+  // the app needs, without failing the install when Slack doesn't say.
   rpc FinishFoundrySlackInstall(FinishFoundrySlackInstallRequest) returns (FoundrySlackResponse) {
     option (google.api.http) = {
       post: "/v1/foundry/slack:finish-install"
@@ -2697,9 +2714,15 @@ message GetFoundrySlackRequest {
 }
 message FoundrySlackResponse {
   FoundrySlack slack = 1;
+  // FinishFoundrySlackInstall's: the site path the install was started from
+  // (StartFoundrySlackInstallRequest.return_path); empty for Settings › Slack.
+  string return_path = 2;
 }
 message StartFoundrySlackInstallRequest {
   string workspace_id = 1;
+  // The site path to return to once the install is finished:
+  // /settings/slack (empty), /data?add=slack or /data/connections/{id}.
+  string return_path = 2;
 }
 message StartFoundrySlackInstallResponse {
   // Slack's page that asks to add the app; it returns to the site's

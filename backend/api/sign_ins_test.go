@@ -1110,7 +1110,7 @@ func TestSignInSettings(t *testing.T) {
 		}
 	}
 	for name, cfg := range map[string]*foundryv1.ConnectorConfig{
-		"a Slack token": {Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{BotToken: "xoxb-1"}}},
+		"a Slack token": {Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{Credential: &foundryv1.SlackConnectorConfig_BotToken{BotToken: "xoxb-1"}}}},
 		"a self-hosted PostHog": {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "custom",
 			Host: "https://posthog.acme.test"}}},
 		"PostHog EU Cloud":        {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "eu"}}},

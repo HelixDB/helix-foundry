@@ -175,7 +175,7 @@
     },
     "/v1/foundry/slack:finish-install": {
       "post": {
-        "summary": "Finishes adding the app with what Slack returned to the site: the\nstate names the workspace, and must be the caller's, unexpired and\nunspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner\nor admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL\n(an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),\nFOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN\n(another Foundry workspace has the Slack workspace),\nFOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last\ndisconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is\nconnected). The same Slack workspace again is a reinstall, which keeps\nits links.",
+        "summary": "Finishes adding the app with what Slack returned to the site: the\nstate names the workspace, and must be the caller's, unexpired and\nunspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner\nor admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL\n(an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),\nFOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN\n(another Foundry workspace has the Slack workspace),\nFOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last\ndisconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is\nconnected). The same Slack workspace again is a reinstall, which keeps\nits links. It reads the bot's id (auth.test) and whether its installer\nis a Slack admin or owner (users.info), which a Slack connection through\nthe app needs, without failing the install when Slack doesn't say.",
         "operationId": "FoundryService_FinishFoundrySlackInstall",
         "responses": {
           "200": {
@@ -1814,6 +1814,7 @@
         ]
       },
       "post": {
+        "summary": "A Slack connection through Helix's Slack app (SlackAppCredential) is\nrefused with FAILED_PRECONDITION, by reason: FOUNDRY_SLACK_FEED_DISABLED\n(not offered here), FOUNDRY_SLACK_APP_NOT_INSTALLED,\nFOUNDRY_SLACK_APP_SCOPES (add the app again),\nFOUNDRY_SLACK_APP_ADMIN (no Slack admin or owner installed it),\nFOUNDRY_SLACK_APP_BOT_UNKNOWN (add the app again),\nFOUNDRY_SLACK_APP_IN_USE (another connection reads the Slack workspace),\nFOUNDRY_SLACK_APP_ENTERPRISE (a connection reads a workspace of the\nSlack organisation), FOUNDRY_SLACK_APP_NOTICE (the storage notice\naccepted isn't the current one). UpdateConnector refuses the same when\nit switches to the app; a connection with a token switches in stages:\nit syncs by its token until the app has read the history.",
         "operationId": "FoundryService_CreateConnector",
         "responses": {
           "200": {
@@ -6374,7 +6375,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/slack:start-install": {
       "post": {
-        "summary": "Starts adding the app, for an owner or admin: the Slack page to send\nthem to, whose state is bound to them and the workspace for ten\nminutes, once. FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on\nthe install list), FOUNDRY_SLACK_INSTALLED (it has an install),\nFOUNDRY_AGENT_DISABLED (Founder is off).",
+        "summary": "Starts adding the app, for an owner or admin: the Slack page to send\nthem to, whose state is bound to them and the workspace for ten\nminutes, once. With an install that lacks permissions what Helix\noffers here needs (FoundrySlackInstall.missing_scopes), it is a\nreinstall asking for them. FAILED_PRECONDITION:\nFOUNDRY_SLACK_NOT_OFFERED (not on the install list),\nFOUNDRY_SLACK_INSTALLED (it has an install lacking nothing),\nFOUNDRY_AGENT_DISABLED (Founder is off).",
         "operationId": "FoundryService_StartFoundrySlackInstall",
         "responses": {
           "200": {
@@ -7215,7 +7216,13 @@
       }
     },
     "FoundryServiceStartFoundrySlackInstallBody": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "returnPath": {
+          "type": "string",
+          "description": "The site path to return to once the install is finished:\n/settings/slack (empty), /data?add=slack or /data/connections/{id}."
+        }
+      }
     },
     "FoundryServiceStartFoundryWorkflowRunBody": {
       "type": "object",
@@ -7607,6 +7614,10 @@
         "account": {
           "$ref": "#/definitions/v1ConnectorAccount",
           "description": "Set when the connector was connected by signing in at its provider: the\naccount it reads with, in place of a stored key."
+        },
+        "slackStatus": {
+          "$ref": "#/definitions/v1ConnectorSlackStatus",
+          "description": "Set for a Slack connection through Helix's Slack app, or switching to it."
         }
       }
     },
@@ -7820,6 +7831,9 @@
         "github": {
           "$ref": "#/definitions/v1GitHubConnectorSetup"
         },
+        "slack": {
+          "$ref": "#/definitions/v1SlackConnectorSetup"
+        },
         "planCode": {
           "type": "string",
           "description": "The lowest catalog plan that includes the kind."
@@ -7953,6 +7967,57 @@
       ],
       "default": "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED",
       "description": " - CONNECTOR_SIGN_IN_STATUS_PENDING: Started; its link not yet followed.\n - CONNECTOR_SIGN_IN_STATUS_AUTHORIZING: Sent to the provider to authorize.\n - CONNECTOR_SIGN_IN_STATUS_FINISHING: Its callback arrived and is being finished.\n - CONNECTOR_SIGN_IN_STATUS_DECLINED: The user declined at the provider. Authorizing again retries it.\n - CONNECTOR_SIGN_IN_STATUS_FAILED: See failure. Authorizing again retries it."
+    },
+    "v1ConnectorSlackStatus": {
+      "type": "object",
+      "properties": {
+        "teamId": {
+          "type": "string",
+          "description": "The Slack workspace (team) it reads, and its name."
+        },
+        "teamName": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/v1SlackFeedState"
+        },
+        "missingScopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The permissions the install lacks (NEEDS_REINSTALL)."
+        },
+        "backfill": {
+          "$ref": "#/definitions/v1SlackBackfill",
+          "description": "What the app has left to read of the history; unset when nothing."
+        },
+        "lastEventAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Reserved: when Slack last sent the connection a message. Not set yet."
+        },
+        "eventsLimitedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When Slack last dropped the team's events, past its 30,000 an hour;\nset only within the last 24 hours."
+        },
+        "lossyDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days published with messages possibly missing."
+        },
+        "switching": {
+          "type": "boolean",
+          "description": "Switching from its token: it syncs by its token until the app has read\nthe history."
+        },
+        "deletedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "INSTALL_GONE: when the connection and its data are deleted."
+        }
+      },
+      "description": "ConnectorSlackStatus is how a Slack connection through Helix's Slack app\nreads its Slack workspace."
     },
     "v1ConnectorSync": {
       "type": "object",
@@ -9144,6 +9209,10 @@
         "updatedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "surface": {
+          "$ref": "#/definitions/v1FoundryAgentSurface",
+          "description": "Where it was started: Foundry's site (UNSPECIFIED) or Slack, by its\nfirst turn's surface."
         }
       },
       "description": "FoundryAgentThread is a conversation with the Assistant, private to its user."
@@ -12025,6 +12094,22 @@
         "updatedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "missingScopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The permissions it lacks that what Helix offers here needs (a Slack\nconnection through the app, follow-ups without a mention): adding the\napp again asks for them. Empty while those are off."
+        },
+        "installerAdmin": {
+          "type": "boolean",
+          "description": "A Slack workspace admin or owner installed it, as Slack said when it\nwas last installed: a connection reads through it only then."
+        },
+        "eventsLimitedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When Slack last dropped the team's events, past its 30,000 an hour;\nset only within the last 24 hours."
         }
       },
       "description": "FoundrySlackInstall is a Slack workspace's install of the app."
@@ -12073,6 +12158,10 @@
       "properties": {
         "slack": {
           "$ref": "#/definitions/v1FoundrySlack"
+        },
+        "returnPath": {
+          "type": "string",
+          "description": "FinishFoundrySlackInstall's: the site path the install was started from\n(StartFoundrySlackInstallRequest.return_path); empty for Settings › Slack."
         }
       }
     },
@@ -14054,20 +14143,107 @@
         }
       }
     },
+    "v1SlackAppCredential": {
+      "type": "object",
+      "properties": {
+        "noticeVersion": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The storage notice the owner or admin binding it accepted\n(SlackConnectorSetup.notice_version); required to bind. A response\ncarries the one accepted."
+        },
+        "now": {
+          "type": "boolean",
+          "description": "On an update of a connection switching from its token (switching): read\nthrough the app at once, before the app has read the history, so the\ndays it hasn't read yet lose their documents until it does."
+        }
+      },
+      "description": "SlackAppCredential reads a Slack connection through the workspace's\ninstall of Helix's Slack app."
+    },
+    "v1SlackBackfill": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The channels whose history it reads, and those done."
+        },
+        "channelsDone": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "channelName": {
+          "type": "string",
+          "description": "Reserved: the channel it reads now. Not set yet."
+        },
+        "etaSeconds": {
+          "type": "string",
+          "format": "int64",
+          "description": "About how long it has left; 0 when it can't tell."
+        },
+        "waitingUntil": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Slack asked it to wait until then; unset when it doesn't wait."
+        }
+      },
+      "description": "SlackBackfill is what Helix's Slack app has left to read of a\nconnection's history, which Slack allows it a page a minute."
+    },
     "v1SlackConnectorConfig": {
       "type": "object",
       "properties": {
         "botToken": {
           "type": "string",
-          "description": "Bot User OAuth token (xoxb-…) of an app installed in the Slack\nworkspace; write-only."
+          "description": "Bot User OAuth token (xoxb-…) of an app installed in the Slack\nworkspace; write-only. \"\" keeps the stored one."
+        },
+        "helixApp": {
+          "$ref": "#/definitions/v1SlackAppCredential",
+          "description": "Read through the workspace's install of Helix's Slack app."
         },
         "historyDays": {
           "type": "integer",
           "format": "int32",
-          "description": "Days of channel history to keep, 1 to 365; 0 is 90."
+          "description": "Days of channel history to keep: 1 to 365 with a token, 1 to 90\nthrough Helix's Slack app; 0 is 90."
         }
       },
-      "description": "SlackConnectorConfig reads the channels a Slack app was added to."
+      "description": "SlackConnectorConfig reads the channels a Slack app was added to: the\ncustomer's own app, by its bot token, or Helix's Slack app, through the\nworkspace's install of it (Settings › Slack)."
+    },
+    "v1SlackConnectorSetup": {
+      "type": "object",
+      "properties": {
+        "install": {
+          "$ref": "#/definitions/v1FoundrySlackInstall",
+          "description": "The workspace's install; unset while it has none."
+        },
+        "canInstall": {
+          "type": "boolean",
+          "description": "The caller may add the app, or add it again for new permissions: an\nowner or admin of a workspace Helix offers it to."
+        },
+        "inUseByConnectorId": {
+          "type": "string",
+          "description": "The connection that reads the install already; empty while none does.\nA Slack workspace is read by one connection."
+        },
+        "installerAdmin": {
+          "type": "boolean",
+          "description": "A Slack workspace admin or owner installed it; false: one must add it\nagain before a connection can read through it."
+        },
+        "noticeVersion": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The storage notice to show, and to send back (SlackAppCredential)."
+        }
+      },
+      "description": "SlackConnectorSetup is what a Slack connection through Helix's Slack app\nneeds: the workspace's install of the app, made by a Slack admin or owner,\nwith the permissions channel history needs, and the storage notice the\nowner or admin binding it accepts."
+    },
+    "v1SlackFeedState": {
+      "type": "string",
+      "enum": [
+        "SLACK_FEED_STATE_UNSPECIFIED",
+        "SLACK_FEED_STATE_LIVE",
+        "SLACK_FEED_STATE_NEEDS_REINSTALL",
+        "SLACK_FEED_STATE_INSTALL_GONE",
+        "SLACK_FEED_STATE_TEAM_CHANGED"
+      ],
+      "default": "SLACK_FEED_STATE_UNSPECIFIED",
+      "description": "SlackFeedState is whether a Slack connection through Helix's Slack app\ncan read.\n\n - SLACK_FEED_STATE_LIVE: It reads.\n - SLACK_FEED_STATE_NEEDS_REINSTALL: The install lacks permissions it needs: an owner or admin adds the app\nagain.\n - SLACK_FEED_STATE_INSTALL_GONE: The app was removed from the Slack workspace: its data is frozen, and\ndeleted at deleted_at unless the app is added again.\n - SLACK_FEED_STATE_TEAM_CHANGED: The workspace's install is of another Slack workspace: edit the\nconnection to read it, or delete it."
     },
     "v1StartFoundrySlackInstallResponse": {
       "type": "object",

@@ -199,6 +199,18 @@ type FoundryServiceClient interface {
 	// Helix Foundry connectors
 	ListConnectorKinds(ctx context.Context, in *ListConnectorKindsRequest, opts ...grpc.CallOption) (*ListConnectorKindsResponse, error)
 	TestConnector(ctx context.Context, in *TestConnectorRequest, opts ...grpc.CallOption) (*TestConnectorResponse, error)
+	// A Slack connection through Helix's Slack app (SlackAppCredential) is
+	// refused with FAILED_PRECONDITION, by reason: FOUNDRY_SLACK_FEED_DISABLED
+	// (not offered here), FOUNDRY_SLACK_APP_NOT_INSTALLED,
+	// FOUNDRY_SLACK_APP_SCOPES (add the app again),
+	// FOUNDRY_SLACK_APP_ADMIN (no Slack admin or owner installed it),
+	// FOUNDRY_SLACK_APP_BOT_UNKNOWN (add the app again),
+	// FOUNDRY_SLACK_APP_IN_USE (another connection reads the Slack workspace),
+	// FOUNDRY_SLACK_APP_ENTERPRISE (a connection reads a workspace of the
+	// Slack organisation), FOUNDRY_SLACK_APP_NOTICE (the storage notice
+	// accepted isn't the current one). UpdateConnector refuses the same when
+	// it switches to the app; a connection with a token switches in stages:
+	// it syncs by its token until the app has read the history.
 	CreateConnector(ctx context.Context, in *CreateConnectorRequest, opts ...grpc.CallOption) (*ConnectorResponse, error)
 	ListConnectors(ctx context.Context, in *ListConnectorsRequest, opts ...grpc.CallOption) (*ListConnectorsResponse, error)
 	GetConnector(ctx context.Context, in *GetConnectorRequest, opts ...grpc.CallOption) (*ConnectorResponse, error)
@@ -492,8 +504,11 @@ type FoundryServiceClient interface {
 	GetFoundrySlack(ctx context.Context, in *GetFoundrySlackRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error)
 	// Starts adding the app, for an owner or admin: the Slack page to send
 	// them to, whose state is bound to them and the workspace for ten
-	// minutes, once. FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on
-	// the install list), FOUNDRY_SLACK_INSTALLED (it has an install),
+	// minutes, once. With an install that lacks permissions what Helix
+	// offers here needs (FoundrySlackInstall.missing_scopes), it is a
+	// reinstall asking for them. FAILED_PRECONDITION:
+	// FOUNDRY_SLACK_NOT_OFFERED (not on the install list),
+	// FOUNDRY_SLACK_INSTALLED (it has an install lacking nothing),
 	// FOUNDRY_AGENT_DISABLED (Founder is off).
 	StartFoundrySlackInstall(ctx context.Context, in *StartFoundrySlackInstallRequest, opts ...grpc.CallOption) (*StartFoundrySlackInstallResponse, error)
 	// Finishes adding the app with what Slack returned to the site: the
@@ -506,7 +521,9 @@ type FoundryServiceClient interface {
 	// FOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last
 	// disconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is
 	// connected). The same Slack workspace again is a reinstall, which keeps
-	// its links.
+	// its links. It reads the bot's id (auth.test) and whether its installer
+	// is a Slack admin or owner (users.info), which a Slack connection through
+	// the app needs, without failing the install when Slack doesn't say.
 	FinishFoundrySlackInstall(ctx context.Context, in *FinishFoundrySlackInstallRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error)
 	// Disconnects the workspace's install, for an owner or admin: the app is
 	// removed from the Slack workspace (Helix tries again shortly when Slack
@@ -2129,6 +2146,18 @@ type FoundryServiceServer interface {
 	// Helix Foundry connectors
 	ListConnectorKinds(context.Context, *ListConnectorKindsRequest) (*ListConnectorKindsResponse, error)
 	TestConnector(context.Context, *TestConnectorRequest) (*TestConnectorResponse, error)
+	// A Slack connection through Helix's Slack app (SlackAppCredential) is
+	// refused with FAILED_PRECONDITION, by reason: FOUNDRY_SLACK_FEED_DISABLED
+	// (not offered here), FOUNDRY_SLACK_APP_NOT_INSTALLED,
+	// FOUNDRY_SLACK_APP_SCOPES (add the app again),
+	// FOUNDRY_SLACK_APP_ADMIN (no Slack admin or owner installed it),
+	// FOUNDRY_SLACK_APP_BOT_UNKNOWN (add the app again),
+	// FOUNDRY_SLACK_APP_IN_USE (another connection reads the Slack workspace),
+	// FOUNDRY_SLACK_APP_ENTERPRISE (a connection reads a workspace of the
+	// Slack organisation), FOUNDRY_SLACK_APP_NOTICE (the storage notice
+	// accepted isn't the current one). UpdateConnector refuses the same when
+	// it switches to the app; a connection with a token switches in stages:
+	// it syncs by its token until the app has read the history.
 	CreateConnector(context.Context, *CreateConnectorRequest) (*ConnectorResponse, error)
 	ListConnectors(context.Context, *ListConnectorsRequest) (*ListConnectorsResponse, error)
 	GetConnector(context.Context, *GetConnectorRequest) (*ConnectorResponse, error)
@@ -2422,8 +2451,11 @@ type FoundryServiceServer interface {
 	GetFoundrySlack(context.Context, *GetFoundrySlackRequest) (*FoundrySlackResponse, error)
 	// Starts adding the app, for an owner or admin: the Slack page to send
 	// them to, whose state is bound to them and the workspace for ten
-	// minutes, once. FAILED_PRECONDITION: FOUNDRY_SLACK_NOT_OFFERED (not on
-	// the install list), FOUNDRY_SLACK_INSTALLED (it has an install),
+	// minutes, once. With an install that lacks permissions what Helix
+	// offers here needs (FoundrySlackInstall.missing_scopes), it is a
+	// reinstall asking for them. FAILED_PRECONDITION:
+	// FOUNDRY_SLACK_NOT_OFFERED (not on the install list),
+	// FOUNDRY_SLACK_INSTALLED (it has an install lacking nothing),
 	// FOUNDRY_AGENT_DISABLED (Founder is off).
 	StartFoundrySlackInstall(context.Context, *StartFoundrySlackInstallRequest) (*StartFoundrySlackInstallResponse, error)
 	// Finishes adding the app with what Slack returned to the site: the
@@ -2436,7 +2468,9 @@ type FoundryServiceServer interface {
 	// FOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last
 	// disconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is
 	// connected). The same Slack workspace again is a reinstall, which keeps
-	// its links.
+	// its links. It reads the bot's id (auth.test) and whether its installer
+	// is a Slack admin or owner (users.info), which a Slack connection through
+	// the app needs, without failing the install when Slack doesn't say.
 	FinishFoundrySlackInstall(context.Context, *FinishFoundrySlackInstallRequest) (*FoundrySlackResponse, error)
 	// Disconnects the workspace's install, for an owner or admin: the app is
 	// removed from the Slack workspace (Helix tries again shortly when Slack
