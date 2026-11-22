@@ -172,13 +172,19 @@ func TestFoundryRebuild(t *testing.T) {
 		ctx := context.Background()
 		f, _, current := refreshFixture(t, "RB7")
 		earlier(t, current)
-		_, err := testDB.ExecContext(ctx, `UPDATE foundry_ontologies SET deleted_at=NOW(6) WHERE id=?`, f.ontology.ID)
+		_, err := testDB.ExecContext(ctx, `UPDATE foundry_ontologies SET deleted_at=NOW(6), current_load_id=NULL WHERE id=?`, f.ontology.ID)
 		require.NoError(t, err)
 		_, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("x"))
 		assert.ErrorIs(t, err, store.ErrNotFound)
 		listed, err := f.db.ListFoundryRebuilds(ctx, cutover, "", 10)
 		require.NoError(t, err)
 		assert.Empty(t, listed, "a deleted ontology is never listed")
+		// Live again with its earlier load, it is.
+		_, err = testDB.ExecContext(ctx, `UPDATE foundry_ontologies SET deleted_at=NULL, current_load_id=? WHERE id=?`, current, f.ontology.ID)
+		require.NoError(t, err)
+		listed, err = f.db.ListFoundryRebuilds(ctx, cutover, "", 10)
+		require.NoError(t, err)
+		assert.Len(t, listed, 1)
 	})
 
 	// The ontologies owed a rebuild, by id, a page at a time; the run

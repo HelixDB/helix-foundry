@@ -13,17 +13,17 @@ import (
 
 // The command refuses what it can't read before it opens the database.
 func TestRebuildLoadsArguments(t *testing.T) {
-	for args, want := range map[string]string{
-		"":                                       "--current-created-before is required",
-		"--current-created-before=yesterday":     "--current-created-before: parsing time",
-		"--current-created-before=2026-11-22":    "--current-created-before: parsing time",
-		"--current-created-before=2026-11-22T00:00:00Z extra": "unexpected arguments",
-		"--nope":                                 "flag provided but not defined",
+	for _, tc := range []struct{ args, want string }{
+		{"", "--current-created-before is required"},
+		{"--current-created-before=yesterday", "--current-created-before: parsing time"},
+		{"--current-created-before=2026-11-22", "--current-created-before: parsing time"},
+		{"--current-created-before=2026-11-22T00:00:00Z extra", "unexpected arguments"},
+		{"--nope", "flag provided but not defined"},
 	} {
 		var out bytes.Buffer
-		err := runRebuildLoads(context.Background(), "unused:unused@tcp(127.0.0.1:1)/none", strings.Fields(args), &out)
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%q: %v, want %q", args, err, want)
+		err := runRebuildLoads(context.Background(), "unused:unused@tcp(127.0.0.1:1)/none", strings.Fields(tc.args), &out)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: %v, want %q", tc.args, err, tc.want)
 		}
 	}
 }
