@@ -270,7 +270,8 @@ func TestSlackAudiences(t *testing.T) {
 func TestEmailsAndAudiences(t *testing.T) {
 	for raw, want := range map[string]string{
 		"ada@example.com": "ada@example.com", " Ada@Example.COM\n": "ada@example.com", "a@b": "a@b",
-		"": "", "  ": "", "ada": "", "@example.com": "", "ada@": "", "a da@example.com": "", "ada@exa\tmple.com": "",
+		"": "", "  ": "", "ada": "", "@example.com": "", "ada@": "", "a da@example.com": "", "ada@exa\tmple.com": "", strings.Repeat("a", 309) + "@example.com": "",
+		strings.Repeat("a", 308) + "@example.com": strings.Repeat("a", 308) + "@example.com",
 	} {
 		e, ok := ParseEmail(raw)
 		if e.String() != want || ok != (want != "") {

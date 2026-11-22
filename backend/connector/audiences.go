@@ -41,12 +41,17 @@ type Person struct {
 // matches no one.
 type Email struct{ address string }
 
+// maxEmailBytes is the longest address kept: 64 bytes of local part, an @
+// and 255 of domain.
+const maxEmailBytes = 320
+
 // ParseEmail is raw in the form people are matched by; ok is false for an
-// address that is blank or has no @ between a local part and a domain.
+// address that is blank, has no @ between a local part and a domain, holds
+// white space or is longer than maxEmailBytes.
 func ParseEmail(raw string) (_ Email, ok bool) {
 	address := strings.ToLower(strings.TrimSpace(raw))
 	local, domain, found := strings.Cut(address, "@")
-	if !found || local == "" || domain == "" || strings.ContainsAny(address, " \t\r\n") {
+	if !found || local == "" || domain == "" || strings.ContainsAny(address, " \t\r\n") || len(address) > maxEmailBytes {
 		return Email{}, false
 	}
 	return Email{address: address}, true
