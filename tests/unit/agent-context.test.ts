@@ -298,6 +298,27 @@ describe("the agent routes", () => {
   });
 });
 
+describe("index.md", () => {
+  /** src/app/index.md as a build in `mode` loads it. */
+  async function load(mode = "") {
+    vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", mode);
+    vi.resetModules();
+    return (await import("@/app/index.md/route")).GET;
+  }
+
+  it("sends agents to the landing page's Markdown on helix-website, as / sends visitors to its home", async () => {
+    const res = (await load())();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(
+      "https://www.helix-db.com/index.md",
+    );
+  });
+
+  it("is not found in a local build", async () => {
+    expect((await load("local"))().status).toBe(404);
+  });
+});
+
 describe("robots.txt", () => {
   async function load(appEnv: string, mode = "") {
     vi.stubEnv("NEXT_PUBLIC_APP_ENV", appEnv);

@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, type NextFetchEvent } from "next/server";
 
@@ -56,6 +58,20 @@ describe("proxy", () => {
       "/robots.txt",
       "/.well-known/:path*",
     ]);
+  });
+
+  it("watches only files that have a route of their own, never the app's catch-all", async () => {
+    const { config } = await load("client-test");
+    const app = join(__dirname, "../../src/app");
+    // robots.txt is src/app/robots.ts; the others are route handlers.
+    const files = config.matcher.filter((path) => /\.\w+$/.test(path));
+    expect(files).toContain("/index.md");
+    for (const path of files)
+      expect(
+        existsSync(join(app, path, "route.ts")) ||
+          existsSync(join(app, path.replace(/\.txt$/, ".ts"))),
+        path,
+      ).toBe(true);
   });
 
   it("leaves a local build's responses alone", async () => {
