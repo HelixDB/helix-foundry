@@ -1,4 +1,5 @@
 import type {
+  FinishFoundrySlackInstallRequest,
   FoundrySlack,
   FoundrySlackAccessRequest,
   FoundrySlackInstall,
@@ -36,6 +37,8 @@ export const SLACK_REASONS = [
   "FOUNDRY_SLACK_INSTALLED",
   "FOUNDRY_AGENT_DISABLED",
   "FOUNDRY_SLACK_INSTALL_EXPIRED",
+  "FOUNDRY_SLACK_CANCELLED",
+  "FOUNDRY_SLACK_INSTALL_FAILED",
   "FOUNDRY_SLACK_REFUSED",
   "FOUNDRY_SLACK_ENTERPRISE_INSTALL",
   "FOUNDRY_SLACK_SCOPES",
@@ -51,6 +54,7 @@ export const SLACK_REASONS = [
   "FOUNDRY_RELAY_LOCAL_ONLY",
   "FOUNDRY_RELAY_LINK_EXPIRED",
   "FOUNDRY_RELAY_NOT_LINKED",
+  "FOUNDRY_RELAY_LINK_REVOKED",
 ] as const;
 export type SlackReason = (typeof SLACK_REASONS)[number];
 
@@ -266,6 +270,8 @@ export function installFailure(error: unknown): SlackInstallFailure {
   switch (slackReason(error)) {
     case "FOUNDRY_SLACK_INSTALL_EXPIRED":
       return "expired";
+    case "FOUNDRY_SLACK_CANCELLED":
+      return "cancelled";
     case "FOUNDRY_SLACK_REFUSED":
       return "refused";
     case "FOUNDRY_SLACK_ENTERPRISE_INSTALL":
@@ -346,11 +352,60 @@ export function relayRedirect(uri: string | undefined): string | null {
 }
 
 /**
+ * Where a refused finish sends the browser back to: the Settings › Slack of
+ * the linked local install that started the install (the WFE's ErrorInfo
+ * metadata `return_to`, as relayRedirect accepts it, whatever the reason),
+ * or null for an install of this Helix workspace, or none known.
+ *
+ * @example
+ * installReturnTo(new ApiError("cancelled", 400, 9, [{ reason: "FOUNDRY_SLACK_CANCELLED", metadata: { return_to: "http://localhost:3000/settings/slack" } }])); // "http://localhost:3000/settings/slack"
+ * installReturnTo(new ApiError("x", 400, 9, [{ metadata: { return_to: "https://evil.example/settings/slack" } }])); // null
+ */
+export function installReturnTo(error: unknown): string | null {
+  if (!(error instanceof ApiError)) return null;
+  for (const d of error.details || []) {
+    const metadata =
+      d && typeof d === "object"
+        ? (d as { metadata?: unknown }).metadata
+        : undefined;
+    const to =
+      metadata && typeof metadata === "object"
+        ? (metadata as Record<string, unknown>).return_to
+        : undefined;
+    if (typeof to === "string" && relayRedirect(to)) return to;
+  }
+  return null;
+}
+
+/**
+ * Tells the WFE the person cancelled on Slack's page (`error`, Slack's
+ * code, with the install's `state`), which spends the state: the Settings ›
+ * Slack of the linked local install that started it, to send the browser
+ * back to, or null for an install of this Helix workspace, or when the WFE
+ * didn't say (the cancel is reported by the page, not here).
+ */
+export async function cancelSlackInstall(
+  error: string,
+  state: string,
+): Promise<string | null> {
+  try {
+    await api<FoundrySlackResponse>("/v1/foundry/slack:finish-install", {
+      error,
+      state,
+    } satisfies FinishFoundrySlackInstallRequest);
+    return null;
+  } catch (e) {
+    return installReturnTo(e);
+  }
+}
+
+/**
  * Finishes adding the app with what Slack returned: the workspace's Slack
  * after it, which names the workspace the state was for, where the install
  * was started from (slackReturnTo), and, for one a linked local install
  * started, that install's own Settings › Slack (relayRedirect) to send
- * the browser to instead.
+ * the browser to instead. A refusal is thrown as it came; installReturnTo
+ * reads where it sends a local install's owner back to.
  */
 export async function finishSlackInstall(
   code: string,

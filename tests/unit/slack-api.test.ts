@@ -4,12 +4,14 @@ import { api, ApiError } from "@/web/api";
 import { trackBeforeLeaving, trackEvent } from "@/web/analytics";
 import {
   SLACK_REASONS,
+  cancelSlackInstall,
   createSlackLink,
   deleteSlackLink,
   disconnectSlack,
   finishSlackInstall,
   installFailed,
   installFailure,
+  installReturnTo,
   linkFailure,
   linkRefusalText,
   previewSlackLink,
@@ -416,6 +418,64 @@ describe("adding the app", () => {
     expect(tracked).toHaveBeenLastCalledWith("slack_install_failed", {
       reason: "cancelled",
     });
+  });
+  it("tells the WFE of a cancel, and learns where a local install's goes back", async () => {
+    const back = "http://localhost:3000/settings/slack";
+    call.mockRejectedValueOnce(
+      refusal("FOUNDRY_SLACK_CANCELLED", {
+        workspace_id: "ws",
+        return_to: back,
+      }),
+    );
+    await expect(cancelSlackInstall("access_denied", "s")).resolves.toBe(back);
+    expect(call).toHaveBeenCalledWith("/v1/foundry/slack:finish-install", {
+      error: "access_denied",
+      state: "s",
+    });
+    // Helix's own install, a state spent already, or the WFE out of reach:
+    // no way back but Helix's own Settings › Slack.
+    for (const e of [
+      refusal("FOUNDRY_SLACK_CANCELLED", { workspace_id: "ws" }),
+      refusal("FOUNDRY_SLACK_INSTALL_EXPIRED"),
+      new TypeError("Failed to fetch"),
+    ]) {
+      call.mockRejectedValueOnce(e);
+      await expect(
+        cancelSlackInstall("access_denied", "s"),
+      ).resolves.toBeNull();
+    }
+    call.mockResolvedValueOnce({});
+    await expect(cancelSlackInstall("access_denied", "s")).resolves.toBeNull();
+    expect(tracked).not.toHaveBeenCalled();
+  });
+  it("reads a refusal's way back to a local install, whatever its reason, and only to one", () => {
+    const back = "http://127.0.0.1:3100/settings/slack";
+    expect(
+      installReturnTo(refusal("FOUNDRY_SLACK_TEAM_TAKEN", { return_to: back })),
+    ).toBe(back);
+    expect(
+      installReturnTo(
+        refusal("FOUNDRY_RELAY_LINK_REVOKED", { return_to: back }),
+      ),
+    ).toBe(back);
+    expect(
+      installReturnTo(refusal("A_REASON_NO_ONE_KNOWS", { return_to: back })),
+    ).toBe(back);
+    for (const e of [
+      refusal("FOUNDRY_SLACK_TEAM_TAKEN", {
+        return_to: "https://evil.example/settings/slack",
+      }),
+      refusal("FOUNDRY_SLACK_TEAM_TAKEN"),
+      new ApiError("odd", 400, 9, [null, "text", { metadata: "x" }]),
+      new Error("offline"),
+    ])
+      expect(installReturnTo(e)).toBeNull();
+    expect(installFailure(refusal("FOUNDRY_SLACK_CANCELLED"))).toBe(
+      "cancelled",
+    );
+    expect(installFailure(refusal("FOUNDRY_SLACK_INSTALL_FAILED"))).toBe(
+      "error",
+    );
   });
   it("disconnects, reporting it once accepted", async () => {
     call.mockResolvedValueOnce({ slack: { installAllowed: true } });

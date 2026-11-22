@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -531,17 +534,30 @@ func (s *Service) slackURL() string {
 // Then it reads the bot's id (auth.test) and whether the installer is a
 // Slack admin or owner (users.info), which a Slack connection through the
 // app needs; either failing keeps what the install had, and is logged. It
-// answers the path the install was started from.
+// answers the path the install was started from. Slack's error in place of
+// a code (a cancel) spends the state and refuses FOUNDRY_SLACK_CANCELLED.
+// A refusal once the state is spent says, for an install a linked
+// standalone install started, where its Settings › Slack is
+// (slackReturnTo), so the site sends the browser back there, not to
+// Helix's own.
 func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.FinishFoundrySlackInstallRequest) (*foundryv1.FoundrySlackResponse, error) {
 	userID, err := s.slackPerson(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	code, state := req.GetCode(), req.GetState()
+	state := req.GetState()
+	var code, cancelled string
+	switch answer := req.GetAnswer().(type) {
+	case *foundryv1.FinishFoundrySlackInstallRequest_Code:
+		code = answer.Code
+	case *foundryv1.FinishFoundrySlackInstallRequest_Error:
+		cancelled = answer.Error
+	}
 	switch {
-	case code == "" || len(code) > maxSlackArg || state == "" || len(state) > maxSlackArg:
-		return nil, status.Errorf(codes.InvalidArgument, "code and state are what Slack returned, at most %d characters", maxSlackArg)
-	case s.deps.ConnectorKeys == nil:
+	case code == "" && !slackErrorPattern.MatchString(cancelled) || len(code) > maxSlackArg || state == "" || len(state) > maxSlackArg:
+		return nil, status.Errorf(codes.InvalidArgument,
+			"state and a code, or Slack's error code, are what Slack returned, at most %d characters", maxSlackArg)
+	case code != "" && s.deps.ConnectorKeys == nil:
 		return nil, status.Error(codes.Unavailable, "Foundry can't keep a Slack token here: it has no connector keyring")
 	}
 	st, err := s.deps.DB.SpendFoundrySlackInstallState(ctx, hashToken(state), userID)
@@ -551,7 +567,55 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 			"this install expired or was finished already: add Helix Foundry to Slack again from Settings › Slack")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the install's state: %v", err)
+	case cancelled != "":
+		log.From(ctx).Info("foundry slack install cancelled", "workspace_id", st.WorkspaceID, "error", cancelled)
+		return nil, slackReturnTo(foundryPrecondition(st.WorkspaceID, "FOUNDRY_SLACK_CANCELLED",
+			"Helix Foundry wasn't added: adding it to Slack was cancelled"), st.ReturnTo)
 	}
+	resp, err := s.finishSlackInstall(ctx, st, userID, code)
+	if err != nil {
+		return nil, slackReturnTo(err, st.ReturnTo)
+	}
+	return resp, nil
+}
+
+// slackErrorPattern is an OAuth error code Slack returns in place of a code
+// (access_denied, invalid_scope, ...).
+var slackErrorPattern = regexp.MustCompile(`^[a-z_]{1,64}$`)
+
+// slackReturnTo is err with returnTo (an install's own Settings › Slack, a
+// linked standalone install's) as its ErrorInfo's metadata return_to: one
+// added when it had none (FOUNDRY_SLACK_INSTALL_FAILED). err as it is for
+// none.
+func slackReturnTo(err error, returnTo string) error {
+	if returnTo == "" {
+		return err
+	}
+	st := status.Convert(err)
+	info := &errdetails.ErrorInfo{Reason: "FOUNDRY_SLACK_INSTALL_FAILED", Domain: foundryDomain}
+	var others []protoadapt.MessageV1
+	for _, d := range st.Details() {
+		if held, ok := d.(*errdetails.ErrorInfo); ok {
+			info = held
+		} else if m, ok := d.(protoadapt.MessageV1); ok {
+			others = append(others, m)
+		}
+	}
+	info.Metadata = maps.Clone(info.Metadata)
+	if info.Metadata == nil {
+		info.Metadata = map[string]string{}
+	}
+	info.Metadata["return_to"] = returnTo
+	out, detailErr := status.New(st.Code(), st.Message()).WithDetails(append(others, info)...)
+	if detailErr != nil {
+		return err
+	}
+	return out.Err()
+}
+
+// finishSlackInstall finishes the install whose state st the caller spent
+// with Slack's code (FinishFoundrySlackInstall).
+func (s *Service) finishSlackInstall(ctx context.Context, st *model.SlackInstallState, userID, code string) (*foundryv1.FoundrySlackResponse, error) {
 	ws := st.WorkspaceID
 	_, relayed := st.Destination.(model.SlackServesRelay)
 	switch {

@@ -131,7 +131,7 @@ describe("Slack's return from adding the app", () => {
       readSlackReturn(storage, ["installed", "install_error"], NOW),
     ).toEqual({ kind: "installed", code: "c1", state: "s1", at: NOW });
   });
-  it("keeps a cancel's error", () => {
+  it("keeps a cancel's error, with its state for the WFE to say whose install it was", () => {
     const storage = new Memory();
     captureSlackReturn(
       at("/slack/installed", "?error=access_denied&state=s1"),
@@ -141,7 +141,33 @@ describe("Slack's return from adding the app", () => {
     );
     expect(
       readSlackReturn(storage, ["installed", "install_error"], NOW),
-    ).toEqual({ kind: "install_error", error: "access_denied", at: NOW });
+    ).toEqual({
+      kind: "install_error",
+      error: "access_denied",
+      state: "s1",
+      at: NOW,
+    });
+    // Without a state, the error alone.
+    captureSlackReturn(
+      at("/slack/installed", "?error=access_denied"),
+      storage,
+      vi.fn(),
+      NOW,
+    );
+    expect(readSlackReturn(storage, "install_error", NOW)).toEqual({
+      kind: "install_error",
+      error: "access_denied",
+      at: NOW,
+    });
+    captureSlackReturn(
+      at("/slack/installed", `?error=access_denied&state=${"s".repeat(513)}`),
+      storage,
+      vi.fn(),
+      NOW,
+    );
+    expect(
+      readSlackReturn(storage, "install_error", NOW)?.state,
+    ).toBeUndefined();
   });
   it("keeps nothing of a malformed return, and still bares the URL", () => {
     const storage = new Memory(),
@@ -432,6 +458,8 @@ describe("reading a kept return", () => {
       { ...good, code: "" },
       { ...good, state: ["s"] },
       { kind: "install_error", error: 1, at: NOW },
+      { kind: "install_error", error: "access_denied", state: 1, at: NOW },
+      { kind: "install_error", error: "access_denied", state: "", at: NOW },
       { kind: "link", token: "abc", at: NOW },
       { kind: "other", at: NOW },
     ])

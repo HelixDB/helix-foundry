@@ -1,6 +1,6 @@
 // What Slack's and Helix's ways back to the site carry, kept in this tab
 // before any call, and the URL then cleaned: Slack's return from adding the
-// app (/slack/installed?code=&state=, or ?error= when the person
+// app (/slack/installed?code=&state=, or ?error=&state= when the person
 // cancelled), the one-time link the app sends a person in Slack
 // (/slack/link?workspace=<id>#t=<token>), a local install's request to link
 // it to Helix (the hosted site's /relay/link?state=&code_challenge=
@@ -22,14 +22,16 @@ const KEY = "foundry.slack.return.v1";
 const MAX = 512;
 
 /**
- * What a way back carried: a finished install, a cancelled one, a link, a
+ * What a way back carried: a finished install, a cancelled one (with its
+ * state when Slack sent it, so the WFE can say where the install was
+ * started), a link, a
  * local install asking to be linked to Helix (its state, PKCE challenge,
  * Settings › Slack and name, as it sent them), or Helix's answer to it on
  * the local install: a code for its state, or a cancel.
  */
 export type SlackReturn =
   | { kind: "installed"; code: string; state: string; at: number }
-  | { kind: "install_error"; error: string; at: number }
+  | { kind: "install_error"; error: string; state?: string; at: number }
   | { kind: "link"; token: string; at: number }
   | {
       kind: "relay_link";
@@ -87,7 +89,9 @@ export function captureSlackReturn(
       ok(code) && ok(state)
         ? { kind: "installed", code, state, at: now }
         : ok(error) && /^[a-z_]{1,64}$/.test(error)
-          ? { kind: "install_error", error, at: now }
+          ? ok(state)
+            ? { kind: "install_error", error, state, at: now }
+            : { kind: "install_error", error, at: now }
           : null;
     replace("/slack/installed");
   } else if (url.pathname === "/slack/link") {
@@ -195,7 +199,9 @@ export function readSlackReturn<K extends SlackReturn["kind"]>(
     r.kind === "installed" || r.kind === "relay_return"
       ? fits(r.code) && fits(r.state)
       : r.kind === "install_error" || r.kind === "relay_error"
-        ? fits(r.error) && ERROR_CODE.test(r.error)
+        ? fits(r.error) &&
+          ERROR_CODE.test(r.error) &&
+          (r.kind === "relay_error" || r.state === undefined || fits(r.state))
         : r.kind === "relay_link"
           ? fits(r.state) &&
             RELAY_STATE.test(r.state) &&

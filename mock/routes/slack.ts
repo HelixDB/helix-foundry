@@ -378,6 +378,39 @@ export function relayUnlinked() {
   state.states.clear();
 }
 
+/**
+ * `reply` with `returnTo` (a linked local install's Settings › Slack) as
+ * its ErrorInfo's metadata return_to, as the backend's slackReturnTo adds
+ * it: to the ErrorInfo it has, else one of FOUNDRY_SLACK_INSTALL_FAILED.
+ */
+function withReturnTo(reply: MockReply, returnTo: string): MockReply {
+  const body = (reply.body || {}) as { details?: unknown[] };
+  const details = [...(body.details || [])];
+  const at = details.findIndex(
+    (d) =>
+      !!d &&
+      typeof d === "object" &&
+      (d as { "@type"?: unknown })["@type"] ===
+        "type.googleapis.com/google.rpc.ErrorInfo",
+  );
+  const info = (
+    at >= 0
+      ? details[at]
+      : {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          reason: "FOUNDRY_SLACK_INSTALL_FAILED",
+          domain: "foundry.helix-db.com",
+        }
+  ) as { metadata?: Record<string, string> };
+  const withIt = {
+    ...info,
+    metadata: { ...info.metadata, return_to: returnTo },
+  };
+  if (at >= 0) details[at] = withIt;
+  else details.push(withIt);
+  return { ...reply, body: { ...body, details } };
+}
+
 /** What may stop an install, for an owner or admin, now. */
 function installRefusal(m: Membership): MockReply | null {
   if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
@@ -539,11 +572,17 @@ export const slackRoutes: MockRoute[] = [
           "FOUNDRY_SLACK_DISABLED",
           "Helix Foundry for Slack isn't available here",
         );
-      const req = (body || {}) as Partial<FinishFoundrySlackInstallRequest>;
-      if (!req.code || !req.state)
+      const req = (body || {}) as Partial<
+        FinishFoundrySlackInstallRequest & { code: string; error: string }
+      >;
+      const cancelled =
+        !req.code &&
+        typeof req.error === "string" &&
+        /^[a-z_]{1,64}$/.test(req.error);
+      if ((!req.code && !cancelled) || (req.code && req.error) || !req.state)
         return fail(
           "INVALID_ARGUMENT",
-          "code and state are what Slack returned, at most 512 characters",
+          "state and a code, or Slack's error code, are what Slack returned, at most 256 characters",
         );
       const s = state.states.get(req.state);
       if (!s || s.used || s.expires < Date.now() || s.userId !== user.id)
@@ -553,22 +592,37 @@ export const slackRoutes: MockRoute[] = [
           "this install expired or was finished already: add Helix Foundry to Slack again from Settings › Slack",
         );
       s.used = true;
-      const m = membership(s.workspaceId, user.id);
-      if (isReply(m)) return m;
-      const refused = installRefusal(m);
-      if (refused) return refused;
-      if (state.codes.get(req.code) !== req.state)
-        return foundryPrecondition(
-          m.workspaceId,
-          "FOUNDRY_SLACK_REFUSED",
-          "Slack refused the install (invalid_code): add Helix Foundry to Slack again",
+      // Past the state, a local install's refusal says where it goes back.
+      const back = (reply: MockReply) =>
+        s.returnTo ? withReturnTo(reply, s.returnTo) : reply;
+      if (cancelled)
+        return back(
+          foundryPrecondition(
+            s.workspaceId,
+            "FOUNDRY_SLACK_CANCELLED",
+            "Helix Foundry wasn't added: adding it to Slack was cancelled",
+          ),
         );
-      state.codes.delete(req.code);
+      const m = membership(s.workspaceId, user.id);
+      if (isReply(m)) return back(m);
+      const refused = installRefusal(m);
+      if (refused) return back(refused);
+      if (state.codes.get(req.code!) !== req.state)
+        return back(
+          foundryPrecondition(
+            m.workspaceId,
+            "FOUNDRY_SLACK_REFUSED",
+            "Slack refused the install (invalid_code): add Helix Foundry to Slack again",
+          ),
+        );
+      state.codes.delete(req.code!);
       if (knobs.slackTeamTaken)
-        return foundryPrecondition(
-          m.workspaceId,
-          "FOUNDRY_SLACK_TEAM_TAKEN",
-          "this Slack workspace is connected to another Foundry workspace: disconnect it there, or a Slack admin can remove Helix Foundry in Slack's app settings",
+        return back(
+          foundryPrecondition(
+            m.workspaceId,
+            "FOUNDRY_SLACK_TEAM_TAKEN",
+            "this Slack workspace is connected to another Foundry workspace: disconnect it there, or a Slack admin can remove Helix Foundry in Slack's app settings",
+          ),
         );
       if (s.returnTo) {
         s.onInstalled?.(

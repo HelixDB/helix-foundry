@@ -534,9 +534,10 @@ func TestStartAndFinishRelayedInstall(t *testing.T) {
 
 	// Only the link's member finishes it.
 	f.slack.answer("oauth.v2.access", http.StatusOK, grantJSON(nil))
-	_, err = f.s.FinishFoundrySlackInstall(as("user-3"), &foundryv1.FinishFoundrySlackInstallRequest{Code: "c", State: state})
+	_, err = f.s.FinishFoundrySlackInstall(as("user-3"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"), State: state})
 	assert.Equal(t, "FOUNDRY_SLACK_INSTALL_EXPIRED", reasonOf(err))
-	done, err := f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Code: "c", State: state})
+	assert.Empty(t, returnToOf(t, err), "a state not spent says nothing of its install")
+	done, err := f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"), State: state})
 	require.NoError(t, err)
 	assert.Equal(t, "http://localhost:3000/settings/slack", done.GetReturnTo())
 	assert.Nil(t, done.GetSlack().GetInstall(), "the workspace's own Slack is untouched")
@@ -554,17 +555,49 @@ func TestStartAndFinishRelayedInstall(t *testing.T) {
 	require.NoError(t, err)
 	authorize, _ = url.Parse(resp.GetAuthorizeUrl())
 	r.slackStore.refusal = foundrystore.ErrNotFound
-	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Code: "c", State: authorize.Query().Get("state")})
+	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"), State: authorize.Query().Get("state")})
 	assert.Equal(t, "FOUNDRY_RELAY_LINK_REVOKED", reasonOf(err))
+	assert.Equal(t, link.ReturnTo(), returnToOf(t, err), "back to the install's own Settings › Slack")
 	r.slackStore.refusal = nil
+
+	// Cancelled on Slack's page: the state is spent, Slack isn't asked, and
+	// the browser goes back to the install.
+	resp, err = start(nil)
+	require.NoError(t, err)
+	authorize, _ = url.Parse(resp.GetAuthorizeUrl())
+	exchanges := len(f.slack.called())
+	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCancelled,
+		State: authorize.Query().Get("state")})
+	assert.Equal(t, "FOUNDRY_SLACK_CANCELLED", reasonOf(err))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Equal(t, link.ReturnTo(), returnToOf(t, err))
+	assert.Len(t, f.slack.called(), exchanges, "Slack isn't asked")
+	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"),
+		State: authorize.Query().Get("state")})
+	assert.Equal(t, "FOUNDRY_SLACK_INSTALL_EXPIRED", reasonOf(err), "spent")
+
+	// A refusal of no reason of its own says where to go back too.
+	resp, err = start(nil)
+	require.NoError(t, err)
+	authorize, _ = url.Parse(resp.GetAuthorizeUrl())
+	f.slack.answer("oauth.v2.access", http.StatusInternalServerError, `oops`)
+	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"),
+		State: authorize.Query().Get("state")})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Equal(t, "FOUNDRY_SLACK_INSTALL_FAILED", reasonOf(err))
+	assert.Equal(t, link.ReturnTo(), returnToOf(t, err))
+	f.slack.answer("oauth.v2.access", http.StatusOK, grantJSON(nil))
 
 	// With the relay off a relayed state finishes nothing.
 	resp, err = start(nil)
 	require.NoError(t, err)
 	authorize, _ = url.Parse(resp.GetAuthorizeUrl())
 	f.cfg.Foundry.Slack.Relay.Enabled = false
-	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Code: "c", State: authorize.Query().Get("state")})
+	_, err = f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"), State: authorize.Query().Get("state")})
 	assert.Equal(t, "FOUNDRY_RELAY_DISABLED", reasonOf(err))
+	reason, metadata := slackReason(t, err)
+	assert.Equal(t, "FOUNDRY_RELAY_DISABLED", reason, "its own reason kept")
+	assert.Equal(t, link.ReturnTo(), metadata["return_to"])
 }
 
 func TestListAndRevokeRelayLinks(t *testing.T) {

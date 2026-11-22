@@ -5858,14 +5858,21 @@ export type StartFoundrySlackInstallResponse = { authorizeUrl?: string };
 
 /**
  * v1FinishFoundrySlackInstallRequest: POST /v1/foundry/slack:finish-install,
- * what Slack returned. The state must be the caller's, unexpired and unspent
- * (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner or admin.
- * FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL, FOUNDRY_SLACK_SCOPES,
- * FOUNDRY_SLACK_REFUSED, FOUNDRY_SLACK_TEAM_TAKEN,
- * FOUNDRY_SLACK_DISCONNECTING, FOUNDRY_SLACK_INSTALLED. The same Slack
+ * what Slack returned: the state with a code, or with Slack's error code
+ * (the person cancelled), which spends the state and is refused
+ * FOUNDRY_SLACK_CANCELLED. The state must be the caller's, unexpired and
+ * unspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner or
+ * admin. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL,
+ * FOUNDRY_SLACK_SCOPES, FOUNDRY_SLACK_REFUSED, FOUNDRY_SLACK_TEAM_TAKEN,
+ * FOUNDRY_SLACK_DISCONNECTING, FOUNDRY_SLACK_INSTALLED. Every refusal past
+ * the state of an install a linked local install started carries that
+ * install's Settings › Slack as its ErrorInfo's metadata `return_to` (one
+ * of no reason of its own: FOUNDRY_SLACK_INSTALL_FAILED). The same Slack
  * workspace again is a reinstall, which keeps its links.
  */
-export type FinishFoundrySlackInstallRequest = { code: string; state: string };
+export type FinishFoundrySlackInstallRequest =
+  | { code: string; state: string }
+  | { error: string; state: string };
 
 /**
  * FoundryServiceUpdateFoundrySlackBody: PATCH .../foundry/slack, owners and

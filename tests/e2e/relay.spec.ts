@@ -8,7 +8,8 @@ import { APP_ORIGIN, expect, signIn, test } from "./support/mock";
 // Foundry on someone's computer to Acme, its request kept through a
 // sign-in and sent back only to that computer, the install's Add to Slack
 // finished here and sent back to it, then revoked; a request that would
-// leave the computer, or a member, links nothing; and where the relay is
+// leave the computer, or a member, links nothing; a cancelled or refused
+// Add to Slack goes back to the install too; and where the relay is
 // off, Settings › Slack doesn't mention it.
 
 const MOCK = `http://127.0.0.1:${e2ePorts.mock}`;
@@ -85,20 +86,46 @@ test("an owner links a Foundry on someone's computer, finishes its Add to Slack,
   await expect(links).toContainText("Linked by Ada Lovelace");
   await expect(links).toContainText("Not in Slack yet.");
 
-  // Cancelled on Slack's page, nothing says whose install it was: the page
-  // tells the install's owner to go back to it, not to add it here.
+  // Cancelled on Slack's page: the WFE spends the state and says whose
+  // install it was, and the page goes back to it.
   const cancelled = (await post("/__mock/relay/slack-install", {
     linkId,
   })) as { authorizeUrl: string };
   await page.goto(cancelled.authorizeUrl);
   await page.getByRole("button", { name: "Cancel" }).click();
+  await page.waitForURL(REDIRECT);
+
+  // Refused once Slack came back: said here, with the way back to the
+  // install, never Helix's own Settings › Slack.
+  await fetch(`${MOCK}/__mock/config`, {
+    method: "POST",
+    body: JSON.stringify({ slackTeamTaken: true }),
+  });
+  const refused = (await post("/__mock/relay/slack-install", {
+    linkId,
+  })) as { authorizeUrl: string };
+  await page.goto(refused.authorizeUrl);
+  await page.getByRole("button", { name: "Allow" }).click();
   await expect(page).toHaveURL(/\/slack\/installed$/);
+  const refusedAlert = page
+    .getByRole("alert")
+    .filter({ hasText: "Helix Foundry wasn’t added to Slack" });
+  await expect(refusedAlert).toContainText(
+    "connected to another Foundry workspace",
+  );
+  await expect(refusedAlert).toContainText(
+    "Add it again from Settings › Slack on the Foundry on your computer.",
+  );
   await expect(
-    page.getByText(
-      "Adding it for the Foundry on your computer? Go back there and add it again from its Settings › Slack.",
-      { exact: false },
-    ),
-  ).toBeVisible();
+    page.getByRole("link", { name: "Back to the Foundry on your computer" }),
+  ).toHaveAttribute("href", REDIRECT);
+  await expect(
+    page.getByRole("link", { name: "Open Settings › Slack" }),
+  ).toHaveCount(0);
+  await fetch(`${MOCK}/__mock/config`, {
+    method: "POST",
+    body: JSON.stringify({ slackTeamTaken: false }),
+  });
 
   // Its Add to Slack, through the door, is finished here and sent back.
   const { authorizeUrl } = (await post("/__mock/relay/slack-install", {

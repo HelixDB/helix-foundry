@@ -462,6 +462,23 @@ func slackReason(t *testing.T, err error) (string, map[string]string) {
 	return "", nil
 }
 
+// finishCode is a finish's answer: Slack's code.
+func finishCode(code string) *foundryv1.FinishFoundrySlackInstallRequest_Code {
+	return &foundryv1.FinishFoundrySlackInstallRequest_Code{Code: code}
+}
+
+// finishCancelled is a finish's answer: Slack's error, the person having
+// cancelled.
+var finishCancelled = &foundryv1.FinishFoundrySlackInstallRequest_Error{Error: "access_denied"}
+
+// returnToOf is the Settings › Slack a finish's refusal sends the browser
+// back to: a linked standalone install's, "" for none.
+func returnToOf(t *testing.T, err error) string {
+	t.Helper()
+	_, metadata := slackReason(t, err)
+	return metadata["return_to"]
+}
+
 // signed is a request Slack signed now.
 func signed(route foundryv1.SlackRoute, body []byte) *foundryv1.ReceiveSlackRequestRequest {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
@@ -881,7 +898,7 @@ func TestFinishFoundrySlackInstall(t *testing.T) {
 		return u.Query().Get("state")
 	}
 	finish := func(f slackFixture, user, state string) (*foundryv1.FoundrySlack, error) {
-		resp, err := f.s.FinishFoundrySlackInstall(as(user), &foundryv1.FinishFoundrySlackInstallRequest{Code: "the code", State: state})
+		resp, err := f.s.FinishFoundrySlackInstall(as(user), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("the code"), State: state})
 		return resp.GetSlack(), err
 	}
 	t.Run("installs, with the token sealed under the install", func(t *testing.T) {
@@ -1010,12 +1027,27 @@ func TestFinishFoundrySlackInstall(t *testing.T) {
 		_, err := finish(f, "user-1", started(t, f))
 		assert.Equal(t, codes.Internal, status.Code(err))
 	})
+	t.Run("a cancel spends the state, and says nothing more of Helix's own install", func(t *testing.T) {
+		f := newSlackFixture(t)
+		state := started(t, f)
+		_, err := f.s.FinishFoundrySlackInstall(as("user-1"), &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCancelled, State: state})
+		reason, metadata := slackReason(t, err)
+		assert.Equal(t, "FOUNDRY_SLACK_CANCELLED", reason)
+		assert.Equal(t, map[string]string{"workspace_id": slackWS}, metadata, "no way back but Helix's own Settings › Slack")
+		assert.True(t, f.db.states[hashToken(state)].used, "spent")
+		assert.Empty(t, f.slack.called(), "Slack isn't asked")
+		_, err = finish(f, "user-1", state)
+		assert.Equal(t, "FOUNDRY_SLACK_INSTALL_EXPIRED", reasonOf(err))
+		assert.Empty(t, returnToOf(t, err))
+	})
 	t.Run("malformed, or nowhere to keep a token", func(t *testing.T) {
 		f := newSlackFixture(t)
 		for name, req := range map[string]*foundryv1.FinishFoundrySlackInstallRequest{
-			"no code":    {State: "s"},
-			"no state":   {Code: "c"},
-			"long state": {Code: "c", State: strings.Repeat("s", maxSlackArg+1)},
+			"no code":             {State: "s"},
+			"no state":            {Answer: finishCode("c")},
+			"long state":          {Answer: finishCode("c"), State: strings.Repeat("s", maxSlackArg+1)},
+			"an empty code":       {Answer: finishCode(""), State: "s"},
+			"an error of no form": {Answer: &foundryv1.FinishFoundrySlackInstallRequest_Error{Error: "Access Denied!"}, State: "s"},
 		} {
 			_, err := f.s.FinishFoundrySlackInstall(as("user-1"), req)
 			assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
@@ -1517,7 +1549,7 @@ func TestSlackSettingsEdges(t *testing.T) {
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		_, err = f.s.StartFoundrySlackInstall(agent, &foundryv1.StartFoundrySlackInstallRequest{WorkspaceId: slackWS})
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
-		_, err = f.s.FinishFoundrySlackInstall(agent, &foundryv1.FinishFoundrySlackInstallRequest{Code: "c", State: "s"})
+		_, err = f.s.FinishFoundrySlackInstall(agent, &foundryv1.FinishFoundrySlackInstallRequest{Answer: finishCode("c"), State: "s"})
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 		_, err = f.s.DisconnectFoundrySlack(agent, &foundryv1.DisconnectFoundrySlackRequest{WorkspaceId: slackWS})
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))

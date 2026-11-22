@@ -4,12 +4,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, MessageSquare, TriangleAlert } from "lucide-react";
 import { sentence } from "../../api";
 import { tabStorage } from "../data/sign-ins";
-import { ButtonLink, EmptyState, Page, PageHeader, useTitle } from "../../kit";
+import {
+  ButtonAnchor,
+  ButtonLink,
+  EmptyState,
+  Page,
+  PageHeader,
+  useTitle,
+} from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import {
+  cancelSlackInstall,
   finishSlackInstall,
   installFailed,
+  installReturnTo,
   slackKey,
   slackReturnCopy,
   slackReturnFailure,
@@ -30,16 +39,24 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // Foundry workspace has the Slack workspace, Helix is still disconnecting
 // it, an org-wide install, a permission left out, an expired state. Slack's
 // own ?error= is said in fixed words (slackReturnCopy), never echoed.
-// Neither a cancel (Slack's ?error= carries nothing of the install) nor a
-// refusal says whose install it was, so a failure also tells someone who
-// started from a Foundry on their computer to go back to it: Settings ›
-// Slack here would add Helix Foundry to this Helix workspace instead.
+// A cancel (?error= with the state) is told to the WFE, which spends the
+// state and, for a linked local install's, says where its Settings › Slack
+// is: the page goes back there. A refusal says so too (installReturnTo),
+// and its way back is that install's, never Helix's own Settings › Slack,
+// which would add Helix Foundry to this Helix workspace instead. When the
+// WFE can't say whose install it was (no state, an expired one), the page
+// tells someone who started from a Foundry on their computer to go back.
+
+/** Where a failure's button goes: Helix's Settings › Slack, or a local install's. */
+type WayBack = { kind: "helix" } | { kind: "local"; url: string };
 
 type Phase =
   | { kind: "finishing" }
-  | { kind: "failed"; title: string; text: string }
-  // Added for a local install: on the way back to its Settings › Slack.
-  | { kind: "leaving" }
+  // Slack's cancel, told to the WFE: where it goes back to is not known yet.
+  | { kind: "cancelling" }
+  | { kind: "failed"; title: string; text: string; back: WayBack }
+  // For a local install: on the way back to its Settings › Slack.
+  | { kind: "leaving"; title: string }
   // This tab holds nothing to finish: opened again, or in another tab.
   | { kind: "lost" };
 
@@ -59,7 +76,13 @@ export function SlackInstalledPage() {
         ? { kind: "lost" }
         : kept.kind === "installed"
           ? { kind: "finishing" }
-          : { kind: "failed", ...slackReturnCopy(kept.error) },
+          : kept.state
+            ? { kind: "cancelling" }
+            : {
+                kind: "failed",
+                ...slackReturnCopy(kept.error),
+                back: { kind: "helix" },
+              },
     ),
     started = useRef(false);
   useTitle("Adding Helix Foundry to Slack");
@@ -70,12 +93,22 @@ export function SlackInstalledPage() {
     clearSlackReturn(tabStorage());
     if (kept.kind === "install_error") {
       installFailed(slackReturnFailure(kept.error));
+      if (!kept.state) return;
+      const copy = slackReturnCopy(kept.error);
+      void cancelSlackInstall(kept.error, kept.state).then((returnTo) => {
+        if (!returnTo) {
+          setPhase({ kind: "failed", ...copy, back: { kind: "helix" } });
+          return;
+        }
+        setPhase({ kind: "leaving", title: copy.title });
+        window.location.assign(returnTo);
+      });
       return;
     }
     void finishSlackInstall(kept.code, kept.state).then(
       async ({ slack, returnPath, returnTo }) => {
         if (returnTo) {
-          setPhase({ kind: "leaving" });
+          setPhase({ kind: "leaving", title: "Helix Foundry is in Slack" });
           window.location.assign(returnTo);
           return;
         }
@@ -103,15 +136,20 @@ export function SlackInstalledPage() {
           { replace: true },
         );
       },
-      (e: Error) =>
+      (e: Error) => {
+        const local = installReturnTo(e);
         setPhase({
           kind: "failed",
           title: "Helix Foundry wasn’t added to Slack",
-          text: sentence(e.message),
-        }),
+          text: local
+            ? `${sentence(e.message)} Add it again from Settings › Slack on the Foundry on your computer.`
+            : sentence(e.message),
+          back: local ? { kind: "local", url: local } : { kind: "helix" },
+        });
+      },
     );
   }, []);
-  const back = (
+  const helixBack = (
     <ButtonLink size="sm" variant="primary" to={paths.settings("slack")}>
       Open Settings › Slack
     </ButtonLink>
@@ -122,8 +160,14 @@ export function SlackInstalledPage() {
       {phase.kind === "leaving" ? (
         <EmptyState
           icon={LoaderCircle}
-          title="Helix Foundry is in Slack"
+          title={phase.title}
           text="Going back to the Foundry on this computer…"
+        />
+      ) : phase.kind === "cancelling" ? (
+        <EmptyState
+          icon={LoaderCircle}
+          title="Helix Foundry wasn’t added"
+          text="Adding it to Slack was cancelled."
         />
       ) : phase.kind === "finishing" ? (
         <EmptyState
@@ -133,19 +177,32 @@ export function SlackInstalledPage() {
         />
       ) : phase.kind === "failed" ? (
         <div role="alert">
-          <EmptyState
-            icon={TriangleAlert}
-            title={phase.title}
-            text={`${phase.text} ${LOCAL_WAY_BACK}`}
-            action={back}
-          />
+          {phase.back.kind === "local" ? (
+            <EmptyState
+              icon={TriangleAlert}
+              title={phase.title}
+              text={phase.text}
+              action={
+                <ButtonAnchor size="sm" variant="primary" href={phase.back.url}>
+                  Back to the Foundry on your computer
+                </ButtonAnchor>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={TriangleAlert}
+              title={phase.title}
+              text={`${phase.text} ${LOCAL_WAY_BACK}`}
+              action={helixBack}
+            />
+          )}
         </div>
       ) : (
         <EmptyState
           icon={MessageSquare}
           title="Nothing to finish here"
           text={`This tab didn’t add Helix Foundry to Slack, or it was finished already. Add it from Settings › Slack. ${LOCAL_WAY_BACK}`}
-          action={back}
+          action={helixBack}
         />
       )}
     </Page>

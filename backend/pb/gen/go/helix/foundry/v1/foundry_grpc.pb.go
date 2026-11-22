@@ -524,7 +524,12 @@ type FoundryServiceClient interface {
 	// Finishes adding the app with what Slack returned to the site: the
 	// state names the workspace, and must be the caller's, unexpired and
 	// unspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner
-	// or admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL
+	// or admin of it. Slack's error in place of a code (the person
+	// cancelled) spends the state and is FOUNDRY_SLACK_CANCELLED. Every
+	// refusal past the state of an install a linked standalone install
+	// started carries its Settings › Slack (ErrorInfo metadata return_to),
+	// where the site sends the browser back. FAILED_PRECONDITION:
+	// FOUNDRY_SLACK_ENTERPRISE_INSTALL
 	// (an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),
 	// FOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN
 	// (another Foundry workspace has the Slack workspace),
@@ -2627,7 +2632,12 @@ type FoundryServiceServer interface {
 	// Finishes adding the app with what Slack returned to the site: the
 	// state names the workspace, and must be the caller's, unexpired and
 	// unspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner
-	// or admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL
+	// or admin of it. Slack's error in place of a code (the person
+	// cancelled) spends the state and is FOUNDRY_SLACK_CANCELLED. Every
+	// refusal past the state of an install a linked standalone install
+	// started carries its Settings › Slack (ErrorInfo metadata return_to),
+	// where the site sends the browser back. FAILED_PRECONDITION:
+	// FOUNDRY_SLACK_ENTERPRISE_INSTALL
 	// (an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),
 	// FOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN
 	// (another Foundry workspace has the Slack workspace),

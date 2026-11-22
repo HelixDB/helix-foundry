@@ -175,7 +175,7 @@
     },
     "/v1/foundry/slack:finish-install": {
       "post": {
-        "summary": "Finishes adding the app with what Slack returned to the site: the\nstate names the workspace, and must be the caller's, unexpired and\nunspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner\nor admin of it. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL\n(an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),\nFOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN\n(another Foundry workspace has the Slack workspace),\nFOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last\ndisconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is\nconnected). The same Slack workspace again is a reinstall, which keeps\nits links. It reads the bot's id (auth.test) and whether its installer\nis a Slack admin or owner (users.info), which a Slack connection through\nthe app needs, without failing the install when Slack doesn't say.",
+        "summary": "Finishes adding the app with what Slack returned to the site: the\nstate names the workspace, and must be the caller's, unexpired and\nunspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner\nor admin of it. Slack's error in place of a code (the person\ncancelled) spends the state and is FOUNDRY_SLACK_CANCELLED. Every\nrefusal past the state of an install a linked standalone install\nstarted carries its Settings › Slack (ErrorInfo metadata return_to),\nwhere the site sends the browser back. FAILED_PRECONDITION:\nFOUNDRY_SLACK_ENTERPRISE_INSTALL\n(an org-wide install), FOUNDRY_SLACK_SCOPES (permissions missing),\nFOUNDRY_SLACK_REFUSED (Slack refused the code), FOUNDRY_SLACK_TEAM_TAKEN\n(another Foundry workspace has the Slack workspace),\nFOUNDRY_SLACK_DISCONNECTING (Helix is still telling Slack of its last\ndisconnect), FOUNDRY_SLACK_INSTALLED (another Slack workspace is\nconnected). The same Slack workspace again is a reinstall, which keeps\nits links. It reads the bot's id (auth.test) and whether its installer\nis a Slack admin or owner (users.info), which a Slack connection through\nthe app needs, without failing the install when Slack doesn't say.",
         "operationId": "FoundryService_FinishFoundrySlackInstall",
         "responses": {
           "200": {
@@ -8886,6 +8886,9 @@
       "type": "object",
       "properties": {
         "code": {
+          "type": "string"
+        },
+        "error": {
           "type": "string"
         },
         "state": {
