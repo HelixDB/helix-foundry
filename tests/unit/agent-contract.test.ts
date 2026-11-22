@@ -21,8 +21,8 @@ import { draftFromTables } from "../../mock/routes/ontology-agent";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
-  it("is 4.29.0, the engine that flags rules over empty properties", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.29.0 sha256:897bec09af56a000");
+  it("is 4.30.0, the engine that keeps datetimes as Helix DateTime", () => {
+    expect(AGENT_CONTRACT_VERSION).toBe("4.30.0 sha256:39d070c0cf031d19");
   });
 
   it("takes asked_at for as_of, and refuses as_of", () => {

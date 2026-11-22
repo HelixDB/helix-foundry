@@ -48,7 +48,7 @@
       "type": "string"
     },
     "reads": {
-      "description": "The reads, at most [`MAX_READS`]; each has its own result, in order.",
+      "description": "The reads, at most [`MAX_READS`]; each has its own result, in order. A datetime is an\ninstant kept to the millisecond (an RFC 3339 time, its offset and finer digits read\naway), compared and ordered as one.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/ReadItem"
