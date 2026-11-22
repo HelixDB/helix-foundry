@@ -266,6 +266,17 @@ type ReadStore interface {
 	GetFoundrySlackReply(ctx context.Context, turnID string) (*model.SlackReply, error)
 	ListFoundrySlackFollows(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackReply, error)
 	CountFoundrySlackFollows(ctx context.Context, installID string) (int, error)
+	ListFoundrySlackThreadMappings(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackThread, error)
+
+	// The Slack data connector on Helix's Slack app: feeds, their buffer,
+	// the day mirror's index and the backfill (foundry_slack_feed.go)
+	GetFoundrySlackFeed(ctx context.Context, connectorID string) (*model.SlackFeed, error)
+	FoundrySlackFeedAfter(ctx context.Context, feedID string, after int64, budget model.SlackFeedBudget) ([]model.SlackFeedRow, error)
+	FoundrySlackDaysAfter(ctx context.Context, feedID string, seq int64) ([]model.SlackFeedDay, error)
+	ListFoundrySlackFeedChannels(ctx context.Context, feedID string) ([]model.SlackChannelJoin, error)
+	DueFoundrySlackBackfill(ctx context.Context, method model.SlackSlotMethod, limit int) ([]model.SlackBackfillWork, error)
+	FoundrySlackBackfillProgress(ctx context.Context, feedID string) (model.SlackBackfillProgress, error)
+	ListFoundrySlackOrphans(ctx context.Context, retention time.Duration, limit int) ([]*model.SlackFeed, error)
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
@@ -537,7 +548,7 @@ type Store interface {
 	// PurgeFoundrySlack ends a deleted workspace's Slack; its host calls it
 	// when it deletes the workspace.
 	PurgeFoundrySlack(ctx context.Context, workspaceID string) error
-	CreateFoundrySlackInstallState(ctx context.Context, workspaceID, userID, stateHash string, ttl time.Duration) error
+	CreateFoundrySlackInstallState(ctx context.Context, workspaceID, userID, stateHash, returnPath string, ttl time.Duration) error
 	SpendFoundrySlackInstallState(ctx context.Context, stateHash, userID string) (*model.SlackInstallState, error)
 	CreateFoundrySlackLinkToken(ctx context.Context, installID, slackUserID, tokenHash string, ttl time.Duration) error
 	LinkFoundrySlackUser(ctx context.Context, workspaceID, tokenHash, userID string) (*model.SlackLink, error)
@@ -558,6 +569,29 @@ type Store interface {
 	ReleaseFoundrySlackReply(ctx context.Context, turnID, owner string, after time.Duration) error
 	FinishFoundrySlackReply(ctx context.Context, turnID, owner string) error
 	PruneFoundrySlack(ctx context.Context, intake, replies time.Duration, limit int) (int64, error)
+	UpdateFoundrySlackInstallBot(ctx context.Context, installID string, u model.SlackInstallBotUpdate) error
+	MarkFoundrySlackThreadBot(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+	MarkFoundrySlackThreadOthers(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+
+	// The Slack data connector on Helix's Slack app: binding, appends, folds,
+	// channels, Tier-1 slots and the backfill (foundry_slack_feed.go)
+	CreateSlackAppConnector(ctx context.Context, c *model.Connector, bind model.SlackFeedBind) error
+	UpdateSlackAppConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate, sw model.SlackAppSwitch) error
+	AppendFoundrySlackFeed(ctx context.Context, installID string, batch model.SlackFeedBatch, limits model.SlackFeedLimits) (model.SlackFeedAppended, error)
+	AppendFoundrySlackFeedGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, spacing time.Duration) (model.SlackFeedAppended, error)
+	RecordFoundrySlackEventsLimited(ctx context.Context, installID string, minute time.Time, spacing time.Duration) (model.SlackFeedAppended, error)
+	CommitFoundrySlackFold(ctx context.Context, fold model.SlackFold) error
+	MarkFoundrySlackDaysDocumented(ctx context.Context, feedID string, days []model.SlackDayKey) error
+	PruneFoundrySlackFeed(ctx context.Context, limit int) (int64, error)
+	JoinFoundrySlackChannels(ctx context.Context, feedID string, joins []model.SlackChannelJoin) (int, error)
+	PurgeFoundrySlackChannel(ctx context.Context, feedID, channelID string) error
+	ReserveFoundrySlackSlot(ctx context.Context, installID string, method model.SlackSlotMethod, every time.Duration) (bool, error)
+	DeferFoundrySlackSlot(ctx context.Context, installID string, method model.SlackSlotMethod, after time.Duration) error
+	AdvanceFoundrySlackBackfill(ctx context.Context, step model.SlackBackfillStep, spacing time.Duration) error
+	QueueFoundrySlackThreads(ctx context.Context, threads []model.SlackBackfillThread) (int, error)
+	FailFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, message string, maxAttempts int) (model.SlackBackfillStatus, error)
+	EndFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, status model.SlackBackfillStatus, message string) error
+	SpendFoundrySlackGap(ctx context.Context, feedID string, max int) (bool, error)
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error

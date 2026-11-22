@@ -29,9 +29,10 @@ import (
 // clocks never disagree about a lease.
 
 const foundrySlackInstallColumns = `id, workspace_id, team_id, enterprise_id, team_name, app_id, bot_user_id, scopes, installed_by_user_id,
-       installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at`
+       installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at, bot_id, installer_admin, events_limited_at`
 
-const foundrySlackThreadColumns = `s.id, s.install_id, s.channel_id, s.thread_ts, s.slack_user_id, s.agent_thread_id, s.created_at, s.last_at`
+const foundrySlackThreadColumns = `s.id, s.install_id, s.channel_id, s.thread_ts, s.slack_user_id, s.agent_thread_id, s.created_at, s.last_at,
+       s.bot_at, s.others_at`
 
 const foundrySlackIntakeColumns = `id, install_id, dedupe_key, kind, conversation, slack_user_id, payload,
        JSON_UNQUOTE(JSON_EXTRACT(payload, '$.input')), status, attempts, failures, next_attempt_at, lease_owner, lease_until, waits_on_turn,
@@ -115,6 +116,10 @@ FROM foundry_slack_installs WHERE revoked_at IS NOT NULL AND uninstalled_at IS N
 //     a new token (reinstalled true);
 //   - else in is inserted with its token.
 //
+// Either way the install has its Tier-1 slots (foundry_slack_slots). A new
+// install of a team the workspace's feeds read (one whose install was
+// removed) takes them over (repointFoundrySlackFeeds).
+//
 // It returns the install as stored. Two workspaces installing one team at
 // once may deadlock on the team's gap lock: the loser runs again, and is
 // refused.
@@ -190,6 +195,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, in.WorkspaceID, in.TeamID, in.Enterp
 		if _, err := tx.db.ExecContext(ctx, `REPLACE INTO foundry_slack_install_tokens (install_id, token_sealed, key_id) VALUES (?, ?, ?)`,
 			id, token.Sealed, token.KeyID); err != nil {
 			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_slack_slots (install_id, method) VALUES (?, ?), (?, ?)`,
+			id, model.SlackSlotHistory, id, model.SlackSlotReplies); err != nil {
+			return err
+		}
+		if !reinstalled {
+			if err := tx.repointFoundrySlackFeeds(ctx, in.WorkspaceID, in.TeamID, id); err != nil {
+				return err
+			}
 		}
 		out, err = scanFoundrySlackInstall(tx.db.QueryRowContext(ctx, "SELECT "+foundrySlackInstallColumns+` FROM foundry_slack_installs WHERE id=?`, id))
 		return err
@@ -339,14 +353,16 @@ func (s *mysqlDB) clearFoundrySlackInstall(ctx context.Context, installs string,
 // --- Install states ---
 
 // CreateFoundrySlackInstallState records an install the member userID
-// started for workspaceID: its state's SHA-256 (hex), live for ttl.
-// ErrConflict when the hash is taken.
-func (s *mysqlDB) CreateFoundrySlackInstallState(ctx context.Context, workspaceID, userID, stateHash string, ttl time.Duration) error {
-	if workspaceID == "" || userID == "" || !model.ValidSHA256Hex(stateHash) || ttl <= 0 {
-		return fmt.Errorf("a Slack install state names its workspace and member, a SHA-256 and a lifetime")
+// started for workspaceID: its state's SHA-256 (hex), live for ttl, and
+// where the site goes once Slack hands it back ("" for Settings › Slack;
+// the caller checks it against its allowlist). ErrConflict when the hash is
+// taken.
+func (s *mysqlDB) CreateFoundrySlackInstallState(ctx context.Context, workspaceID, userID, stateHash, returnPath string, ttl time.Duration) error {
+	if workspaceID == "" || userID == "" || !model.ValidSHA256Hex(stateHash) || ttl <= 0 || len(returnPath) > 255 {
+		return fmt.Errorf("a Slack install state names its workspace and member, a SHA-256, a lifetime, and a return path of at most 255 bytes")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_slack_install_states (state_hash, workspace_id, user_id, expires_at)
-VALUES (?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND)`, stateHash, workspaceID, userID, ttl.Microseconds())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_slack_install_states (state_hash, workspace_id, user_id, return_path, expires_at)
+VALUES (?, ?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND)`, stateHash, workspaceID, userID, nullString(returnPath), ttl.Microseconds())
 	if isDuplicateKey(err) {
 		return ErrConflict
 	}
@@ -360,9 +376,11 @@ func (s *mysqlDB) SpendFoundrySlackInstallState(ctx context.Context, stateHash, 
 	var out model.SlackInstallState
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		err := tx.db.QueryRowContext(ctx, `SELECT state_hash, workspace_id, user_id, expires_at FROM foundry_slack_install_states
+		var returnPath sql.NullString
+		err := tx.db.QueryRowContext(ctx, `SELECT state_hash, workspace_id, user_id, return_path, expires_at FROM foundry_slack_install_states
 WHERE state_hash=? AND user_id=? AND used_at IS NULL AND expires_at > NOW(6) FOR UPDATE`, stateHash, userID).
-			Scan(&out.StateHash, &out.WorkspaceID, &out.UserID, &out.ExpiresAt)
+			Scan(&out.StateHash, &out.WorkspaceID, &out.UserID, &returnPath, &out.ExpiresAt)
+		out.ReturnPath = returnPath.String
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -1006,9 +1024,9 @@ func (s *mysqlDB) PruneFoundrySlack(ctx context.Context, intake, replies time.Du
 func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 	var i model.SlackInstall
 	var scopes string
-	var revoked, uninstalled sql.NullTime
+	var revoked, uninstalled, limited sql.NullTime
 	if err := scanner.Scan(&i.ID, &i.WorkspaceID, &i.TeamID, &i.EnterpriseID, &i.TeamName, &i.AppID, &i.BotUserID, &scopes, &i.InstalledByUserID,
-		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled); err != nil {
+		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled, &i.BotID, &i.InstallerAdmin, &limited); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1022,6 +1040,7 @@ func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 	if uninstalled.Valid {
 		i.UninstalledAt = &uninstalled.Time
 	}
+	i.EventsLimitedAt = timePtr(limited)
 	return &i, nil
 }
 
@@ -1038,12 +1057,15 @@ func scanFoundrySlackLink(scanner rowScanner) (*model.SlackLink, error) {
 
 func scanFoundrySlackThread(scanner rowScanner) (*model.SlackThread, error) {
 	var t model.SlackThread
-	if err := scanner.Scan(&t.ID, &t.InstallID, &t.ChannelID, &t.ThreadTS, &t.SlackUserID, &t.AgentThreadID, &t.CreatedAt, &t.LastAt); err != nil {
+	var botAt, othersAt sql.NullTime
+	if err := scanner.Scan(&t.ID, &t.InstallID, &t.ChannelID, &t.ThreadTS, &t.SlackUserID, &t.AgentThreadID, &t.CreatedAt, &t.LastAt,
+		&botAt, &othersAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	t.BotAt, t.OthersAt = timePtr(botAt), timePtr(othersAt)
 	return &t, nil
 }
 

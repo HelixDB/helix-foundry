@@ -190,9 +190,9 @@ func (s *slackStore) UninstallFoundrySlackTeam(_ context.Context, team, intakeID
 	return s.uninstalled, nil
 }
 
-func (s *slackStore) CreateFoundrySlackInstallState(_ context.Context, ws, userID, hash string, ttl time.Duration) error {
+func (s *slackStore) CreateFoundrySlackInstallState(_ context.Context, ws, userID, hash, returnPath string, ttl time.Duration) error {
 	s.states[hash] = &slackState{SlackInstallState: model.SlackInstallState{StateHash: hash, WorkspaceID: ws, UserID: userID,
-		ExpiresAt: time.Now().Add(ttl)}, ttl: ttl}
+		ReturnPath: returnPath, ExpiresAt: time.Now().Add(ttl)}, ttl: ttl}
 	return nil
 }
 

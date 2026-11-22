@@ -53,6 +53,15 @@ type SlackInstall struct {
 	TeamName     string
 	AppID        string
 	BotUserID    string
+	// BotID is auth.test's bot_id, which Helix's own messages carry: "" until
+	// Finish reads it (a feed doesn't bind then).
+	BotID string
+	// InstallerAdmin says a Slack workspace admin or owner installed it: a
+	// feed binds only then.
+	InstallerAdmin bool
+	// EventsLimitedAt is the last minute Slack dropped the team's events
+	// (app_rate_limited); nil when it never has.
+	EventsLimitedAt *time.Time
 	// Scopes are the bot token's, as Slack granted them.
 	Scopes            []string
 	InstalledByUserID string
@@ -143,7 +152,10 @@ type SlackInstallState struct {
 	StateHash   string
 	WorkspaceID string
 	UserID      string
-	ExpiresAt   time.Time
+	// ReturnPath is where the site goes once Slack hands the install back;
+	// "" is Settings › Slack.
+	ReturnPath string
+	ExpiresAt  time.Time
 }
 
 // SlackLink is a Slack user of an install linked to a Foundry user, who the
@@ -177,6 +189,11 @@ type SlackThread struct {
 	// LastAt is the last Slack message the thread took: its text is purged
 	// SlackThreadIdle after it.
 	LastAt time.Time
+	// BotAt is when the bot last posted in the Slack thread, and OthersAt
+	// when anyone but the bot and SlackUserID last did; nil when never. An
+	// unmentioned reply is taken while BotAt is the newer.
+	BotAt    *time.Time
+	OthersAt *time.Time
 }
 
 // SlackIntakeKind is what an intake row holds: a closed set.

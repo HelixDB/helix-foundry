@@ -408,7 +408,7 @@ func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.S
 		return nil, status.Errorf(codes.Internal, "make the install's state: %v", err)
 	}
 	state := base64.RawURLEncoding.EncodeToString(raw)
-	if err := s.deps.DB.CreateFoundrySlackInstallState(ctx, ws, userID, hashToken(state), slackStateTTL); err != nil {
+	if err := s.deps.DB.CreateFoundrySlackInstallState(ctx, ws, userID, hashToken(state), "", slackStateTTL); err != nil {
 		return nil, status.Errorf(codes.Internal, "record the install's state: %v", err)
 	}
 	cfg := s.deps.Cfg.Foundry.Slack

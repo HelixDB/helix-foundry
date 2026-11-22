@@ -1805,7 +1805,7 @@ func (u Unimplemented) PurgeFoundrySlack(context.Context, string) error {
 	return nil
 }
 
-func (u Unimplemented) CreateFoundrySlackInstallState(context.Context, string, string, string, time.Duration) error {
+func (u Unimplemented) CreateFoundrySlackInstallState(context.Context, string, string, string, string, time.Duration) error {
 	u.unimplemented("CreateFoundrySlackInstallState")
 	return nil
 }
@@ -1908,4 +1908,144 @@ func (u Unimplemented) FinishFoundrySlackReply(context.Context, string, string) 
 func (u Unimplemented) PruneFoundrySlack(context.Context, time.Duration, time.Duration, int) (int64, error) {
 	u.unimplemented("PruneFoundrySlack")
 	return 0, nil
+}
+
+func (u Unimplemented) ListFoundrySlackThreadMappings(context.Context, string, string, string) ([]*model.SlackThread, error) {
+	u.unimplemented("ListFoundrySlackThreadMappings")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundrySlackFeed(context.Context, string) (*model.SlackFeed, error) {
+	u.unimplemented("GetFoundrySlackFeed")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundrySlackFeedAfter(context.Context, string, int64, model.SlackFeedBudget) ([]model.SlackFeedRow, error) {
+	u.unimplemented("FoundrySlackFeedAfter")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundrySlackDaysAfter(context.Context, string, int64) ([]model.SlackFeedDay, error) {
+	u.unimplemented("FoundrySlackDaysAfter")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundrySlackFeedChannels(context.Context, string) ([]model.SlackChannelJoin, error) {
+	u.unimplemented("ListFoundrySlackFeedChannels")
+	return nil, nil
+}
+
+func (u Unimplemented) DueFoundrySlackBackfill(context.Context, model.SlackSlotMethod, int) ([]model.SlackBackfillWork, error) {
+	u.unimplemented("DueFoundrySlackBackfill")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundrySlackBackfillProgress(context.Context, string) (model.SlackBackfillProgress, error) {
+	u.unimplemented("FoundrySlackBackfillProgress")
+	return model.SlackBackfillProgress{}, nil
+}
+
+func (u Unimplemented) ListFoundrySlackOrphans(context.Context, time.Duration, int) ([]*model.SlackFeed, error) {
+	u.unimplemented("ListFoundrySlackOrphans")
+	return nil, nil
+}
+
+func (u Unimplemented) UpdateFoundrySlackInstallBot(context.Context, string, model.SlackInstallBotUpdate) error {
+	u.unimplemented("UpdateFoundrySlackInstallBot")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundrySlackThreadBot(context.Context, string, string, string, time.Time) error {
+	u.unimplemented("MarkFoundrySlackThreadBot")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundrySlackThreadOthers(context.Context, string, string, string, time.Time) error {
+	u.unimplemented("MarkFoundrySlackThreadOthers")
+	return nil
+}
+
+func (u Unimplemented) CreateSlackAppConnector(context.Context, *model.Connector, model.SlackFeedBind) error {
+	u.unimplemented("CreateSlackAppConnector")
+	return nil
+}
+
+func (u Unimplemented) UpdateSlackAppConnector(context.Context, string, string, model.ConnectorUpdate, model.SlackAppSwitch) error {
+	u.unimplemented("UpdateSlackAppConnector")
+	return nil
+}
+
+func (u Unimplemented) AppendFoundrySlackFeed(context.Context, string, model.SlackFeedBatch, model.SlackFeedLimits) (model.SlackFeedAppended, error) {
+	u.unimplemented("AppendFoundrySlackFeed")
+	return model.SlackFeedAppended{}, nil
+}
+
+func (u Unimplemented) AppendFoundrySlackFeedGaps(context.Context, string, []model.SlackFeedGap, time.Duration) (model.SlackFeedAppended, error) {
+	u.unimplemented("AppendFoundrySlackFeedGaps")
+	return model.SlackFeedAppended{}, nil
+}
+
+func (u Unimplemented) RecordFoundrySlackEventsLimited(context.Context, string, time.Time, time.Duration) (model.SlackFeedAppended, error) {
+	u.unimplemented("RecordFoundrySlackEventsLimited")
+	return model.SlackFeedAppended{}, nil
+}
+
+func (u Unimplemented) CommitFoundrySlackFold(context.Context, model.SlackFold) error {
+	u.unimplemented("CommitFoundrySlackFold")
+	return nil
+}
+
+func (u Unimplemented) MarkFoundrySlackDaysDocumented(context.Context, string, []model.SlackDayKey) error {
+	u.unimplemented("MarkFoundrySlackDaysDocumented")
+	return nil
+}
+
+func (u Unimplemented) PruneFoundrySlackFeed(context.Context, int) (int64, error) {
+	u.unimplemented("PruneFoundrySlackFeed")
+	return 0, nil
+}
+
+func (u Unimplemented) JoinFoundrySlackChannels(context.Context, string, []model.SlackChannelJoin) (int, error) {
+	u.unimplemented("JoinFoundrySlackChannels")
+	return 0, nil
+}
+
+func (u Unimplemented) PurgeFoundrySlackChannel(context.Context, string, string) error {
+	u.unimplemented("PurgeFoundrySlackChannel")
+	return nil
+}
+
+func (u Unimplemented) ReserveFoundrySlackSlot(context.Context, string, model.SlackSlotMethod, time.Duration) (bool, error) {
+	u.unimplemented("ReserveFoundrySlackSlot")
+	return false, nil
+}
+
+func (u Unimplemented) DeferFoundrySlackSlot(context.Context, string, model.SlackSlotMethod, time.Duration) error {
+	u.unimplemented("DeferFoundrySlackSlot")
+	return nil
+}
+
+func (u Unimplemented) AdvanceFoundrySlackBackfill(context.Context, model.SlackBackfillStep, time.Duration) error {
+	u.unimplemented("AdvanceFoundrySlackBackfill")
+	return nil
+}
+
+func (u Unimplemented) QueueFoundrySlackThreads(context.Context, []model.SlackBackfillThread) (int, error) {
+	u.unimplemented("QueueFoundrySlackThreads")
+	return 0, nil
+}
+
+func (u Unimplemented) FailFoundrySlackBackfill(context.Context, model.SlackBackfillWindow, string, int) (model.SlackBackfillStatus, error) {
+	u.unimplemented("FailFoundrySlackBackfill")
+	return "", nil
+}
+
+func (u Unimplemented) EndFoundrySlackBackfill(context.Context, model.SlackBackfillWindow, model.SlackBackfillStatus, string) error {
+	u.unimplemented("EndFoundrySlackBackfill")
+	return nil
+}
+
+func (u Unimplemented) SpendFoundrySlackGap(context.Context, string, int) (bool, error) {
+	u.unimplemented("SpendFoundrySlackGap")
+	return false, nil
 }

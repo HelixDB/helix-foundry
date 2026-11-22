@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -319,15 +320,16 @@ func TestFoundrySlackInstallStates(t *testing.T) {
 	ctx := context.Background()
 	f := newSlackFixture(t, "states")
 	for _, bad := range []error{
-		f.db.CreateFoundrySlackInstallState(ctx, "", agentUser, sha("s"), time.Minute),
-		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, "", sha("s"), time.Minute),
-		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, "state", time.Minute),
-		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s"), 0),
+		f.db.CreateFoundrySlackInstallState(ctx, "", agentUser, sha("s"), "", time.Minute),
+		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, "", sha("s"), "", time.Minute),
+		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, "state", "", time.Minute),
+		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s"), "", 0),
+		f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s"), "/"+strings.Repeat("x", 255), time.Minute),
 	} {
 		assert.Error(t, bad)
 	}
-	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s1"), 10*time.Minute))
-	assert.ErrorIs(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s1"), 10*time.Minute), store.ErrConflict)
+	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s1"), "", 10*time.Minute))
+	assert.ErrorIs(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s1"), "", 10*time.Minute), store.ErrConflict)
 
 	_, err := f.db.SpendFoundrySlackInstallState(ctx, sha("s1"), "user-eve")
 	assert.ErrorIs(t, err, store.ErrNotFound, "another member's")
@@ -335,10 +337,16 @@ func TestFoundrySlackInstallStates(t *testing.T) {
 	require.NoError(t, err, "another member's try left it unspent")
 	assert.Equal(t, f.workspaceID, st.WorkspaceID)
 	assert.Equal(t, agentUser, st.UserID)
+	assert.Empty(t, st.ReturnPath, "none: Settings › Slack")
 	_, err = f.db.SpendFoundrySlackInstallState(ctx, sha("s1"), agentUser)
 	assert.ErrorIs(t, err, store.ErrNotFound, "once")
 
-	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s2"), time.Minute))
+	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("back"), "/data?add=slack", time.Minute))
+	st, err = f.db.SpendFoundrySlackInstallState(ctx, sha("back"), agentUser)
+	require.NoError(t, err)
+	assert.Equal(t, "/data?add=slack", st.ReturnPath, "handed back as it was kept")
+
+	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s2"), "", time.Minute))
 	dbExec(t, `UPDATE foundry_slack_install_states SET expires_at=NOW(6) - INTERVAL 1 SECOND WHERE state_hash=?`, sha("s2"))
 	_, err = f.db.SpendFoundrySlackInstallState(ctx, sha("s2"), agentUser)
 	assert.ErrorIs(t, err, store.ErrNotFound, "expired")
@@ -1034,8 +1042,8 @@ func TestFoundrySlackPrune(t *testing.T) {
 	f.queue(t, i.ID, 2, "conv-b")
 	require.NoError(t, f.db.CreateFoundrySlackLinkToken(ctx, i.ID, "UADA", sha("old"), time.Minute))
 	require.NoError(t, f.db.CreateFoundrySlackLinkToken(ctx, i.ID, "UGRACE", sha("new"), time.Minute))
-	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("old"), time.Minute))
-	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("new"), time.Minute))
+	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("old"), "", time.Minute))
+	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("new"), "", time.Minute))
 	for n := 1; n <= 3; n++ {
 		_, err := f.db.HoldFoundrySlackReply(ctx, f.reply(i.ID, n))
 		require.NoError(t, err)
@@ -1073,7 +1081,7 @@ func TestFoundrySlackPurgeWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.db.CreateFoundrySlackLinkToken(ctx, kept.ID, "UADA", sha("kept"), time.Minute))
 
-	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s"), time.Minute))
+	require.NoError(t, f.db.CreateFoundrySlackInstallState(ctx, f.workspaceID, agentUser, sha("s"), "", time.Minute))
 	require.NoError(t, f.db.CreateFoundrySlackLinkToken(ctx, i.ID, "UADA", sha("t1"), time.Minute))
 	_, err = f.db.LinkFoundrySlackUser(ctx, f.workspaceID, sha("t1"), agentUser)
 	require.NoError(t, err)
