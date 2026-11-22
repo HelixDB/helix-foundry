@@ -173,6 +173,30 @@ func TestFoundryDocumentExpiry(t *testing.T) {
 		assert.Equal(t, broken, live.LoadID)
 	})
 
+	// Deleting a connector read through Helix's Slack app (its orphan
+	// sweep's, or a person's) keeps nothing: its documents leave every
+	// load, as days leaving the window do.
+	t.Run("a deleted Slack app connector's documents leave every load", func(t *testing.T) {
+		ctx := context.Background()
+		c := newConnectorSync(t, newFoundryFixture(t, "EXS"), "EXS")
+		ws := c.ontology.WorkspaceID
+		c.published(t, c.publish("EXS-a", []*model.FoundryDocument{c.note("s1", "C1:2026-08-01", "1|a", day)}, nil))
+		older := c.loadReading(t, "EXS-L1", c.setID)
+		c.loaded(t, "exs1", id26("FD-s1"))
+		current := c.loadReading(t, "EXS-L2", c.setID)
+		c.loaded(t, "exs2", id26("FD-s1"))
+		require.NoError(t, c.db.SetFoundryOntologyAutoRefresh(ctx, ws, c.ontology.ID, false))
+		dbExec(t, `INSERT INTO foundry_slack_feeds (id, connector_id, workspace_id, team_id, install_id, notice_version, bound_by)
+VALUES (?, ?, ?, 'T1', ?, 1, 'u')`, id26("FEED-EXS"), c.connector.ID, ws, id26("INST-EXS"))
+
+		require.NoError(t, c.db.DeleteConnector(ctx, ws, c.connector.ID))
+		live := c.liveJob(t)
+		require.NotNil(t, live, "refresh off takes it out all the same")
+		assert.Equal(t, model.FoundryGraphJobExtract, live.Kind)
+		assert.Equal(t, current, live.LoadID)
+		assert.Equal(t, model.FoundryLoadDeleting, c.loadStatus(t, older), "deleted once the extract ends")
+	})
+
 	// Its other loads go with any deleted document of the set as old at the
 	// source as what expires, such as one a load being written kept when an
 	// earlier day left; a load holding only newer deleted ones stays.

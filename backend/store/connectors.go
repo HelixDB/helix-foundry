@@ -109,8 +109,11 @@ WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, args...)
 // refresh on whose current load reads one of its tables owes a refresh due
 // now (OweFoundryRefreshes), which leaves the tables out; one whose live or
 // current load holds one of its documents takes them out of the graph with
-// an extract (oweFoundryRemovals). ErrNotFound means the workspace has no
-// such live connector.
+// an extract (oweFoundryRemovals). A connector read through Helix's Slack
+// app (one with a feed) keeps nothing past its delete: its documents leave
+// every load, refresh on or off, and the other loads holding them are
+// deleted (expireFoundryLoads), as the app's days leaving the window do.
+// ErrNotFound means the workspace has no such live connector.
 func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -127,6 +130,10 @@ func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) e
 		if err != nil {
 			return fmt.Errorf("lock connector %s: %w", id, err)
 		}
+		var fed bool
+		if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_slack_feeds WHERE live_connector=?)`, id).Scan(&fed); err != nil {
+			return fmt.Errorf("read connector %s Slack feed: %w", id, err)
+		}
 		tables, sets, err := tx.deleteConnector(ctx, workspaceID, id)
 		if err != nil {
 			return err
@@ -136,10 +143,32 @@ func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) e
 				return err
 			}
 		}
-		if len(sets) == 0 {
+		switch {
+		case len(sets) == 0:
 			return nil
+		case !fed:
+			return tx.oweFoundryRemovals(ctx, ontologies, true)
 		}
-		return tx.oweFoundryRemovals(ctx, ontologies, true)
+		rows, err := tx.db.QueryContext(ctx, `SELECT set_id, MAX(source_at) FROM foundry_documents
+WHERE set_id IN (`+idPlaceholders(len(sets))+`) AND status='deleted' AND source_at IS NOT NULL GROUP BY set_id`, toAnySlice(sets)...)
+		if err != nil {
+			return fmt.Errorf("read connector %s deleted documents: %w", id, err)
+		}
+		expired := map[string]time.Time{}
+		for rows.Next() {
+			var set string
+			var newest time.Time
+			if err := rows.Scan(&set, &newest); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			expired[set] = newest
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return tx.expireFoundryLoads(ctx, ontologies, expired)
 	})
 }
 

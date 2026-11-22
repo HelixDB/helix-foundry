@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -92,9 +93,20 @@ func (k *slackAppKind) Prepare(src Source) (json.RawMessage, error) { return k.p
 // Hint is empty: the app's install is the credential, shown in Settings › Slack.
 func (k *slackAppKind) Hint(string) string { return "" }
 
-// Streams are the conversations, as the app keeps them.
-func (k *slackAppKind) Streams(Source) []Stream {
+// Streams are the conversations, as the app keeps them. A day before the
+// window of the source's history_days, as a pass counts it when the day
+// is removed, is expired: what the app read leaves every load once the
+// connection no longer keeps it (a staged switch's token days past the
+// app's 90 among them).
+func (k *slackAppKind) Streams(src Source) []Stream {
+	var settings SlackSettings
+	_ = json.Unmarshal(orEmpty(src.Settings), &settings) // stored by Prepare
 	s := slackConversations
+	s.Expired = func(externalID string) bool {
+		_, day, _ := strings.Cut(externalID, ":")
+		at, err := time.Parse(time.DateOnly, day)
+		return err == nil && at.Before(slackWindow(cmp.Or(settings.HistoryDays, defaultSlackHistoryDays)))
+	}
 	replies := "threads started on older days list no replies but those that arrived as they were posted"
 	if k.RepliesDays > 0 {
 		replies = fmt.Sprintf("threads started more than %d days ago list no replies but those that arrived as they were posted", k.RepliesDays)

@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
+	"slices"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -138,9 +141,21 @@ func (s *mysqlDB) expireFoundryDocuments(ctx context.Context, ontologies []*mode
 		append(toAnySlice(ids), setID)...).Scan(&newest); err != nil {
 		return fmt.Errorf("read the newest expired document of set %s: %w", setID, err)
 	}
+	expired := map[string]time.Time{}
+	if newest.Valid {
+		expired[setID] = newest.Time
+	}
+	return s.expireFoundryLoads(ctx, ontologies, expired)
+}
+
+// expireFoundryLoads has the deleted documents of each set of expired, up to
+// the newest at the source it maps the set to, leave every load of
+// ontologies, whose locks the caller holds, as expireFoundryDocuments says;
+// every deleted document leaves the live and current loads.
+func (s *mysqlDB) expireFoundryLoads(ctx context.Context, ontologies []*model.FoundryOntology, expired map[string]time.Time) error {
 	var deleting []*model.FoundryOntology
 	for _, o := range ontologies {
-		if !newest.Valid {
+		if len(expired) == 0 {
 			break
 		}
 		live, err := s.liveFoundryGraphJob(ctx, o.ID)
@@ -155,18 +170,22 @@ func (s *mysqlDB) expireFoundryDocuments(ctx context.Context, ontologies []*mode
 		if live != nil {
 			writing = live.LoadID
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE foundry_loads l SET l.status='deleting'
+		var marked int64
+		for _, setID := range slices.Sorted(maps.Keys(expired)) {
+			res, err := s.db.ExecContext(ctx, `UPDATE foundry_loads l SET l.status='deleting'
 WHERE l.ontology_id=? AND l.status IN ('ready', 'partial', 'failed', 'delete_failed') AND l.id NOT IN (?, ?)
   AND EXISTS (SELECT 1 FROM foundry_load_documents m JOIN foundry_documents d ON d.id=m.document_id
-    WHERE m.load_id=l.id AND m.set_id=? AND d.status='deleted' AND d.source_at <= ?)`, o.ID, current, writing, setID, newest.Time)
-		if err != nil {
-			return fmt.Errorf("delete the loads of ontology %s holding expired documents: %w", o.ID, err)
+    WHERE m.load_id=l.id AND m.set_id=? AND d.status='deleted' AND d.source_at <= ?)`, o.ID, current, writing, setID, expired[setID])
+			if err != nil {
+				return fmt.Errorf("delete the loads of ontology %s holding expired documents: %w", o.ID, err)
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			marked += n
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n > 0 {
+		if marked > 0 {
 			deleting = append(deleting, o)
 		}
 	}

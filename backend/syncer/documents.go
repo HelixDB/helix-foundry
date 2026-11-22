@@ -30,7 +30,7 @@ import (
 
 var syncDocuments = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_sync_documents_total",
-	Help: "Connector documents by kind and what a sync did with each: added, replaced, updated, kept, over_cap, outside_window, paused, dropped, removed or truncated.",
+	Help: "Connector documents by kind and what a sync did with each: added, replaced, updated, kept, over_cap, outside_window, paused, dropped, removed, expired (left the source's retention) or truncated.",
 }, []string{"kind", "outcome"})
 
 // documentStore holds documents' bytes (document.Store).
@@ -133,6 +133,9 @@ type batch struct {
 	text   [][]byte // add's bytes, in order
 	update []model.ConnectorDocumentUpdate
 	remove []string
+	// expire are removals the stream says left the source's retention
+	// (connector.Stream.Expired): they leave every load.
+	expire []string
 	size   int
 	// held and gone are what the publish makes of the live index, by
 	// external id; no id is in both, and each of gone is held now.
@@ -142,7 +145,7 @@ type batch struct {
 	outcomes map[string]int
 }
 
-func (b *batch) empty() bool { return len(b.add)+len(b.update)+len(b.remove) == 0 }
+func (b *batch) empty() bool { return len(b.add)+len(b.update)+len(b.remove)+len(b.expire) == 0 }
 
 // openDocuments takes, after table selection, the kind's on streams whose
 // table the sync reads, makes sure each has its set (EnsureConnectorDocumentSet,
@@ -613,7 +616,7 @@ func (d *documents) flush(ctx context.Context, s *stream) error {
 	}
 	_, err := d.r.s.DB.PublishConnectorDocuments(ctx, model.ConnectorDocumentsPublish{
 		WorkspaceID: sync.WorkspaceID, ConnectorID: sync.ConnectorID, SetID: s.setID,
-		Add: b.add, Update: b.update, Remove: b.remove, Grace: d.r.s.PurgeGrace,
+		Add: b.add, Update: b.update, Remove: b.remove, Expire: b.expire, Grace: d.r.s.PurgeGrace,
 		Fan: model.FoundryDocumentFanOut{NewJobID: id.New, Budget: d.r.s.MonthBudget(d.r.s.now()), CanWrite: func(string) bool { return true },
 			SystemOnly: d.systemOnly},
 	}, sync.ID, leaseOwner(sync))
@@ -728,14 +731,21 @@ func (d *documents) prune(ctx context.Context) error {
 }
 
 // remove publishes the removal of the stream's documents of externalIDs, in
-// chunks of removeChunk.
+// chunks of removeChunk: expired, leaving every load, those the stream
+// says left the source's retention (connector.Stream.Expired).
 func (d *documents) remove(ctx context.Context, s *stream, externalIDs []string) error {
 	slices.Sort(externalIDs)
 	for chunk := range slices.Chunk(externalIDs, removeChunk) {
-		s.batch = batch{gone: map[string]bool{}, outcomes: map[string]int{"removed": len(chunk)}}
+		s.batch = batch{gone: map[string]bool{}, outcomes: map[string]int{}}
 		for _, externalID := range chunk {
 			s.batch.gone[externalID] = true
+			if s.Expired != nil && s.Expired(externalID) {
+				s.batch.expire = append(s.batch.expire, s.held[externalID].ID)
+				s.batch.outcomes["expired"]++
+				continue
+			}
 			s.batch.remove = append(s.batch.remove, s.held[externalID].ID)
+			s.batch.outcomes["removed"]++
 		}
 		if err := d.flush(ctx, s); err != nil {
 			return err

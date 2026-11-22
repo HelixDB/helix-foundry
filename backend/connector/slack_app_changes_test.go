@@ -245,6 +245,11 @@ func TestSlackAppChanges(t *testing.T) {
 			"cascade messages day=2026-10-28", "cascade channel_days day=2026-10-28"}) || next.Window != "2026-10-29" {
 			t.Fatalf("cascades %v, window %s", got, next.Window)
 		}
+		// Their documents are expired, leaving every load; a token's are removed.
+		expired := a.app.Streams(a.src)[0].Expired
+		if !expired("C1:2026-10-28") || expired("C1:2026-10-29") || expired("C1:soon") || a.poll.Streams(a.src)[0].Expired != nil {
+			t.Fatal("the app's stream expires other days than those before its window, or a token's expires any")
+		}
 	})
 
 	t.Run("covers a channel newly readable and purges one no longer, then lists the directory again", func(t *testing.T) {

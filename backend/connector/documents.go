@@ -54,6 +54,12 @@ type Stream struct {
 	Description string // the set's description, which the ontology agent reads
 	Format      Format
 	Keep        Keep // how many of its documents the set holds
+	// Expired says, when the sync removes a document the stream holds,
+	// that it left the source's retention (a Slack day past the window the
+	// app may keep): it leaves every load, refresh on or off
+	// (model.ConnectorDocumentsPublish.Expire), not only those that
+	// refresh. Asked at the removal, by external id. Nil expires none.
+	Expired func(externalID string) bool `json:"-"`
 }
 
 // Keep is how many of a stream's documents its set holds. The zero value is
