@@ -120,6 +120,8 @@ CREATE TABLE foundry_slack_intake (
   payload         JSON        NULL,
   status          VARCHAR(16) NOT NULL DEFAULT 'queued',
   attempts        INT         NOT NULL DEFAULT 0,
+  -- The claims that failed and were tried again; deferrals and waits aren't.
+  failures        INT         NOT NULL DEFAULT 0,
   next_attempt_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   -- A fresh random token per claim; every later write is conditional on it.
   lease_owner     CHAR(32)    CHARACTER SET ascii COLLATE ascii_bin NULL,

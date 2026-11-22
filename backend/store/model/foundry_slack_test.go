@@ -203,9 +203,14 @@ func TestSlackReplyValidate(t *testing.T) {
 
 	seq, ts, wait := 3, "1712345678.000300", 1500*time.Millisecond
 	full := SlackReplyUpdate{Lease: time.Minute, AfterSeq: &seq, MessageTS: &ts, UpdateAfter: &wait,
-		Posted: map[string]string{"q:01Q": SlackPostPending, "a:01A": ts, "k:01TURN": ts}}
+		Posted: map[string]string{"q:01Q": SlackPostPending, "a:01A": ts, "k:01TURN": ts, "q:01R": SlackPostRefused, "q:01R.1": ts}}
 	if err := full.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	for v, done := range map[string]bool{ts: true, SlackPostRefused: true, SlackPostPending: false, "": false, "posted": false} {
+		if SlackPostDone(v) != done {
+			t.Fatalf("SlackPostDone(%q) is %v", v, !done)
+		}
 	}
 	neg, badTS, past := -1, "not a ts", -time.Second
 	for name, u := range map[string]SlackReplyUpdate{

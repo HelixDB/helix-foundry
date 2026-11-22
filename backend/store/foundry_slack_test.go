@@ -682,6 +682,7 @@ func TestFoundrySlackIntakeQueue(t *testing.T) {
 	require.NotNil(t, again.Input)
 	assert.Equal(t, "Which customers renewed?", *again.Input)
 	assert.Equal(t, 2, again.Attempts)
+	assert.Equal(t, 1, again.Failures, "a retry counts a failure")
 	require.NotNil(t, again.Error)
 	assert.Equal(t, "unavailable", *again.Error)
 	assert.NotEqual(t, *in.LeaseOwner, *again.LeaseOwner, "each claim its own owner")
@@ -690,6 +691,7 @@ func TestFoundrySlackIntakeQueue(t *testing.T) {
 	for _, bad := range []model.SlackIntakeOutcome{
 		nil, model.SlackIntakeGaveUp{}, model.SlackIntakeRetry{After: -time.Second, Error: "x"}, model.SlackIntakeRetry{},
 		model.SlackIntakeWait{For: time.Minute}, model.SlackIntakeWait{TurnID: "t"},
+		model.SlackIntakeDeferred{After: -time.Second, Error: "x"}, model.SlackIntakeDeferred{After: time.Second},
 	} {
 		assert.Error(t, f.db.EndFoundrySlackIntake(ctx, again.ID, *again.LeaseOwner, bad), "%#v", bad)
 	}
@@ -699,13 +701,17 @@ func TestFoundrySlackIntakeQueue(t *testing.T) {
 	assert.ErrorIs(t, f.db.EndFoundrySlackIntake(ctx, again.ID, *again.LeaseOwner, model.SlackIntakeEnded{}), store.ErrNotFound, "ended once")
 	assert.Nil(t, f.claim(t))
 
-	// A retry later isn't due yet.
+	// A deferral later isn't due yet, and counts no failure.
 	f.queue(t, i.ID, 3, "conv-b")
 	later := f.claimedIntake(t, 3)
-	require.NoError(t, f.db.EndFoundrySlackIntake(ctx, later.ID, *later.LeaseOwner, model.SlackIntakeRetry{After: time.Hour, Error: "429"}))
+	require.NoError(t, f.db.EndFoundrySlackIntake(ctx, later.ID, *later.LeaseOwner, model.SlackIntakeDeferred{After: time.Hour, Error: "429"}))
+	assert.True(t, dbTrue(t, `SELECT status='queued' AND error='429' AND next_attempt_at > NOW(6) + INTERVAL 59 MINUTE AND lease_owner IS NULL
+  FROM foundry_slack_intake WHERE id=?`, later.ID))
 	assert.Nil(t, f.claim(t))
 	dbExec(t, `UPDATE foundry_slack_intake SET next_attempt_at=NOW(6) WHERE id=?`, later.ID)
 	done := f.claimedIntake(t, 3)
+	assert.Equal(t, 2, done.Attempts)
+	assert.Zero(t, done.Failures, "a deferral isn't a failure")
 	require.NoError(t, f.db.EndFoundrySlackIntake(ctx, done.ID, *done.LeaseOwner, model.SlackIntakeEnded{}))
 	assert.True(t, dbTrue(t, `SELECT status='done' AND payload IS NULL AND error IS NULL FROM foundry_slack_intake WHERE id=?`, done.ID))
 }
@@ -992,6 +998,21 @@ func TestFoundrySlackReplies(t *testing.T) {
 	orphan := f.claimReply(t)
 	require.NotNil(t, orphan)
 	assert.Nil(t, orphan.MessageTS, "its follower posts the first message")
+
+	// A held reply whose intake claim gave up is released at once; a
+	// release changes no reply already posted, followed or done.
+	_, err = f.db.HoldFoundrySlackReply(ctx, f.reply(i.ID, 3))
+	require.NoError(t, err)
+	assert.Nil(t, f.claimReply(t), "held")
+	for _, turnID := range []string{f.turnID(3), f.turnID(3), r.TurnID, orphan.TurnID, f.turnID(8)} {
+		require.NoError(t, f.db.ReleaseFoundrySlackHold(ctx, turnID))
+	}
+	assert.True(t, dbTrue(t, `SELECT lease_owner IS NOT NULL FROM foundry_slack_replies WHERE turn_id=?`, orphan.TurnID), "its follower keeps it")
+	assert.True(t, dbTrue(t, `SELECT status='done' FROM foundry_slack_replies WHERE turn_id=?`, r.TurnID))
+	released := f.claimReply(t)
+	require.NotNil(t, released)
+	assert.Equal(t, f.turnID(3), released.TurnID)
+	assert.Nil(t, released.MessageTS)
 }
 
 // --- Retention and a deleted workspace ---

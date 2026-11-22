@@ -236,8 +236,14 @@ type SlackIntake struct {
 	// "input"), which every retry sends again; nil until then.
 	Input  *string
 	Status SlackIntakeStatus
-	// Attempts counts claims, this one included.
-	Attempts      int
+	// Attempts counts claims, this one included: whatever ended them, so
+	// no row is claimed for ever.
+	Attempts int
+	// Failures counts the earlier claims that failed and were tried again
+	// (SlackIntakeRetry), this one not included: what max_attempts bounds.
+	// A deferral (SlackIntakeDeferred) or a wait (SlackIntakeWait) isn't
+	// one.
+	Failures      int
 	NextAttemptAt time.Time
 	// LeaseOwner is the claim's own random token: every write of the claim
 	// names it, and one that finds another (the lease was reclaimed) changes
@@ -282,8 +288,17 @@ type SlackIntakeEnded struct{}
 // SlackIntakeGaveUp ends the row failed, saying why; its payload is dropped.
 type SlackIntakeGaveUp struct{ Error string }
 
-// SlackIntakeRetry queues the row again After from now, saying why.
+// SlackIntakeRetry queues the row again After from now, saying why: a
+// failure, which counts toward its Failures.
 type SlackIntakeRetry struct {
+	After time.Duration
+	Error string
+}
+
+// SlackIntakeDeferred queues the row again After from now, saying why,
+// without counting a failure: a rate limit, or a thread busy with no turn
+// to wait on.
+type SlackIntakeDeferred struct {
 	After time.Duration
 	Error string
 }
@@ -296,10 +311,11 @@ type SlackIntakeWait struct {
 	For    time.Duration
 }
 
-func (SlackIntakeEnded) slackIntakeOutcome()  {}
-func (SlackIntakeGaveUp) slackIntakeOutcome() {}
-func (SlackIntakeRetry) slackIntakeOutcome()  {}
-func (SlackIntakeWait) slackIntakeOutcome()   {}
+func (SlackIntakeEnded) slackIntakeOutcome()    {}
+func (SlackIntakeGaveUp) slackIntakeOutcome()   {}
+func (SlackIntakeRetry) slackIntakeOutcome()    {}
+func (SlackIntakeDeferred) slackIntakeOutcome() {}
+func (SlackIntakeWait) slackIntakeOutcome()     {}
 
 // SlackReplyStatus is where a reply is: a closed set.
 type SlackReplyStatus string
@@ -324,6 +340,15 @@ func ParseSlackReplyStatus(s string) (SlackReplyStatus, error) {
 // that finds it posts again (at-least-once).
 const SlackPostPending = "pending"
 
+// SlackPostRefused is a posted entry Slack refused for good (or that can't
+// be sent at all, its blocks past Block Kit's limits): never posted, never
+// tried again.
+const SlackPostRefused = "refused"
+
+// SlackPostDone reports a posted entry its follower is done with: posted
+// (a message's ts) or refused for good.
+func SlackPostDone(v string) bool { return v == SlackPostRefused || ValidSlackTS(v) }
+
 // SlackReply is a Founder turn shown in Slack, followed by one worker at a
 // time under a lease it keeps for the whole follow.
 type SlackReply struct {
@@ -338,7 +363,10 @@ type SlackReply struct {
 	AfterSeq int
 	// Posted is what else was posted, by key ("q:<question>", "a:<action>",
 	// "k:<asking turn>", and "m:<n>" for the reply's n-th message past its
-	// first, once the first filled): the message's ts, or SlackPostPending.
+	// first, once the first filled): the message's ts, SlackPostPending or
+	// SlackPostRefused. A post of several messages records each, its i-th
+	// under its key and ".<i>", while it goes, then its key: its first
+	// message's ts.
 	Posted       map[string]string
 	Status       SlackReplyStatus
 	LeaseOwner   *string
@@ -384,7 +412,7 @@ func (u SlackReplyUpdate) Validate() error {
 		return fmt.Errorf("a Slack reply's next update is not in the past")
 	}
 	for k, v := range u.Posted {
-		if !validSlackPostKey(k) || v != SlackPostPending && !ValidSlackTS(v) {
+		if !validSlackPostKey(k) || v != SlackPostPending && !SlackPostDone(v) {
 			return fmt.Errorf("Slack post %q=%q is not a post's key and ts", k, v)
 		}
 	}

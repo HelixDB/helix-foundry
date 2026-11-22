@@ -1875,6 +1875,11 @@ func (u Unimplemented) HoldFoundrySlackReply(context.Context, *model.SlackReply)
 	return nil, nil
 }
 
+func (u Unimplemented) ReleaseFoundrySlackHold(context.Context, string) error {
+	u.unimplemented("ReleaseFoundrySlackHold")
+	return nil
+}
+
 func (u Unimplemented) StartFoundrySlackReply(context.Context, string, string, string, string) error {
 	u.unimplemented("StartFoundrySlackReply")
 	return nil

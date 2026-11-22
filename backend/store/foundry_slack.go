@@ -34,8 +34,8 @@ const foundrySlackInstallColumns = `id, workspace_id, team_id, enterprise_id, te
 const foundrySlackThreadColumns = `s.id, s.install_id, s.channel_id, s.thread_ts, s.slack_user_id, s.agent_thread_id, s.created_at, s.last_at`
 
 const foundrySlackIntakeColumns = `id, install_id, dedupe_key, kind, conversation, slack_user_id, payload,
-       JSON_UNQUOTE(JSON_EXTRACT(payload, '$.input')), status, attempts, next_attempt_at, lease_owner, lease_until, waits_on_turn, error,
-       created_at, finished_at`
+       JSON_UNQUOTE(JSON_EXTRACT(payload, '$.input')), status, attempts, failures, next_attempt_at, lease_owner, lease_until, waits_on_turn,
+       error, created_at, finished_at`
 
 const foundrySlackReplyColumns = `turn_id, install_id, channel_id, thread_ts, slack_user_id, message_ts, after_seq, posted, status, lease_owner,
        lease_until, next_poll_at, next_update_at, created_at, finished_at`
@@ -780,7 +780,8 @@ WHERE id=? AND status='running' AND lease_owner=? AND JSON_CONTAINS_PATH(payload
 // ErrNotFound when the lease was lost, and nothing changed:
 //   - model.SlackIntakeEnded ends it done, model.SlackIntakeGaveUp failed with
 //     why; either drops its payload;
-//   - model.SlackIntakeRetry queues it again after a while, saying why;
+//   - model.SlackIntakeRetry queues it again after a while, saying why, and
+//     counts a failure; model.SlackIntakeDeferred does without counting one;
 //   - model.SlackIntakeWait queues it behind a busy thread's live turn for at
 //     most a while, until WakeFoundrySlackIntake; a turn that already ended
 //     wakes it at once.
@@ -800,6 +801,13 @@ SET status='failed', payload=NULL, error=?, waits_on_turn=NULL, finished_at=NOW(
 	case model.SlackIntakeRetry:
 		if o.After < 0 || o.Error == "" {
 			return fmt.Errorf("a retried Slack intake row waits a while and says why")
+		}
+		return execOrNotFound(ctx, s.db, `UPDATE foundry_slack_intake
+SET status='queued', failures=failures+1, next_attempt_at=NOW(6) + INTERVAL ? MICROSECOND, error=?, waits_on_turn=NULL, `+released+owned,
+			o.After.Microseconds(), o.Error, id, owner)
+	case model.SlackIntakeDeferred:
+		if o.After < 0 || o.Error == "" {
+			return fmt.Errorf("a deferred Slack intake row waits a while and says why")
 		}
 		return execOrNotFound(ctx, s.db, `UPDATE foundry_slack_intake
 SET status='queued', next_attempt_at=NOW(6) + INTERVAL ? MICROSECOND, error=?, waits_on_turn=NULL, `+released+owned,
@@ -870,6 +878,16 @@ VALUES (?, ?, ?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND) ON DUPLICATE KEY UPDATE 
 		return nil, err
 	}
 	return s.GetFoundrySlackReply(ctx, r.TurnID)
+}
+
+// ReleaseFoundrySlackHold makes the turn's held reply due for a follower
+// now, while its first message isn't posted and no follower holds it: an
+// intake claim that held it gave up before posting, and the follower posts
+// it, not the hold's end. Nothing happens to any other reply.
+func (s *mysqlDB) ReleaseFoundrySlackHold(ctx context.Context, turnID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE foundry_slack_replies SET next_poll_at=NOW(6)
+WHERE turn_id=? AND status='following' AND message_ts IS NULL AND lease_owner IS NULL AND next_poll_at > NOW(6)`, turnID)
+	return err
 }
 
 // StartFoundrySlackReply records the reply's first message, messageTS, and
@@ -1035,7 +1053,7 @@ func scanFoundrySlackIntake(scanner rowScanner) (*model.SlackIntake, error) {
 	var payload, input, leaseOwner, waits, errText sql.NullString
 	var leaseUntil, finished sql.NullTime
 	if err := scanner.Scan(&in.ID, &in.InstallID, &in.DedupeKey, &kind, &in.Conversation, &in.SlackUserID, &payload, &input, &status, &in.Attempts,
-		&in.NextAttemptAt, &leaseOwner, &leaseUntil, &waits, &errText, &in.CreatedAt, &finished); err != nil {
+		&in.Failures, &in.NextAttemptAt, &leaseOwner, &leaseUntil, &waits, &errText, &in.CreatedAt, &finished); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
