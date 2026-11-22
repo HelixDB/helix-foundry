@@ -166,6 +166,11 @@ const (
 	// give it, as a restricted member does, and proposes BotOperations for
 	// an owner or admin to run (BotTools).
 	ReachBot
+	// ReachReadOnly is a read-only turn's (model.FoundryAgentTurn.ReadOnly)
+	// of a person with the workspace's whole view: it reads all of it, as
+	// ReachWorkspace does, but with GranteeTools only, so it prepares,
+	// changes and makes nothing (readOnlyPrompt).
+	ReachReadOnly
 )
 
 // tools are the tools a turn of r may offer its model.
@@ -179,15 +184,36 @@ func (r Reach) tools() map[string]bool {
 	return GranteeTools
 }
 
+// wholeView reports a Reach that reads the whole workspace, never narrowed
+// to source grants: the thread records no grants, and its tool calls need
+// no reads of them around (reachAround).
+func (r Reach) wholeView() bool { return r == ReachWorkspace || r == ReachReadOnly }
+
+// readOnlyPrompt is what a read-only turn is told after the system prompt
+// (ReachReadOnly, and a helper's turn: Hosts.Open): a standalone install's
+// Slack users its owner allowed, and the owner's own while approving
+// changes from Slack is off.
+const readOnlyPrompt = `This conversation only reads and asks: prepare nothing, and change or make nothing, dashboards included; you have no tool that would, so what the prompt above says about actions, cards, dashboards you make and workflows doesn't apply here. When they ask for a change, tell them plainly that the install's owner makes changes in Foundry, then answer what you can by reading and asking.`
+
 // turnReach is the turn's Reach this attempt, for the worker's turns and a
 // helper's alike: ReachBot for a Slack install's bot, else its person's now
-// (reachOf).
+// (reachOf). A read-only turn only narrows it: a person with the whole view
+// reads it all with ReachReadOnly, a restricted member keeps ReachGrants,
+// and a bot reads its grants as one does (ReachGrants: it proposes
+// nothing).
 func turnReach(session integration.Session, turn *model.FoundryAgentTurn) (Reach, error) {
 	switch turn.Principal.(type) {
 	case model.AgentBot:
+		if turn.ReadOnly {
+			return ReachGrants, nil
+		}
 		return ReachBot, nil
 	case model.AgentPerson:
-		return reachOf(session, turn.WorkspaceID)
+		reach, err := reachOf(session, turn.WorkspaceID)
+		if err == nil && reach == ReachWorkspace && turn.ReadOnly {
+			reach = ReachReadOnly
+		}
+		return reach, err
 	}
 	return ReachGrants, &Failure{Message: "The turn belongs to no one Founder knows", Permanent: true, Err: fmt.Errorf("turn %s: principal %T", turn.ID, turn.Principal)}
 }
@@ -222,7 +248,7 @@ func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, re
 	retry := func(err error) error {
 		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
-	if reach == ReachWorkspace {
+	if reach.wholeView() {
 		if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
 			return nil, retry(err)
 		}
@@ -847,7 +873,7 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		var output any
 		var failed bool
 		run := func() { content, output, failed = t.callTool(ctx, use, tool != nil) }
-		if t.reach != ReachWorkspace && tool != nil {
+		if !t.reach.wholeView() && tool != nil {
 			if err := t.reachAround(ctx, run); err != nil {
 				return err
 			}

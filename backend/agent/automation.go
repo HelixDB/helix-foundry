@@ -77,7 +77,8 @@ func (r *Runner) automationStep(ctx context.Context, turn *model.FoundryAgentTur
 
 // system is the turn's system prompt: the Assistant's, then its surface's
 // (surfacePrompt), then a restricted member's (granteePrompt), a Slack
-// install's bot's (botPrompt) or an automation's turn's own.
+// install's bot's (botPrompt), a read-only turn's (readOnlyPrompt) or an
+// automation's turn's own.
 func (t *turnRun) system() string {
 	out := system(t.turn.WorkspaceID) + surfacePrompt(t.turn.Surface)
 	switch t.reach {
@@ -85,6 +86,8 @@ func (t *turnRun) system() string {
 		out += "\n\n" + granteePrompt
 	case ReachBot:
 		out += "\n\n" + botPrompt
+	case ReachReadOnly:
+		out += "\n\n" + readOnlyPrompt
 	}
 	if t.automation != nil {
 		out += "\n\n" + automationPrompt(t.automation)

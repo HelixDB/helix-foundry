@@ -558,6 +558,18 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), "a surface the API doesn't know")
 	})
+	t.Run("read-only", func(t *testing.T) {
+		f := newAgentFixture(t)
+		readOnly := func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ReadOnly = true }
+		resp, err := send(f, readOnly)
+		require.NoError(t, err)
+		assert.True(t, f.store.turns[resp.GetTurn().GetId()].ReadOnly, "any caller narrows its turn")
+		again, err := send(f, readOnly)
+		require.NoError(t, err)
+		assert.Equal(t, resp.GetTurn().GetId(), again.GetTurn().GetId())
+		_, err = send(f, nil)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "the same token, not read-only, is another message")
+	})
 	t.Run("malformed", func(t *testing.T) {
 		f := newAgentFixture(t)
 		for name, mutate := range map[string]func(*foundryv1.SendFoundryAgentMessageRequest){

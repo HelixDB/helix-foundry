@@ -168,6 +168,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	default:
 		return nil, status.Error(codes.InvalidArgument, "surface is unspecified (Foundry's site) or slack")
 	}
+	// A turn that only reads and asks only narrows it too.
+	t.ReadOnly = req.GetReadOnly()
 	var first json.RawMessage
 	// answered is the turn the answers answer.
 	var answered *foundrymodel.FoundryAgentTurn
@@ -210,9 +212,10 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		return nil, status.Error(codes.InvalidArgument, "text or answers is required")
 	}
 	// The same client token is the same turn: its kind, where it is read,
-	// and what it says.
+	// whether it only reads, and what it says.
 	same := func(other *foundrymodel.FoundryAgentTurn) bool {
-		return other.Kind == t.Kind && other.Surface == t.Surface && other.Input == t.Input && reflect.DeepEqual(other.Answers, t.Answers)
+		return other.Kind == t.Kind && other.Surface == t.Surface && other.ReadOnly == t.ReadOnly && other.Input == t.Input &&
+			reflect.DeepEqual(other.Answers, t.Answers)
 	}
 	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, principal, token)
 	switch {
