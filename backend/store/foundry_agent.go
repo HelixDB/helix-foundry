@@ -25,19 +25,19 @@ const foundryAgentThreadScans = 10
 // renewed and settled as a question is (foundry_questions.go); its events and
 // transcript are written only while its worker holds its lease.
 
-const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at`
+const foundryAgentThreadColumns = `id, workspace_id, principal_kind, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at`
 
 // foundryAgentThreadSurface is a thread's first turn's surface, after its
 // columns where it is read (never under a lock: it would lock the turn).
 const foundryAgentThreadSurface = `, COALESCE((SELECT u.surface FROM foundry_agent_turns u WHERE u.thread_id=foundry_agent_threads.id
   ORDER BY u.created_at, u.id LIMIT 1), 'site')`
 
-const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, surface, input, automation_run_id, automation_node_id, page_context,
+const foundryAgentTurnColumns = `id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, input, automation_run_id, automation_node_id, page_context,
        asked, answers, status, error, client_token,
        lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
        output_tokens, steps, last_seq, created_at, started_at, finished_at`
 
-const foundryAgentActionColumns = `id, turn_id, thread_id, workspace_id, user_id, operation, target, payload, payload_hash, display,
+const foundryAgentActionColumns = `id, turn_id, thread_id, workspace_id, principal_kind, user_id, operation, target, payload, payload_hash, display,
        target_named_by_user, confirmation_id, confirmation_token_sealed, confirmation_key_id, status, result, error, expires_at,
        decided_by, decided_at, created_at`
 
@@ -54,17 +54,17 @@ const claimFoundryAgentTurnTries = 20
 // the workspace's limits, in one transaction holding the workspace's lock,
 // then the thread's, with first, when not nil, as its first event:
 //   - thread is the new thread t starts, or nil for t.ThreadID, which must be
-//     the user's own live thread (ErrNotFound otherwise);
+//     t.Principal's own live thread (ErrNotFound otherwise);
 //   - answers (t.Answers, checked by the caller against the questions) answer
 //     the thread's newest turn, t.Input, which ended done having asked its
 //     person (FoundryAgentQuestionsClosed otherwise: answered, or the thread
 //     went on);
-//   - the user has no turn with t's client token (ErrConflict: a double
-//     click, which the caller answers with that turn);
+//   - the principal has no turn with t's client token (ErrConflict: a
+//     double click, which the caller answers with that turn);
 //   - the thread has no live turn and no action running (FoundryAgentThreadBusy);
 //     a click that ran past model.FoundryAgentExecutingFor is ended unknown;
-//   - the user sent fewer than limits.PerHour messages and answers in the
-//     last hour;
+//   - the principal sent fewer than limits.PerHour messages and answers in
+//     the last hour (a bot counts its own, apart from every person's);
 //   - what the month's people's turns and automation suggestions settled,
 //     plus t's cap, is within limits.CapMicros.
 //
@@ -74,14 +74,17 @@ const claimFoundryAgentTurnTries = 20
 func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits,
 	first json.RawMessage) error {
 	answering := t.Kind == model.FoundryAgentTurnAnswers
+	principal, err := foundryAgentPrincipalColumns(t.Principal)
 	switch {
-	case t.ID == "" || t.WorkspaceID == "" || t.ThreadID == "" || t.UserID == "":
+	case err != nil:
+		return fmt.Errorf("foundry agent turn %s: %w", t.ID, err)
+	case t.ID == "" || t.WorkspaceID == "" || t.ThreadID == "":
 		return fmt.Errorf("foundry agent turn is missing an id")
 	case t.Kind != model.FoundryAgentTurnMessage && !answering || strings.TrimSpace(t.Input) == "" || t.MaxUSDMicros <= 0:
 		return fmt.Errorf("foundry agent turn %s is no message or answers with a cap", t.ID)
 	case answering != (t.Answers != nil) || answering && thread != nil || t.Asked != nil:
 		return fmt.Errorf("foundry agent turn %s: answers come exactly with an answers turn, of a thread that asked", t.ID)
-	case thread != nil && (thread.ID != t.ThreadID || thread.WorkspaceID != t.WorkspaceID || thread.UserID != t.UserID):
+	case thread != nil && (thread.ID != t.ThreadID || thread.WorkspaceID != t.WorkspaceID || thread.Principal != t.Principal):
 		return fmt.Errorf("foundry agent turn %s isn't of its new thread", t.ID)
 	case limits.PerHour < 1 || limits.CapMicros <= 0:
 		return fmt.Errorf("foundry agent limits must be positive")
@@ -100,13 +103,13 @@ func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAg
 			if err != nil {
 				return err
 			}
-			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_threads (id, workspace_id, user_id, title, runtime, granted_targets)
-VALUES (?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Title, string(thread.Runtime), granted); err != nil {
+			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_threads (id, workspace_id, principal_kind, user_id, title, runtime, granted_targets)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, principal.Kind.String(), principal.ID, thread.Title, string(thread.Runtime), granted); err != nil {
 				return err
 			}
 			runtime = thread.Runtime
 		} else {
-			if err := tx.lockFoundryAgentThread(ctx, t.WorkspaceID, t.UserID, t.ThreadID); err != nil {
+			if err := tx.lockFoundryAgentThread(ctx, t.WorkspaceID, principal, t.ThreadID); err != nil {
 				return err
 			}
 			if err := tx.db.QueryRowContext(ctx, `SELECT runtime FROM foundry_agent_threads WHERE id=?`, t.ThreadID).Scan(&runtime); err != nil {
@@ -136,9 +139,10 @@ VALUES (?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread
 		var settled int64
 		since := limits.Since.UTC()
 		if err := tx.db.QueryRowContext(ctx, `SELECT
-  (SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND kind IN ('message', 'answers') AND created_at >= NOW(6) - INTERVAL 1 HOUR),
+  (SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND principal_kind=? AND kind IN ('message', 'answers')
+     AND created_at >= NOW(6) - INTERVAL 1 HOUR),
   `+foundryAssistantSettled,
-			t.WorkspaceID, t.UserID, t.WorkspaceID, since, t.WorkspaceID, since).Scan(&lastHour, &settled); err != nil {
+			t.WorkspaceID, principal.ID, principal.Kind.String(), t.WorkspaceID, since, t.WorkspaceID, since).Scan(&lastHour, &settled); err != nil {
 			return err
 		}
 		switch {
@@ -158,9 +162,9 @@ VALUES (?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, thread.UserID, thread
 			answers = raw
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, runtime, kind, surface, input, page_context, answers, status, client_token, max_usd_micros)
-SELECT ?, ?, ?, ?, runtime, ?, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
-			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Surface.String(), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
+  (id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, input, page_context, answers, status, client_token, max_usd_micros)
+SELECT ?, ?, ?, ?, ?, runtime, ?, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, principal.Kind.String(), principal.ID, string(t.Kind), t.Surface.String(), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			if live, liveErr := tx.liveFoundryAgentTurn(ctx, t.ThreadID); liveErr == nil && live {
 				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "Founder is still answering in this thread"}
@@ -240,26 +244,29 @@ func (s *mysqlDB) AskFoundryAgentQuestions(ctx context.Context, turnID, workerID
 	})
 }
 
-// lockFoundryAgentThread locks the user's live thread: ErrNotFound when it
-// is another's, deleted or absent.
-func (s *mysqlDB) lockFoundryAgentThread(ctx context.Context, workspaceID, userID, threadID string) error {
+// lockFoundryAgentThread locks the principal's live thread: ErrNotFound when
+// it is another's, deleted or absent.
+func (s *mysqlDB) lockFoundryAgentThread(ctx context.Context, workspaceID string, principal access.Principal, threadID string) error {
 	var id string
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM foundry_agent_threads
-WHERE id=? AND workspace_id=? AND user_id=? AND deleted_at IS NULL FOR UPDATE`, threadID, workspaceID, userID).Scan(&id)
+WHERE id=? AND workspace_id=? AND user_id=? AND principal_kind=? AND deleted_at IS NULL FOR UPDATE`,
+		threadID, workspaceID, principal.ID, principal.Kind.String()).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	return err
 }
 
-// sentFoundryAgentTurn reports whether the user has a turn with t's client token.
+// sentFoundryAgentTurn reports whether t's principal has a turn with t's
+// client token.
 func (s *mysqlDB) sentFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn) (bool, error) {
 	if t.ClientToken == nil {
 		return false, nil
 	}
+	p := t.Principal.Access()
 	var sent int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND client_token=?`,
-		t.WorkspaceID, t.UserID, *t.ClientToken).Scan(&sent)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND principal_kind=? AND client_token=?`,
+		t.WorkspaceID, p.ID, p.Kind.String(), *t.ClientToken).Scan(&sent)
 	return sent > 0, err
 }
 
@@ -306,19 +313,23 @@ func (s *mysqlDB) GetFoundryAgentThread(ctx context.Context, workspaceID, id str
 FROM foundry_agent_threads WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, id, workspaceID))
 }
 
-// ListFoundryAgentThreads returns the user's live chats of the workspace,
+// ListFoundryAgentThreads returns the principal's live chats of the workspace,
 // most recently active first, a page of limit at a time: never the threads
 // their automations' runs run in. With keep, only the threads a restricted
 // member made (granted_targets set, in SQL) that keep keeps: rows are read
 // limit+1 at a time until a page is full, at most foundryAgentThreadScans
 // reads, after which the page ends early with a token past the rows read.
-func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, keep func(*model.FoundryAgentThread) bool,
-	pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
+func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal,
+	keep func(*model.FoundryAgentThread) bool, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error) {
+	p, err := foundryAgentPrincipalColumns(principal)
+	if err != nil {
+		return nil, "", err
+	}
 	var out []*model.FoundryAgentThread
 	var last *model.FoundryAgentThread
 	for range foundryAgentThreadScans {
-		conds := []string{"workspace_id=?", "user_id=?", "kind='chat'", "deleted_at IS NULL"}
-		args := []any{workspaceID, userID}
+		conds := []string{"workspace_id=?", "user_id=?", "principal_kind=?", "kind='chat'", "deleted_at IS NULL"}
+		args := []any{workspaceID, p.ID, p.Kind.String()}
 		if keep != nil {
 			conds = append(conds, "granted_targets IS NOT NULL")
 		}
@@ -436,15 +447,20 @@ func parseGrantedTargets(raw string) (*model.FoundryAgentThreadGrants, error) {
 	return out, nil
 }
 
-// DeleteFoundryAgentThread deletes the user's thread and cancels its live
-// turn, charging what that turn reserved; ErrNotFound when it isn't theirs.
+// DeleteFoundryAgentThread deletes the principal's thread and cancels its
+// live turn, charging what that turn reserved; ErrNotFound when it isn't
+// theirs.
 // A thread started from Slack has its Slack-born text purged with it, and
 // its Slack mapping deleted (purgeFoundrySlackThreadsOf), so the Slack
 // sweep never looks for deleted threads.
-func (s *mysqlDB) DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error {
+func (s *mysqlDB) DeleteFoundryAgentThread(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, id string) error {
+	p, err := foundryAgentPrincipalColumns(principal)
+	if err != nil {
+		return err
+	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		if err := tx.lockFoundryAgentThread(ctx, workspaceID, userID, id); err != nil {
+		if err := tx.lockFoundryAgentThread(ctx, workspaceID, p, id); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_turns
@@ -464,9 +480,16 @@ func (s *mysqlDB) GetFoundryAgentTurn(ctx context.Context, workspaceID, id strin
 FROM foundry_agent_turns WHERE id=? AND workspace_id=?`, id, workspaceID))
 }
 
-func (s *mysqlDB) GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error) {
+// GetFoundryAgentTurnByClientToken returns the principal's turn sent with
+// clientToken.
+func (s *mysqlDB) GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal,
+	clientToken string) (*model.FoundryAgentTurn, error) {
+	p, err := foundryAgentPrincipalColumns(principal)
+	if err != nil {
+		return nil, err
+	}
 	return scanFoundryAgentTurn(s.db.QueryRowContext(ctx, "SELECT "+foundryAgentTurnColumns+`
-FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND client_token=?`, workspaceID, userID, clientToken))
+FROM foundry_agent_turns WHERE workspace_id=? AND user_id=? AND principal_kind=? AND client_token=?`, workspaceID, p.ID, p.Kind.String(), clientToken))
 }
 
 // ListFoundryAgentTurns returns the thread's newest limit turns, oldest first.
@@ -481,15 +504,20 @@ FROM foundry_agent_turns WHERE thread_id=? ORDER BY created_at DESC, id DESC LIM
 	return out, err
 }
 
-// CancelFoundryAgentTurn ends the user's queued or running turn as cancelled,
+// CancelFoundryAgentTurn ends the principal's queued or running turn as cancelled,
 // charging what it reserved; its attempt loses its lease and records nothing.
 // Cancelling a cancelled turn returns it; ErrConflict means it ended otherwise.
-func (s *mysqlDB) CancelFoundryAgentTurn(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentTurn, error) {
+func (s *mysqlDB) CancelFoundryAgentTurn(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, id string) (
+	*model.FoundryAgentTurn, error) {
+	p, err := foundryAgentPrincipalColumns(principal)
+	if err != nil {
+		return nil, err
+	}
 	var out *model.FoundryAgentTurn
-	err := s.WithTx(ctx, func(txDB Store) error {
+	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		t, err := scanFoundryAgentTurn(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentTurnColumns+`
-FROM foundry_agent_turns WHERE id=? AND workspace_id=? AND user_id=? FOR UPDATE`, id, workspaceID, userID))
+FROM foundry_agent_turns WHERE id=? AND workspace_id=? AND user_id=? AND principal_kind=? FOR UPDATE`, id, workspaceID, p.ID, p.Kind.String()))
 		switch {
 		case err != nil:
 			return err
@@ -835,19 +863,39 @@ WHERE runtime=? AND ((status='queued' AND next_attempt_at < ?) OR (status='runni
 // (FoundryAgentTooManyCards). An automation's turn records an action its
 // owner approved for the step as executing, decided by them (DecidedBy):
 // it runs at once, waiting on no one, and FinishFoundryAgentAction ends it.
-// ErrNotFound means the lease was lost.
+// a's principal is its turn's, and its approval the one that principal
+// takes (ValidateApproval): a bot's action is a proposal, prepared with no
+// confirmation, which only an owner or admin runs
+// (ClaimFoundryAgentProposal). ErrNotFound means the lease was lost.
 func (s *mysqlDB) RecordFoundryAgentAction(ctx context.Context, workerID string, a *model.FoundryAgentAction, maxPending int,
 	card func(*model.FoundryAgentAction) (json.RawMessage, error)) (*model.FoundryAgentAction, error) {
 	approved := a.Status == model.FoundryAgentActionExecuting
-	if a.ID == "" || a.TurnID == "" || !approved && a.Status != model.FoundryAgentActionPrepared || len(a.PayloadHash) != 64 || len(a.TokenSealed) == 0 ||
-		approved && a.DecidedBy == nil {
-		return nil, fmt.Errorf("foundry agent action is incomplete")
+	if err := a.ValidateApproval(); err != nil {
+		return nil, err
+	}
+	_, bot := a.Principal.(model.AgentBot)
+	if a.ID == "" || a.TurnID == "" || !approved && a.Status != model.FoundryAgentActionPrepared || len(a.PayloadHash) != 64 ||
+		approved && (a.DecidedBy == nil || bot) {
+		return nil, fmt.Errorf("foundry agent action is incomplete, or a bot's approved by no one")
+	}
+	p := a.Principal.Access()
+	var confirmationID, keyID any
+	var sealed []byte
+	if c, ok := a.Approval.(model.PersonApproval); ok {
+		confirmationID, sealed, keyID = c.ConfirmationID, c.TokenSealed, c.KeyID
 	}
 	var out *model.FoundryAgentAction
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		if err := tx.ownFoundryAgentTurn(ctx, a.TurnID, workerID); err != nil {
 			return err
+		}
+		var kind, owner string
+		if err := tx.db.QueryRowContext(ctx, `SELECT principal_kind, user_id FROM foundry_agent_turns WHERE id=?`, a.TurnID).Scan(&kind, &owner); err != nil {
+			return err
+		}
+		if kind != p.Kind.String() || owner != p.ID {
+			return fmt.Errorf("foundry agent action %s is not its turn's principal's", a.ID)
 		}
 		existing, err := scanFoundryAgentAction(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+`
 FROM foundry_agent_actions WHERE turn_id=? AND payload_hash=?`, a.TurnID, a.PayloadHash))
@@ -868,11 +916,11 @@ WHERE thread_id=? AND status='prepared' AND expires_at > NOW(6)`, a.ThreadID).Sc
 				Detail: fmt.Sprintf("%d actions already wait for the person; let them run or dismiss those first", pending)}
 		}
 		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_actions
-  (id, turn_id, thread_id, workspace_id, user_id, operation, target, payload, payload_hash, display, target_named_by_user,
+  (id, turn_id, thread_id, workspace_id, principal_kind, user_id, operation, target, payload, payload_hash, display, target_named_by_user,
    confirmation_id, confirmation_token_sealed, confirmation_key_id, status, expires_at, decided_by, decided_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, IF(?, NOW(6), NULL))`,
-			a.ID, a.TurnID, a.ThreadID, a.WorkspaceID, a.UserID, a.Operation, a.Target, string(a.Payload), a.PayloadHash, string(a.Display),
-			a.TargetNamedByUser, a.ConfirmationID, a.TokenSealed, a.KeyID, string(a.Status), a.ExpiresAt.UTC(), a.DecidedBy, approved); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, IF(?, NOW(6), NULL))`,
+			a.ID, a.TurnID, a.ThreadID, a.WorkspaceID, p.Kind.String(), p.ID, a.Operation, a.Target, string(a.Payload), a.PayloadHash, string(a.Display),
+			a.TargetNamedByUser, confirmationID, sealed, keyID, string(a.Status), a.ExpiresAt.UTC(), a.DecidedBy, approved); err != nil {
 			return err
 		}
 		if out, err = scanFoundryAgentAction(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+`
@@ -910,38 +958,67 @@ FROM foundry_agent_actions WHERE thread_id=? ORDER BY created_at, id`, threadID)
 	return scanAll(rows, scanFoundryAgentAction)
 }
 
-// foundryAgentActionThread is the thread of the user's action, read outside
-// the transaction that then locks it: an action never changes thread, and a
-// read inside would fix the transaction's snapshot before the thread's lock
-// (busyFoundryAgentThread).
-func (s *mysqlDB) foundryAgentActionThread(ctx context.Context, workspaceID, userID, id string) (string, error) {
-	var threadID string
-	err := s.db.QueryRowContext(ctx, `SELECT thread_id FROM foundry_agent_actions WHERE id=? AND workspace_id=? AND user_id=?`,
-		id, workspaceID, userID).Scan(&threadID)
+// foundryAgentActionThread is the thread and principal of an action of the
+// workspace: a person's own (principal names them), or any bot's (principal
+// names the kind alone: a proposal is the workspace's to decide). It is read
+// outside the transaction that then locks it: an action never changes
+// thread or principal, and a read inside would fix the transaction's
+// snapshot before the thread's lock (busyFoundryAgentThread).
+func (s *mysqlDB) foundryAgentActionThread(ctx context.Context, workspaceID string, principal access.Principal, id string) (
+	string, access.Principal, error) {
+	var threadID, owner string
+	err := s.db.QueryRowContext(ctx, `SELECT thread_id, user_id FROM foundry_agent_actions
+WHERE id=? AND workspace_id=? AND principal_kind=? AND (principal_kind='service_credential' OR user_id=?)`,
+		id, workspaceID, principal.Kind.String(), principal.ID).Scan(&threadID, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
+		return "", principal, ErrNotFound
 	}
-	return threadID, err
+	return threadID, access.Principal{Kind: principal.Kind, ID: owner}, err
 }
 
-// lockFoundryAgentAction locks the user's live thread, then their action of
-// it: ErrNotFound when either isn't theirs. It reads nothing before the
-// thread's lock.
-func (s *mysqlDB) lockFoundryAgentAction(ctx context.Context, workspaceID, userID, threadID, id string) (*model.FoundryAgentAction, error) {
-	if err := s.lockFoundryAgentThread(ctx, workspaceID, userID, threadID); err != nil {
+// lockFoundryAgentAction locks the principal's live thread, then their
+// action of it: ErrNotFound when either isn't theirs. It reads nothing
+// before the thread's lock.
+func (s *mysqlDB) lockFoundryAgentAction(ctx context.Context, workspaceID string, principal access.Principal, threadID, id string) (
+	*model.FoundryAgentAction, error) {
+	if err := s.lockFoundryAgentThread(ctx, workspaceID, principal, threadID); err != nil {
 		return nil, err
 	}
 	return scanFoundryAgentAction(s.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+`
-FROM foundry_agent_actions WHERE id=? AND thread_id=? AND user_id=? FOR UPDATE`, id, threadID, userID))
+FROM foundry_agent_actions WHERE id=? AND thread_id=? AND user_id=? AND principal_kind=? FOR UPDATE`,
+		id, threadID, principal.ID, principal.Kind.String()))
 }
 
-// ClaimFoundryAgentAction starts the user's click on their action: from
+// ClaimFoundryAgentAction starts the user's click on their own action: from
 // prepared to executing, once, for the payload they saw (payloadHash), while
 // its confirmation lives and its thread is idle. Refusals are a
 // model.FoundryAgentRefusal; an action that expired is marked so.
-// ErrNotFound means the action isn't theirs.
+// ErrNotFound means the action isn't theirs: a bot's proposal never is
+// (ClaimFoundryAgentProposal runs it).
 func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error) {
-	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
+	return s.claimFoundryAgentAction(ctx, workspaceID, model.AgentPerson{UserID: userID}.Access(), userID, id, payloadHash)
+}
+
+// ClaimFoundryAgentProposal starts an owner's or admin's run of a bot's
+// proposal, as ClaimFoundryAgentAction starts a person's click: from
+// prepared to executing, once, for the payload they reviewed (payloadHash),
+// while it hasn't expired and its thread is idle, decided by approverID,
+// whom the caller checked is an owner or admin. Two approvers racing run it
+// once: the second is refused (FoundryAgentNotPrepared), and DecidedBy says
+// who ran it. ErrNotFound means the workspace has no such proposal: a
+// person's action is no proposal.
+func (s *mysqlDB) ClaimFoundryAgentProposal(ctx context.Context, workspaceID, id, payloadHash, approverID string) (*model.FoundryAgentAction, error) {
+	if approverID == "" {
+		return nil, fmt.Errorf("a proposal is run by someone")
+	}
+	return s.claimFoundryAgentAction(ctx, workspaceID, model.AgentBot{}.Access(), approverID, id, payloadHash)
+}
+
+// claimFoundryAgentAction claims, for decider, the action
+// foundryAgentActionThread finds for principal.
+func (s *mysqlDB) claimFoundryAgentAction(ctx context.Context, workspaceID string, principal access.Principal, decider, id, payloadHash string) (
+	*model.FoundryAgentAction, error) {
+	threadID, principal, err := s.foundryAgentActionThread(ctx, workspaceID, principal, id)
 	if err != nil {
 		return nil, err
 	}
@@ -950,7 +1027,7 @@ func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, user
 	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		out, expired = nil, false
-		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, threadID, id)
+		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, principal, threadID, id)
 		if err != nil {
 			return err
 		}
@@ -970,7 +1047,7 @@ func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, user
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_actions SET status='executing', decided_by=?, decided_at=NOW(6) WHERE id=?`,
-			userID, id); err != nil {
+			decider, id); err != nil {
 			return err
 		}
 		out, err = scanFoundryAgentAction(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+` FROM foundry_agent_actions WHERE id=?`, id))
@@ -984,9 +1061,13 @@ func (s *mysqlDB) ClaimFoundryAgentAction(ctx context.Context, workspaceID, user
 
 // FinishFoundryAgentAction ends a click that is executing with end and, when
 // continuation is set, queues the action-result turn the agent goes on from
-// with its first event, in the same transaction. The continuation takes the
-// surface of the action's turn, wherever the click came from, and
-// continuation.Surface is set to it once queued. continuation.MaxUSDMicros
+// with its first event, in the same transaction. A bot's proposal keeps only
+// whether it ran: its result is {operation, status, decided_by}, and its
+// error a fixed sentence (model.FoundryAgentProposalFailed, …Unknown), so
+// its thread, which everyone in the Slack thread reads, never learns what
+// only its approver may. The continuation takes the surface and principal of
+// the action's turn, wherever the click came from, and continuation.Surface
+// and continuation.Principal are set to them once queued. continuation.MaxUSDMicros
 // is an 'api' turn's cap: on a helper's thread it is stored as 0. The thread is idle (the
 // claim checked, and sends wait for the click), so the turn is live alone;
 // should one be live after all, the click still ends, with no continuation.
@@ -1015,8 +1096,19 @@ func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end m
 		if err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_agent_threads WHERE id=? FOR UPDATE`, threadID).Scan(&threadID); err != nil {
 			return err
 		}
-		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_agent_actions SET status=?, result=?, error=? WHERE id=? AND status='executing'`,
-			string(end.Status), nullJSON(end.Result), nullString(end.Error), id); err != nil {
+		var botError any
+		switch end.Status {
+		case model.FoundryAgentActionFailed:
+			botError = model.FoundryAgentProposalFailed
+		case model.FoundryAgentActionUnknown:
+			botError = model.FoundryAgentProposalUnknown
+		}
+		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_agent_actions
+SET status=?,
+    result=IF(principal_kind='user', CAST(? AS JSON), JSON_OBJECT('operation', operation, 'status', ?, 'decided_by', decided_by)),
+    error=IF(principal_kind='user', ?, ?)
+WHERE id=? AND status='executing'`,
+			string(end.Status), nullJSON(end.Result), string(end.Status), nullString(end.Error), botError, id); err != nil {
 			return err
 		}
 		if continuation == nil {
@@ -1025,13 +1117,13 @@ func (s *mysqlDB) FinishFoundryAgentAction(ctx context.Context, id string, end m
 		t := continuation
 		// A helper's thread runs on its owner's subscription: its turns' cap is 0.
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, user_id, runtime, kind, surface, input, status, max_usd_micros)
-SELECT ?, ?, ?, ?, th.runtime, ?, src.surface, ?, 'queued', IF(th.runtime='api', ?, 0)
+  (id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, input, status, max_usd_micros)
+SELECT ?, ?, ?, src.principal_kind, src.user_id, th.runtime, ?, src.surface, ?, 'queued', IF(th.runtime='api', ?, 0)
 FROM foundry_agent_threads th
 JOIN foundry_agent_actions a ON a.id=? AND a.thread_id=th.id
 JOIN foundry_agent_turns src ON src.id=a.turn_id
 WHERE th.id=?`,
-			t.ID, t.WorkspaceID, t.ThreadID, t.UserID, string(t.Kind), t.Input, t.MaxUSDMicros, id, t.ThreadID)
+			t.ID, t.WorkspaceID, t.ThreadID, string(t.Kind), t.Input, t.MaxUSDMicros, id, t.ThreadID)
 		if isDuplicateKey(err) {
 			// A turn went live after all: the click's end stands, and the
 			// agent reads the action's result with the thread's actions.
@@ -1043,11 +1135,15 @@ WHERE th.id=?`,
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET updated_at=NOW(6) WHERE id=?`, t.ThreadID); err != nil {
 			return err
 		}
-		var surface string
-		if err := tx.db.QueryRowContext(ctx, `SELECT surface FROM foundry_agent_turns WHERE id=?`, t.ID).Scan(&surface); err != nil {
+		var surface, kind, owner string
+		if err := tx.db.QueryRowContext(ctx, `SELECT surface, principal_kind, user_id FROM foundry_agent_turns WHERE id=?`, t.ID).Scan(&surface, &kind,
+			&owner); err != nil {
 			return err
 		}
 		if t.Surface, err = model.ParseFoundryAgentSurface(surface); err != nil {
+			return err
+		}
+		if t.Principal, err = model.ParseFoundryAgentPrincipal(kind, owner); err != nil {
 			return err
 		}
 		return tx.appendFoundryAgentEvents(ctx, t.ID, []json.RawMessage{firstEvent})
@@ -1058,14 +1154,32 @@ WHERE th.id=?`,
 // expired) action; dismissing it twice returns it. Refusals are a
 // model.FoundryAgentRefusal; ErrNotFound means it isn't theirs.
 func (s *mysqlDB) DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error) {
-	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
+	return s.dismissFoundryAgentAction(ctx, workspaceID, model.AgentPerson{UserID: userID}.Access(), userID, id)
+}
+
+// DismissFoundryAgentProposal records an owner's or admin's no (deciderID,
+// whom the caller checked) to a bot's prepared or expired proposal, as
+// DismissFoundryAgentAction records a person's. ErrNotFound means the
+// workspace has no such proposal.
+func (s *mysqlDB) DismissFoundryAgentProposal(ctx context.Context, workspaceID, id, deciderID string) (*model.FoundryAgentAction, error) {
+	if deciderID == "" {
+		return nil, fmt.Errorf("a proposal is dismissed by someone")
+	}
+	return s.dismissFoundryAgentAction(ctx, workspaceID, model.AgentBot{}.Access(), deciderID, id)
+}
+
+// dismissFoundryAgentAction dismisses, for decider, the action
+// foundryAgentActionThread finds for principal.
+func (s *mysqlDB) dismissFoundryAgentAction(ctx context.Context, workspaceID string, principal access.Principal, decider, id string) (
+	*model.FoundryAgentAction, error) {
+	threadID, principal, err := s.foundryAgentActionThread(ctx, workspaceID, principal, id)
 	if err != nil {
 		return nil, err
 	}
 	var out *model.FoundryAgentAction
 	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, threadID, id)
+		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, principal, threadID, id)
 		switch {
 		case err != nil:
 			return err
@@ -1076,7 +1190,7 @@ func (s *mysqlDB) DismissFoundryAgentAction(ctx context.Context, workspaceID, us
 			return model.FoundryAgentRefusal{Reason: model.FoundryAgentNotPrepared, Detail: "the action is " + string(a.Shown(time.Now()))}
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_agent_actions SET status='dismissed', decided_by=?, decided_at=NOW(6) WHERE id=?`,
-			userID, id); err != nil {
+			decider, id); err != nil {
 			return err
 		}
 		out, err = scanFoundryAgentAction(tx.db.QueryRowContext(ctx, "SELECT "+foundryAgentActionColumns+` FROM foundry_agent_actions WHERE id=?`, id))
@@ -1088,20 +1202,24 @@ func (s *mysqlDB) DismissFoundryAgentAction(ctx context.Context, workspaceID, us
 // RefreshFoundryAgentAction gives the user's prepared or expired action the
 // new confirmation prepared for the same payload, and its card as drawn
 // again with it (display), waiting for them again. Refusals are a
-// model.FoundryAgentRefusal; ErrNotFound means it isn't theirs.
+// model.FoundryAgentRefusal; ErrNotFound means it isn't theirs (a bot's
+// proposal has no confirmation to refresh).
 func (s *mysqlDB) RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
 	sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error) {
 	if !json.Valid(display) {
 		return nil, fmt.Errorf("refresh foundry agent action %s: its display isn't JSON", id)
 	}
-	threadID, err := s.foundryAgentActionThread(ctx, workspaceID, userID, id)
+	if confirmationID == "" || len(sealed) == 0 || keyID == "" {
+		return nil, fmt.Errorf("refresh foundry agent action %s: its confirmation is incomplete", id)
+	}
+	threadID, principal, err := s.foundryAgentActionThread(ctx, workspaceID, model.AgentPerson{UserID: userID}.Access(), id)
 	if err != nil {
 		return nil, err
 	}
 	var out *model.FoundryAgentAction
 	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, userID, threadID, id)
+		a, err := tx.lockFoundryAgentAction(ctx, workspaceID, principal, threadID, id)
 		switch {
 		case err != nil:
 			return err
@@ -1137,10 +1255,9 @@ func scanFoundryAgentThreadSurface(scanner rowScanner) (*model.FoundryAgentThrea
 
 func scanFoundryAgentThread(scanner rowScanner, extra ...any) (*model.FoundryAgentThread, error) {
 	var t model.FoundryAgentThread
-	var runtime string
-	var kind string
+	var runtime, kind, principalKind, owner string
 	var session, granted sql.NullString
-	if err := scanner.Scan(append([]any{&t.ID, &t.WorkspaceID, &t.UserID, &kind, &t.Title, &runtime, &session, &granted, &t.CreatedAt,
+	if err := scanner.Scan(append([]any{&t.ID, &t.WorkspaceID, &principalKind, &owner, &kind, &t.Title, &runtime, &session, &granted, &t.CreatedAt,
 		&t.UpdatedAt}, extra...)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1148,6 +1265,10 @@ func scanFoundryAgentThread(scanner rowScanner, extra ...any) (*model.FoundryAge
 		return nil, err
 	}
 	t.Runtime, t.RuntimeSessionID, t.Kind = model.FoundryAgentRuntime(runtime), session.String, model.FoundryAgentThreadKind(kind)
+	var err error
+	if t.Principal, err = model.ParseFoundryAgentPrincipal(principalKind, owner); err != nil {
+		return nil, fmt.Errorf("read foundry agent thread %s: %w", t.ID, err)
+	}
 	if granted.Valid {
 		g, err := parseGrantedTargets(granted.String)
 		if err != nil {
@@ -1160,11 +1281,11 @@ func scanFoundryAgentThread(scanner rowScanner, extra ...any) (*model.FoundryAge
 
 func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	var t model.FoundryAgentTurn
-	var runtime, kind, surface, status string
+	var principalKind, owner, runtime, kind, surface, status string
 	var pageContext, asked, answers, errText, clientToken, leaseOwner, automationRun, automationNode sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &t.Spend
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &t.UserID, &runtime, &kind, &surface, &t.Input, &automationRun, &automationNode, &pageContext,
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &principalKind, &owner, &runtime, &kind, &surface, &t.Input, &automationRun, &automationNode, &pageContext,
 		&asked, &answers, &status, &errText, &clientToken,
 		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &t.LostMicros, &spend.InputTokens,
 		&spend.OutputTokens, &t.Steps, &t.LastSeq, &t.CreatedAt, &startedAt, &finishedAt); err != nil {
@@ -1176,6 +1297,9 @@ func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	t.Runtime, t.Kind, t.Status = model.FoundryAgentRuntime(runtime), model.FoundryAgentTurnKind(kind), model.FoundryAgentTurnStatus(status)
 	var err error
 	if t.Surface, err = model.ParseFoundryAgentSurface(surface); err != nil {
+		return nil, fmt.Errorf("read foundry agent turn %s: %w", t.ID, err)
+	}
+	if t.Principal, err = model.ParseFoundryAgentPrincipal(principalKind, owner); err != nil {
 		return nil, fmt.Errorf("read foundry agent turn %s: %w", t.ID, err)
 	}
 	if pageContext.Valid {
@@ -1217,16 +1341,29 @@ func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 
 func scanFoundryAgentAction(scanner rowScanner) (*model.FoundryAgentAction, error) {
 	var a model.FoundryAgentAction
-	var status, payload, display string
-	var result, errText, decidedBy sql.NullString
+	var principalKind, owner, status, payload, display string
+	var result, errText, decidedBy, confirmationID, keyID sql.NullString
+	var sealed []byte
 	var decidedAt sql.NullTime
-	if err := scanner.Scan(&a.ID, &a.TurnID, &a.ThreadID, &a.WorkspaceID, &a.UserID, &a.Operation, &a.Target, &payload, &a.PayloadHash, &display,
-		&a.TargetNamedByUser, &a.ConfirmationID, &a.TokenSealed, &a.KeyID, &status, &result, &errText, &a.ExpiresAt,
+	if err := scanner.Scan(&a.ID, &a.TurnID, &a.ThreadID, &a.WorkspaceID, &principalKind, &owner, &a.Operation, &a.Target, &payload, &a.PayloadHash,
+		&display, &a.TargetNamedByUser, &confirmationID, &sealed, &keyID, &status, &result, &errText, &a.ExpiresAt,
 		&decidedBy, &decidedAt, &a.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	var err error
+	if a.Principal, err = model.ParseFoundryAgentPrincipal(principalKind, owner); err != nil {
+		return nil, fmt.Errorf("read foundry agent action %s: %w", a.ID, err)
+	}
+	// The approval follows from the principal; a row that disagrees is refused.
+	a.Approval = model.AdminApproval{}
+	if confirmationID.Valid || sealed != nil || keyID.Valid {
+		a.Approval = model.PersonApproval{ConfirmationID: confirmationID.String, TokenSealed: sealed, KeyID: keyID.String}
+	}
+	if err := a.ValidateApproval(); err != nil {
+		return nil, fmt.Errorf("read foundry agent action: %w", err)
 	}
 	a.Status, a.Payload, a.Display = model.FoundryAgentActionStatus(status), json.RawMessage(payload), json.RawMessage(display)
 	if result.Valid {
@@ -1242,4 +1379,17 @@ func scanFoundryAgentAction(scanner rowScanner) (*model.FoundryAgentAction, erro
 		a.DecidedAt = &decidedAt.Time
 	}
 	return &a, nil
+}
+
+// foundryAgentPrincipalColumns is p as its rows keep it, refusing none and
+// an empty id.
+func foundryAgentPrincipalColumns(p model.FoundryAgentPrincipal) (access.Principal, error) {
+	if p == nil {
+		return access.Principal{}, fmt.Errorf("a foundry agent row has a principal")
+	}
+	a := p.Access()
+	if a.ID == "" {
+		return access.Principal{}, fmt.Errorf("a foundry agent row's principal has an id")
+	}
+	return a, nil
 }

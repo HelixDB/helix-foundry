@@ -121,7 +121,7 @@ type Store interface {
 	FinishFoundrySlackReply(ctx context.Context, turnID, owner string) error
 	PruneFoundrySlack(ctx context.Context, intake, replies time.Duration, limit int) (int64, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
-	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
+	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, clientToken string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)

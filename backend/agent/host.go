@@ -785,7 +785,11 @@ var (
 // the claim lost its lease fails.
 func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, spend HostSpend) (*mcp.Server, error) {
 	sink := &actionSink{db: h.DB, keys: h.Keys, turn: turn, workerID: workerID, maxPending: h.Cfg.MaxPendingActions, sessions: h.Sessions}
-	session, err := h.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
+	person, ok := turn.Principal.(model.AgentPerson)
+	if !ok {
+		return nil, fmt.Errorf("agent: a helper runs a person's turns only")
+	}
+	session, err := h.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: person.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
 	if err != nil {
 		return nil, err

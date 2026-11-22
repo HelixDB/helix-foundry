@@ -203,11 +203,12 @@ func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, re
 	if err != nil {
 		return nil, retry(err)
 	}
-	teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, turn.UserID)
+	principal := turn.Principal.Access()
+	teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, principal.ID)
 	if err != nil {
 		return nil, retry(err)
 	}
-	principals := []access.Principal{{Kind: access.PrincipalUser, ID: turn.UserID}}
+	principals := []access.Principal{principal}
 	for _, team := range teams {
 		principals = append(principals, access.Principal{Kind: access.PrincipalTeam, ID: team})
 	}
@@ -337,7 +338,11 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		}
 		sink.approved = step.allow
 	}
-	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
+	person, ok := turn.Principal.(model.AgentPerson)
+	if !ok {
+		return out, &Failure{Message: "Founder can't run this bot's turn yet.", Permanent: true, Err: fmt.Errorf("turn %s is a bot's", turn.ID)}
+	}
+	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: person.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
 	switch status.Code(err) {
 	case codes.OK:

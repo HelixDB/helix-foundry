@@ -478,7 +478,7 @@ func TestFoundrySlackThreads(t *testing.T) {
 	// A Founder thread deleted on the site takes its Slack text and its
 	// mapping with it at once.
 	f.settle(t, f.claimed(t))
-	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentUser, f.threadID(1)))
+	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, model.AgentPerson{UserID: agentUser}, f.threadID(1)))
 	_, err = f.db.GetFoundrySlackThread(ctx, i.ID, "C1", m.ThreadTS, "UADA")
 	assert.ErrorIs(t, err, store.ErrNotFound)
 	assert.True(t, dbTrue(t, `SELECT input='' FROM foundry_agent_turns WHERE id=?`, f.turnID(1)), "the deleted thread's text is purged")
@@ -549,7 +549,7 @@ func TestFoundrySlackThreadPurge(t *testing.T) {
 	fresh := f.purgeable(t, 2, i.ID)
 	deleted := f.purgeable(t, 3, i.ID)
 	dbExec(t, `UPDATE foundry_slack_threads SET last_at=NOW(6) - INTERVAL 31 DAY WHERE id=?`, idle.ID)
-	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentUser, deleted.AgentThreadID))
+	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, model.AgentPerson{UserID: agentUser}, deleted.AgentThreadID))
 	assert.True(t, purged(t, deleted.AgentThreadID), "deleted on the site: purged as it is deleted")
 	var spentBefore int64
 	require.NoError(t, testDB.QueryRow(`SELECT SUM(usd_micros) FROM foundry_agent_turns WHERE workspace_id=?`, f.workspaceID).Scan(&spentBefore))
@@ -564,7 +564,7 @@ func TestFoundrySlackThreadPurge(t *testing.T) {
 	var spentAfter int64
 	require.NoError(t, testDB.QueryRow(`SELECT SUM(usd_micros) FROM foundry_agent_turns WHERE workspace_id=?`, f.workspaceID).Scan(&spentAfter))
 	assert.Equal(t, spentBefore, spentAfter, "the turns stay for the spend sums")
-	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
+	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, model.AgentPerson{UserID: agentUser}, nil, "", 10)
 	require.NoError(t, err)
 	require.Len(t, threads, 1, "purged threads leave the person's list")
 	assert.Equal(t, fresh.AgentThreadID, threads[0].ID)
@@ -1119,11 +1119,11 @@ func TestFoundryAgentTurnSurface(t *testing.T) {
 	ctx := context.Background()
 	f := newSlackFixture(t, "surface")
 	turn := func(n int, surface model.FoundryAgentSurface) *model.FoundryAgentTurn {
-		return &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), UserID: agentUser,
+		return &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), Principal: model.AgentPerson{UserID: agentUser},
 			Kind: model.FoundryAgentTurnMessage, Surface: surface, Input: "hi", MaxUSDMicros: 500_000}
 	}
 	thread := func(n int) *model.FoundryAgentThread {
-		return &model.FoundryAgentThread{ID: f.threadID(n), WorkspaceID: f.workspaceID, UserID: agentUser, Title: "Hi", Runtime: model.FoundryAgentRuntimeAPI}
+		return &model.FoundryAgentThread{ID: f.threadID(n), WorkspaceID: f.workspaceID, Principal: model.AgentPerson{UserID: agentUser}, Title: "Hi", Runtime: model.FoundryAgentRuntimeAPI}
 	}
 	assert.Error(t, f.db.CreateFoundryAgentTurn(ctx, turn(1, model.FoundryAgentSurface(9)), thread(1), f.limits(), nil), "an unknown surface")
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn(1, model.FoundryAgentSurfaceSlack), thread(1), f.limits(), nil))
@@ -1136,7 +1136,7 @@ func TestFoundryAgentTurnSurface(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want, thread.Surface, "a thread is where its first turn was asked")
 	}
-	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
+	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, model.AgentPerson{UserID: agentUser}, nil, "", 10)
 	require.NoError(t, err)
 	listed := map[string]model.FoundryAgentSurface{}
 	for _, th := range threads {
@@ -1154,7 +1154,7 @@ func TestFoundryAgentTurnSurface(t *testing.T) {
 	f.settle(t, slackTurn)
 	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
 	require.NoError(t, err)
-	next := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: slackTurn.ThreadID, UserID: agentUser,
+	next := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: slackTurn.ThreadID, Principal: model.AgentPerson{UserID: agentUser},
 		Kind: model.FoundryAgentTurnActionResult, Surface: model.FoundryAgentSurfaceSite, Input: a.ID, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionSucceeded,
 		Result: json.RawMessage(`{}`)}, next, json.RawMessage(`{"type":"action_result"}`)))

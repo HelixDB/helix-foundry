@@ -22,7 +22,12 @@ func RunAction(ctx context.Context, sessions integration.SessionHost, keys *secr
 	failed := func(why string) model.FoundryAgentActionEnd {
 		return model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: why}
 	}
-	token, err := keys.Open(a.TokenSealed, a.KeyID, a.ID)
+	person, ok := a.Principal.(model.AgentPerson)
+	confirmation, confirmed := a.Approval.(model.PersonApproval)
+	if !ok || !confirmed {
+		return failed("only its person runs this action")
+	}
+	token, err := keys.Open(confirmation.TokenSealed, confirmation.KeyID, a.ID)
 	if err != nil {
 		return failed("the action's confirmation can't be opened; ask Founder to prepare it again")
 	}
@@ -32,13 +37,13 @@ func RunAction(ctx context.Context, sessions integration.SessionHost, keys *secr
 	if err := decoder.Decode(&payload); err != nil {
 		return failed("the action's payload can't be read")
 	}
-	session, err := sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: a.UserID, WorkspaceID: a.WorkspaceID},
+	session, err := sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: person.UserID, WorkspaceID: a.WorkspaceID},
 		integration.ConfirmByCaller{})
 	if err != nil {
 		return failed("your access to this workspace couldn't be read; nothing ran, so you can ask again")
 	}
 	switch done := session.Service.ExecuteForPerson(session.Ctx, session.Identity, integration.ExecuteFoundryInput{
-		Operation: a.Operation, Target: a.Target, Payload: payload, ConfirmationID: a.ConfirmationID, ConfirmationToken: string(token),
+		Operation: a.Operation, Target: a.Target, Payload: payload, ConfirmationID: confirmation.ConfirmationID, ConfirmationToken: string(token),
 	}).(type) {
 	case integration.ExecutedOK:
 		result, err := json.Marshal(done.Result)

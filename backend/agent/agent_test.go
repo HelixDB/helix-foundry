@@ -95,7 +95,7 @@ func (s *memStore) thread(id string) *model.FoundryAgentThread {
 	}
 	t, ok := s.threads[id]
 	if !ok {
-		t = &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Kind: model.FoundryAgentThreadChat, Runtime: model.FoundryAgentRuntimeAPI,
+		t = &model.FoundryAgentThread{ID: id, WorkspaceID: ws, Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentThreadChat, Runtime: model.FoundryAgentRuntimeAPI,
 			Granted: &model.FoundryAgentThreadGrants{}}
 		s.threads[id] = t
 	}
@@ -807,7 +807,7 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 }
 
 func message(text string) *model.FoundryAgentTurn {
-	return &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnMessage,
+	return &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentTurnMessage,
 		Input: text, MaxUSDMicros: 500_000, Attempts: 1}
 }
 
@@ -882,7 +882,8 @@ func TestPreparedActionsGoToThePersonNotTheModel(t *testing.T) {
 	assert.Equal(t, "create_load", a.Operation)
 	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"version":{"id":"ver3","number":3}}`, string(a.Display))
 	assert.True(t, a.TargetNamedByUser, "the person named the ontology")
-	token, err := h.keys.Open(a.TokenSealed, a.KeyID, a.ID)
+	confirmation := a.Approval.(model.PersonApproval)
+	token, err := h.keys.Open(confirmation.TokenSealed, confirmation.KeyID, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "hlxc_secreta", string(token))
 	assert.Zero(t, h.backend.loads, "preparing runs nothing")

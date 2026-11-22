@@ -1287,7 +1287,7 @@ func (u Unimplemented) GetFoundryAgentThread(context.Context, string, string) (*
 	return nil, nil
 }
 
-func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, string, func(*model.FoundryAgentThread) bool, string, int) ([]*model.FoundryAgentThread, string, error) {
+func (u Unimplemented) ListFoundryAgentThreads(context.Context, string, model.FoundryAgentPrincipal, func(*model.FoundryAgentThread) bool, string, int) ([]*model.FoundryAgentThread, string, error) {
 	u.unimplemented("ListFoundryAgentThreads")
 	return nil, "", nil
 }
@@ -1302,7 +1302,7 @@ func (u Unimplemented) GetFoundryAgentTurn(context.Context, string, string) (*mo
 	return nil, nil
 }
 
-func (u Unimplemented) GetFoundryAgentTurnByClientToken(context.Context, string, string, string) (*model.FoundryAgentTurn, error) {
+func (u Unimplemented) GetFoundryAgentTurnByClientToken(context.Context, string, model.FoundryAgentPrincipal, string) (*model.FoundryAgentTurn, error) {
 	u.unimplemented("GetFoundryAgentTurnByClientToken")
 	return nil, nil
 }
@@ -1347,12 +1347,12 @@ func (u Unimplemented) AskFoundryAgentQuestions(context.Context, string, string,
 	return nil
 }
 
-func (u Unimplemented) DeleteFoundryAgentThread(context.Context, string, string, string) error {
+func (u Unimplemented) DeleteFoundryAgentThread(context.Context, string, model.FoundryAgentPrincipal, string) error {
 	u.unimplemented("DeleteFoundryAgentThread")
 	return nil
 }
 
-func (u Unimplemented) CancelFoundryAgentTurn(context.Context, string, string, string) (*model.FoundryAgentTurn, error) {
+func (u Unimplemented) CancelFoundryAgentTurn(context.Context, string, model.FoundryAgentPrincipal, string) (*model.FoundryAgentTurn, error) {
 	u.unimplemented("CancelFoundryAgentTurn")
 	return nil, nil
 }
@@ -1414,6 +1414,16 @@ func (u Unimplemented) FinishFoundryAgentAction(context.Context, string, model.F
 
 func (u Unimplemented) DismissFoundryAgentAction(context.Context, string, string, string) (*model.FoundryAgentAction, error) {
 	u.unimplemented("DismissFoundryAgentAction")
+	return nil, nil
+}
+
+func (u Unimplemented) ClaimFoundryAgentProposal(context.Context, string, string, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("ClaimFoundryAgentProposal")
+	return nil, nil
+}
+
+func (u Unimplemented) DismissFoundryAgentProposal(context.Context, string, string, string) (*model.FoundryAgentAction, error) {
+	u.unimplemented("DismissFoundryAgentProposal")
 	return nil, nil
 }
 
@@ -1963,6 +1973,31 @@ func (u Unimplemented) MarkFoundrySlackThreadBot(context.Context, string, string
 func (u Unimplemented) MarkFoundrySlackThreadOthers(context.Context, string, string, string, time.Time) error {
 	u.unimplemented("MarkFoundrySlackThreadOthers")
 	return nil
+}
+
+func (u Unimplemented) SetFoundrySlackMode(context.Context, string, string, model.SlackIdentityMode) (model.SlackIdentityMode, error) {
+	u.unimplemented("SetFoundrySlackMode")
+	return nil, nil
+}
+
+func (u Unimplemented) AddFoundrySlackThreadPerson(context.Context, string, string) error {
+	u.unimplemented("AddFoundrySlackThreadPerson")
+	return nil
+}
+
+func (u Unimplemented) IsFoundrySlackBot(context.Context, string, string) (bool, error) {
+	u.unimplemented("IsFoundrySlackBot")
+	return false, nil
+}
+
+func (u Unimplemented) IsFoundrySlackBotCredential(context.Context, string) (bool, error) {
+	u.unimplemented("IsFoundrySlackBotCredential")
+	return false, nil
+}
+
+func (u Unimplemented) IsFoundrySlackThreadPerson(context.Context, string, string) (bool, error) {
+	u.unimplemented("IsFoundrySlackThreadPerson")
+	return false, nil
 }
 
 func (u Unimplemented) CreateSlackAppConnector(context.Context, *model.Connector, model.SlackFeedBind) error {

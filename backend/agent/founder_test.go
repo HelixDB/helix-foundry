@@ -66,7 +66,7 @@ func TestFounderMakesTheDashboardItWasAskedForAtOnce(t *testing.T) {
 	require.Len(t, h.db.actions, 1)
 	action := h.db.actions[0]
 	assert.Equal(t, model.FoundryAgentActionSucceeded, action.Status)
-	assert.Equal(t, &turn.UserID, action.DecidedBy, "decided by the person who asked")
+	assert.Equal(t, new(turn.Principal.Access().ID), action.DecidedBy, "decided by the person who asked")
 	assert.Contains(t, string(action.Result), `"id":"dash1"`, "the dashboard Undo deletes")
 	assert.Equal(t, []string{"started", "tool_call", "action_card", "action_result", "tool_result", "text", "finished"}, h.db.eventTypes(),
 		"the card, then how it ran")

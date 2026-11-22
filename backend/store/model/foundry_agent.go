@@ -51,12 +51,57 @@ const (
 	FoundryAgentThreadAutomation FoundryAgentThreadKind = "automation"
 )
 
+// FoundryAgentPrincipal is whom a thread, its turns and its actions belong
+// to: a closed set, kept as (principal_kind, user_id).
+type FoundryAgentPrincipal interface {
+	// Access is the principal as grants name it, and as its rows keep it:
+	// its kind and id.
+	Access() access.Principal
+	agentPrincipal()
+}
+
+// AgentPerson is a Helix user: their own threads, run as them.
+type AgentPerson struct{ UserID string }
+
+// AgentBot is a Slack install's bot in bot mode: a workspace service
+// credential, a grantee whose token no one holds. Its actions are run by
+// an owner or admin who approves them, as themselves.
+type AgentBot struct{ CredentialID string }
+
+// Access is the user as grants name them.
+func (p AgentPerson) Access() access.Principal {
+	return access.Principal{Kind: access.PrincipalUser, ID: p.UserID}
+}
+
+// Access is the service credential as grants name it.
+func (p AgentBot) Access() access.Principal {
+	return access.Principal{Kind: access.PrincipalServiceCredential, ID: p.CredentialID}
+}
+
+func (AgentPerson) agentPrincipal() {}
+func (AgentBot) agentPrincipal()    {}
+
+// ParseFoundryAgentPrincipal reads a principal as its row keeps it
+// (principal_kind, user_id), refusing any other kind and an empty id.
+func ParseFoundryAgentPrincipal(kind, id string) (FoundryAgentPrincipal, error) {
+	if id == "" {
+		return nil, fmt.Errorf("a foundry agent principal has an id")
+	}
+	switch kind {
+	case access.PrincipalUser.String():
+		return AgentPerson{UserID: id}, nil
+	case access.PrincipalServiceCredential.String():
+		return AgentBot{CredentialID: id}, nil
+	}
+	return nil, fmt.Errorf("unknown foundry agent principal kind %q", kind)
+}
+
 // FoundryAgentThread is one conversation with the Assistant, private to the
-// user who started it.
+// principal who started it.
 type FoundryAgentThread struct {
 	ID          string
 	WorkspaceID string
-	UserID      string
+	Principal   FoundryAgentPrincipal
 	Kind        FoundryAgentThreadKind
 	Title       string
 	Runtime     FoundryAgentRuntime
@@ -157,7 +202,8 @@ type FoundryAgentTurn struct {
 	ID          string
 	WorkspaceID string
 	ThreadID    string
-	UserID      string
+	// Principal is its thread's: the store refuses any other.
+	Principal FoundryAgentPrincipal
 	// Runtime is its thread's, which the store copies when it queues the turn.
 	Runtime FoundryAgentRuntime
 	Kind    FoundryAgentTurnKind
@@ -291,15 +337,46 @@ const (
 // without saying how it ended.
 const FoundryAgentExecutingFor = 2 * time.Minute
 
-// FoundryAgentAction is an action the agent prepared for its person to run.
+// FoundryAgentApproval is how an action is approved: a closed set, derived
+// from its principal, never stored as a value of its own.
+type FoundryAgentApproval interface{ agentApproval() }
+
+// PersonApproval is a person's action: they run it with a click, under the
+// one-time confirmation prepared for them. TokenSealed is its token, sealed
+// under KeyID with the action's id as its context.
+type PersonApproval struct {
+	ConfirmationID string
+	TokenSealed    []byte
+	KeyID          string
+}
+
+// AdminApproval is a bot's action (a proposal): it holds no confirmation,
+// and an owner or admin who approves it runs it as themselves (DecidedBy).
+type AdminApproval struct{}
+
+func (PersonApproval) agentApproval() {}
+func (AdminApproval) agentApproval()  {}
+
+// The errors a bot's proposal keeps when its run fails or loses its answer:
+// the bot's thread learns only whether it ran (FinishFoundryAgentAction),
+// and the approver alone why not.
+const (
+	FoundryAgentProposalFailed  = "The run failed; the owner or admin who ran it was told why."
+	FoundryAgentProposalUnknown = "The run stopped without saying how it ended; the owner or admin who ran it was told."
+)
+
+// FoundryAgentAction is an action the agent prepared for its person to run,
+// or, for a bot, proposed for an owner or admin to run.
 type FoundryAgentAction struct {
 	ID          string
 	TurnID      string
 	ThreadID    string
 	WorkspaceID string
-	UserID      string
-	Operation   string
-	Target      string
+	// Principal is its turn's; Approval follows from it: PersonApproval for
+	// AgentPerson, AdminApproval for AgentBot (ValidateApproval).
+	Principal FoundryAgentPrincipal
+	Operation string
+	Target    string
 	// Payload is canonical, and PayloadHash the confirmation's hash of it.
 	Payload     json.RawMessage
 	PayloadHash string
@@ -308,18 +385,35 @@ type FoundryAgentAction struct {
 	// TargetNamedByUser says the target's ids came from the person's own
 	// messages or page, not only from the agent.
 	TargetNamedByUser bool
-	ConfirmationID    string
-	// TokenSealed is the confirmation's token, sealed under KeyID with the
-	// action's id as its context.
-	TokenSealed []byte
-	KeyID       string
-	Status      FoundryAgentActionStatus
-	Result      json.RawMessage
-	Error       *string
-	ExpiresAt   time.Time
-	DecidedBy   *string
-	DecidedAt   *time.Time
-	CreatedAt   time.Time
+	Approval          FoundryAgentApproval
+	Status            FoundryAgentActionStatus
+	Result            json.RawMessage
+	Error             *string
+	ExpiresAt         time.Time
+	// DecidedBy is the Helix user who ran or dismissed it: its person, or
+	// the owner or admin who decided a bot's proposal.
+	DecidedBy *string
+	DecidedAt *time.Time
+	CreatedAt time.Time
+}
+
+// ValidateApproval refuses an approval its principal doesn't take: a
+// person's action has a whole confirmation, and a bot's none.
+func (a *FoundryAgentAction) ValidateApproval() error {
+	switch p := a.Principal.(type) {
+	case AgentPerson:
+		c, ok := a.Approval.(PersonApproval)
+		if !ok || c.ConfirmationID == "" || len(c.TokenSealed) == 0 || c.KeyID == "" {
+			return fmt.Errorf("foundry agent action %s: a person's action has its confirmation", a.ID)
+		}
+	case AgentBot:
+		if _, ok := a.Approval.(AdminApproval); !ok {
+			return fmt.Errorf("foundry agent action %s: a bot's action holds no confirmation", a.ID)
+		}
+	default:
+		return fmt.Errorf("foundry agent action %s has no principal (%T)", a.ID, p)
+	}
+	return nil
 }
 
 // Shown is the action's status as a person reads it at now: a prepared one
@@ -341,7 +435,7 @@ type FoundryAgentLimits struct {
 	// Since is the start of the budget's month.
 	Since     time.Time
 	CapMicros int64
-	// PerHour is how many messages one user may send in an hour.
+	// PerHour is how many messages one principal may send in an hour.
 	PerHour int
 	// Running is how many of the workspace's turns may run at once.
 	Running int

@@ -392,7 +392,7 @@ func (f *founder) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 	case err != nil:
 		return nil, refusal(err)
 	}
-	next := &model.FoundryAgentTurn{ID: id.New(), WorkspaceID: a.WorkspaceID, ThreadID: a.ThreadID, UserID: user, Kind: model.FoundryAgentTurnActionResult,
+	next := &model.FoundryAgentTurn{ID: id.New(), WorkspaceID: a.WorkspaceID, ThreadID: a.ThreadID, Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentTurnActionResult,
 		Input: a.ID, MaxUSDMicros: 1_000_000}
 	first, err := agent.MarshalEvent(agent.ActionResult{ActionID: a.ID, Operation: a.Operation, Status: "succeeded", Result: json.RawMessage(`{}`)})
 	if err != nil {
@@ -736,8 +736,8 @@ func (r *stubRun) prepared(operation string, shown any, expires time.Time) *mode
 	require.NoError(r.w.t, err)
 	hash := fmt.Sprintf("%064x", time.Now().UnixNano())
 	a, err := r.w.db.RecordFoundryAgentAction(r.w.ctx, r.worker, &model.FoundryAgentAction{ID: actionID, TurnID: r.turn.ID, ThreadID: r.turn.ThreadID,
-		WorkspaceID: r.w.ws, UserID: r.turn.UserID, Operation: operation, Target: "ont_1", Payload: json.RawMessage(`{"version_id":"ver_3"}`),
-		PayloadHash: hash, Display: display, ConfirmationID: "conf-1", TokenSealed: sealed, KeyID: keyID, Status: model.FoundryAgentActionPrepared,
+		WorkspaceID: r.w.ws, Principal: r.turn.Principal, Operation: operation, Target: "ont_1", Payload: json.RawMessage(`{"version_id":"ver_3"}`),
+		PayloadHash: hash, Display: display, Approval: model.PersonApproval{ConfirmationID: "conf-1", TokenSealed: sealed, KeyID: keyID}, Status: model.FoundryAgentActionPrepared,
 		ExpiresAt: expires}, 5, func(a *model.FoundryAgentAction) (json.RawMessage, error) {
 		return agent.MarshalEvent(cardOf(a))
 	})

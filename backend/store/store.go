@@ -242,9 +242,10 @@ type ReadStore interface {
 
 	// The Assistant (foundry_agent.go)
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
-	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, keep func(*model.FoundryAgentThread) bool, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
+	ListFoundryAgentThreads(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, keep func(*model.FoundryAgentThread) bool,
+		pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
-	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
+	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, clientToken string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ListFoundryAgentMessages(ctx context.Context, threadID string) ([]model.FoundryAgentMessage, error)
@@ -267,6 +268,11 @@ type ReadStore interface {
 	ListFoundrySlackFollows(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackReply, error)
 	CountFoundrySlackFollows(ctx context.Context, installID string) (int, error)
 	ListFoundrySlackThreadMappings(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackThread, error)
+	// Bot mode (L2): whether a credential is a workspace's live bot, or any
+	// install's, and who has spoken to the bot in a thread.
+	IsFoundrySlackBot(ctx context.Context, workspaceID, credentialID string) (bool, error)
+	IsFoundrySlackBotCredential(ctx context.Context, credentialID string) (bool, error)
+	IsFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) (bool, error)
 
 	// The Slack data connector on Helix's Slack app: feeds, their buffer,
 	// the day mirror's index and the backfill (foundry_slack_feed.go)
@@ -513,9 +519,9 @@ type Store interface {
 	// foundry-agent-worker's turns (foundry_agent.go)
 	CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits, first json.RawMessage) error
 	AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error
-	DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error
+	DeleteFoundryAgentThread(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, id string) error
 	RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error
-	CancelFoundryAgentTurn(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentTurn, error)
+	CancelFoundryAgentTurn(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, id string) (*model.FoundryAgentTurn, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	AppendFoundryAgentEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
@@ -535,6 +541,10 @@ type Store interface {
 	ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error)
 	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
 	DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error)
+	// A bot's proposals, run or dismissed by an owner or admin of the
+	// workspace (Helix Foundry for Slack's bot mode).
+	ClaimFoundryAgentProposal(ctx context.Context, workspaceID, id, payloadHash, approverID string) (*model.FoundryAgentAction, error)
+	DismissFoundryAgentProposal(ctx context.Context, workspaceID, id, deciderID string) (*model.FoundryAgentAction, error)
 	RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
 		sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error)
 
@@ -573,6 +583,8 @@ type Store interface {
 	UpdateFoundrySlackInstallBot(ctx context.Context, installID string, u model.SlackInstallBotUpdate) error
 	MarkFoundrySlackThreadBot(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
 	MarkFoundrySlackThreadOthers(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+	SetFoundrySlackMode(ctx context.Context, workspaceID, installID string, mode model.SlackIdentityMode) (model.SlackIdentityMode, error)
+	AddFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) error
 
 	// The Slack data connector on Helix's Slack app: binding, appends, folds,
 	// channels, Tier-1 slots and the backfill (foundry_slack_feed.go)

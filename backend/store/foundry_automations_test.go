@@ -532,9 +532,9 @@ func TestFoundryAutomationRunSteps(t *testing.T) {
 	require.Len(t, told.Earlier, 2, "the trigger and the sync")
 
 	// An Assistant step queues its turn in the run's own thread.
-	thread := &model.FoundryAgentThread{ID: id26("UTHREAD"), WorkspaceID: f.workspaceID, UserID: automationOwner, Kind: model.FoundryAgentThreadAutomation,
+	thread := &model.FoundryAgentThread{ID: id26("UTHREAD"), WorkspaceID: f.workspaceID, Principal: model.AgentPerson{UserID: automationOwner}, Kind: model.FoundryAgentThreadAutomation,
 		Title: a.Name, Runtime: model.FoundryAgentRuntimeAPI}
-	turn := &model.FoundryAgentTurn{ID: id26("UTURN"), WorkspaceID: f.workspaceID, ThreadID: thread.ID, UserID: automationOwner,
+	turn := &model.FoundryAgentTurn{ID: id26("UTURN"), WorkspaceID: f.workspaceID, ThreadID: thread.ID, Principal: model.AgentPerson{UserID: automationOwner},
 		Kind: model.FoundryAgentTurnAutomation, Input: "Count the invoices", MaxUSDMicros: 500_000, AutomationRunID: &run.ID, AutomationNodeID: ptr("ask")}
 	require.Error(t, f.db.StartFoundryAutomationAssistant(ctx, run.ID, "w1", "other", thread, turn), "the turn is the step's")
 	require.NoError(t, f.db.StartFoundryAutomationAssistant(ctx, run.ID, "w1", "ask", thread, turn))
@@ -554,7 +554,7 @@ func TestFoundryAutomationRunSteps(t *testing.T) {
 	require.Equal(t, model.FoundryAgentTurnAutomation, queued.Kind)
 	require.Equal(t, &run.ID, queued.AutomationRunID)
 	require.Equal(t, ptr("ask"), queued.AutomationNodeID)
-	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, automationOwner, nil, "", 10)
+	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, model.AgentPerson{UserID: automationOwner}, nil, "", 10)
 	require.NoError(t, err)
 	require.Empty(t, threads, "a run's thread is no chat")
 	got, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, thread.ID)
@@ -642,9 +642,9 @@ func TestFoundryAutomationCancelAndDeleteEndTurns(t *testing.T) {
 	require.NoError(t, err)
 	run, err := f.db.ClaimFoundryAutomationRun(ctx, "w1", time.Minute)
 	require.NoError(t, err)
-	thread := &model.FoundryAgentThread{ID: id26("CTHREAD"), WorkspaceID: f.workspaceID, UserID: automationOwner, Kind: model.FoundryAgentThreadAutomation,
+	thread := &model.FoundryAgentThread{ID: id26("CTHREAD"), WorkspaceID: f.workspaceID, Principal: model.AgentPerson{UserID: automationOwner}, Kind: model.FoundryAgentThreadAutomation,
 		Title: a.Name, Runtime: model.FoundryAgentRuntimeAPI}
-	turn := &model.FoundryAgentTurn{ID: id26("CTURN"), WorkspaceID: f.workspaceID, ThreadID: thread.ID, UserID: automationOwner,
+	turn := &model.FoundryAgentTurn{ID: id26("CTURN"), WorkspaceID: f.workspaceID, ThreadID: thread.ID, Principal: model.AgentPerson{UserID: automationOwner},
 		Kind: model.FoundryAgentTurnAutomation, Input: "Look", MaxUSDMicros: 500_000, AutomationRunID: &run.ID, AutomationNodeID: ptr("ask")}
 	require.NoError(t, f.db.StartFoundryAutomationAssistant(ctx, run.ID, "w1", "ask", thread, turn))
 
@@ -894,14 +894,14 @@ func TestFoundryAutomationTurnsHaveTheirOwnBudget(t *testing.T) {
 	f := newAgentFixture(t, "pool")
 	ctx := context.Background()
 	runID := id26("POOLRUN")
-	thread := &model.FoundryAgentThread{ID: id26("POOLTHREAD"), WorkspaceID: f.workspaceID, UserID: agentUser, Kind: model.FoundryAgentThreadAutomation,
+	thread := &model.FoundryAgentThread{ID: id26("POOLTHREAD"), WorkspaceID: f.workspaceID, Principal: model.AgentPerson{UserID: agentUser}, Kind: model.FoundryAgentThreadAutomation,
 		Title: "Weekly", Runtime: model.FoundryAgentRuntimeAPI}
 	// The run row the turn's step belongs to.
 	_, err := testDB.Exec(`INSERT INTO foundry_automation_runs (id, automation_id, workspace_id, owner_user_id, spec, spec_revision, trigger_key, trigger_event,
   status, lease_owner, lease_until) VALUES (?, ?, ?, ?, '{}', 1, 'manual:x', '{}', 'running', 'w1', NOW(6) + INTERVAL 1 HOUR)`,
 		runID, id26("POOLAUTO"), f.workspaceID, agentUser)
 	require.NoError(t, err)
-	turn := &model.FoundryAgentTurn{ID: id26("POOLTURN"), WorkspaceID: f.workspaceID, ThreadID: thread.ID, UserID: agentUser,
+	turn := &model.FoundryAgentTurn{ID: id26("POOLTURN"), WorkspaceID: f.workspaceID, ThreadID: thread.ID, Principal: model.AgentPerson{UserID: agentUser},
 		Kind: model.FoundryAgentTurnAutomation, Input: "Look", MaxUSDMicros: 500_000, AutomationRunID: &runID, AutomationNodeID: ptr("ask")}
 	require.NoError(t, f.db.StartFoundryAutomationAssistant(ctx, runID, "w1", "ask", thread, turn))
 

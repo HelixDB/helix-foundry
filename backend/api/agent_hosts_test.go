@@ -263,11 +263,11 @@ func TestASendRunsOnItsThreadsRuntime(t *testing.T) {
 
 		// An existing thread keeps its runtime, whatever the workspace's is now.
 		hosts.set("ws-1", foundrymodel.FoundryAgentRuntimeAPI)
-		f.store.threads["th-codex"] = &foundrymodel.FoundryAgentThread{ID: "th-codex", WorkspaceID: "ws-1", UserID: person.UserID,
+		f.store.threads["th-codex"] = &foundrymodel.FoundryAgentThread{ID: "th-codex", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID},
 			Runtime: foundrymodel.FoundryAgentRuntimeCodex}
 		_, err = send(f, "c2", "th-codex")
 		assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))
-		f.store.threads["th-claude"] = &foundrymodel.FoundryAgentThread{ID: "th-claude", WorkspaceID: "ws-1", UserID: person.UserID,
+		f.store.threads["th-claude"] = &foundrymodel.FoundryAgentThread{ID: "th-claude", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID},
 			Runtime: foundrymodel.FoundryAgentRuntimeClaudeCode}
 		_, err = send(f, "c3", "th-claude")
 		require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestASendRunsOnItsThreadsRuntime(t *testing.T) {
 		resp, err := send(f, "c1", "")
 		require.NoError(t, err)
 		assert.Equal(t, "api", resp.GetThread().GetRuntime())
-		f.store.threads["th-claude"] = &foundrymodel.FoundryAgentThread{ID: "th-claude", WorkspaceID: "ws-1", UserID: person.UserID,
+		f.store.threads["th-claude"] = &foundrymodel.FoundryAgentThread{ID: "th-claude", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID},
 			Runtime: foundrymodel.FoundryAgentRuntimeClaudeCode}
 		_, err = send(f, "c2", "th-claude")
 		assert.Equal(t, "FOUNDRY_AGENT_HOST_OFFLINE", reasonOf(err))

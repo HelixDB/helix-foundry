@@ -311,7 +311,7 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		}
 	case status.Code(err) == codes.InvalidArgument && status.Convert(err).Message() == "client_token was already used for another message":
 		// An earlier attempt sent it: follow its turn.
-		if turn, err = b.db.GetFoundryAgentTurnByClientToken(ctx, c.install.WorkspaceID, link.UserID, req.ClientToken); err != nil {
+		if turn, err = b.db.GetFoundryAgentTurnByClientToken(ctx, c.install.WorkspaceID, model.AgentPerson{UserID: link.UserID}, req.ClientToken); err != nil {
 			return nil, fmt.Errorf("find the message's turn: %w", err)
 		}
 	case reasonOf(err) == "FOUNDRY_AGENT_THREAD_BUSY":

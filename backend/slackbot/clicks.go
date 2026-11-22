@@ -138,7 +138,7 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 		return b.clickTell(ctx, c, k, "This action is gone.")
 	case err != nil:
 		return nil, fmt.Errorf("read the action: %w", err)
-	case action.UserID != link.UserID:
+	case action.Principal != model.AgentPerson{UserID: link.UserID}:
 		return b.clickTell(ctx, c, k, notYours)
 	}
 	if !inDM(k.ChannelID) {
@@ -329,7 +329,7 @@ func (b *Bot) stop(ctx context.Context, c claim, r *model.SlackReply, clicker st
 		return true, nil
 	case err != nil:
 		return false, fmt.Errorf("read the turn: %w", err)
-	case turn.UserID != link.UserID:
+	case turn.Principal != model.AgentPerson{UserID: link.UserID}:
 		return false, nil
 	}
 	session, done, err := b.session(ctx, c, link, r.ChannelID, r.ThreadTS)

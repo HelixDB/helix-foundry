@@ -127,7 +127,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		}
 	}
 	t := &foundrymodel.FoundryAgentTurn{
-		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), UserID: userID, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
+		ID: id.New(), WorkspaceID: ws, ThreadID: req.GetThreadId(), Principal: foundrymodel.AgentPerson{UserID: userID}, ClientToken: &token, MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
 	// Where its person reads it only narrows the turn, so any caller sets it.
 	switch req.GetSurface() {
@@ -184,7 +184,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	same := func(other *foundrymodel.FoundryAgentTurn) bool {
 		return other.Kind == t.Kind && other.Surface == t.Surface && other.Input == t.Input && reflect.DeepEqual(other.Answers, t.Answers)
 	}
-	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
+	existing, err := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, foundrymodel.AgentPerson{UserID: userID}, token)
 	switch {
 	case err == nil && !same(existing):
 		return nil, status.Error(codes.InvalidArgument, "client_token was already used for another message")
@@ -215,7 +215,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	if sent {
 		if err := s.sendRelayedAnswers(ctx, ws, userID, answered, t.Answers); err != nil {
 			// The same click again, which sent them first, has its turn.
-			if raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token); lookupErr == nil && same(raced) {
+			if raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, foundrymodel.AgentPerson{UserID: userID}, token); lookupErr == nil && same(raced) {
 				return s.agentTurnResponse(ctx, raced)
 			}
 			return nil, err
@@ -237,7 +237,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	}
 	if t.ThreadID == "" {
 		t.ThreadID = id.New()
-		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, UserID: userID, Title: foundryagent.Title(t.Input),
+		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, Principal: foundrymodel.AgentPerson{UserID: userID}, Title: foundryagent.Title(t.Input),
 			Runtime: runtime}
 		// A restricted member's thread holds what their grants give now;
 		// each of its turns adds what they hold when it runs.
@@ -262,7 +262,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	switch {
 	case errors.Is(err, foundrystore.ErrConflict):
 		// The same click again won the race.
-		raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
+		raced, lookupErr := s.deps.DB.GetFoundryAgentTurnByClientToken(ctx, ws, foundrymodel.AgentPerson{UserID: userID}, token)
 		if lookupErr != nil || !same(raced) {
 			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another message")
 		}
@@ -374,7 +374,7 @@ func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.Li
 		}
 		keep = func(t *foundrymodel.FoundryAgentThread) bool { return grants.Holds(t.Granted.Targets) }
 	}
-	threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, ws, userID, keep, req.GetPageToken(), agentThreadPage)
+	threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, ws, foundrymodel.AgentPerson{UserID: userID}, keep, req.GetPageToken(), agentThreadPage)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
@@ -396,7 +396,7 @@ func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.Li
 func (s *Service) agentThread(ctx context.Context, workspaceID, userID, threadID string) (*foundrymodel.FoundryAgentThread, error) {
 	t, err := s.deps.DB.GetFoundryAgentThread(ctx, workspaceID, threadID)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && t.UserID != userID:
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && t.Principal != foundrymodel.AgentPerson{UserID: userID}:
 		return nil, status.Error(codes.NotFound, "thread not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the thread: %v", err)
@@ -458,7 +458,7 @@ func (s *Service) DeleteFoundryAgentThread(ctx context.Context, req *foundryv1.D
 			return nil, err
 		}
 	}
-	switch err := s.deps.DB.DeleteFoundryAgentThread(ctx, req.GetWorkspaceId(), userID, req.GetId()); {
+	switch err := s.deps.DB.DeleteFoundryAgentThread(ctx, req.GetWorkspaceId(), foundrymodel.AgentPerson{UserID: userID}, req.GetId()); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "thread not found")
 	case err != nil:
@@ -472,7 +472,7 @@ func (s *Service) DeleteFoundryAgentThread(ctx context.Context, req *foundryv1.D
 func (s *Service) agentTurn(ctx context.Context, workspaceID, userID, turnID string) (*foundrymodel.FoundryAgentTurn, error) {
 	t, err := s.deps.DB.GetFoundryAgentTurn(ctx, workspaceID, turnID)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && t.UserID != userID:
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && t.Principal != foundrymodel.AgentPerson{UserID: userID}:
 		return nil, status.Error(codes.NotFound, "turn not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the turn: %v", err)
@@ -521,7 +521,7 @@ func (s *Service) CancelFoundryAgentTurn(ctx context.Context, req *foundryv1.Can
 			return nil, err
 		}
 	}
-	t, err := s.deps.DB.CancelFoundryAgentTurn(ctx, req.GetWorkspaceId(), userID, req.GetId())
+	t, err := s.deps.DB.CancelFoundryAgentTurn(ctx, req.GetWorkspaceId(), foundrymodel.AgentPerson{UserID: userID}, req.GetId())
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "turn not found")
@@ -583,7 +583,7 @@ func (s *Service) ExecuteFoundryAgentAction(ctx context.Context, req *foundryv1.
 		end = s.approveOnClick(ctx, ws, userID, a.Payload, end)
 	}
 	continuation := &foundrymodel.FoundryAgentTurn{
-		ID: id.New(), WorkspaceID: ws, ThreadID: a.ThreadID, UserID: userID, Kind: foundrymodel.FoundryAgentTurnActionResult, Input: a.ID,
+		ID: id.New(), WorkspaceID: ws, ThreadID: a.ThreadID, Principal: foundrymodel.AgentPerson{UserID: userID}, Kind: foundrymodel.FoundryAgentTurnActionResult, Input: a.ID,
 		MaxUSDMicros: s.deps.Cfg.Foundry.Agent.MaxMicros(),
 	}
 	if !s.agentContinues(ctx, ws, a.ThreadID) {
@@ -681,7 +681,7 @@ const agentRunMargin = 15 * time.Second
 func (s *Service) agentAction(ctx context.Context, workspaceID, userID, actionID string) (*foundrymodel.FoundryAgentAction, error) {
 	a, err := s.deps.DB.GetFoundryAgentAction(ctx, workspaceID, actionID)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && a.UserID != userID:
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && a.Principal != foundrymodel.AgentPerson{UserID: userID}:
 		return nil, status.Error(codes.NotFound, "action not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the action: %v", err)

@@ -71,7 +71,7 @@ func TestMessageStartsTurnAndReplyFollowsIt(t *testing.T) {
 
 	turn := w.only()
 	assert.Equal(t, model.FoundryAgentSurfaceSlack, turn.Surface)
-	assert.Equal(t, adaID, turn.UserID)
+	assert.Equal(t, model.AgentPerson{UserID: adaID}, turn.Principal)
 	assert.Equal(t, "Which customers *renewed*? Ask <all>", turn.Input)
 	assert.JSONEq(t, `{"time_zone":"Europe/London"}`, string(turn.PageContext))
 	assert.Equal(t, 1, w.threads())
@@ -149,7 +149,7 @@ func TestMentionNamesPeopleAndFollowUpsKeepTheThread(t *testing.T) {
 	w.settle()
 	third := w.last()
 	assert.NotEqual(t, first.ThreadID, third.ThreadID)
-	assert.Equal(t, graceID, third.UserID)
+	assert.Equal(t, model.AgentPerson{UserID: graceID}, third.Principal)
 	assert.Equal(t, 2, w.threads())
 }
 

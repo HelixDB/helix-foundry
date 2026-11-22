@@ -246,13 +246,18 @@ func (s *actionSink) record(ctx context.Context, a integration.PreparedAction, a
 		return nil, fmt.Errorf("seal the action's confirmation: %w", err)
 	}
 	action := &model.FoundryAgentAction{
-		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, UserID: s.turn.UserID,
+		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, Principal: s.turn.Principal,
 		Operation: a.Operation, Target: a.Target, Payload: a.Payload, PayloadHash: a.PayloadHash, Display: card.Display,
-		TargetNamedByUser: named, ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID,
+		TargetNamedByUser: named, Approval: model.PersonApproval{ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID},
 		Status: model.FoundryAgentActionPrepared, ExpiresAt: a.Confirmation.ExpiresAt,
 	}
 	if approved {
-		action.Status, action.DecidedBy = model.FoundryAgentActionExecuting, &s.turn.UserID
+		// An automation's step, run as its owner, a person.
+		owner, ok := s.turn.Principal.(model.AgentPerson)
+		if !ok {
+			return nil, fmt.Errorf("only a person's turn approves its own action")
+		}
+		action.Status, action.DecidedBy = model.FoundryAgentActionExecuting, &owner.UserID
 	}
 	return s.db.RecordFoundryAgentAction(ctx, s.workerID, action, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
 		return MarshalEvent(ActionCard{

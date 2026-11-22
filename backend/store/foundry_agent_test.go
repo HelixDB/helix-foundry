@@ -28,6 +28,9 @@ type agentFixture struct {
 
 const agentUser = "user-ada"
 
+// agentPerson is Ada as her rows' principal.
+var agentPerson = model.AgentPerson{UserID: agentUser}
+
 func newAgentFixture(t *testing.T, tag string) agentFixture {
 	t.Helper()
 	f := agentFixture{db: newTestStore(t), workspaceID: id26("AWS-" + tag), tag: tag}
@@ -51,13 +54,13 @@ func (f agentFixture) threadID(n int) string { return id26(fmt.Sprintf("AH-%s-%0
 func (f agentFixture) send(n, thread int) error {
 	token := fmt.Sprintf("send-%d", n)
 	t := &model.FoundryAgentTurn{
-		ID: f.turnID(n), WorkspaceID: f.workspaceID, UserID: agentUser, Kind: model.FoundryAgentTurnMessage,
+		ID: f.turnID(n), WorkspaceID: f.workspaceID, Principal: agentPerson, Kind: model.FoundryAgentTurnMessage,
 		Input: fmt.Sprintf("message %d", n), ClientToken: &token, MaxUSDMicros: 500_000,
 	}
 	var newThread *model.FoundryAgentThread
 	if thread == 0 {
 		t.ThreadID = f.threadID(n)
-		newThread = &model.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: f.workspaceID, UserID: agentUser, Title: "Load it", Runtime: model.FoundryAgentRuntimeAPI}
+		newThread = &model.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: f.workspaceID, Principal: agentPerson, Title: "Load it", Runtime: model.FoundryAgentRuntimeAPI}
 	} else {
 		t.ThreadID = f.threadID(thread)
 	}
@@ -81,10 +84,10 @@ func (f agentFixture) settle(t *testing.T, turn *model.FoundryAgentTurn) {
 // prepare records an action of turn, as its worker does.
 func (f agentFixture) prepare(turn *model.FoundryAgentTurn, n int, expires time.Time) (*model.FoundryAgentAction, error) {
 	a := &model.FoundryAgentAction{
-		ID: id26(fmt.Sprintf("AA-%s-%03d-", f.tag, n)), TurnID: turn.ID, ThreadID: turn.ThreadID, WorkspaceID: f.workspaceID, UserID: agentUser,
+		ID: id26(fmt.Sprintf("AA-%s-%03d-", f.tag, n)), TurnID: turn.ID, ThreadID: turn.ThreadID, WorkspaceID: f.workspaceID, Principal: agentPerson,
 		Operation: "create_load", Target: "ontology:ws/o", Payload: json.RawMessage(`{"version_id":"v1"}`),
-		PayloadHash: strings.Repeat(fmt.Sprint(n%10), 64), Display: json.RawMessage(`{}`), ConfirmationID: "conf", TokenSealed: []byte("sealed"),
-		KeyID: "k", Status: model.FoundryAgentActionPrepared, ExpiresAt: expires,
+		PayloadHash: strings.Repeat(fmt.Sprint(n%10), 64), Display: json.RawMessage(`{}`), Approval: model.PersonApproval{ConfirmationID: "conf", TokenSealed: []byte("sealed"), KeyID: "k"},
+		Status: model.FoundryAgentActionPrepared, ExpiresAt: expires,
 	}
 	return f.db.RecordFoundryAgentAction(context.Background(), "w1", a, 3, func(a *model.FoundryAgentAction) (json.RawMessage, error) {
 		return json.Marshal(map[string]string{"type": "action_card", "action_id": a.ID})
@@ -105,7 +108,7 @@ func TestFoundryAgentSendAndClaim(t *testing.T) {
 	// One live turn a thread.
 	assert.Equal(t, model.FoundryAgentThreadBusy, refusal(t, f.send(2, 1)))
 	// Another user's thread isn't found.
-	other := &model.FoundryAgentTurn{ID: f.turnID(9), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: "user-eve",
+	other := &model.FoundryAgentTurn{ID: f.turnID(9), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: model.AgentPerson{UserID: "user-eve"},
 		Kind: model.FoundryAgentTurnMessage, Input: "hi", MaxUSDMicros: 500_000}
 	assert.ErrorIs(t, f.db.CreateFoundryAgentTurn(ctx, other, nil, f.limits(), nil), store.ErrNotFound)
 
@@ -146,11 +149,11 @@ func TestFoundryAgentSendAndClaim(t *testing.T) {
 	require.Len(t, turns, 2)
 	assert.Equal(t, f.turnID(1), turns[0].ID, "oldest first")
 
-	threads, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
+	threads, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, nil, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, next)
 	require.Len(t, threads, 1)
-	none, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, "user-eve", nil, "", 10)
+	none, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, model.AgentPerson{UserID: "user-eve"}, nil, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, none, "a thread is private to its user")
 }
@@ -160,13 +163,13 @@ func TestFoundryAgentLimits(t *testing.T) {
 	f := newAgentFixture(t, "limits")
 	limits := f.limits()
 	limits.PerHour = 1
-	t1 := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+	t1 := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "one", MaxUSDMicros: 500_000}
-	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, t1, &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, UserID: agentUser,
+	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, t1, &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, Principal: agentPerson,
 		Title: "one", Runtime: model.FoundryAgentRuntimeAPI}, limits, nil))
 	t2 := *t1
 	t2.ID, t2.ThreadID = f.turnID(2), f.threadID(2)
-	err := f.db.CreateFoundryAgentTurn(ctx, &t2, &model.FoundryAgentThread{ID: f.threadID(2), WorkspaceID: f.workspaceID, UserID: agentUser,
+	err := f.db.CreateFoundryAgentTurn(ctx, &t2, &model.FoundryAgentThread{ID: f.threadID(2), WorkspaceID: f.workspaceID, Principal: agentPerson,
 		Title: "two", Runtime: model.FoundryAgentRuntimeAPI}, limits, nil)
 	assert.Equal(t, model.FoundryAgentPerHour, refusal(t, err))
 
@@ -191,22 +194,22 @@ func TestFoundryAgentClaimDefersAndCancels(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, second, "the workspace runs one at a time")
 
-	cancelled, err := f.db.CancelFoundryAgentTurn(ctx, f.workspaceID, agentUser, first.ID)
+	cancelled, err := f.db.CancelFoundryAgentTurn(ctx, f.workspaceID, agentPerson, first.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentTurnCancelled, cancelled.Status)
 	assert.EqualValues(t, 500_000, cancelled.Spend.USDMicros, "a cancelled run is charged its reservation")
 	assert.ErrorIs(t, f.db.RenewFoundryAgentTurnLease(ctx, first.ID, "w1", time.Minute), store.ErrNotFound)
-	_, err = f.db.CancelFoundryAgentTurn(ctx, f.workspaceID, "user-eve", f.turnID(2))
+	_, err = f.db.CancelFoundryAgentTurn(ctx, f.workspaceID, model.AgentPerson{UserID: "user-eve"}, f.turnID(2))
 	assert.ErrorIs(t, err, store.ErrNotFound)
 
 	// A deleted thread's queued turn is cancelled, not run.
-	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentUser, f.threadID(2)))
+	require.NoError(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentPerson, f.threadID(2)))
 	gone, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, f.turnID(2))
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentTurnCancelled, gone.Status)
 	_, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
 	assert.ErrorIs(t, err, store.ErrNotFound)
-	assert.ErrorIs(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentUser, f.threadID(2)), store.ErrNotFound)
+	assert.ErrorIs(t, f.db.DeleteFoundryAgentThread(ctx, f.workspaceID, agentPerson, f.threadID(2)), store.ErrNotFound)
 }
 
 func TestFoundryAgentActions(t *testing.T) {
@@ -262,7 +265,7 @@ func TestFoundryAgentActions(t *testing.T) {
 	// A send waits for the click.
 	assert.Equal(t, model.FoundryAgentThreadBusy, refusal(t, f.send(2, 1)))
 
-	next := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, UserID: agentUser,
+	next := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, Principal: agentPerson,
 		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{
 		Status: model.FoundryAgentActionSucceeded, Result: json.RawMessage(`{"load":"l1"}`)}, next, json.RawMessage(`{"type":"action_result"}`)))
@@ -285,7 +288,7 @@ func TestFoundryAgentActions(t *testing.T) {
 		time.Now().Add(time.Minute))
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionPrepared, refreshed.Status)
-	assert.Equal(t, "c2", refreshed.ConfirmationID)
+	assert.Equal(t, "c2", refreshed.Approval.(model.PersonApproval).ConfirmationID)
 	assert.JSONEq(t, string(redrawn), string(refreshed.Display), "the card as drawn again")
 	assert.Nil(t, refreshed.DecidedAt)
 	dismissed, err := f.db.DismissFoundryAgentAction(ctx, f.workspaceID, agentUser, expired.ID)
@@ -340,7 +343,7 @@ func TestFoundryAgentClickEndsThoughATurnWentLive(t *testing.T) {
 	_, err = testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros)
 VALUES (?, ?, ?, ?, 'api', 'message', 'hi', 'queued', 1)`, f.turnID(7), f.workspaceID, turn.ThreadID, agentUser)
 	require.NoError(t, err)
-	next := &model.FoundryAgentTurn{ID: f.turnID(8), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, UserID: agentUser,
+	next := &model.FoundryAgentTurn{ID: f.turnID(8), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, Principal: agentPerson,
 		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "no"},
 		next, json.RawMessage(`{"type":"action_result"}`)))
@@ -452,7 +455,7 @@ func TestFoundryAgentClickEndsBesideASend(t *testing.T) {
 	f.settle(t, turn)
 	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
 	require.NoError(t, err)
-	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, UserID: agentUser,
+	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: turn.ThreadID, Principal: agentPerson,
 		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
 	finished, swept := whileLocked(t, turn.ThreadID, func() error {
 		return f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "no"}, next,
@@ -484,7 +487,7 @@ VALUES (?, ?, ?, ?, 'api', 'message', 'message 2', 'queued', 'send-2', 1)`, f.tu
 	assert.ErrorIs(t, sent, store.ErrConflict)
 	// Another message while the turn is live is still refused as busy.
 	assert.Equal(t, model.FoundryAgentThreadBusy, refusal(t, f.send(3, 1)))
-	_, err := f.db.GetFoundryAgentTurnByClientToken(ctx, f.workspaceID, agentUser, "send-2")
+	_, err := f.db.GetFoundryAgentTurnByClientToken(ctx, f.workspaceID, agentPerson, "send-2")
 	require.NoError(t, err)
 }
 
@@ -514,10 +517,10 @@ func TestFoundryAgentReclaimCountsADeadReservationLost(t *testing.T) {
 func TestFoundryAgentClaimTakesItsRuntimeOnly(t *testing.T) {
 	ctx := context.Background()
 	f := newAgentFixture(t, "runtime")
-	turn := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+	turn := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "hi", MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID,
-		UserID: agentUser, Title: "hi", Runtime: model.FoundryAgentRuntimeClaudeCode}, f.limits(), nil))
+		Principal: agentPerson, Title: "hi", Runtime: model.FoundryAgentRuntimeClaudeCode}, f.limits(), nil))
 	none, err := f.db.ClaimFoundryAgentTurn(ctx, "w1", f.claim())
 	require.NoError(t, err)
 	assert.Nil(t, none, "the API's worker leaves a helper's turns")
@@ -610,9 +613,9 @@ func TestFoundryAgentSubscriptionTurns(t *testing.T) {
 	limits := f.limits()
 	limits.CapMicros = 1
 	token := "sub-1"
-	turn := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+	turn := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "load it", ClientToken: &token, MaxUSDMicros: 500_000}
-	thread := &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, UserID: agentUser, Title: "Load it",
+	thread := &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, Principal: agentPerson, Title: "Load it",
 		Runtime: model.FoundryAgentRuntimeClaudeCode}
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, thread, limits, nil), "a $0 turn fits any budget")
 	stored, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, turn.ID)
@@ -649,7 +652,7 @@ func TestFoundryAgentSubscriptionTurns(t *testing.T) {
 	require.NoError(t, f.db.SettleFoundryAgentTurn(ctx, claimed.ID, "w1", model.FoundryAgentTurnOutcome{Status: model.FoundryAgentTurnDone, Steps: 1}))
 	_, err = f.db.ClaimFoundryAgentAction(ctx, f.workspaceID, agentUser, a.ID, a.PayloadHash)
 	require.NoError(t, err)
-	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+	next := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnActionResult, Input: a.ID, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.FinishFoundryAgentAction(ctx, a.ID, model.FoundryAgentActionEnd{Status: model.FoundryAgentActionSucceeded,
 		Result: json.RawMessage(`{}`)}, next, json.RawMessage(`{"type":"action_result"}`)))
@@ -672,10 +675,10 @@ func TestFoundryAgentUnclaimedHelperTurnsEnd(t *testing.T) {
 	f := newAgentFixture(t, "unclaimed")
 	sendOn := func(n int, runtime model.FoundryAgentRuntime) {
 		t.Helper()
-		turn := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), UserID: agentUser,
+		turn := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), Principal: agentPerson,
 			Kind: model.FoundryAgentTurnMessage, Input: "hi", MaxUSDMicros: 500_000}
 		require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, &model.FoundryAgentThread{ID: f.threadID(n), WorkspaceID: f.workspaceID,
-			UserID: agentUser, Title: "hi", Runtime: runtime}, f.limits(), nil))
+			Principal: agentPerson, Title: "hi", Runtime: runtime}, f.limits(), nil))
 	}
 	// 1 waited long, 2 just now, 3 is Codex's, 4 the worker's; 5 ran, and
 	// its helper stopped long ago; 6 runs under a live lease.
@@ -717,7 +720,7 @@ WHERE id=?`
 		}
 	}
 	// Its thread takes a message again.
-	again := &model.FoundryAgentTurn{ID: f.turnID(7), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+	again := &model.FoundryAgentTurn{ID: f.turnID(7), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "again", MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, again, nil, f.limits(), nil))
 }
@@ -732,7 +735,7 @@ var agentQuestions = &model.FoundryAgentAsked{Questions: []agentquestion.Questio
 // answer queues Ada's answers, n, to the questions turn asked in thread.
 func (f agentFixture) answer(n, thread int, asked string, answers []agentquestion.Answer) error {
 	token := fmt.Sprintf("answer-%d", n)
-	t := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(thread), UserID: agentUser,
+	t := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(thread), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnAnswers, Input: asked, Answers: answers, ClientToken: &token, MaxUSDMicros: 500_000}
 	first, _ := json.Marshal(map[string]any{"type": "answers", "turn_id": asked})
 	return f.db.CreateFoundryAgentTurn(context.Background(), t, nil, f.limits(), first)
@@ -811,7 +814,7 @@ func TestFoundryAgentQuestionsAndAnswers(t *testing.T) {
 	limited := f.claimed(t)
 	require.NoError(t, f.db.AskFoundryAgentQuestions(ctx, limited.ID, "w1", agentQuestions, event))
 	f.settle(t, limited)
-	over := &model.FoundryAgentTurn{ID: f.turnID(11), WorkspaceID: f.workspaceID, ThreadID: f.threadID(10), UserID: agentUser,
+	over := &model.FoundryAgentTurn{ID: f.turnID(11), WorkspaceID: f.workspaceID, ThreadID: f.threadID(10), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnAnswers, Input: limited.ID, Answers: answers, ClientToken: &token, MaxUSDMicros: 500_000}
 	assert.Equal(t, model.FoundryAgentPerHour, refusal(t, f.db.CreateFoundryAgentTurn(ctx, over, nil, limits, nil)), "five messages and an answer")
 }
@@ -822,13 +825,13 @@ func TestFoundryAgentAnswersShape(t *testing.T) {
 	ctx := context.Background()
 	f := newAgentFixture(t, "ashape")
 	answers := []agentquestion.Answer{}
-	bad := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), UserID: agentUser,
+	bad := &model.FoundryAgentTurn{ID: f.turnID(1), WorkspaceID: f.workspaceID, ThreadID: f.threadID(1), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "hi", Answers: answers, MaxUSDMicros: 500_000}
 	assert.Error(t, f.db.CreateFoundryAgentTurn(ctx, bad, nil, f.limits(), nil), "a message with answers")
 	bad.Kind, bad.Answers = model.FoundryAgentTurnAnswers, nil
 	assert.Error(t, f.db.CreateFoundryAgentTurn(ctx, bad, nil, f.limits(), nil), "answers without any")
 	bad.Answers = answers
-	thread := &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, UserID: agentUser, Title: "x", Runtime: model.FoundryAgentRuntimeAPI}
+	thread := &model.FoundryAgentThread{ID: f.threadID(1), WorkspaceID: f.workspaceID, Principal: agentPerson, Title: "x", Runtime: model.FoundryAgentRuntimeAPI}
 	assert.Error(t, f.db.CreateFoundryAgentTurn(ctx, bad, thread, f.limits(), nil), "a new thread's answers")
 	_, err := testDB.Exec(`INSERT INTO foundry_agent_turns (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros, answers)
 VALUES (?, ?, ?, ?, 'api', 'message', 'hi', 'done', 1, '[]')`, f.turnID(2), f.workspaceID, f.threadID(2), agentUser)
@@ -847,16 +850,16 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 	invoices := access.TableTarget("conn-crm", "invoices")
 	require.NoError(t, f.send(1, 0))
 	token := "send-2"
-	granted := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(2), UserID: agentUser,
+	granted := &model.FoundryAgentTurn{ID: f.turnID(2), WorkspaceID: f.workspaceID, ThreadID: f.threadID(2), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "message 2", ClientToken: &token, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, granted, &model.FoundryAgentThread{ID: granted.ThreadID, WorkspaceID: f.workspaceID,
-		UserID: agentUser, Title: "Invoices", Runtime: model.FoundryAgentRuntimeAPI,
+		Principal: agentPerson, Title: "Invoices", Runtime: model.FoundryAgentRuntimeAPI,
 		Granted: &model.FoundryAgentThreadGrants{Targets: []access.Target{stripe, invoices}}}, f.limits(), nil))
 	token3 := "send-3"
-	empty := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: f.threadID(3), UserID: agentUser,
+	empty := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: f.threadID(3), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "message 3", ClientToken: &token3, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, empty, &model.FoundryAgentThread{ID: empty.ThreadID, WorkspaceID: f.workspaceID,
-		UserID: agentUser, Title: "Nothing", Runtime: model.FoundryAgentRuntimeAPI, Granted: &model.FoundryAgentThreadGrants{}}, f.limits(), nil))
+		Principal: agentPerson, Title: "Nothing", Runtime: model.FoundryAgentRuntimeAPI, Granted: &model.FoundryAgentThreadGrants{}}, f.limits(), nil))
 
 	whole, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
 	require.NoError(t, err)
@@ -870,15 +873,15 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 	require.NotNil(t, none.Granted, "holding nothing is still a grantee's")
 	assert.Empty(t, none.Granted.Targets)
 
-	all, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
+	all, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, nil, "", 10)
 	require.NoError(t, err)
 	assert.Len(t, all, 3)
-	page, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, keepAll, "", 1)
+	page, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, keepAll, "", 1)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	assert.Equal(t, f.threadID(3), page[0].ID, "newest first")
 	require.NotEmpty(t, next)
-	rest, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, keepAll, next, 1)
+	rest, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, keepAll, next, 1)
 	require.NoError(t, err)
 	require.Len(t, rest, 1)
 	assert.Equal(t, f.threadID(2), rest[0].ID)
@@ -902,7 +905,7 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 	whole, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
 	require.NoError(t, err)
 	assert.Nil(t, whole.Granted, "a whole view's thread stays one")
-	only, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, keepAll, "", 10)
+	only, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, keepAll, "", 10)
 	require.NoError(t, err)
 	require.Len(t, only, 1)
 	assert.Equal(t, f.threadID(3), only[0].ID)
@@ -919,22 +922,22 @@ func TestFoundryAgentThreadsKeepFillsAPage(t *testing.T) {
 	f := newAgentFixture(t, "keep")
 	for n := 1; n <= 23; n++ {
 		token := fmt.Sprintf("keep-%d", n)
-		turn := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), UserID: agentUser,
+		turn := &model.FoundryAgentTurn{ID: f.turnID(n), WorkspaceID: f.workspaceID, ThreadID: f.threadID(n), Principal: agentPerson,
 			Kind: model.FoundryAgentTurnMessage, Input: "hi", ClientToken: &token, MaxUSDMicros: 500_000}
 		require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, turn, &model.FoundryAgentThread{ID: turn.ThreadID, WorkspaceID: f.workspaceID,
-			UserID: agentUser, Title: "hi", Runtime: model.FoundryAgentRuntimeAPI, Granted: &model.FoundryAgentThreadGrants{}}, f.limits(), nil))
+			Principal: agentPerson, Title: "hi", Runtime: model.FoundryAgentRuntimeAPI, Granted: &model.FoundryAgentThreadGrants{}}, f.limits(), nil))
 		time.Sleep(2 * time.Millisecond)
 	}
 	// Keep threads 1, 2 and 3: the twenty newest are read and left out first.
 	old := func(t *model.FoundryAgentThread) bool {
 		return t.ID == f.threadID(1) || t.ID == f.threadID(2) || t.ID == f.threadID(3)
 	}
-	page, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, old, "", 2)
+	page, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, old, "", 2)
 	require.NoError(t, err)
 	require.Len(t, page, 2)
 	assert.Equal(t, []string{f.threadID(3), f.threadID(2)}, []string{page[0].ID, page[1].ID})
 	require.NotEmpty(t, next)
-	rest, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, old, next, 2)
+	rest, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, old, next, 2)
 	require.NoError(t, err)
 	require.Len(t, rest, 1)
 	assert.Equal(t, f.threadID(1), rest[0].ID)
@@ -943,11 +946,11 @@ func TestFoundryAgentThreadsKeepFillsAPage(t *testing.T) {
 	// Keeping none, a page of 1 reads two rows at a time: ten reads (20 rows)
 	// end it with nothing and a token, which reads the last 3 and ends.
 	nothing := func(*model.FoundryAgentThread) bool { return false }
-	none, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nothing, "", 1)
+	none, next, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, nothing, "", 1)
 	require.NoError(t, err)
 	assert.Empty(t, none)
 	require.NotEmpty(t, next, "past ten reads")
-	none, next, err = f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nothing, next, 1)
+	none, next, err = f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, nothing, next, 1)
 	require.NoError(t, err)
 	assert.Empty(t, none)
 	assert.Empty(t, next, "every row read")

@@ -29,7 +29,7 @@ import (
 // clocks never disagree about a lease.
 
 const foundrySlackInstallColumns = `id, workspace_id, team_id, enterprise_id, team_name, app_id, bot_user_id, scopes, installed_by_user_id,
-       installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at, bot_id, installer_admin, events_limited_at`
+       installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at, bot_id, installer_admin, events_limited_at, bot_credential_id`
 
 const foundrySlackThreadColumns = `s.id, s.install_id, s.channel_id, s.thread_ts, s.slack_user_id, s.agent_thread_id, s.created_at, s.last_at,
        s.bot_at, s.others_at`
@@ -691,8 +691,8 @@ func (s *mysqlDB) purgeFoundrySlackThreadsOf(ctx context.Context, agentThreadID 
 }
 
 // purgeFoundrySlackThread purges the Founder thread's Slack-born text and
-// deletes the mapping (PurgeFoundrySlackThreads); the caller holds the
-// Founder thread's lock and the mapping's.
+// deletes the mapping, with who spoke in it (PurgeFoundrySlackThreads); the
+// caller holds the Founder thread's lock and the mapping's.
 func (s *mysqlDB) purgeFoundrySlackThread(ctx context.Context, mappingID, agentThreadID string) error {
 	for _, stmt := range []string{
 		`UPDATE foundry_agent_turns
@@ -710,6 +710,9 @@ WHERE thread_id=? AND status IN ('queued', 'running')`,
 		if _, err := s.db.ExecContext(ctx, stmt, agentThreadID); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_slack_thread_people WHERE thread_id=?`, mappingID); err != nil {
+		return err
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_slack_threads WHERE id=?`, mappingID)
 	return err
@@ -1025,15 +1028,19 @@ func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 	var i model.SlackInstall
 	var scopes string
 	var revoked, uninstalled, limited sql.NullTime
+	var bot sql.NullString
 	if err := scanner.Scan(&i.ID, &i.WorkspaceID, &i.TeamID, &i.EnterpriseID, &i.TeamName, &i.AppID, &i.BotUserID, &scopes, &i.InstalledByUserID,
-		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled, &i.BotID, &i.InstallerAdmin, &limited); err != nil {
+		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled, &i.BotID, &i.InstallerAdmin, &limited, &bot); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	// L1 installs act per person; bot mode (L2) is a column of its own.
+	// The mode is derived: a bot credential is bot mode (L2), none per person.
 	i.Scopes, i.Mode = strings.Split(scopes, ","), model.SlackPerPerson{}
+	if bot.Valid {
+		i.Mode = model.SlackSharedBot{CredentialID: bot.String}
+	}
 	if revoked.Valid {
 		i.RevokedAt = &revoked.Time
 	}
