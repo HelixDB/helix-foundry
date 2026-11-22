@@ -97,11 +97,16 @@ const classNone = "none"
 //
 // A request refused for room (3 or 5) is 429 rate_limited for a click, and 503 for an event, which
 // Slack sends again. On Slack's last retry (slackLastRetry), an event of ClassReply or ClassFeed
-// that the room refuses, or that the backend fails, is lost to Slack: it is answered 200 with
-// X-Slack-No-Retry, and its team's, channel's and minute's gap is held (feedGaps) for the backend
-// to record as a gap of the Slack data connector, whose backfill reads it again (gap_recorded), or
-// counted gap_lost past the cap. A ClassBot event is never answered so: the bot's events have no
-// backfill.
+// that its class's pod-wide room refuses, or that the backend fails, is lost to Slack: it is
+// answered 200 with X-Slack-No-Retry, and its team's, channel's and minute's gap is held (feedGaps)
+// for the backend to record as a gap of the Slack data connector, whose backfill reads it again
+// (gap_recorded), or counted gap_lost past the cap, which hosted alarms on; one whose body names no
+// team, or a channel shared with another organisation, which no feed reads, is gap_unattributed.
+// No one has verified such a request was Slack's, so an event its own address's room refuses (its
+// bucket or places, in 3 or 5), or that the read room refuses before its body is read, holds no
+// gap and raises no alarm, which anyone could otherwise do at will: it is refused as any other
+// is, and counted in helix_foundry_slack_feed_gaps_total as unverified. A ClassBot event is never
+// answered so: the bot's events have no backfill.
 //
 // Every refusal but a gap's 200 is the door's JSON error body, which Slack ignores. Each request
 // logs one line, its route, class, status and outcome, never its body, headers or address, but a
@@ -150,8 +155,8 @@ func (s *slackDoor) route(route slackRoute) http.Handler {
 type slackAnswer struct {
 	backend *foundryv1.ReceiveSlackRequestResponse
 	fail    *failure
-	// gap is gap_recorded or gap_lost for an event answered 200 with X-Slack-No-Retry on Slack's
-	// last retry; "" otherwise.
+	// gap is gap_recorded, gap_lost or gap_unattributed for an event answered 200 with
+	// X-Slack-No-Retry on Slack's last retry; "" otherwise.
 	gap   string
 	class string
 	// cause is the backend's failure behind a gap, logged.
@@ -171,7 +176,7 @@ func (s *slackDoor) serveHTTP(w http.ResponseWriter, r *http.Request, route slac
 	quiet := false
 	switch {
 	case answer.gap != "":
-		// A gap lost is always logged, which hosted alarms on; one recorded for room isn't, as a
+		// A gap lost is always logged, which hosted alarms on; any other for room isn't, as a
 		// flood's refusals aren't.
 		outcome, httpStatus, quiet = answer.gap, http.StatusOK, answer.cause == nil && answer.gap != "gap_lost"
 		w.Header().Set("X-Slack-No-Retry", "1")
@@ -254,21 +259,27 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 	name, lost := classNone, false
 	var body []byte
 	// busy refuses a request the room can't take: a click 429, an event 503, which Slack sends
-	// again, but a lost one 200 with its gap held.
-	busy := func(after time.Duration, message string) slackAnswer {
+	// again, but a lost one 200 with its gap held when its class's pod-wide room refused it
+	// (held). A lost one its own address's room refused, or an event on Slack's last retry
+	// refused before its body is read, is refused all the same, and counted unverified.
+	busy := func(after time.Duration, message string, held bool) slackAnswer {
 		answer := slackAnswer{fail: limited(after, message), class: name}
-		if route.route == foundryv1.SlackRoute_SLACK_ROUTE_EVENTS {
+		events := route.route == foundryv1.SlackRoute_SLACK_ROUTE_EVENTS
+		if events {
 			answer.fail.status = http.StatusServiceUnavailable
 		}
-		if lost {
+		switch {
+		case lost && held:
 			answer.gap = s.holdGap(body, now)
+		case lost || body == nil && events && retry >= slackLastRetry:
+			feedGapsTotal.WithLabelValues("unverified").Inc()
 		}
 		return answer
 	}
 
 	leave, ok := s.read.addressPlace(address)
 	if !ok {
-		return busy(time.Second, "this address has too many Slack requests in flight; send again after Retry-After")
+		return busy(time.Second, "this address has too many Slack requests in flight; send again after Retry-After", false)
 	}
 	weight := r.ContentLength
 	if weight < 0 {
@@ -276,7 +287,7 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 	}
 	if !s.read.bytes.TryAcquire(weight) {
 		leave()
-		return busy(time.Second, "Foundry is reading too many Slack requests at once; send again after Retry-After")
+		return busy(time.Second, "Foundry is reading too many Slack requests at once; send again after Retry-After", false)
 	}
 	body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, route.maxBody))
 	s.read.bytes.Release(weight)
@@ -301,16 +312,16 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 	name, lost = class.String(), retry >= slackLastRetry && class != slack.ClassBot
 	room := s.classes[class]
 	if wait := room.address(address, now); wait > 0 {
-		return busy(wait, "this address sends too many Slack requests; send again after Retry-After")
+		return busy(wait, "this address sends too many Slack requests; send again after Retry-After", false)
 	}
 	leave, ok = room.addressPlace(address)
 	if !ok {
-		return busy(time.Second, "this address has too many Slack requests in flight; send again after Retry-After")
+		return busy(time.Second, "this address has too many Slack requests in flight; send again after Retry-After", false)
 	}
 	defer leave()
 	release, ok := room.enter(int64(len(body)), now)
 	if !ok {
-		return busy(time.Second, "Foundry is taking too many Slack requests at once; send again after Retry-After")
+		return busy(time.Second, "Foundry is taking too many Slack requests at once; send again after Retry-After", true)
 	}
 	defer release()
 

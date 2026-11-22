@@ -48,12 +48,14 @@ var slackRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 }, []string{"route", "class", "outcome"})
 
 // feedGapsTotal counts the gaps of Slack events lost on Slack's last retry, by outcome: held
-// until the next flush, flushed to the backend, retried (held again after a flush failed), or lost
-// (no team to name, the pod's gaps full, or refused by the backend for good).
+// until the next flush, flushed to the backend, retried (held again after a flush failed), lost
+// (the pod's gaps full, or refused by the backend for good), unattributed (no team to name, or a
+// channel no feed reads) or unverified (refused for its own address's room or before its body was
+// read: no gap is held for what anyone could send).
 var feedGapsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_slack_feed_gaps_total",
 	Help: "Minutes of channels whose Slack events the door answered on Slack's last retry without the backend taking them, by " +
-		"outcome: held, flushed, retried or lost.",
+		"outcome: held, flushed, retried, lost, unattributed or unverified.",
 }, []string{"outcome"})
 
 // relayRequestsTotal counts the relay's answers to linked installs by route (token, claim, slack,

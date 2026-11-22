@@ -132,11 +132,16 @@ func (g *feedGaps) take() []feedGap {
 }
 
 // holdGap holds the gap of an event's body that Slack is about to drop, taken at now. It returns
-// the request's outcome: gap_recorded once held, or gap_lost when the body names no team or the
-// gaps are full.
+// the request's outcome: gap_recorded once held, gap_lost when the gaps are full, or
+// gap_unattributed when the body names no team, or a channel shared with another organisation,
+// which no feed reads: an unverified body may name anything, so it raises no alarm.
 func (s *slackDoor) holdGap(body []byte, now time.Time) string {
 	gap, ok := feedGapOf(body, now)
-	if !ok || s.gaps.add(gap) > 0 {
+	switch {
+	case !ok:
+		feedGapsTotal.WithLabelValues("unattributed").Inc()
+		return "gap_unattributed"
+	case s.gaps.add(gap) > 0:
 		feedGapsTotal.WithLabelValues("lost").Inc()
 		return "gap_lost"
 	}

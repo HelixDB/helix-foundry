@@ -260,29 +260,65 @@ func TestSlackLastRetry(t *testing.T) {
 		assert.Empty(t, d.h.slack.gaps.take())
 	})
 
-	t.Run("counts a gap lost when it names no team, or the pod holds its most", func(t *testing.T) {
+	t.Run("counts a gap lost when the pod holds its most, which it logs", func(t *testing.T) {
 		d := newDoor(t, full)
 		spend(d)
 		var logs bytes.Buffer
 		d.h.slack.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 		lost := slackRequestsTotal.WithLabelValues("events", "feed", "gap_lost")
 		before := testutil.ToFloat64(lost)
-		requireGap(t, d.do(retried(eventsPath, strings.Replace(feedBody, `"T1"`, `"t-1"`, 1), slackLastRetry)))
 		for i := range maxFeedGaps {
 			require.Zero(t, d.h.slack.gaps.add(feedGap{team: "T1", channel: "C1", minute: int64(i) * 60}))
 		}
 		requireGap(t, d.do(retried(eventsPath, feedBody, slackLastRetry)))
-		assert.Equal(t, before+2, testutil.ToFloat64(lost))
+		assert.Equal(t, before+1, testutil.ToFloat64(lost))
 		assert.Len(t, d.h.slack.gaps.take(), maxFeedGaps)
-		// Each is logged, though refused for room, which hosted alarms on.
-		lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
-		require.Len(t, lines, 2)
-		for _, line := range lines {
-			assert.Contains(t, line, `"level":"WARN"`)
-			assert.Contains(t, line, `"msg":"foundry slack request"`)
-			assert.Contains(t, line, `"outcome":"gap_lost"`)
-		}
+		// Logged, though refused for room, which hosted alarms on.
+		line := strings.TrimSpace(logs.String())
+		assert.Contains(t, line, `"level":"WARN"`)
+		assert.Contains(t, line, `"msg":"foundry slack request"`)
+		assert.Contains(t, line, `"outcome":"gap_lost"`)
 	})
+
+	// A body anyone may send names what it likes: one naming no team holds no
+	// gap, and raises no alarm.
+	t.Run("counts quietly a gap that names no team", func(t *testing.T) {
+		d := newDoor(t, full)
+		spend(d)
+		var logs bytes.Buffer
+		d.h.slack.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+		unattributed := feedGapsTotal.WithLabelValues("unattributed")
+		before := testutil.ToFloat64(unattributed)
+		requireGap(t, d.do(retried(eventsPath, strings.Replace(feedBody, `"T1"`, `"t-1"`, 1), slackLastRetry)))
+		assert.Equal(t, before+1, testutil.ToFloat64(unattributed))
+		assert.Empty(t, d.h.slack.gaps.take())
+		assert.Empty(t, logs.String())
+	})
+
+	// Its own address's room, or the read room before its body is read,
+	// refusing an event holds no gap: no one verified it was Slack's, and
+	// anyone could send it to mint gaps. It is refused, and counted.
+	for name, change := range map[string]func(*config.EventsConfig){
+		"its address's bucket": func(c *config.EventsConfig) {
+			c.Endpoint.SlackFeed.AddressRequestsPerSecond, c.Endpoint.SlackFeed.AddressBurstRequests = 1, 1
+		},
+		"the read room": func(c *config.EventsConfig) { c.Endpoint.Slack.MaxBytesInFlight = 1 },
+	} {
+		t.Run("holds no gap of an event "+name+" refuses", func(t *testing.T) {
+			d := newDoor(t, change)
+			var logs bytes.Buffer
+			d.h.slack.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			if name == "its address's bucket" {
+				require.Equal(t, http.StatusOK, d.do(signed(eventsPath, feedBody)).Code)
+			}
+			unverified := feedGapsTotal.WithLabelValues("unverified")
+			before := testutil.ToFloat64(unverified)
+			requireRefused(t, d.do(retried(eventsPath, feedBody, slackLastRetry)), http.StatusServiceUnavailable, codeRateLimited)
+			assert.Equal(t, before+1, testutil.ToFloat64(unverified))
+			assert.Empty(t, d.h.slack.gaps.take())
+			assert.NotContains(t, logs.String(), "gap_lost")
+		})
+	}
 }
 
 // A gap is read from the body as the backend reads its team, unverified.
