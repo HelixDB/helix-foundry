@@ -226,7 +226,7 @@
     column-gap: var(--hf-space-8);
   }
   .hf-gate-pitch {
-    padding: 0 0 0 var(--hf-space-8);
+    padding: 0 0 0 var(--hf-space-5);
     border-top: 0;
     border-left: 1px solid var(--hf-border);
   }

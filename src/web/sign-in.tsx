@@ -181,8 +181,8 @@ export function SignInPage() {
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
   // Someone who came here cold sees what Foundry is: the app sends a
-  // signed-out user with return_to, a failed sign-in comes back with ?error=,
-  // and a local build has no sign-in.
+  // signed-out user with return_to (but from `/`, and after signing out), a
+  // failed sign-in comes back with ?error=, and a local build has no sign-in.
   const cold = !LOCAL && !returnTo && !code;
   const start = async (id: Provider["id"]) => {
     setPending(id);
