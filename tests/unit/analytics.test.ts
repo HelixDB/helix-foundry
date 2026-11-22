@@ -127,10 +127,6 @@ describe("sign-in", () => {
   it("carries the first touch on the sign-up funnel's events", async () => {
     const a = await load();
     const ft = await import("@/web/first-touch");
-    vi.stubGlobal("location", {
-      origin: "https://foundry.helix-db.com",
-      pathname: "/login",
-    });
     ft.noteFirstTouch({
       search: "?utm_source=www&utm_medium=hero&utm_campaign=foundry",
       pathname: "/login",
