@@ -203,3 +203,24 @@ func TestSetFoundrySlackAccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, r.requests)
 }
+
+// A standalone install keeps those its owner allows as the owner, read-only:
+// the owner's own Slack account is their full link only, whichever came
+// first, and none while they have none.
+func TestLocalMyLinkIsTheOwnersOwn(t *testing.T) {
+	f, _ := newLocalSlackFixture(t)
+	install := f.db.install(t, f.keys, model.SlackPerPerson{})
+	bob := &model.SlackLink{InstallID: install.ID, SlackUserID: "U0BOB0002", UserID: "user-1", Access: model.SlackReadAccess{}}
+	ada := &model.SlackLink{InstallID: install.ID, SlackUserID: slackAda, UserID: "user-1", Access: model.SlackFullAccess{}}
+	mine := func() *foundryv1.FoundrySlackLink {
+		t.Helper()
+		got, err := f.s.GetFoundrySlack(as("user-1"), &foundryv1.GetFoundrySlackRequest{WorkspaceId: slackWS})
+		require.NoError(t, err)
+		return got.GetSlack().GetMyLink()
+	}
+	f.db.links = []*model.SlackLink{bob}
+	assert.Nil(t, mine(), "Bob is allowed, as the owner, but isn't the owner")
+	f.db.links = []*model.SlackLink{bob, ada}
+	require.NotNil(t, mine())
+	assert.Equal(t, slackAda, mine().GetSlackUserId())
+}

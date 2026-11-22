@@ -402,7 +402,9 @@ func (s *Service) slackResponse(ctx context.Context, workspaceID, userID string)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read the Slack links: %v", err)
 	}
-	if i := slices.IndexFunc(links, func(l *model.SlackLink) bool { return l.UserID == userID }); i >= 0 {
+	// A standalone install keeps those its owner allows as the owner too,
+	// read-only: none of them is the owner's own Slack account.
+	if i := slices.IndexFunc(links, func(l *model.SlackLink) bool { return l.UserID == userID && l.Access != model.SlackReadAccess{} }); i >= 0 {
 		out.MyLink = s.slackLinkToProto(ctx, links[i])
 	}
 	return &foundryv1.FoundrySlackResponse{Slack: out}, nil
