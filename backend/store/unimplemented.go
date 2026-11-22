@@ -2035,6 +2035,11 @@ func (u Unimplemented) CommitFoundrySlackFold(context.Context, model.SlackFold) 
 	return nil
 }
 
+func (u Unimplemented) ForgetFoundrySlackObjects(context.Context, string, []string) error {
+	u.unimplemented("ForgetFoundrySlackObjects")
+	return nil
+}
+
 func (u Unimplemented) MarkFoundrySlackDaysDocumented(context.Context, string, []model.SlackDayKey) error {
 	u.unimplemented("MarkFoundrySlackDaysDocumented")
 	return nil

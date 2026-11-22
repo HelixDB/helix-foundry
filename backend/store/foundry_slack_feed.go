@@ -708,11 +708,17 @@ FROM foundry_slack_feed WHERE feed_id=? AND seq > ? AND seq <= ? ORDER BY seq`, 
 // otherwise: another fold won, or the feed is deleting): folded_seq moves
 // to To, the fold's days are written at updated_seq To, its dropped days'
 // index rows deleted, and their objects and the ones it replaced recorded
-// for the sweep (connector_replaced_snapshots). A fold that loses has its
-// own days' objects recorded instead, so they go too.
+// for the sweep (connector_replaced_snapshots). A day of a channel the feed
+// no longer covers (one a purge took while the fold ran) isn't written: its
+// object is recorded as replaced. A fold that loses has its own days'
+// objects recorded instead, so they go too. A fold of no rows (To = From)
+// only drops days, those that left the window of a feed gone quiet.
 func (s *mysqlDB) CommitFoundrySlackFold(ctx context.Context, fold model.SlackFold) error {
-	if fold.FeedID == "" || fold.From < 0 || fold.To <= fold.From {
+	switch {
+	case fold.FeedID == "" || fold.From < 0 || fold.To < fold.From:
 		return fmt.Errorf("a Slack fold names its feed and a span of rows")
+	case fold.To == fold.From && (len(fold.Days) > 0 || len(fold.Dropped) == 0):
+		return fmt.Errorf("a Slack fold of no rows only drops days")
 	}
 	seen := map[model.SlackDayKey]bool{}
 	for _, d := range fold.Days {
@@ -731,19 +737,34 @@ func (s *mysqlDB) CommitFoundrySlackFold(ctx context.Context, fold model.SlackFo
 	}
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		switch err := execOrNotFound(ctx, tx.db, `UPDATE foundry_slack_feeds SET folded_seq=?
-WHERE id=? AND folded_seq=? AND deleting_at IS NULL AND last_seq >= ?`, fold.To, fold.FeedID, fold.From, fold.To); {
-		case errors.Is(err, ErrNotFound):
+		feed, err := tx.lockLiveFoundrySlackFeed(ctx, fold.FeedID)
+		switch {
+		case errors.Is(err, ErrNotFound) || err == nil && (feed.FoldedSeq != fold.From || feed.LastSeq < fold.To):
 			return ErrConflict
 		case err != nil:
 			return err
 		}
-		var workspaceID, connectorID string
-		if err := tx.db.QueryRowContext(ctx, `SELECT workspace_id, connector_id FROM foundry_slack_feeds WHERE id=?`, fold.FeedID).
-			Scan(&workspaceID, &connectorID); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_slack_feeds SET folded_seq=? WHERE id=?`, fold.To, fold.FeedID); err != nil {
 			return err
 		}
-		for chunk := range slices.Chunk(fold.Days, foundrySlackRowsPerInsert) {
+		workspaceID, connectorID := feed.WorkspaceID, feed.ConnectorID
+		rows, err := tx.db.QueryContext(ctx, `SELECT channel_id FROM foundry_slack_feed_channels WHERE feed_id=?`, fold.FeedID)
+		if err != nil {
+			return err
+		}
+		covered, err := scanStrings(rows)
+		if err != nil {
+			return err
+		}
+		replaced := fold.Replaced
+		days := slices.DeleteFunc(slices.Clone(fold.Days), func(d model.SlackFeedDay) bool {
+			if slices.Contains(covered, d.ChannelID) {
+				return false
+			}
+			replaced = append(replaced, d.ObjectKey)
+			return true
+		})
+		for chunk := range slices.Chunk(days, foundrySlackRowsPerInsert) {
 			args := make([]any, 0, 9*len(chunk))
 			for _, d := range chunk {
 				args = append(args, fold.FeedID, d.ChannelID, d.Day.Format(time.DateOnly), d.ObjectKey, d.Digest, d.Messages, d.Bytes, string(d.State),
@@ -756,7 +777,6 @@ ON DUPLICATE KEY UPDATE object_key=VALUES(object_key), digest=VALUES(digest), me
 				return err
 			}
 		}
-		replaced := fold.Replaced
 		for _, d := range fold.Dropped {
 			var key string
 			err := tx.db.QueryRowContext(ctx, `SELECT object_key FROM foundry_slack_feed_days WHERE feed_id=? AND channel_id=? AND day=? FOR UPDATE`,
@@ -799,6 +819,33 @@ ON DUPLICATE KEY UPDATE object_key=VALUES(object_key), digest=VALUES(digest), me
 		}
 	}
 	return ErrConflict
+}
+
+// ForgetFoundrySlackObjects records objects a fold wrote but never
+// committed (a write or its commit failed) for the sweep
+// (connector_replaced_snapshots), so their messages go. A feed the prune
+// finished deleting records none.
+func (s *mysqlDB) ForgetFoundrySlackObjects(ctx context.Context, feedID string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	var workspaceID, connectorID string
+	switch err := s.db.QueryRowContext(ctx, `SELECT workspace_id, connector_id FROM foundry_slack_feeds WHERE id=?`, feedID).
+		Scan(&workspaceID, &connectorID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	}
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		for _, key := range keys {
+			if err := recordReplacedSnapshot(ctx, tx.db, workspaceID, connectorID, key); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // FoundrySlackDaysAfter returns a feed's index rows a fold wrote after seq,

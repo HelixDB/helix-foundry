@@ -786,6 +786,78 @@ func TestSlackMirrorReads(t *testing.T) {
 	})
 }
 
+func TestSlackFoldWindowAndCoverage(t *testing.T) {
+	ctx := context.Background()
+	// A feed gone quiet still drops the days that left the window: their
+	// index rows, and their objects for the sweep.
+	t.Run("a quiet feed drops the days that left the window", func(t *testing.T) {
+		a := newSlackAppFeed(t)
+		a.fold(t)
+		old := a.feed.day("C1", "2026-10-28").ObjectKey
+		commits := a.feed.commits
+		a.fold(t)
+		if a.feed.commits != commits {
+			t.Fatal("a quiet feed with nothing to drop committed a fold")
+		}
+		slackNow = func() time.Time { return slackTestNow.AddDate(0, 0, 2) }
+		a.fold(t)
+		if a.feed.day("C1", "2026-10-28").ObjectKey != "" || !slices.Contains(a.feed.replaced, old) || a.feed.day("C2", "2026-10-29").ObjectKey == "" {
+			t.Fatalf("days %v, replaced %v", a.feed.days, a.feed.replaced)
+		}
+	})
+	// A row of a channel the feed doesn't cover writes nothing; a joined row
+	// covers its channel for the rows after it, and a left one uncovers it.
+	t.Run("skips the rows of channels the feed doesn't cover", func(t *testing.T) {
+		a := newSlackAppFeed(t)
+		a.event(model.SlackRowMessage, "C9", fmt.Sprintf(`{"user":"U1","text":"Before","ts":%q}`, slackTS("2026-10-28T10:00:00Z")))
+		a.feed.append(model.SlackRowJoined, model.SlackFeedFromEvent, "C8", slackDayOf("2026-10-28"),
+			fmt.Sprintf(`{"joined_at":%q}`, slackTestNow.Add(-time.Hour).Format(time.RFC3339)))
+		a.event(model.SlackRowMessage, "C8", fmt.Sprintf(`{"user":"U1","text":"After","ts":%q}`, slackTS("2026-10-28T11:00:00Z")))
+		a.feed.append(model.SlackRowLeft, model.SlackFeedFromEvent, "C2", slackDayOf("2026-10-29"), `{}`)
+		a.event(model.SlackRowMessage, "C2", fmt.Sprintf(`{"user":"U1","text":"Gone","ts":%q}`, slackTS("2026-10-29T15:00:00Z")))
+		if _, err := a.app.Fold(ctx, "conn1", 3, *a.src.SlackApp); err != nil {
+			t.Fatal(err)
+		}
+		if a.feed.day("C9", "2026-10-28").ObjectKey != "" || a.feed.day("C8", "2026-10-28").ObjectKey == "" ||
+			a.feed.day("C2", "2026-10-29").ObjectKey != "" || a.feed.day("C1", "2026-10-28").ObjectKey == "" {
+			t.Fatalf("days %v", a.feed.days)
+		}
+		if len(a.objects.objects) != len(a.feed.days) || len(a.feed.replaced) != 0 {
+			t.Fatalf("wrote %d objects for %d days, replaced %v: a day of a channel it doesn't cover was written", len(a.objects.objects),
+				len(a.feed.days), a.feed.replaced)
+		}
+	})
+	// A purge that commits while a fold runs takes the channel's days for
+	// good: the fold's commit writes none of them.
+	t.Run("a channel purged while the fold runs stays purged", func(t *testing.T) {
+		a := newSlackAppFeed(t)
+		a.feed.before = func() {
+			if err := a.feed.PurgeFoundrySlackChannel(ctx, "feed1", "C1"); err != nil {
+				t.Error(err)
+			}
+		}
+		if _, err := a.app.Fold(ctx, "conn1", 3, *a.src.SlackApp); err != nil {
+			t.Fatal(err)
+		}
+		if a.feed.day("C1", "2026-10-28").ObjectKey != "" || len(a.feed.replaced) != 1 || a.feed.day("C2", "2026-10-29").ObjectKey == "" {
+			t.Fatalf("days %v, replaced %v", a.feed.days, a.feed.replaced)
+		}
+	})
+}
+
+// secondPutFails is a bucket whose second Put fails.
+type secondPutFails struct {
+	*eventObjects
+	puts int
+}
+
+func (b *secondPutFails) Put(ctx context.Context, key string, body io.ReadSeeker) error {
+	if b.puts++; b.puts == 2 {
+		return errors.New("bucket down")
+	}
+	return b.eventObjects.Put(ctx, key, body)
+}
+
 func TestSlackFoldFailures(t *testing.T) {
 	ctx := context.Background()
 	down := errors.New("bucket down")
@@ -809,6 +881,31 @@ func TestSlackFoldFailures(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a write that fails has the days written before it recorded for the sweep", func(t *testing.T) {
+		a := newSlackAppFeed(t)
+		a.app.Objects = &secondPutFails{eventObjects: a.objects}
+		if _, err := a.app.Fold(ctx, "conn1", 3, *a.src.SlackApp); err == nil || !strings.Contains(err.Error(), "bucket down") {
+			t.Fatalf("Fold error = %v", err)
+		}
+		if len(a.feed.forgotten) != 1 || len(a.objects.objects) != 1 || a.objects.objects[a.feed.forgotten[0]] == nil || a.feed.commits != 0 {
+			t.Fatalf("forgotten %v of %d objects, %d commits", a.feed.forgotten, len(a.objects.objects), a.feed.commits)
+		}
+	})
+	t.Run("a commit that fails, the feed unmoved, has its days recorded for the sweep", func(t *testing.T) {
+		a := newSlackAppFeed(t)
+		a.feed.failCommit = errors.New("deadlock")
+		if _, err := a.app.Fold(ctx, "conn1", 3, *a.src.SlackApp); err == nil {
+			t.Fatal("Fold succeeded")
+		}
+		if len(a.feed.forgotten) != 2 || len(a.objects.objects) != 2 {
+			t.Fatalf("forgotten %v of %d objects", a.feed.forgotten, len(a.objects.objects))
+		}
+		for _, key := range a.feed.forgotten {
+			if a.objects.objects[key] == nil {
+				t.Fatalf("forgot %s, which the fold didn't write", key)
+			}
+		}
+	})
 	t.Run("a day cut short", func(t *testing.T) {
 		a := newSlackAppFeed(t)
 		a.fold(t)
@@ -829,6 +926,9 @@ func TestSlackFoldFailures(t *testing.T) {
 		}
 		if _, err := a.app.Fold(ctx, "conn1", 3, *a.src.SlackApp); !errors.Is(err, storeDown) {
 			t.Fatalf("Fold error = %v", err)
+		}
+		if len(a.feed.forgotten) != 0 {
+			t.Fatalf("a fold that may have committed forgot %v", a.feed.forgotten)
 		}
 	})
 	t.Run("an install that fails, or an index that can't be read", func(t *testing.T) {

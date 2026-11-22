@@ -238,8 +238,15 @@ func slackWindow(historyDays int) time.Time {
 // commits the fold under a compare-and-set on the feed's folded_seq, which
 // fences a worker that lost its lease: a fold that lost to another runs
 // again from the new folded_seq (its objects are the store's to record as
-// replaced). Days before the window of historyDays leave the mirror. app
-// names Helix's bot, whose messages are kept without their text.
+// replaced). Days before the window of historyDays leave the mirror, also
+// when no row waits: a feed gone quiet commits a fold of no rows that only
+// drops them. The objects of a fold that never commits (a write or the
+// commit failed, and the feed's folded_seq is still its From) are recorded
+// for the sweep. app names Helix's bot, whose messages are kept without
+// their text.
+//
+// A row of a channel the feed doesn't cover is skipped: the channel's
+// joined backfill reads it back once covered.
 //
 // Rows apply in seq order (the payloads: see SlackSpan):
 //   - message, changed: placed as Slack places them, a message in no thread
@@ -269,11 +276,26 @@ func (o SlackFeedOptions) Fold(ctx context.Context, connectorID string, historyD
 			return nil, fmt.Errorf("read the Slack feed of connector %s: %w", connectorID, err)
 		}
 		rows, err := o.Feed.FoundrySlackFeedAfter(ctx, feed.ID, feed.FoldedSeq, o.Budget)
-		if err != nil || len(rows) == 0 {
-			return feed, err
-		}
-		fold, err := o.fold(ctx, feed, rows, historyDays, app)
 		if err != nil {
+			return nil, err
+		}
+		fold := model.SlackFold{FeedID: feed.ID, From: feed.FoldedSeq, To: feed.FoldedSeq}
+		if len(rows) == 0 {
+			index, err := o.Feed.FoundrySlackDaysAfter(ctx, feed.ID, 0)
+			if err != nil {
+				return nil, err
+			}
+			window := slackWindow(historyDays)
+			for _, d := range index {
+				if d.Day.Before(window) {
+					fold.Dropped = append(fold.Dropped, d.SlackDayKey)
+				}
+			}
+			if len(fold.Dropped) == 0 {
+				return feed, nil
+			}
+		} else if fold, err = o.fold(ctx, feed, rows, historyDays, app); err != nil {
+			o.forget(ctx, feed.ID, fold.Days)
 			return nil, err
 		}
 		cerr := o.Feed.CommitFoundrySlackFold(ctx, fold)
@@ -286,38 +308,67 @@ func (o SlackFeedOptions) Fold(ctx context.Context, connectorID string, historyD
 		switch {
 		case err != nil:
 			return nil, errors.Join(cerr, err)
+		case now.FoldedSeq == fold.From:
+			// Nothing moved it: this fold never committed, and its objects are no one's.
+			o.forget(ctx, feed.ID, fold.Days)
+			return nil, fmt.Errorf("commit the Slack fold of connector %s: %w", connectorID, cerr)
 		case now.FoldedSeq == fold.To:
 			return now, nil
-		case now.FoldedSeq == fold.From || attempt == slackFoldAttempts:
+		case attempt == slackFoldAttempts:
 			return nil, fmt.Errorf("commit the Slack fold of connector %s: %w", connectorID, cerr)
 		}
 	}
 }
 
-// slackFolding is one fold's state: the index it read, the days it read
-// and changed, and the channels a left row purged.
+// forget records objects of days a fold wrote but never committed for the
+// sweep, best effort: what it can't record is logged.
+func (o SlackFeedOptions) forget(ctx context.Context, feedID string, days []model.SlackFeedDay) {
+	if len(days) == 0 {
+		return
+	}
+	keys := make([]string, len(days))
+	for i, d := range days {
+		keys[i] = d.ObjectKey
+	}
+	if err := o.Feed.ForgetFoundrySlackObjects(ctx, feedID, keys); err != nil {
+		log.From(ctx).Warn("a failed Slack fold's objects can't be recorded for the sweep", "feed", feedID, "objects", len(keys), "err", err)
+	}
+}
+
+// slackFolding is one fold's state: the index it read, the channels the
+// feed covers, the days it read and changed, and the channels a left row
+// purged.
 type slackFolding struct {
-	o      SlackFeedOptions
-	feed   *model.SlackFeed
-	index  map[model.SlackDayKey]model.SlackFeedDay
-	days   map[model.SlackDayKey]*slackMirrorDay
-	purged map[string]bool
-	window time.Time
-	ours   func(slackMessage) bool
+	o       SlackFeedOptions
+	feed    *model.SlackFeed
+	index   map[model.SlackDayKey]model.SlackFeedDay
+	covered map[string]bool
+	days    map[model.SlackDayKey]*slackMirrorDay
+	purged  map[string]bool
+	window  time.Time
+	ours    func(slackMessage) bool
 }
 
 // fold applies rows to the mirror and writes the days it changed: the
-// commit of the fold.
+// commit of the fold. When a write fails, the fold returned holds the days
+// written before it.
 func (o SlackFeedOptions) fold(ctx context.Context, feed *model.SlackFeed, rows []model.SlackFeedRow, historyDays int,
 	app SlackApp) (model.SlackFold, error) {
 	index, err := o.Feed.FoundrySlackDaysAfter(ctx, feed.ID, 0)
 	if err != nil {
 		return model.SlackFold{}, err
 	}
-	f := &slackFolding{o: o, feed: feed, index: map[model.SlackDayKey]model.SlackFeedDay{}, days: map[model.SlackDayKey]*slackMirrorDay{},
-		purged: map[string]bool{}, window: slackWindow(historyDays), ours: slackOurs(app, o.HelixAppID)}
+	channels, err := o.Feed.ListFoundrySlackFeedChannels(ctx, feed.ID)
+	if err != nil {
+		return model.SlackFold{}, err
+	}
+	f := &slackFolding{o: o, feed: feed, index: map[model.SlackDayKey]model.SlackFeedDay{}, covered: map[string]bool{},
+		days: map[model.SlackDayKey]*slackMirrorDay{}, purged: map[string]bool{}, window: slackWindow(historyDays), ours: slackOurs(app, o.HelixAppID)}
 	for _, d := range index {
 		f.index[d.SlackDayKey] = d
+	}
+	for _, c := range channels {
+		f.covered[c.ChannelID] = true
 	}
 	for _, row := range rows {
 		applied, err := f.apply(ctx, row)
@@ -346,7 +397,7 @@ func (o SlackFeedOptions) fold(ctx context.Context, feed *model.SlackFeed, rows 
 			ObjectKey: fmt.Sprintf("ws/%s/connectors/%s/slack-days/%s/%s/%s/%d-%s.jsonl.gz", feed.WorkspaceID, feed.ConnectorID, feed.ID,
 				key.ChannelID, key.Day.Format(time.DateOnly), fold.To, id.New())}
 		if err := o.Objects.Put(ctx, day.ObjectKey, bytes.NewReader(object)); err != nil {
-			return model.SlackFold{}, fmt.Errorf("write the Slack day %s: %w", day.ObjectKey, err)
+			return fold, fmt.Errorf("write the Slack day %s: %w", day.ObjectKey, err)
 		}
 		fold.Days = append(fold.Days, day)
 		if had {
@@ -383,9 +434,13 @@ func (f *slackFolding) day(ctx context.Context, key model.SlackDayKey) (*slackMi
 	return d, nil
 }
 
-// apply applies one row; false when its payload can't be read.
+// apply applies one row; false when its payload can't be read. A row of a
+// channel the feed doesn't cover, but a joined one, is skipped.
 func (f *slackFolding) apply(ctx context.Context, row model.SlackFeedRow) (bool, error) {
 	key := model.SlackDayKey{ChannelID: row.ChannelID, Day: row.Day}
+	if row.Kind != model.SlackRowJoined && !f.covered[row.ChannelID] {
+		return true, nil
+	}
 	switch row.Kind {
 	case model.SlackRowMessage, model.SlackRowChanged:
 		var m slackMessage
@@ -465,12 +520,13 @@ func (f *slackFolding) apply(ctx context.Context, row model.SlackFeedRow) (bool,
 		}
 		_, err := f.o.Feed.JoinFoundrySlackChannels(ctx, f.feed.ID, []model.SlackChannelJoin{{ChannelID: row.ChannelID,
 			CoveredFrom: joined.JoinedAt.UTC(), Oldest: oldest}})
+		f.covered[row.ChannelID] = err == nil
 		return true, err
 	case model.SlackRowLeft:
 		if err := f.o.Feed.PurgeFoundrySlackChannel(ctx, f.feed.ID, row.ChannelID); err != nil {
 			return true, err
 		}
-		f.purged[row.ChannelID] = true
+		f.purged[row.ChannelID], f.covered[row.ChannelID] = true, false
 		for k := range f.days {
 			if k.ChannelID == row.ChannelID {
 				delete(f.days, k)

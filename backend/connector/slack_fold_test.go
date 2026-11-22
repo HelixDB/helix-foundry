@@ -213,10 +213,14 @@ func TestSlackFold(t *testing.T) {
 		a.feed.append(model.SlackRowJoined, model.SlackFeedFromEvent, "C2", long, fmt.Sprintf(`{"joined_at":%q}`, long.Format(time.RFC3339)))
 		event(a, model.SlackRowMessage, msg(at("09:00:00"), "before leaving"))
 		a.feed.append(model.SlackRowLeft, model.SlackFeedFromEvent, "C1", slackDayOf("2026-10-28"), `{"why":"left"}`)
+		// Uncovered, until the bot is back: the channel's joined backfill reads it then.
+		event(a, model.SlackRowMessage, msg(at("09:30:00"), "while away"))
+		back := time.Date(2026, 10, 28, 9, 45, 0, 0, time.UTC)
+		a.feed.append(model.SlackRowJoined, model.SlackFeedFromEvent, "C1", back, fmt.Sprintf(`{"user_id":"UF","joined_at":%q}`, back.Format(time.RFC3339)))
 		event(a, model.SlackRowMessage, msg(at("10:00:00"), "after coming back"))
 		a.feed.append(model.SlackRowChannel, model.SlackFeedFromEvent, "C1", slackDayOf("2026-10-28"), `{"name":"renamed"}`)
 		a.fold(t)
-		if len(a.feed.joins) != 2 || !a.feed.joins[0].CoveredFrom.Equal(joinedAt) || !a.feed.joins[0].Oldest.Equal(slackDayOf("2026-10-27")) ||
+		if len(a.feed.joins) != 3 || !a.feed.joins[0].CoveredFrom.Equal(joinedAt) || !a.feed.joins[0].Oldest.Equal(slackDayOf("2026-10-27")) ||
 			!a.feed.joins[1].Oldest.Before(long) || !slices.Equal(a.feed.purges, []string{"C1"}) {
 			t.Fatalf("joins %+v, purges %v", a.feed.joins, a.feed.purges)
 		}

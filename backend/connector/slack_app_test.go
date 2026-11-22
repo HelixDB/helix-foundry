@@ -31,6 +31,7 @@ type slackFeedFake struct {
 	joins      []model.SlackChannelJoin
 	purges     []string
 	replaced   []string
+	forgotten  []string
 	documented []model.SlackDayKey
 	commits    int
 	before     func()
@@ -116,6 +117,10 @@ func (f *slackFeedFake) CommitFoundrySlackFold(_ context.Context, fold model.Sla
 	f.commits++
 	f.feed.FoldedSeq = fold.To
 	for _, d := range fold.Days {
+		if _, covered := f.channels[d.ChannelID]; !covered {
+			f.replaced = append(f.replaced, d.ObjectKey)
+			continue
+		}
 		d.UpdatedSeq = fold.To
 		if held, ok := f.days[d.SlackDayKey]; ok {
 			d.DocumentedAt = held.DocumentedAt
@@ -129,6 +134,16 @@ func (f *slackFeedFake) CommitFoundrySlackFold(_ context.Context, fold model.Sla
 			delete(f.days, k)
 		}
 	}
+	return nil
+}
+
+func (f *slackFeedFake) ForgetFoundrySlackObjects(_ context.Context, _ string, keys []string) error {
+	if err := f.failed("ForgetFoundrySlackObjects"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forgotten = append(f.forgotten, keys...)
 	return nil
 }
 
@@ -286,6 +301,7 @@ func newSlackAppTest(t *testing.T, routes map[string]func(*http.Request) (int, s
 	if err != nil {
 		t.Fatal(err)
 	}
+	feed.cover("C1", "C2")
 	calls := &slackCalls{}
 	app := &SlackApp{InstallID: "inst1", TeamID: "T1", BotUserID: "UF", BotID: "BF", Caller: slackRoutesCaller{routes: routes, scopes: slackAllScopes, calls: calls}}
 	return &slackAppTest{poll: tokenKind.(*slackKind), app: appKind.(*slackAppKind), feed: feed, objects: objects, calls: calls,

@@ -646,9 +646,44 @@ func TestFoundrySlackFold(t *testing.T) {
 	assert.NotNil(t, all[0].DocumentedAt)
 	assert.Nil(t, all[1].DocumentedAt)
 
+	// A day of a channel the feed no longer covers is never written, so a
+	// purge that committed while the fold ran stays: its object goes.
+	require.NoError(t, f.db.PurgeFoundrySlackChannel(ctx, feed.ID, "C2"))
+	_, err = f.db.AppendFoundrySlackFeed(ctx, install.ID, model.SlackFeedBatch{Rows: []model.SlackFeedRow{feedRow("C1", "Ev7", d2)}, At: d2},
+		feedLimits)
+	require.NoError(t, err)
+	require.NoError(t, f.db.CommitFoundrySlackFold(ctx, model.SlackFold{FeedID: feed.ID, From: 3, To: 4,
+		Days:     []model.SlackFeedDay{slackDay("C1", d2, "k/c1/d2/4", "complete"), slackDay("C2", d2, "k/c2/d2/4", "partial")},
+		Replaced: []string{"k/c1/d2/3"}}))
+	all, err = f.db.FoundrySlackDaysAfter(ctx, feed.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	assert.Equal(t, []string{"C1", "C1"}, []string{all[0].ChannelID, all[1].ChannelID}, "no day of C2")
+	assert.Subset(t, replacedKeys(t, f.db), []string{"k/c2/d2/4", "k/c1/d2/3"})
+
+	// A fold of no rows drops days alone, under the same compare-and-set.
+	assert.ErrorIs(t, f.db.CommitFoundrySlackFold(ctx, model.SlackFold{FeedID: feed.ID, From: 3, To: 3,
+		Dropped: []model.SlackDayKey{{ChannelID: "C1", Day: d1}}}), store.ErrConflict)
+	require.NoError(t, f.db.CommitFoundrySlackFold(ctx, model.SlackFold{FeedID: feed.ID, From: 4, To: 4,
+		Dropped: []model.SlackDayKey{{ChannelID: "C1", Day: d1}}}))
+	all, err = f.db.FoundrySlackDaysAfter(ctx, feed.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.True(t, all[0].Day.Equal(d2))
+	assert.Contains(t, replacedKeys(t, f.db), "k/c1/d1/3")
+	assert.Equal(t, int64(4), mustFeed(t, f.db, c.ID).FoldedSeq)
+
+	// Objects of a fold that never committed go too.
+	require.NoError(t, f.db.ForgetFoundrySlackObjects(ctx, feed.ID, []string{"k/never"}))
+	require.NoError(t, f.db.ForgetFoundrySlackObjects(ctx, feed.ID, nil))
+	require.NoError(t, f.db.ForgetFoundrySlackObjects(ctx, id26("nofeed"), []string{"k/nobody"}))
+	assert.Contains(t, replacedKeys(t, f.db), "k/never")
+	assert.NotContains(t, replacedKeys(t, f.db), "k/nobody")
+
 	t.Run("bad", func(t *testing.T) {
 		for _, bad := range []model.SlackFold{
 			{From: 0, To: 1},
+			{FeedID: feed.ID, From: 4, To: 4, Days: []model.SlackFeedDay{slackDay("C1", d1, "a", "partial")}, Dropped: []model.SlackDayKey{{ChannelID: "C1", Day: d2}}},
 			{FeedID: feed.ID, From: 3, To: 3},
 			{FeedID: feed.ID, From: -1, To: 3},
 			{FeedID: feed.ID, From: 3, To: 4, Days: []model.SlackFeedDay{slackDay("C1", d1, "a", "partial"), slackDay("C1", d1, "b", "partial")}},
@@ -666,7 +701,7 @@ func TestFoundrySlackFold(t *testing.T) {
 			feedLimits)
 		require.NoError(t, err)
 		require.NoError(t, f.db.DeleteConnector(ctx, f.workspaceID, c.ID))
-		assert.ErrorIs(t, f.db.CommitFoundrySlackFold(ctx, model.SlackFold{FeedID: feed.ID, From: 3, To: 4}), store.ErrConflict)
+		assert.ErrorIs(t, f.db.CommitFoundrySlackFold(ctx, model.SlackFold{FeedID: feed.ID, From: 4, To: 5}), store.ErrConflict)
 	})
 }
 

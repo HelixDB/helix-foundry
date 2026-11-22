@@ -29,6 +29,8 @@ type SlackFeedStore interface {
 	FoundrySlackFeedAfter(ctx context.Context, feedID string, after int64, budget model.SlackFeedBudget) ([]model.SlackFeedRow, error)
 	// CommitFoundrySlackFold commits a fold while the feed's folded_seq is its From.
 	CommitFoundrySlackFold(ctx context.Context, fold model.SlackFold) error
+	// ForgetFoundrySlackObjects records objects a fold wrote but never committed, for the sweep.
+	ForgetFoundrySlackObjects(ctx context.Context, feedID string, keys []string) error
 	// FoundrySlackDaysAfter are the mirror's index rows a fold wrote after seq.
 	FoundrySlackDaysAfter(ctx context.Context, feedID string, seq int64) ([]model.SlackFeedDay, error)
 	// MarkFoundrySlackDaysDocumented records that the days' documents were offered.

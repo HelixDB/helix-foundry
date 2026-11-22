@@ -633,6 +633,7 @@ type Store interface {
 	AppendFoundrySlackFeedGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, spacing time.Duration) (model.SlackFeedAppended, error)
 	RecordFoundrySlackEventsLimited(ctx context.Context, installID string, minute time.Time, spacing time.Duration) (model.SlackFeedAppended, error)
 	CommitFoundrySlackFold(ctx context.Context, fold model.SlackFold) error
+	ForgetFoundrySlackObjects(ctx context.Context, feedID string, keys []string) error
 	MarkFoundrySlackDaysDocumented(ctx context.Context, feedID string, days []model.SlackDayKey) error
 	PruneFoundrySlackFeed(ctx context.Context, limit int) (int64, error)
 	JoinFoundrySlackChannels(ctx context.Context, feedID string, joins []model.SlackChannelJoin) (int, error)
