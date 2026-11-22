@@ -36,6 +36,8 @@ type Service struct {
 	// loadDocuments keeps what a busy load made of its documents a few
 	// seconds, for the callers that poll it.
 	loadDocuments loadDocumentSets
+	// slackFeed holds the slots and installs of Slack's channel events.
+	slackFeed slackFeedIntake
 }
 
 var (

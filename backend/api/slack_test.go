@@ -56,6 +56,10 @@ type slackStore struct {
 	refusal     error
 	revoked     map[string]bool // install id → told Slack
 	fail        error
+	// conns and feed hold Slack connections through the app and their
+	// feeds (slack_connector_test.go, slack_feed_test.go).
+	conns *connectorStore
+	feed  *slackFeedFake
 }
 
 type slackState struct {
@@ -71,7 +75,8 @@ type slackLinkToken struct {
 
 func newSlackStore() *slackStore {
 	return &slackStore{tokens: map[string]model.SlackSealedToken{}, states: map[string]*slackState{}, linkTokens: map[string]*slackLinkToken{},
-		uninstalled: model.SlackUninstallDone, revoked: map[string]bool{}}
+		uninstalled: model.SlackUninstallDone, revoked: map[string]bool{}, conns: &connectorStore{rows: map[string]*model.Connector{}},
+		feed: newSlackFeedFake()}
 }
 
 func (s *slackStore) live(match func(*model.SlackInstall) bool) (*model.SlackInstall, error) {

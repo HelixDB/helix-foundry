@@ -62,7 +62,8 @@ const (
 var slackReceived = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_slack_received_total",
 	Help: "Requests from Slack the API took, by route (events or interactivity) and outcome: queued, duplicate, ignored, " +
-		"unknown_team, uninstalled, stale_uninstall, verification, unverified, malformed, disabled or failed.",
+		"unknown_team, uninstalled, stale_uninstall, verification, unverified, malformed, disabled, feed (a channel event: " +
+		"helix_foundry_slack_feed_events_total), busy or failed.",
 }, []string{"route", "outcome"})
 
 // slackRoutes names the door's routes, for the metric.
@@ -81,7 +82,10 @@ func slackOK() *foundryv1.ReceiveSlackRequestResponse {
 // Foundry's door forwards: it verifies Slack's signature with the app's
 // signing secret, then, with one read and one write and no call to Slack,
 // records once what the bot acts on (intake, the worker's) or ends an
-// uninstalled install. Wherever foundry.slack is off every request is
+// uninstalled install. A channel message or channel event goes to the
+// Slack data connector's feed and the bot's unmentioned follow-ups
+// (receiveSlackFeed), refused UNAVAILABLE at once while the replica's feed
+// slots are taken. Wherever foundry.slack is off every request is
 // answered 404. A store failure is UNAVAILABLE, which the door answers 500:
 // Slack retries an event, and the dedupe key keeps a retry from counting
 // twice; a click isn't retried, and its person clicks again. No log holds
@@ -115,6 +119,10 @@ func (s *Service) ReceiveSlackRequest(ctx context.Context, req *foundryv1.Receiv
 		resp, outcome, err = s.receiveSlackEvent(ctx, req.GetBody())
 	} else {
 		resp, outcome, err = s.receiveSlackClick(ctx, req.GetBody())
+	}
+	if errors.Is(err, errSlackFeedBusy) {
+		slackReceived.WithLabelValues(route, "busy").Inc()
+		return nil, status.Error(codes.Unavailable, "Foundry takes no more of Slack's channel messages just now")
 	}
 	if err != nil {
 		slackReceived.WithLabelValues(route, "failed").Inc()
@@ -160,6 +168,8 @@ func (s *Service) receiveSlackEvent(ctx context.Context, body []byte) (*foundryv
 		team, user, at = e.At.TeamID, e.UserID, &e.At
 	case slack.SessionStopped:
 		team, user = e.At.TeamID, e.UserID
+	case slack.FeedEvent:
+		return s.receiveSlackFeed(ctx, cb.EventID, e)
 	default:
 		return slackOK(), "ignored", nil
 	}
@@ -348,11 +358,7 @@ func (s *Service) slackResponse(ctx context.Context, workspaceID, userID string)
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
 	}
-	out.Install = &foundryv1.FoundrySlackInstall{
-		TeamId: install.TeamID, TeamName: install.TeamName, EnterpriseId: install.EnterpriseID, BotUserId: install.BotUserID,
-		InstalledByUserId: install.InstalledByUserID, InstalledByName: s.slackUserName(ctx, install.InstalledByUserID),
-		CreatedAt: timestamppb.New(install.CreatedAt), UpdatedAt: timestamppb.New(install.UpdatedAt),
-	}
+	out.Install = s.slackInstallToProto(ctx, install)
 	links, err := s.deps.DB.ListFoundrySlackLinks(ctx, install.ID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read the Slack links: %v", err)
@@ -381,9 +387,11 @@ func (s *Service) slackLinkToProto(ctx context.Context, l *model.SlackLink) *fou
 }
 
 // StartFoundrySlackInstall starts an owner's or admin's install of the app:
-// a state bound to them and the workspace for slackStateTTL, once, and
-// Slack's page asking to add the app, which returns to the site's
-// /slack/installed.
+// a state bound to them, the workspace and the site path to return to for
+// slackStateTTL, once, and Slack's page asking to add the app with the
+// scopes foundry.slack's flags need (slack.Required), which returns to the
+// site's /slack/installed. A workspace with an install lacking none of
+// them is refused; one lacking some is installed again.
 func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.StartFoundrySlackInstallRequest) (
 	*foundryv1.StartFoundrySlackInstallResponse, error) {
 	ws := req.GetWorkspaceId()
@@ -394,13 +402,18 @@ func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.S
 	if err != nil {
 		return nil, err
 	}
+	returnPath, ok := slackReturnPath(req.GetReturnPath())
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "return_path is /settings/slack, /data?add=slack or a Slack connection's page")
+	}
 	if err := s.requireSlackInstall(ctx, ws, userID); err != nil {
 		return nil, err
 	}
-	switch _, err := s.deps.DB.GetFoundrySlackInstall(ctx, ws); {
-	case err == nil:
+	required := s.slackRequired()
+	switch install, err := s.deps.DB.GetFoundrySlackInstall(ctx, ws); {
+	case err == nil && !slices.ContainsFunc(required, func(scope string) bool { return !slices.Contains(install.Scopes, scope) }):
 		return nil, foundryPrecondition(ws, "FOUNDRY_SLACK_INSTALLED", "this workspace is connected to Slack already; disconnect it first")
-	case !errors.Is(err, foundrystore.ErrNotFound):
+	case err != nil && !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
 	}
 	raw := make([]byte, 32)
@@ -408,11 +421,11 @@ func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.S
 		return nil, status.Errorf(codes.Internal, "make the install's state: %v", err)
 	}
 	state := base64.RawURLEncoding.EncodeToString(raw)
-	if err := s.deps.DB.CreateFoundrySlackInstallState(ctx, ws, userID, hashToken(state), "", slackStateTTL); err != nil {
+	if err := s.deps.DB.CreateFoundrySlackInstallState(ctx, ws, userID, hashToken(state), returnPath, slackStateTTL); err != nil {
 		return nil, status.Errorf(codes.Internal, "record the install's state: %v", err)
 	}
 	cfg := s.deps.Cfg.Foundry.Slack
-	query := url.Values{"client_id": {cfg.ClientID}, "scope": {strings.Join(slack.Scopes, ",")},
+	query := url.Values{"client_id": {cfg.ClientID}, "scope": {strings.Join(required, ",")},
 		"redirect_uri": {slackRedirectURI(cfg.SiteURL)}, "state": {state}}
 	return &foundryv1.StartFoundrySlackInstallResponse{AuthorizeUrl: s.slackURL() + "/oauth/v2/authorize?" + query.Encode()}, nil
 }
@@ -451,9 +464,13 @@ func (s *Service) slackURL() string {
 // that they are an owner or admin of its workspace, exchanges the code for
 // the bot's token (oauth.v2.access) and records the install with its token
 // sealed under the install's id. An org-wide install, another app's, or one
-// without every scope the bot needs is refused; the store refuses a Slack
-// workspace connected elsewhere, or still being disconnected. The same Slack
-// workspace again is a reinstall.
+// without every scope foundry.slack's flags need (slack.Required) is
+// refused; the store refuses a Slack workspace connected elsewhere, or
+// still being disconnected. The same Slack workspace again is a reinstall.
+// Then it reads the bot's id (auth.test) and whether the installer is a
+// Slack admin or owner (users.info), which a Slack connection through the
+// app needs; either failing keeps what the install had, and is logged. It
+// answers the path the install was started from.
 func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.FinishFoundrySlackInstallRequest) (*foundryv1.FoundrySlackResponse, error) {
 	userID, err := s.slackPerson(ctx, "")
 	if err != nil {
@@ -496,7 +513,7 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 		return nil, status.Errorf(codes.Internal, "Slack installed app %s, not foundry.slack.app_id", grant.AppID)
 	}
 	var missing []string
-	for _, scope := range slack.Scopes {
+	for _, scope := range s.slackRequired() {
 		if !slices.Contains(grant.Scopes, scope) {
 			missing = append(missing, scope)
 		}
@@ -532,7 +549,39 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 		return nil, status.Errorf(codes.Internal, "record the install: %v", err)
 	}
 	log.From(ctx).Info("foundry slack installed", "workspace_id", ws, "install_id", stored.ID, "team", stored.TeamID, "reinstalled", reinstalled)
-	return s.slackResponse(ctx, ws, userID)
+	s.learnSlackBot(ctx, stored.ID, slack.Bot{InstallID: stored.ID, Token: grant.BotToken}, grant.InstallerID)
+	resp, err := s.slackResponse(ctx, ws, userID)
+	if err != nil {
+		return nil, err
+	}
+	resp.ReturnPath = st.ReturnPath
+	return resp, nil
+}
+
+// learnSlackBot records what Slack says of an install's bot (auth.test's
+// bot_id) and its installer (users.info: a Slack admin or owner). Best
+// effort: either call failing keeps what the install had.
+func (s *Service) learnSlackBot(ctx context.Context, installID string, bot slack.Bot, installer string) {
+	callCtx, cancel := context.WithTimeout(ctx, slackCallTimeout)
+	defer cancel()
+	var learned model.SlackInstallBotUpdate
+	if botID, err := s.deps.Slack.BotID(callCtx, bot); err == nil {
+		learned.BotID = &botID
+	} else {
+		log.From(ctx).Warn("slack auth.test failed; the install keeps its bot id", "install_id", installID, "err", err)
+	}
+	if user, err := s.deps.Slack.UserInfo(callCtx, bot, installer); err == nil {
+		learned.InstallerAdmin = &user.Admin
+	} else {
+		log.From(ctx).Warn("slack users.info of the installer failed; the install keeps whether a Slack admin installed it", "install_id", installID,
+			"err", err)
+	}
+	if learned.BotID == nil && learned.InstallerAdmin == nil {
+		return
+	}
+	if err := s.deps.DB.UpdateFoundrySlackInstallBot(ctx, installID, learned); err != nil {
+		log.From(ctx).Warn("record the Slack install's bot failed", "install_id", installID, "err", err)
+	}
 }
 
 // DisconnectFoundrySlack disconnects the workspace's install, for an owner
