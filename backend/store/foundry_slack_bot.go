@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -140,4 +141,22 @@ func (s *mysqlDB) IsFoundrySlackThreadPerson(ctx context.Context, threadID, slac
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_slack_thread_people WHERE thread_id=? AND slack_user_id=?`,
 		threadID, slackUserID).Scan(&n)
 	return n > 0, err
+}
+
+// CountFoundrySlackUserMessages counts the events intake recorded from
+// slackUserID in installID within window before the row intakeID came, that
+// row not counted: what one Slack user sent a bot-mode install's bot in the
+// hour its per-user cap reads (foundry_slack_intake_user_idx). Read from
+// the row's own time, a retry of it counts the same; with no such row it is
+// 0.
+func (s *mysqlDB) CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error) {
+	if window <= 0 {
+		return 0, fmt.Errorf("a Slack user's messages are counted over a positive window")
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_slack_intake me
+JOIN foundry_slack_intake i ON i.install_id=me.install_id AND i.slack_user_id=? AND i.kind=? AND i.id<>me.id
+  AND i.created_at <= me.created_at AND i.created_at > me.created_at - INTERVAL ? MICROSECOND
+WHERE me.id=? AND me.install_id=?`, slackUserID, string(model.SlackIntakeEvent), window.Microseconds(), intakeID, installID).Scan(&n)
+	return n, err
 }

@@ -273,6 +273,7 @@ type ReadStore interface {
 	IsFoundrySlackBot(ctx context.Context, workspaceID, credentialID string) (bool, error)
 	IsFoundrySlackBotCredential(ctx context.Context, credentialID string) (bool, error)
 	IsFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) (bool, error)
+	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
 
 	// The Slack data connector on Helix's Slack app: feeds, their buffer,
 	// the day mirror's index and the backfill (foundry_slack_feed.go)

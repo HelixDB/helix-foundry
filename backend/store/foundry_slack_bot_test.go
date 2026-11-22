@@ -2,8 +2,11 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,4 +147,51 @@ func TestFoundrySlackThreadPeople(t *testing.T) {
 	is, err := f.db.IsFoundrySlackThreadPerson(ctx, mine.ID, "UADA")
 	require.NoError(t, err)
 	assert.False(t, is)
+}
+
+// A Slack user's messages to a bot-mode install are counted in the window
+// before a row came, that row and others' not counted, and the same for a
+// retry of it later.
+func TestCountFoundrySlackUserMessages(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "percap")
+	i := f.installed(t)
+	createWorkspace(t, id26("AWS-percap2"))
+	other, _, err := f.db.InstallFoundrySlack(ctx, f.install(2, id26("AWS-percap2"), "T2"), sealAs("xoxb-2"))
+	require.NoError(t, err)
+	at := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	row := func(n int, install, user string, kind model.SlackIntakeKind, ago time.Duration) {
+		t.Helper()
+		in := &model.SlackIntake{ID: f.intakeID(n), InstallID: install, DedupeKey: model.SlackEventDedupe(fmt.Sprintf("EvCap%d", n)), Kind: kind,
+			SlackUserID: user, Payload: json.RawMessage(`{}`)}
+		if kind == model.SlackIntakeInteraction {
+			in.DedupeKey = model.SlackClickDedupe("T1", user, fmt.Sprint(n), "foundry.stop")
+		}
+		require.NoError(t, f.db.QueueFoundrySlackIntake(ctx, in))
+		_, err := testDB.Exec(`UPDATE foundry_slack_intake SET created_at=? WHERE id=?`, at.Add(-ago), in.ID)
+		require.NoError(t, err)
+	}
+	row(1, i.ID, "UADA", model.SlackIntakeEvent, 0) // the row counted from
+	row(2, i.ID, "UADA", model.SlackIntakeEvent, time.Minute)
+	row(3, i.ID, "UADA", model.SlackIntakeEvent, 59*time.Minute)
+	row(4, i.ID, "UADA", model.SlackIntakeEvent, 61*time.Minute)    // before the hour
+	row(5, i.ID, "UADA", model.SlackIntakeEvent, -time.Minute)      // after the row
+	row(6, i.ID, "UGRACE", model.SlackIntakeEvent, time.Minute)     // someone else
+	row(7, other.ID, "UADA", model.SlackIntakeEvent, time.Minute)   // another install
+	row(8, i.ID, "UADA", model.SlackIntakeInteraction, time.Minute) // a click
+	row(9, i.ID, "UADA", model.SlackIntakeEvent, 0)                 // at the same moment
+	n, err := f.db.CountFoundrySlackUserMessages(ctx, i.ID, "UADA", f.intakeID(1), time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n, "rows 2, 3 and 9")
+	n, err = f.db.CountFoundrySlackUserMessages(ctx, i.ID, "UADA", f.intakeID(1), 2*time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, 4, n, "row 4 within two hours")
+	n, err = f.db.CountFoundrySlackUserMessages(ctx, other.ID, "UADA", f.intakeID(1), time.Hour)
+	require.NoError(t, err)
+	assert.Zero(t, n, "the row isn't that install's")
+	n, err = f.db.CountFoundrySlackUserMessages(ctx, i.ID, "UADA", id26("SN-none"), time.Hour)
+	require.NoError(t, err)
+	assert.Zero(t, n, "no such row")
+	_, err = f.db.CountFoundrySlackUserMessages(ctx, i.ID, "UADA", f.intakeID(1), 0)
+	assert.Error(t, err)
 }

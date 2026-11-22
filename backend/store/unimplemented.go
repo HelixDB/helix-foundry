@@ -2000,6 +2000,11 @@ func (u Unimplemented) IsFoundrySlackThreadPerson(context.Context, string, strin
 	return false, nil
 }
 
+func (u Unimplemented) CountFoundrySlackUserMessages(context.Context, string, string, string, time.Duration) (int, error) {
+	u.unimplemented("CountFoundrySlackUserMessages")
+	return 0, nil
+}
+
 func (u Unimplemented) CreateSlackAppConnector(context.Context, *model.Connector, model.SlackFeedBind) error {
 	u.unimplemented("CreateSlackAppConnector")
 	return nil
