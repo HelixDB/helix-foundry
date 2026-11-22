@@ -27,6 +27,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -170,10 +171,39 @@ type db struct {
 	failGaps error
 	failQ    error
 	failM    error
+	// installs are the installs it holds by id; one it doesn't is a bare
+	// install of ws.
+	installs map[string]*model.SlackInstall
+	// threads are the Slack threads the bot follows, and people who spoke
+	// in them by thread id; others the threads where someone else spoke.
+	threads []*model.SlackThread
+	others  []string
 }
 
 func (s *db) GetFoundrySlackInstallByID(_ context.Context, id string) (*model.SlackInstall, error) {
+	if in, ok := s.installs[id]; ok {
+		return in, nil
+	}
 	return &model.SlackInstall{ID: id, WorkspaceID: ws}, nil
+}
+
+func (s *db) ListFoundrySlackThreadMappings(_ context.Context, installID, channelID, threadTS string) ([]*model.SlackThread, error) {
+	var out []*model.SlackThread
+	for _, t := range s.threads {
+		if t.InstallID == installID && t.ChannelID == channelID && t.ThreadTS == threadTS {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (s *db) IsFoundrySlackThreadPerson(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (s *db) MarkFoundrySlackThreadOthers(_ context.Context, installID, channelID, threadTS string, at time.Time) error {
+	s.others = append(s.others, installID+" "+channelID+" "+threadTS+" "+at.Format(time.RFC3339))
+	return nil
 }
 
 func (s *db) MirrorFoundrySlackInstalls(_ context.Context, installs []*model.SlackInstall) error {
@@ -649,6 +679,77 @@ func TestTheRelayClaims(t *testing.T) {
 	require.Len(t, f.db.rows["inst-1"], 1)
 	assert.Equal(t, model.SlackFeedFromEvent, f.db.rows["inst-1"][0].Source)
 	assert.Equal(t, []model.SlackFeedGap{{ChannelID: "C0GENERAL", From: day, To: day.Add(time.Minute)}}, f.db.gaps["inst-1"])
+}
+
+// A reply relayed in a thread the bot follows for its sender is taken as a
+// message of their conversation, at its own ts, while the install's
+// follow-ups are on; another person's records that someone else spoke, and
+// one that mentions the bot, or past the window, is left to its mention.
+func TestTheRelayFollowsRepliesItsBotFollows(t *testing.T) {
+	f := newFixture(t)
+	f.linked(t)
+	l, err := f.r.open(context.Background())
+	require.NoError(t, err)
+	const thread = "1795000000.000100"
+	botAt := time.Unix(1795000000, 0).UTC()
+	f.db.installs = map[string]*model.SlackInstall{"inst-1": {ID: "inst-1", WorkspaceID: ws, TeamID: "T0TEAM", BotUserID: "U0BOT", Mode: model.SlackPerPerson{}},
+		"inst-gone": {ID: "inst-gone", WorkspaceID: ws, TeamID: "T0TEAM", BotUserID: "U0BOT", Mode: model.SlackPerPerson{}, RevokedAt: &botAt}}
+	f.db.threads = []*model.SlackThread{{ID: "th-1", InstallID: "inst-1", ChannelID: "C0GENERAL", ThreadTS: thread, SlackUserID: "U0ADA", BotAt: &botAt},
+		{ID: "th-2", InstallID: "inst-gone", ChannelID: "C0GENERAL", ThreadTS: thread, SlackUserID: "U0ADA", BotAt: &botAt}}
+	day := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	row := func(id, install, key, payload string) *foundryv1.FoundryRelayFeedRow {
+		return &foundryv1.FoundryRelayFeedRow{Id: id, InstallId: install, DedupeKey: key, ChannelId: "C0GENERAL", Day: timestamppb.New(day), Kind: "message",
+			PayloadJson: payload}
+	}
+	reply := func(user, ts, text string) string {
+		return `{"ts":"` + ts + `","thread_ts":"` + thread + `","user":"` + user + `","text":"` + text + `"}`
+	}
+	f.door.route("/v1/relay/claim", func(took) (int, string) {
+		return http.StatusOK, marshal(t, &foundryv1.ClaimFoundryRelayDeliveriesResponse{Feed: []*foundryv1.FoundryRelayFeedRow{
+			row("f1", "inst-1", "e:Ev0ADA1", reply("U0ADA", "1795000060.000200", "and Globex?")),
+			row("f2", "inst-1", "e:Ev0ADA2", reply("U0ADA", "1795000061.000200", "<@U0BOT> and Initech?")),
+			row("f3", "inst-1", "e:Ev0BOB1", reply("U0BOB", "1795000062.000200", "me too")),
+			row("f4", "inst-1", "e:Ev0ROOT", `{"ts":"1795000070.000100","user":"U0ADA","text":"new topic"}`),
+			row("f5", "inst-gone", "e:Ev0GONE", reply("U0ADA", "1795000063.000200", "still there?")),
+		}})
+	})
+
+	f.r.o.Slack.Follow.Enabled = false
+	_, err = f.r.claim(context.Background(), l, nil)
+	require.NoError(t, err)
+	assert.Empty(t, f.db.intake, "follow-ups are off on this install")
+	assert.Empty(t, f.db.others)
+
+	f.r.o.Slack.Follow.Enabled, f.r.o.Slack.Follow.Window = true, 24*time.Hour
+	taken, err := f.r.claim(context.Background(), l, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"f1", "f2", "f3", "f4", "f5"}, taken)
+	require.Len(t, f.db.intake, 1, "Ada's unmentioned reply only")
+	in := f.db.intake[0]
+	assert.Equal(t, "e:Ev0ADA1", in.DedupeKey, "its event's")
+	assert.Equal(t, model.SlackIntakeEvent, in.Kind)
+	assert.Equal(t, model.SlackConversation("inst-1", "C0GENERAL", thread, "U0ADA"), in.Conversation)
+	assert.Equal(t, "U0ADA", in.SlackUserID)
+	p, err := slack.ReadPayload(in.Payload)
+	require.NoError(t, err)
+	e, err := slack.DecodeEvent(p.Kind, p.Data)
+	require.NoError(t, err)
+	got, ok := e.(slack.ThreadReply)
+	require.True(t, ok, "%T", e)
+	assert.Equal(t, "and Globex?", got.Text)
+	assert.Equal(t, time.Unix(1795000060, 200_000).UTC(), got.EventTime, "at its own ts")
+	assert.Equal(t, []string{"inst-1 C0GENERAL " + thread + " " + time.Unix(1795000062, 0).UTC().Format(time.RFC3339)}, f.db.others,
+		"Bob spoke in Ada's thread")
+
+	// Again, it is the same reply; past the window, none.
+	_, err = f.r.claim(context.Background(), l, nil)
+	require.NoError(t, err)
+	assert.Len(t, f.db.intake, 1)
+	f.r.o.Slack.Follow.Window = time.Second
+	f.db.intake = nil
+	_, err = f.r.claim(context.Background(), l, nil)
+	require.NoError(t, err)
+	assert.Empty(t, f.db.intake, "Ada replied a minute after the bot")
 }
 
 // validFeedKey is a feed row's dedupe key: its event's.

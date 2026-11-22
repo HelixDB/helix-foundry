@@ -100,7 +100,7 @@ func (f *slackFeedIntake) install(ctx context.Context, db foundrystore.Store, te
 // and, wherever foundry.slack.feed is on, appends what the connection
 // reading it keeps (slackFeedRows) to its feed; wherever
 // foundry.slack.follow is on, a reply in a thread the bot follows is
-// taken as a message (followSlackReply). Slack's app_rate_limited is
+// taken as a message (FollowSlackReply). Slack's app_rate_limited is
 // recorded on the install, and as gaps of its feed. A channel shared with
 // another organisation, and a team with no install, are dropped; the
 // app's own bot's messages are kept without their text.
@@ -170,8 +170,11 @@ func (s *Service) receiveSlackFeed(ctx context.Context, eventID string, e slack.
 		}
 	}
 	if m, ok := e.(slack.ChannelMessage); ok && cfg.Follow.Enabled {
-		if err := s.followSlackReply(ctx, eventID, install, m); err != nil {
+		switch followed, err := FollowSlackReply(ctx, s.deps.DB, cfg.Follow.Window, model.SlackEventDedupe(eventID), install, m); {
+		case err != nil:
 			return nil, "", err
+		case followed:
+			slackFeedTaken.WithLabelValues("followed").Inc()
 		}
 	}
 	return slackOK(), "feed", nil
@@ -290,23 +293,38 @@ func slackTSTime(ts string) time.Time {
 	return time.Unix(s, us*1000).UTC()
 }
 
-// followSlackReply applies the bot's rule for replies that don't mention
+// SlackFollowStore is what FollowSlackReply reads and writes: store.Store's
+// methods.
+type SlackFollowStore interface {
+	ListFoundrySlackThreadMappings(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackThread, error)
+	IsFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) (bool, error)
+	MarkFoundrySlackThreadOthers(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+	QueueFoundrySlackIntake(ctx context.Context, in *model.SlackIntake) error
+}
+
+var _ SlackFollowStore = foundrystore.Store(nil)
+
+// FollowSlackReply applies the bot's rule for replies that don't mention
 // it to m, a channel message of install's team: in a thread the bot posted
 // in (a mapping: per_person, one per person; bot mode, the thread's one),
 // a message from anyone but the bot and the thread's people (per_person,
 // its mappings' people; bot mode, those who spoke to the bot there,
 // foundry_slack_thread_people) records that someone else spoke
 // (others_at); a reply from one of the thread's people is taken, as a
-// message of their conversation (bot mode, the thread's), while the bot
-// posted there last apart from them and within foundry.slack.follow.window.
-func (s *Service) followSlackReply(ctx context.Context, eventID string, install *model.SlackInstall, m slack.ChannelMessage) error {
+// message of their conversation (bot mode, the thread's) deduped by
+// dedupe (its event's), while the bot posted there last apart from them
+// and within window (foundry.slack.follow.window). It reports whether it
+// took the reply now. Hosted applies it to the events Slack sends; a
+// standalone install to the replies Helix's relay passes on.
+func FollowSlackReply(ctx context.Context, db SlackFollowStore, window time.Duration, dedupe string, install *model.SlackInstall,
+	m slack.ChannelMessage) (bool, error) {
 	msg := m.Message
 	if msg.ThreadTS == "" || msg.ThreadTS == msg.TS || msg.User == install.BotUserID || (install.BotID != "" && msg.BotID == install.BotID) {
-		return nil
+		return false, nil
 	}
-	mappings, err := s.deps.DB.ListFoundrySlackThreadMappings(ctx, install.ID, m.At.ChannelID, msg.ThreadTS)
+	mappings, err := db.ListFoundrySlackThreadMappings(ctx, install.ID, m.At.ChannelID, msg.ThreadTS)
 	if err != nil || len(mappings) == 0 {
-		return err
+		return false, err
 	}
 	// person is whose conversation the reply joins: '' for the bot's.
 	person := msg.User
@@ -324,39 +342,37 @@ func (s *Service) followSlackReply(ctx context.Context, eventID string, install 
 			if t.SlackUserID != "" {
 				continue
 			}
-			spoke, err := s.deps.DB.IsFoundrySlackThreadPerson(ctx, t.ID, msg.User)
+			spoke, err := db.IsFoundrySlackThreadPerson(ctx, t.ID, msg.User)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if spoke {
 				mine = t
 			}
 		}
 	default:
-		return nil
+		return false, nil
 	}
 	if mine == nil {
-		return s.deps.DB.MarkFoundrySlackThreadOthers(ctx, install.ID, m.At.ChannelID, msg.ThreadTS, m.EventTime)
+		return false, db.MarkFoundrySlackThreadOthers(ctx, install.ID, m.At.ChannelID, msg.ThreadTS, m.EventTime)
 	}
 	reply, ok := m.Reply(install.BotUserID)
-	window := s.deps.Cfg.Foundry.Slack.Follow.Window
 	if !ok || mine.BotAt == nil || (mine.OthersAt != nil && !mine.BotAt.After(*mine.OthersAt)) || m.EventTime.Sub(*mine.BotAt) > window {
-		return nil
+		return false, nil
 	}
 	payload, err := slack.EventPayload(reply)
 	if err != nil {
-		return err
+		return false, err
 	}
-	in := &model.SlackIntake{ID: id.New(), InstallID: install.ID, DedupeKey: model.SlackEventDedupe(eventID), Kind: model.SlackIntakeEvent,
+	in := &model.SlackIntake{ID: id.New(), InstallID: install.ID, DedupeKey: dedupe, Kind: model.SlackIntakeEvent,
 		Conversation: model.SlackConversation(install.ID, m.At.ChannelID, msg.ThreadTS, person), SlackUserID: msg.User, Payload: payload}
-	switch err := s.deps.DB.QueueFoundrySlackIntake(ctx, in); {
+	switch err := db.QueueFoundrySlackIntake(ctx, in); {
 	case errors.Is(err, foundrystore.ErrConflict):
-		return nil
+		return false, nil
 	case err != nil:
-		return err
+		return false, err
 	}
-	slackFeedTaken.WithLabelValues("followed").Inc()
-	return nil
+	return true, nil
 }
 
 // receiveRelayFeed holds a channel event of a relayed install's team for its

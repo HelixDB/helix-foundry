@@ -14,7 +14,9 @@
 //     bot's deliveries as an intake row of the same id and dedupe key, which
 //     the install's foundry-slack-worker handles as hosted's does, appends
 //     the data connector's channel messages and gaps to its feeds (connector
-//     §11), and acks what it took on the next claim: a delivery not acked
+//     §11), takes a reply in a thread the bot follows as a message, as
+//     hosted takes its own (api.FollowSlackReply, only while the install's
+//     foundry.slack.follow is on), and acks what it took on the next claim: a delivery not acked
 //     comes again, and its dedupe key keeps it one row. It backs off from
 //     a second to a minute, jittered, while Helix can't be reached, and
 //     forgets a link Helix revoked. Linked or not, it revokes the links the
@@ -45,6 +47,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,11 +116,11 @@ var _ Directory = (*directory.Store)(nil)
 
 // Store is what the relay writes of the install's Foundry store
 // (store.Store's methods): its mirror of the link's installs, the bot's
-// intake, and the data connector's feeds.
+// intake and the threads it follows, and the data connector's feeds.
 type Store interface {
+	api.SlackFollowStore
 	GetFoundrySlackInstallByID(ctx context.Context, id string) (*model.SlackInstall, error)
 	MirrorFoundrySlackInstalls(ctx context.Context, installs []*model.SlackInstall) error
-	QueueFoundrySlackIntake(ctx context.Context, in *model.SlackIntake) error
 	ListFoundrySlackFeeds(ctx context.Context, after string, limit int) ([]*model.SlackFeed, error)
 	AppendFoundrySlackFeed(ctx context.Context, installID string, batch model.SlackFeedBatch, limits model.SlackFeedLimits) (model.SlackFeedAppended, error)
 	AppendFoundrySlackFeedGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, spacing time.Duration) (model.SlackFeedAppended, error)
@@ -721,10 +724,10 @@ func (r *Relay) deliver(ctx context.Context, d *foundryv1.FoundryRelayDelivery) 
 }
 
 // appendFeed appends the data connector's channel messages and gaps to the
-// feeds reading their installs, an install's at a time, and returns the
-// ids taken: appended, or that no feed reads (unbound), or that the install
-// can never take (logged). A store failure leaves an install's to come
-// again.
+// feeds reading their installs, an install's at a time, once it took the
+// replies among them its bot follows (follow), and returns the ids taken:
+// appended, or that no feed reads (unbound), or that the install can never
+// take (logged). A store failure leaves an install's to come again.
 func (r *Relay) appendFeed(ctx context.Context, rows []*foundryv1.FoundryRelayFeedRow, gaps []*foundryv1.FoundryRelayFeedGap) []string {
 	type batch struct {
 		ids  []string
@@ -754,6 +757,10 @@ func (r *Relay) appendFeed(ctx context.Context, rows []*foundryv1.FoundryRelayFe
 	limits := model.SlackFeedLimits{Spacing: r.o.Slack.Feed.Spacing, MaxRows: int64(r.o.Slack.Feed.MaxBufferedRows)}
 	for _, installID := range slices.Sorted(maps.Keys(byInstall)) {
 		b := byInstall[installID]
+		if err := r.follow(ctx, installID, b.rows); err != nil {
+			r.logger.Warn("take relayed Slack replies failed; they come again", "install_id", installID, "err", err)
+			continue
+		}
 		if _, err := r.o.DB.AppendFoundrySlackFeed(ctx, installID, model.SlackFeedBatch{Rows: b.rows, At: time.Now()}, limits); err != nil {
 			r.logger.Warn("append relayed Slack channel messages failed; they come again", "install_id", installID, "err", err)
 			continue
@@ -774,4 +781,40 @@ func (r *Relay) appendFeed(ctx context.Context, rows []*foundryv1.FoundryRelayFe
 		taken = append(taken, g.GetId())
 	}
 	return taken
+}
+
+// follow applies the bot's rule for replies that don't mention it
+// (api.FollowSlackReply) to an install's relayed channel messages, while
+// the install's foundry.slack.follow is on: Helix follows no relayed
+// thread. A relayed message is at its own ts, and carries no sender's team
+// (the bot reads the sender's own); an install gone, or one this install
+// no longer holds, follows nothing.
+func (r *Relay) follow(ctx context.Context, installID string, rows []model.SlackFeedRow) error {
+	if !r.o.Slack.Follow.Enabled {
+		return nil
+	}
+	install, err := r.o.DB.GetFoundrySlackInstallByID(ctx, installID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil
+	case err != nil:
+		return fmt.Errorf("read the install: %w", err)
+	case install.RevokedAt != nil:
+		return nil
+	}
+	for _, row := range rows {
+		var msg slack.StoredMessage
+		if row.Kind != model.SlackRowMessage || json.Unmarshal(row.Payload, &msg) != nil || !model.ValidSlackTS(msg.TS) {
+			continue
+		}
+		secs, frac, _ := strings.Cut(msg.TS, ".")
+		s, _ := strconv.ParseInt(secs, 10, 64)
+		us, _ := strconv.ParseInt((frac + "000000")[:6], 10, 64)
+		m := slack.ChannelMessage{At: slack.Place{TeamID: install.TeamID, EnterpriseID: install.EnterpriseID, ChannelID: row.ChannelID}, Message: msg,
+			EventTime: time.Unix(s, us*1000).UTC()}
+		if _, err := api.FollowSlackReply(ctx, r.o.DB, r.o.Slack.Follow.Window, row.DedupeKey, install, m); err != nil {
+			return err
+		}
+	}
+	return nil
 }
