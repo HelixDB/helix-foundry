@@ -59,7 +59,7 @@ message FoundryCatalogPlan {
 // ConnectorKind is one type of Helix Foundry data source.
 message ConnectorKind {
   // stripe, workos, posthog, github, linear, calcom, granola, slack, notion,
-  // google, databuddy, postgres, mysql, s3 or events.
+  // google, databuddy, attio, postgres, mysql, s3 or events.
   string kind = 1;
   string display_name = 2;
   bool requires_pro = 3;
@@ -291,6 +291,15 @@ message DatabuddyConnectorConfig {
   int32 history_days = 3;
 }
 
+// AttioConnectorConfig reads an Attio workspace's CRM: its workspace
+// members, objects and their records, lists and their entries, notes (each
+// also a Markdown document) and tasks, as far as the token's scopes allow.
+message AttioConnectorConfig {
+  // Attio access token (64 characters), made under Workspace settings ›
+  // Developers with read scopes; write-only.
+  string api_key = 1;
+}
+
 // EventsConnectorConfig is an event source: pieces of data, JSON objects
 // with an id, that people and their agents send to Foundry. It has no
 // credential.
@@ -336,6 +345,7 @@ message ConnectorConfig {
     NotionConnectorConfig notion = 15;
     GoogleWorkspaceConnectorConfig google = 16;
     DatabuddyConnectorConfig databuddy = 17;
+    AttioConnectorConfig attio = 18;
   }
 }
 

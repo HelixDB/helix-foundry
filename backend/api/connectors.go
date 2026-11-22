@@ -637,6 +637,8 @@ func sourceFromProto(catalog *connector.Catalog, cfg *foundryv1.ConnectorConfig)
 		d := k.Databuddy
 		name, secret = "databuddy", strings.TrimSpace(d.GetApiKey())
 		settings = connector.DatabuddySettings{WebsiteIDs: d.GetWebsiteIds(), HistoryDays: int(d.GetHistoryDays())}
+	case *foundryv1.ConnectorConfig_Attio:
+		name, settings, secret = "attio", struct{}{}, strings.TrimSpace(k.Attio.GetApiKey())
 	case *foundryv1.ConnectorConfig_Postgres:
 		name, settings, secret = "postgres", databaseSettings(k.Postgres), k.Postgres.GetPassword()
 	case *foundryv1.ConnectorConfig_Mysql:
@@ -751,6 +753,8 @@ func configToProto(kind string, settings json.RawMessage) (*foundryv1.ConnectorC
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Databuddy{Databuddy: &foundryv1.DatabuddyConnectorConfig{
 			WebsiteIds: d.WebsiteIDs, HistoryDays: int32(d.HistoryDays),
 		}}}, nil
+	case "attio":
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Attio{Attio: &foundryv1.AttioConnectorConfig{}}}, nil
 	case "postgres", "mysql":
 		var d connector.DatabaseSettings
 		if err := json.Unmarshal(settings, &d); err != nil {
