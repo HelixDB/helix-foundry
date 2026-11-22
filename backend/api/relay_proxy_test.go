@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,23 @@ func newRelayCaller(t *testing.T) (relayCaller, *model.SlackInstall) {
 	install := r.relayedInstall(t, f, false)
 	r.channels[install.ID+"/C0GEN0001"] = true
 	r.users[install.ID+"/"+slackAda] = true
+	// Every channel is the team's own, but as a test says.
+	f.slack.answers["conversations.info"] = func(_ *http.Request, body []byte) (int, string) {
+		form, _ := url.ParseQuery(string(body))
+		return http.StatusOK, `{"ok":true,"channel":{"id":"` + form.Get("channel") + `"}}`
+	}
 	return relayCaller{t: t, f: f, r: r, token: token}, install
+}
+
+// slackCalls is how many calls of method Slack got.
+func (c relayCaller) slackCalls(method string) int {
+	n := 0
+	for _, m := range c.f.slack.called() {
+		if m == method {
+			n++
+		}
+	}
+	return n
 }
 
 func (c relayCaller) call(method string, args any) (*foundryv1.CallSlackForRelayResponse, error) {
@@ -78,7 +95,17 @@ func TestCallSlackForRelayRefusals(t *testing.T) {
 		"@channel":                           {"chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "<!channel> look"}, codes.PermissionDenied},
 		"@here deep in blocks": {"chat.postMessage", map[string]any{"channel": "C0GEN0001", "blocks": []any{map[string]any{"text": map[string]any{
 			"type": "mrkdwn", "text": "hi <!here|here>"}}}}, codes.PermissionDenied},
-		"a user group":                     {"chat.update", map[string]any{"channel": "C0GEN0001", "ts": "1.2", "text": "<!subteam^S1>"}, codes.PermissionDenied},
+		"a user group": {"chat.update", map[string]any{"channel": "C0GEN0001", "ts": "1.2", "text": "<!subteam^S1>"}, codes.PermissionDenied},
+		"a rich_text broadcast": {"chat.postMessage", map[string]any{"channel": "C0GEN0001", "blocks": []any{map[string]any{"type": "rich_text",
+			"elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "broadcast", "range": "channel"}}}}}}},
+			codes.PermissionDenied},
+		"a rich_text user group": {"chat.update", map[string]any{"channel": "C0GEN0001", "ts": "1.2", "blocks": []any{map[string]any{"type": "rich_text",
+			"elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "usergroup", "usergroup_id": "S0ALL0001"}}}}}}},
+			codes.PermissionDenied},
+		"a broadcast in blocks sent as text": {"chat.postEphemeral", map[string]any{"channel": "C0GEN0001", "user": slackAda,
+			"blocks": `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"broadcast","range":"here"}]}]}]`}, codes.PermissionDenied},
+		"an escaped mention in attachments sent as text": {"chat.postMessage", map[string]any{"channel": "C0GEN0001",
+			"attachments": `[{"text":"\u003c!everyone>"}]`}, codes.PermissionDenied},
 		"no channel":                       {"chat.postMessage", map[string]any{"text": "hi"}, codes.InvalidArgument},
 		"a channel it was never sent from": {"chat.postMessage", map[string]any{"channel": "C0OTHER01", "text": "hi"}, codes.PermissionDenied},
 		"a channel by another name":        {"agents.sessions.setStatus", map[string]any{"channel_id": "C0GEN0001", "channel": "C0OTHER01"}, codes.PermissionDenied},
@@ -95,7 +122,7 @@ func TestCallSlackForRelayRefusals(t *testing.T) {
 		assert.Equal(t, tc.code, status.Code(err), "%s: %v", name, err)
 	}
 	assert.Empty(t, c.f.slack.called(), "nothing reached Slack")
-	assert.EqualValues(t, 18, c.r.usage["link-1"].Refused)
+	assert.EqualValues(t, 22, c.r.usage["link-1"].Refused)
 
 	// Another workspace of the link, a workspace of no form, a body past the
 	// cap, a revoked token.
@@ -247,7 +274,7 @@ func TestCallSlackForRelayLimits(t *testing.T) {
 	out, err := c.call("chat.postMessage", args)
 	require.NoError(t, err)
 	assert.Positive(t, out.GetRetryAfterS(), "the link's calls a minute")
-	assert.Len(t, c.f.slack.called(), 2)
+	assert.Equal(t, 2, c.slackCalls("chat.postMessage"))
 
 	// Slack's Retry-After holds the install's method.
 	d, _ := newRelayCaller(t)
@@ -259,7 +286,99 @@ func TestCallSlackForRelayLimits(t *testing.T) {
 	out, err = d.call("chat.update", map[string]any{"channel": "C0GEN0001", "ts": "1.2", "text": "x"})
 	require.NoError(t, err)
 	assert.Positive(t, out.GetRetryAfterS())
-	assert.Len(t, d.f.slack.called(), 1)
+	assert.Equal(t, 1, d.slackCalls("chat.update"))
+}
+
+// A channel shared with another organisation after the install recorded
+// it is refused for every call naming it, as Slack's conversations.info
+// says, asked once in relaySharedFor; a direct message isn't asked about.
+func TestCallSlackForRelaySharedChannels(t *testing.T) {
+	c, install := newRelayCaller(t)
+	c.r.channels[install.ID+"/C0EXT0001"] = true
+	c.f.slack.answers["conversations.info"] = func(_ *http.Request, body []byte) (int, string) {
+		form, _ := url.ParseQuery(string(body))
+		ch := form.Get("channel")
+		return http.StatusOK, `{"ok":true,"channel":{"id":"` + ch + `","is_ext_shared":` + strconv.FormatBool(ch == "C0EXT0001") + `}}`
+	}
+	for range 2 {
+		_, err := c.call("chat.postMessage", map[string]any{"channel": "C0EXT0001", "text": "hi"})
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	}
+	_, err := c.call("chat.update", map[string]any{"channel": "C0EXT0001", "ts": "1.2", "text": "x"})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, 1, c.slackCalls("conversations.info"), "Slack's word stands for a while")
+	assert.Zero(t, c.slackCalls("chat.postMessage")+c.slackCalls("chat.update"))
+	assert.Equal(t, "Bearer xoxb-live", c.f.slack.call("conversations.info").auth, "asked as the install")
+
+	_, err = c.call("chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "hi"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, c.slackCalls("chat.postMessage"), "the team's own channel")
+
+	// Slack's word lapses, and is asked again.
+	c.f.s.relay.mu.Lock()
+	for k, v := range c.f.s.relay.shared {
+		v.until = time.Now().Add(-time.Second)
+		c.f.s.relay.shared[k] = v
+	}
+	c.f.s.relay.mu.Unlock()
+	_, err = c.call("chat.postMessage", map[string]any{"channel": "C0EXT0001", "text": "hi"})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, 3, c.slackCalls("conversations.info"))
+
+	// The bot's own conversations.info is relayed as Slack answers it, and
+	// what it says stands.
+	c.r.channels[install.ID+"/C0LATE001"] = true
+	c.f.slack.answer("conversations.info", http.StatusOK, `{"ok":true,"channel":{"id":"C0LATE001","is_pending_ext_shared":true}}`)
+	out, err := c.call("conversations.info", map[string]any{"channel": "C0LATE001"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"ok":true,"channel":{"id":"C0LATE001","is_pending_ext_shared":true}}`, out.GetBodyJson())
+	_, err = c.call("chat.postMessage", map[string]any{"channel": "C0LATE001", "text": "hi"})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, 4, c.slackCalls("conversations.info"), "the bot's own ask stands")
+
+	// A direct message isn't asked about; one Slack says is shared isn't
+	// recorded.
+	c.f.slack.answer("conversations.open", http.StatusOK, `{"ok":true,"channel":{"id":"D0ADA0001"}}`)
+	_, err = c.call("conversations.open", map[string]any{"users": slackAda})
+	require.NoError(t, err)
+	_, err = c.call("chat.postMessage", map[string]any{"channel": "D0ADA0001", "text": "hi"})
+	require.NoError(t, err)
+	assert.Equal(t, 4, c.slackCalls("conversations.info"))
+	c.f.slack.answer("conversations.open", http.StatusOK, `{"ok":true,"channel":{"id":"D0EXT0001","is_ext_shared":true}}`)
+	_, err = c.call("conversations.open", map[string]any{"users": slackAda})
+	require.NoError(t, err)
+	assert.False(t, c.r.channels[install.ID+"/D0EXT0001"])
+
+	// Slack not saying is no answer: the call isn't made.
+	d, _ := newRelayCaller(t)
+	for _, answer := range []string{`{"ok":false,"error":"channel_not_found"}`, `{"ok":true,"channel":{"id":"C0OTHER01"}}`, `[]`} {
+		d.f.slack.answer("conversations.info", http.StatusOK, answer)
+		_, err = d.call("chat.update", map[string]any{"channel": "C0GEN0001", "ts": "1.2", "text": "x"})
+		assert.Equal(t, codes.Unavailable, status.Code(err), answer)
+	}
+	d.f.slack.answer("conversations.info", http.StatusInternalServerError, `oops`)
+	_, err = d.call("chat.update", map[string]any{"channel": "C0GEN0001", "ts": "1.2", "text": "x"})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Zero(t, d.slackCalls("chat.update"))
+}
+
+// Past relayCapacity channels, Slack's lapsed words are forgotten first,
+// then all of them.
+func TestRelaySharedIsBounded(t *testing.T) {
+	var l relayLimits
+	l.init(60, 1)
+	now := time.Now()
+	for i := range relayCapacity {
+		l.sawShared("inst", strconv.Itoa(i), false, now.Add(-relaySharedFor))
+	}
+	l.sawShared("inst", "fresh", true, now)
+	assert.Len(t, l.shared, 1, "every lapsed word went")
+	for i := range relayCapacity - 1 {
+		l.sawShared("inst", strconv.Itoa(i), false, now)
+	}
+	l.sawShared("inst", "last", true, now)
+	assert.Len(t, l.shared, 1, "full of standing words, it starts again")
+	assert.True(t, l.shared["inst last"].shared)
 }
 
 // retryAfter wraps h to send Retry-After: seconds.
@@ -277,6 +396,12 @@ func TestRelayHelpers(t *testing.T) {
 	assert.Equal(t, "", truncateUTF8("é", 1))
 	assert.Equal(t, "", relayMassMention(map[string]any{"a": []any{1.0, true, nil, "plain"}}))
 	assert.Equal(t, "<!everyone", relayMassMention([]any{"x", map[string]any{"k": "<!everyone>"}}))
+	assert.Equal(t, "<!here", relayMassMention(map[string]any{"type": "broadcast", "range": "here"}))
+	assert.Equal(t, "<!everyone", relayMassMention(map[string]any{"type": "broadcast", "range": "everyone"}))
+	assert.Equal(t, "<!channel", relayMassMention(map[string]any{"type": "broadcast"}), "a range it doesn't know is the channel")
+	assert.Equal(t, "<!subteam", relayMassMention(`{"type":"usergroup","usergroup_id":"S1"}`))
+	assert.Equal(t, "", relayMassMention(`[not json`), "text that only looks like JSON is text")
+	assert.Equal(t, "", relayMassMention(`[{"type":"user","user_id":"U1"}]`), "a person's mention notifies them alone")
 	assert.EqualValues(t, 2, relayRetry(1500*time.Millisecond).GetRetryAfterS(), "rounded up")
 	answer := map[string]any{"user": "not an object"}
 	scrubRelayAnswer("users.info", answer)

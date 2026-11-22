@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,18 +35,23 @@ import (
 // checked, in order: the method is one the relay allows (relayMethods; the
 // data connector's only while hosted's foundry.slack.feed is on); the body
 // is a JSON object within relay.max_call_bytes, naming no mass mention
-// (<!channel>, <!here>, <!everyone>, <!subteam^…>); the channel it names
-// is one the install was sent something from in 30 days (never an
-// externally shared one), and the users it names ones that wrote to it or
-// were named there; the link's calls a minute (relay.calls_per_minute) and
-// the install's share of Slack's tier for the method on this replica, or a
-// Tier-1 read's slot shared by every replica, have room. A message is
+// (<!channel>, <!here>, <!everyone>, <!subteam^…>, or a rich_text broadcast
+// or user group, also in blocks sent as a JSON string); the channel it
+// names is one the install was sent something from in 30 days, and the
+// users it names ones that wrote to it or were named there; the link's
+// calls a minute (relay.calls_per_minute) and the install's share of
+// Slack's tier for the method on this replica, or a Tier-1 read's slot
+// shared by every replica, have room; and a channel outside a direct
+// message isn't shared with another organisation, as Slack's
+// conversations.info last said within relaySharedFor (a channel can be
+// shared after it was recorded, and a click there carries no word of it).
+// A message is
 // rewritten as the bot's own are (every mrkdwn text verbatim, parse=none,
 // no unfurls, nothing that posts as another name or icon, broadcasts or
 // carries metadata). Slack's answer comes back without any token, and
 // users.info's without the user's email or phone; users.conversations'
 // channels become channels the install may name, as conversations.open's
-// direct message does.
+// direct message does, unless shared with another organisation.
 
 // maxRelayAnswer is the most of Slack's answer the proxy passes back, within
 // the door's call.
@@ -79,6 +85,7 @@ var relayMethods = map[string]relayMethod{
 	"chat.update":               {perMinute: 50, channel: "channel", posts: true},
 	"chat.postEphemeral":        {perMinute: 100, channel: "channel", users: true, posts: true},
 	"users.info":                {perMinute: 100, form: true, users: true},
+	"conversations.info":        {perMinute: 50, form: true, channel: "channel"},
 	"conversations.open":        {perMinute: 50, users: true},
 	"agents.sessions.setStatus": {perMinute: 50, channel: "channel_id"},
 	"conversations.history":     {form: true, channel: "channel", feed: true, slot: model.SlackSlotHistory},
@@ -98,6 +105,17 @@ var relayDropped = []string{"username", "icon_url", "icon_emoji", "as_user", "re
 // relayMassMentions are the mentions no relayed call may carry.
 var relayMassMentions = []string{"<!channel", "<!here", "<!everyone", "<!subteam"}
 
+// relaySharedFor is how long Slack's word that an install's channel is or
+// isn't shared with another organisation stands before it is asked again.
+const relaySharedFor = 5 * time.Minute
+
+// relayShared is what Slack last said of a channel: whether it is shared
+// with another organisation, standing until until.
+type relayShared struct {
+	shared bool
+	until  time.Time
+}
+
 var relayCalls = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_relay_calls_total",
 	Help: "Slack Web API calls linked installs made through the relay, by method (other for one it doesn't allow) and outcome: ok, " +
@@ -106,15 +124,18 @@ var relayCalls = promauto.NewCounterVec(prometheus.CounterOpts{
 
 // relayLimits paces relayed calls on this replica: each link's calls a
 // minute, each install's share of each method's tier, and Slack's own
-// Retry-After per install and method. Its zero value is ready; its buckets
-// are made at the first call, from foundry.slack.
+// Retry-After per install and method; and whether each install's channels
+// are shared with another organisation, as Slack last said. Its zero value
+// is ready; its buckets are made at the first call, from foundry.slack.
 type relayLimits struct {
 	once    sync.Once
 	links   *iplimit.Limiters
 	methods map[string]*iplimit.Limiters
 	mu      sync.Mutex
 	blocked map[string]time.Time
-	http    *http.Client
+	// shared is by install and channel, at most relayCapacity.
+	shared map[string]relayShared
+	http   *http.Client
 }
 
 // relayCapacity bounds the links and installs a replica paces at once.
@@ -131,6 +152,7 @@ func (l *relayLimits) init(perMinute int, share float64) {
 			}
 		}
 		l.blocked = map[string]time.Time{}
+		l.shared = map[string]relayShared{}
 		l.http = &http.Client{Timeout: slackCallTimeout}
 	})
 }
@@ -293,6 +315,21 @@ func (s *Service) callSlackForRelay(ctx context.Context, link *model.RelayLink, 
 	if wait := take(now, reservations...); wait > 0 {
 		return relayRetry(wait), "limited", nil
 	}
+	bot, err := s.slackBot(ctx, install.ID)
+	if err != nil {
+		return nil, "failed", status.Errorf(codes.Unavailable, "open the install's token: %v", err)
+	}
+	// conversations.info is how the install's bot asks itself, and answers
+	// the same either way.
+	if channel, _ := args[method.channel].(string); method.channel != "" && name != "conversations.info" && !strings.HasPrefix(channel, "D") {
+		shared, err := s.relayExtShared(ctx, install.ID, bot.Token, channel, now)
+		switch {
+		case err != nil:
+			return nil, "failed", status.Errorf(codes.Unavailable, "ask Slack whether %s is shared with another organisation: %v", channel, err)
+		case shared:
+			return refuse("%s names a channel shared with another organisation", name)
+		}
+	}
 	if method.slot != "" {
 		perMinute := cfg.Backfill.HistoryPerMinute
 		if method.slot == model.SlackSlotReplies {
@@ -306,10 +343,6 @@ func (s *Service) callSlackForRelay(ctx context.Context, link *model.RelayLink, 
 		if !reserved {
 			return relayRetry(every), "limited", nil
 		}
-	}
-	bot, err := s.slackBot(ctx, install.ID)
-	if err != nil {
-		return nil, "failed", status.Errorf(codes.Unavailable, "open the install's token: %v", err)
 	}
 	code, header, answer, err := s.sendSlack(ctx, name, method.form, bot.Token, args)
 	if err != nil {
@@ -363,8 +396,10 @@ func relayRetry(wait time.Duration) *foundryv1.CallSlackForRelayResponse {
 	return &foundryv1.CallSlackForRelayResponse{RetryAfterS: int32(min(math.Ceil(wait.Seconds()), math.MaxInt32))}
 }
 
-// relayMassMention is the first mass mention any string in v carries, ""
-// for none.
+// relayMassMention is the first mass mention v carries, as its <!…> mention,
+// "" for none: in any string, in any JSON a string holds (blocks or
+// attachments sent as text), or as a rich_text element, a broadcast (as
+// its range) or a user group (<!subteam).
 func relayMassMention(v any) string {
 	switch v := v.(type) {
 	case string:
@@ -373,7 +408,20 @@ func relayMassMention(v any) string {
 				return m
 			}
 		}
+		var inner any
+		if t := strings.TrimSpace(v); (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) && json.Unmarshal([]byte(t), &inner) == nil {
+			return relayMassMention(inner)
+		}
 	case map[string]any:
+		switch v["type"] {
+		case "broadcast":
+			if r, _ := v["range"].(string); r == "here" || r == "everyone" {
+				return "<!" + r
+			}
+			return "<!channel"
+		case "usergroup":
+			return "<!subteam"
+		}
 		for _, e := range v {
 			if m := relayMassMention(e); m != "" {
 				return m
@@ -461,26 +509,35 @@ func scrubRelayAnswer(method string, answer map[string]any) {
 // next: the channels users.conversations lists the bot in (never one
 // shared with another organisation, and no direct message, whose data no
 // connector reads), and the direct message conversations.open opened with
-// users it knows.
+// users it knows (never one shared with another organisation); and what
+// conversations.info said of a channel's sharing.
 func (s *Service) learnRelayAnswer(ctx context.Context, installID, method string, answer map[string]any) {
+	sharedOf := func(ch map[string]any) bool {
+		shared, _ := ch["is_ext_shared"].(bool)
+		pending, _ := ch["is_pending_ext_shared"].(bool)
+		return shared || pending
+	}
 	var channels []string
 	switch method {
+	case "conversations.info":
+		ch, _ := answer["channel"].(map[string]any)
+		if id, _ := ch["id"].(string); model.ValidSlackID(id) {
+			s.relay.sawShared(installID, id, sharedOf(ch), time.Now())
+		}
 	case "users.conversations":
 		listed, _ := answer["channels"].([]any)
 		for _, c := range listed {
 			ch, _ := c.(map[string]any)
 			id, _ := ch["id"].(string)
-			shared, _ := ch["is_ext_shared"].(bool)
-			pending, _ := ch["is_pending_ext_shared"].(bool)
 			im, _ := ch["is_im"].(bool)
 			mpim, _ := ch["is_mpim"].(bool)
-			if model.ValidSlackID(id) && !shared && !pending && !im && !mpim {
+			if model.ValidSlackID(id) && !sharedOf(ch) && !im && !mpim {
 				channels = append(channels, id)
 			}
 		}
 	case "conversations.open":
 		ch, _ := answer["channel"].(map[string]any)
-		if id, _ := ch["id"].(string); model.ValidSlackID(id) {
+		if id, _ := ch["id"].(string); model.ValidSlackID(id) && !sharedOf(ch) {
 			channels = append(channels, id)
 		}
 	}
@@ -490,6 +547,62 @@ func (s *Service) learnRelayAnswer(ctx context.Context, installID, method string
 	if err := s.deps.DB.RecordFoundryRelayChannels(ctx, installID, channels); err != nil {
 		log.From(ctx).Warn("record a relayed install's channels failed", "install_id", installID, "err", err)
 	}
+}
+
+// relayExtShared reports whether the install's channel is shared with
+// another organisation, or invited to be: as Slack last said within
+// relaySharedFor, else as conversations.info says now, with the install's
+// token. An answer that says neither is an error.
+func (s *Service) relayExtShared(ctx context.Context, installID, token, channel string, now time.Time) (bool, error) {
+	l, key := &s.relay, installID+" "+channel
+	l.mu.Lock()
+	known, ok := l.shared[key]
+	l.mu.Unlock()
+	if ok && now.Before(known.until) {
+		return known.shared, nil
+	}
+	code, _, answer, err := s.sendSlack(ctx, "conversations.info", true, token, map[string]any{"channel": channel})
+	switch {
+	case err != nil:
+		return false, err
+	case code != http.StatusOK:
+		return false, fmt.Errorf("Slack answered HTTP %d", code)
+	}
+	var out struct {
+		OK      bool   `json:"ok"`
+		Error   string `json:"error"`
+		Channel struct {
+			ID               string `json:"id"`
+			ExtShared        bool   `json:"is_ext_shared"`
+			PendingExtShared bool   `json:"is_pending_ext_shared"`
+		} `json:"channel"`
+	}
+	switch err := json.Unmarshal(answer, &out); {
+	case err != nil:
+		return false, fmt.Errorf("Slack's answer wasn't conversations.info's: %w", err)
+	case !out.OK:
+		return false, fmt.Errorf("Slack answered %s", truncateUTF8(out.Error, 64))
+	case out.Channel.ID != channel:
+		return false, errors.New("Slack answered for another channel")
+	}
+	shared := out.Channel.ExtShared || out.Channel.PendingExtShared
+	l.sawShared(installID, channel, shared, now)
+	return shared, nil
+}
+
+// sawShared records what Slack said at now of whether the install's channel
+// is shared with another organisation. Past relayCapacity channels it
+// forgets those whose word has lapsed, and, still full, all of them.
+func (l *relayLimits) sawShared(installID, channel string, shared bool, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.shared) >= relayCapacity {
+		maps.DeleteFunc(l.shared, func(_ string, s relayShared) bool { return !now.Before(s.until) })
+		if len(l.shared) >= relayCapacity {
+			clear(l.shared)
+		}
+	}
+	l.shared[installID+" "+channel] = relayShared{shared: shared, until: now.Add(relaySharedFor)}
 }
 
 // sendSlack calls method with token: args as a form (each a string, or a
