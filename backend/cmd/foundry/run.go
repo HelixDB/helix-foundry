@@ -166,7 +166,7 @@ func run(parent context.Context, cfg *Config) error {
 	if link != nil {
 		relayed = link.Transport()
 	}
-	parts, err := buildWorkers(fcfg, logger, probes, st, awsCfg, dbs, f.sessions, relayed)
+	parts, err := buildWorkers(fcfg, logger, probes, st, awsCfg, dbs, local.People{Directory: dir}, f.sessions, relayed)
 	if err != nil {
 		_ = f.Stop(ctx)
 		return err
@@ -391,13 +391,14 @@ func (f *front) Stop(ctx context.Context) error {
 
 // buildWorkers builds foundry-read and the workers from what the install
 // provides them: Foundry's configuration, the logger, the health, the store,
-// the object store, the databases, and, with Slack on, the way to Slack
-// through Helix's relay (relayed), for the Slack bot and the Slack data
-// connector's syncs. Nothing else is provided, so the optional ports an
+// the object store, the databases, who the install's people are (people:
+// the ask worker matches a grantee to its sources by email), and, with Slack
+// on, the way to Slack through Helix's relay (relayed), for the Slack bot
+// and the Slack data connector's syncs. Nothing else is provided, so the optional ports an
 // install lacks are nil: no plan is sold (PlanReader) and nothing is
 // boosted (Boosts).
 func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes, st store.Store, awsCfg aws.Config,
-	dbs ports.Databases, sessions integration.SessionHost, relayed *slackbot.Relayed) ([]component, error) {
+	dbs ports.Databases, people ports.People, sessions integration.SessionHost, relayed *slackbot.Relayed) ([]component, error) {
 	c := dig.New()
 	for _, provide := range []any{
 		func() *foundryconfig.Config { return cfg },
@@ -406,6 +407,7 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 		func() store.Store { return st },
 		func() aws.Config { return awsCfg },
 		func() ports.Databases { return dbs },
+		func() ports.People { return people },
 		func() integration.SessionHost { return sessions },
 	} {
 		if err := c.Provide(provide); err != nil {

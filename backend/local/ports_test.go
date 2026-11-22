@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/local/directory"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store"
 )
@@ -96,6 +97,17 @@ func TestPeople(t *testing.T) {
 	}
 	if _, err := people.DisplayName(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("absent: %v", err)
+	}
+	// The owner is a member with their email, which source permissions match
+	// them by; anyone else, or a workspace that isn't live, is no member.
+	if m, err := people.Member(ctx, "ws", "owner"); err != nil ||
+		m != (ports.Member{Role: ports.RoleOwner, RawAccess: true, Email: directory.OwnerEmail}) {
+		t.Fatalf("owner = %+v, %v", m, err)
+	}
+	for _, tc := range [][2]string{{"ws", "nameless"}, {"ws", ""}, {"deleting", "owner"}, {"nope", "owner"}} {
+		if m, err := people.Member(ctx, tc[0], tc[1]); err != nil || m != (ports.Member{}) {
+			t.Errorf("Member(%s, %s) = %+v, %v", tc[0], tc[1], m, err)
+		}
 	}
 	// Any doubt is false.
 	broken := testDirectory()

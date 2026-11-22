@@ -8,6 +8,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -1037,7 +1038,7 @@ func (u Unimplemented) FoundryLoadHoldings(context.Context, string, string) (acc
 	return access.Holdings{}, nil
 }
 
-func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, *access.Inputs) error {
+func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, *access.Inputs, []access.ItemRef) error {
 	u.unimplemented("SetFoundryQuestionSeen")
 	return nil
 }
@@ -1721,6 +1722,36 @@ func (u Unimplemented) FinishFoundryAutomationSuggestions(context.Context, strin
 
 func (u Unimplemented) ChargeFoundryAutomationSuggestions(context.Context, string, int64) error {
 	u.unimplemented("ChargeFoundryAutomationSuggestions")
+	return nil
+}
+
+func (u Unimplemented) SourceSharingFor(context.Context, string, *connector.Email) ([]model.FoundrySourceSharing, error) {
+	u.unimplemented("SourceSharingFor")
+	return nil, nil
+}
+
+func (u Unimplemented) SourcePeopleByEmail(context.Context, string, []connector.Email) (map[connector.Email][]model.FoundrySourcePerson, error) {
+	u.unimplemented("SourcePeopleByEmail")
+	return nil, nil
+}
+
+func (u Unimplemented) SourceAudienceRead(context.Context, string, string) (model.FoundrySourceAudienceRead, error) {
+	u.unimplemented("SourceAudienceRead")
+	return model.FoundrySourceAudienceRead{}, nil
+}
+
+func (u Unimplemented) ListSourceAudiences(context.Context, string) ([]model.FoundrySourceAudience, error) {
+	u.unimplemented("ListSourceAudiences")
+	return nil, nil
+}
+
+func (u Unimplemented) ReplaceSourceAudiences(context.Context, string, string, time.Time, connector.Audiences) error {
+	u.unimplemented("ReplaceSourceAudiences")
+	return nil
+}
+
+func (u Unimplemented) RecordSourceAudienceProblem(context.Context, string, string, time.Time, string) error {
+	u.unimplemented("RecordSourceAudienceProblem")
 	return nil
 }
 

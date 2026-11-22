@@ -235,6 +235,13 @@ type Member struct {
 	// project's databases, outside Foundry: grants can't restrict what they
 	// read.
 	RawAccess bool
+	// Email is the member's email, only once the host has verified they
+	// own it (WorkOS's email_verified, hosted); empty otherwise. Source
+	// permissions match a restricted reader to a source's people by it
+	// (connector.ParseEmail): an unverified one would let a member claim a
+	// private Slack channel's member's address. An empty email, or one no
+	// source has an account for, reads none of a source's items.
+	Email string
 }
 
 // PlanReader reads the Foundry plan a workspace holds now. Optional: where

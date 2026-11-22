@@ -5,7 +5,15 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { Bot, Copy, KeyRound, Plus, Shapes, Users } from "lucide-react";
+import {
+  Bot,
+  Copy,
+  KeyRound,
+  Plus,
+  Shapes,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { FOUNDER } from "../../../shared/deployment";
 import type {
   CreateServiceCredentialResponse,
@@ -49,6 +57,7 @@ import {
   revokeKey,
   setGrants,
   setRestricted,
+  sourcesQuery,
   updateTeam,
 } from "./access-api";
 import {
@@ -68,6 +77,8 @@ import {
   restrictable,
   restrictedHoldingNothing,
   setOwners,
+  sourcePermissions,
+  SLACK_GRANT_NOTE,
   sourceState,
   sourceTree,
   syncedFrom,
@@ -96,14 +107,19 @@ import { slackQuery } from "./slack-api";
 // Everyone else sees what they saw before. Ontologies says who each is shared
 // with. Each principal's Usage permission, on unless turned off here, lets
 // it see the use cases of what it reads and record their runs: every run of an
-// ontology it reads all of, else only its own.
+// ontology it reads all of, else only its own. A connection whose source
+// reports its own permissions (Slack's channel membership) gives the
+// restricted only what the source shares with their email; Source
+// permissions says, per connection, when those were read and whom they
+// match.
 
-type Tab = "agents" | "people" | "teams" | "ontologies";
+type Tab = "agents" | "people" | "teams" | "ontologies" | "sources";
 const TABS: { id: Tab; label: string }[] = [
   { id: "agents", label: "Agents" },
   { id: "people", label: "People" },
   { id: "teams", label: "Teams" },
   { id: "ontologies", label: "Ontologies" },
+  { id: "sources", label: "Source permissions" },
 ];
 
 /** What every part of the page reads, with the names it shows. */
@@ -237,6 +253,9 @@ function GrantsDialog({
       data.sets.data || [],
     ),
     owners = setOwners(data.sets.data || []);
+  // The connections that follow their sources' permissions, once read.
+  const sources = useQuery(sourcesQuery(id)),
+    follows = new Set((sources.data || []).map((a) => a.connectorId));
   const key = (gs: readonly Grant[]) =>
     targetsOf(gs, owners)
       .map((t) => JSON.stringify(t))
@@ -369,7 +388,12 @@ function GrantsDialog({
                         </span>
                         <span>
                           {c.name}
-                          <small> · all of it, now and later</small>
+                          <small>
+                            {" · "}
+                            {follows.has(c.id)
+                              ? SLACK_GRANT_NOTE
+                              : "all of it, now and later"}
+                          </small>
                         </span>
                       </SourceCheck>
                       {(c.tables.length > 0 || c.sets.length > 0) && (
@@ -1486,6 +1510,89 @@ function OntologiesPanel({ data }: { data: AccessData }) {
   );
 }
 
+// ---------------------------------------------------------------- source permissions
+
+/**
+ * The connections whose sources' own permissions narrow their grants: each
+ * with what it follows, when its syncs last read who its source shares what
+ * with, how many members its people match by email, who isn't matched, its
+ * guests, and why its last read failed.
+ */
+function SourcesPanel({ data }: { data: AccessData }) {
+  const { id } = useWorkspace(),
+    sources = useQuery(sourcesQuery(id));
+  return (
+    <Panel
+      title="Source permissions"
+      subtitle="Connections that follow their source’s own permissions: someone restricted reads only what the source shares with their email, and none of its tables. Everyone else reads all of it."
+      padded={false}
+    >
+      {sources.isPending || data.members.isPending ? (
+        <div className="wk-pad">
+          <SkeletonText lines={2} />
+        </div>
+      ) : sources.error ? (
+        <div className="wk-pad">
+          <p role="alert" className="hf-form-error">
+            {sources.error.message}
+          </p>
+          <Button size="sm" onClick={() => void sources.refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : sources.data.length ? (
+        <ul
+          className="wk-members"
+          aria-label="Source permissions"
+          data-replay-block
+        >
+          {sources.data.map((a) => {
+            const name = data.names.connection(a.connectorId || ""),
+              row = sourcePermissions(
+                a,
+                (userId) => {
+                  const member = data.people.find((m) => m.user?.id === userId);
+                  return member ? nameOf(member) : "Unknown user";
+                },
+                formatRelative,
+              );
+            return (
+              <Row
+                key={a.connectorId}
+                icon={<SourceLogo source={a.kind || ""} size={15} />}
+                title={name}
+                tags={
+                  <Tag tone={a.stale || a.problem ? "warning" : "neutral"}>
+                    {row.follows}
+                  </Tag>
+                }
+                lines={row.line}
+                notes={row.notes}
+                actions={
+                  <ButtonLink
+                    size="sm"
+                    to={paths.connection(a.connectorId || "")}
+                    aria-label={`Open ${name}`}
+                  >
+                    Open
+                  </ButtonLink>
+                }
+              />
+            );
+          })}
+        </ul>
+      ) : (
+        <EmptyState
+          size="sm"
+          icon={ShieldCheck}
+          title="No connection follows its source’s permissions"
+          text="A Slack connection does: someone restricted reads only the channels they’re in."
+        />
+      )}
+    </Panel>
+  );
+}
+
 export function AccessTab() {
   const { role } = useWorkspace();
   return canManage(role) ? (
@@ -1549,6 +1656,8 @@ function AccessTabs() {
           <PeoplePanel data={data} />
         ) : shown === "ontologies" ? (
           <OntologiesPanel data={data} />
+        ) : tab === "sources" ? (
+          <SourcesPanel data={data} />
         ) : (
           <TeamsPanel data={data} />
         )}

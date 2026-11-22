@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -854,7 +855,8 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 		Kind: model.FoundryAgentTurnMessage, Input: "message 2", ClientToken: &token, MaxUSDMicros: 500_000}
 	require.NoError(t, f.db.CreateFoundryAgentTurn(ctx, granted, &model.FoundryAgentThread{ID: granted.ThreadID, WorkspaceID: f.workspaceID,
 		Principal: agentPerson, Title: "Invoices", Runtime: model.FoundryAgentRuntimeAPI,
-		Granted: &model.FoundryAgentThreadGrants{Targets: []access.Target{stripe, invoices}}}, f.limits(), nil))
+		Granted: &model.FoundryAgentThreadGrants{Targets: []access.Target{stripe, invoices},
+			Items: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}}}, f.limits(), nil))
 	token3 := "send-3"
 	empty := &model.FoundryAgentTurn{ID: f.turnID(3), WorkspaceID: f.workspaceID, ThreadID: f.threadID(3), Principal: agentPerson,
 		Kind: model.FoundryAgentTurnMessage, Input: "message 3", ClientToken: &token3, MaxUSDMicros: 500_000}
@@ -868,10 +870,12 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Granted)
 	assert.Equal(t, []access.Target{stripe, invoices}, got.Granted.Targets)
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}, got.Granted.Items, "the channels it ran under")
 	none, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(3))
 	require.NoError(t, err)
 	require.NotNil(t, none.Granted, "holding nothing is still a grantee's")
 	assert.Empty(t, none.Granted.Targets)
+	assert.Empty(t, none.Granted.Items)
 
 	all, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, nil, "", 10)
 	require.NoError(t, err)
@@ -887,12 +891,22 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 	assert.Equal(t, f.threadID(2), rest[0].ID)
 	assert.Empty(t, next, "the whole view's thread isn't a page of its own")
 
-	// A grantee's run adds what it holds, once.
+	// A grantee's run adds what it holds, once, and the channels shared with
+	// it, though its targets added nothing.
 	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2),
 		&model.FoundryAgentThreadGrants{Targets: []access.Target{invoices, general}}))
+	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2),
+		&model.FoundryAgentThreadGrants{Targets: []access.Target{stripe}, Items: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"},
+			{ConnectorID: "conn-slack", Item: "C2"}}}))
 	got, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
 	require.NoError(t, err)
 	assert.Equal(t, []access.Target{stripe, invoices, general}, got.Granted.Targets)
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}}, got.Granted.Items)
+	listed, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentPerson, keepAll, "", 10)
+	require.NoError(t, err)
+	at := slices.IndexFunc(listed, func(x *model.FoundryAgentThread) bool { return x.ID == f.threadID(2) })
+	require.GreaterOrEqual(t, at, 0)
+	assert.Len(t, listed[at].Granted.Items, 2, "a list reads them too")
 	// A whole view's run takes it away, and a grantee's run never gives it back.
 	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2), nil))
 	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(2),
@@ -900,6 +914,9 @@ func TestFoundryAgentThreadGrants(t *testing.T) {
 	got, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
 	require.NoError(t, err)
 	assert.Nil(t, got.Granted)
+	var items int
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_agent_thread_source_items WHERE thread_id=?`, f.threadID(2)).Scan(&items))
+	assert.Zero(t, items, "a whole view's thread keeps no channels")
 	require.NoError(t, f.db.RecordFoundryAgentThreadGrants(ctx, f.workspaceID, f.threadID(1),
 		&model.FoundryAgentThreadGrants{Targets: []access.Target{stripe}}))
 	whole, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))

@@ -35,10 +35,12 @@ export type MockGranteeLoad = {
  * A caller admitted only through source grants, as the backend's
  * access.Grantee: who it is (a principal key, "KIND_USER:usr_eve"), the
  * current loads its grants hold any of by ontology, the one an ontology's
- * route was admitted on, whether its grants cover a document set, whether a
- * load they hold holds a document in a set they cover (of `ontologyId`'s, or
- * any), what they hold of an ontology's current load, for the agent, and
- * whether they still hold what an answer read.
+ * route was admitted on, whether its grants read a document (Grants.Reads:
+ * its set is given, and its connector's source, when that reports its
+ * permissions, shares its item with the grantee), whether a load they hold
+ * holds a document they read (of `ontologyId`'s, or any), what they hold of
+ * an ontology's current load, for the agent, and whether they still hold
+ * what an answer read (Grants.Keeps).
  */
 export type MockGrantee = {
   principal: string;
@@ -47,9 +49,16 @@ export type MockGrantee = {
   // reads only while they hold every target it ran under.
   targets: readonly FoundryAccessTarget[];
   holdsAll: (targets: readonly FoundryAccessTarget[]) => boolean;
+  // The channels its sources share with it now (Grants.VisibleItems), and
+  // whether every one of `items` still is (Grants.SeesItems): a thread is
+  // theirs only while each channel it ran under is.
+  items: () => { connectorId: string; item: string }[];
+  seesItems: (
+    items: readonly { connectorId: string; item: string }[],
+  ) => boolean;
   covered: Map<string, MockGranteeLoad>;
   load?: MockGranteeLoad;
-  coversSet: (setId: string) => boolean;
+  reads: (documentId: string) => boolean;
   holds: (documentId: string, ontologyId?: string) => boolean;
   visibility: (ontologyId: string) => Visibility;
   // The part of the admitted ontology's load it holds, to keep with a
@@ -58,12 +67,16 @@ export type MockGrantee = {
   stillSees: (seen: MockSeen) => boolean;
 };
 
-/** What a grantee held of a load when it read it (access.Inputs). */
+/**
+ * What a grantee held of a load when it read it (access.Inputs), and the
+ * channels its documents were of (access.Part.Items).
+ */
 export type MockSeen = {
   tables: { connectorId: string; table: string }[];
   sets: { setId: string; connectorId: string }[];
   enrichment: boolean;
   uncoverable: boolean;
+  items: { connectorId: string; item: string }[];
 };
 
 export type MockReply = {

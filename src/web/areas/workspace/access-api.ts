@@ -7,6 +7,7 @@ import type {
   FoundryTeamResponse,
   GetMyFoundryAccessResponse,
   ListFoundryAccessResponse,
+  ListFoundrySourceAudiencesResponse,
   ListServiceCredentialsResponse,
   PreviewFoundryAccessChangeResponse,
   SetFoundryAccessGrantsRequest,
@@ -19,8 +20,9 @@ import type { Principal } from "./access-model";
 
 // Settings › Access's WFE calls, and restricted mode's: the workspace's
 // grants, teams and restricted members, who reads what through them, what
-// a change would take away, agents' keys, and what the caller itself reads
-// through grants. Hosted only: a local build has one owner.
+// a change would take away, agents' keys, what the caller itself reads
+// through grants, and the connections that follow their sources'
+// permissions. Hosted only: a local build has one owner.
 
 const enc = encodeURIComponent;
 const access = (ws: string) => `/v1/workspaces/${enc(ws)}/foundry/access`;
@@ -43,6 +45,17 @@ export const myAccessQuery = (ws: string) => ({
   // back to the tab or a job's end (../ontology/scope.tsx) reads it again.
   staleTime: 60_000,
   refetchOnWindowFocus: "always" as const,
+});
+
+/**
+ * The connections whose sources' own permissions narrow their grants, with
+ * what their syncs last read of them (owners and admins).
+ */
+export const sourcesQuery = (ws: string) => ({
+  queryKey: [ws, "foundry-access", "sources"],
+  queryFn: async () =>
+    (await api<ListFoundrySourceAudiencesResponse>(`${access(ws)}/sources`))
+      .sources || [],
 });
 
 /** The workspace's agents' keys, revoked ones too (with revokedAt). */

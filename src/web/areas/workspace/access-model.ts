@@ -7,17 +7,21 @@ import type {
   FoundryLoadAccessInputs,
   FoundryPrincipal,
   FoundryPrincipalKind,
+  FoundrySourceAudience,
   FoundryTeam,
   ListFoundryAccessResponse,
   ResourceScope,
   WorkspaceMember,
 } from "../../../shared/wfe";
+import { formatNumber, plural } from "../../kit/util";
 
 // Source grants as Settings › Access and restricted mode read them, pure:
 // what a grant gives (Grant, from and to the WFE's targets), the workspace's
 // sources as the grants editor lists them (sourceTree), what a load holds
 // that grants don't cover (missing, the backend's Grants.Missing), who reads
-// what, whether a member can be restricted, and where a grantee may go.
+// what, whether a member can be restricted, where a grantee may go, and the
+// connections whose sources' own permissions narrow their grants (Source
+// permissions).
 
 /**
  * What one grant gives, as the editor holds it: a connector (its tables now
@@ -722,3 +726,104 @@ export const readsPart = (
   me: Parameters<typeof readAccess>[0] & { partial: readonly string[] },
   o: { id: string; projectId?: string },
 ) => readAccess(me, o) === "grants" && me.partial.includes(o.id);
+
+// ---------------------------------------------------------------- source permissions
+//
+// A Slack connection follows Slack's own permissions: someone restricted
+// reads only the channels Slack shares with their email, and none of its
+// tables (plans/SOURCE_ACLS.md). Its syncs read those permissions; a read
+// over 7 days old (a day, once a read since failed), or none, leaves it to
+// people who aren't restricted. The backend matches the people it narrows
+// to Slack's, so Slack's own directory never reaches the page.
+
+/**
+ * When a connection's source permissions were last read: never (no read
+ * has worked), too long ago (`stale`), or recently enough to narrow its
+ * grants.
+ */
+export type AudienceRead =
+  | { kind: "never" }
+  | { kind: "stale"; at: string }
+  | { kind: "fresh"; at: string };
+
+/**
+ * A connection's AudienceRead, from GET .../foundry/access/sources.
+ *
+ *     audienceRead({ readAt: "2026-11-20T10:00:00Z", stale: false }) // { kind: "fresh", at: "2026-11-20T10:00:00Z" }
+ *     audienceRead({ stale: true }) // { kind: "never" }
+ */
+export const audienceRead = (a: FoundrySourceAudience): AudienceRead =>
+  !a.readAt
+    ? { kind: "never" }
+    : a.stale
+      ? { kind: "stale", at: a.readAt }
+      : { kind: "fresh", at: a.readAt };
+
+/**
+ * What a grant of a Slack connection gives, said beside it in the grants
+ * editor in place of "all of it".
+ */
+export const SLACK_GRANT_NOTE =
+  "only the channels each person is in, now and later";
+
+/** How many names a note lists before it counts the rest. */
+const NAMES_LISTED = 5;
+
+/**
+ * Names, the first NAMES_LISTED of them, then how many more.
+ *
+ *     listNames(["Ada", "Eve"]) // "Ada, Eve"
+ *     listNames(["A", "B", "C", "D", "E", "F", "G"]) // "A, B, C, D, E and 2 more"
+ */
+export const listNames = (names: readonly string[]) =>
+  names.length > NAMES_LISTED
+    ? `${names.slice(0, NAMES_LISTED).join(", ")} and ${formatNumber(names.length - NAMES_LISTED)} more`
+    : names.join(", ");
+
+/**
+ * One Slack connection's row on Source permissions, in words: what it
+ * follows (its tag), a line of when its permissions were read (`relative`
+ * words a time), what they share and how many of the people it narrows
+ * Slack has an account for, then notes: who it hasn't (named by `name`,
+ * from their user id), its guests, and why the last read failed.
+ *
+ *     sourcePermissions({ readAt, everyoneItems: 5, membersItems: 1, grantees: 3 }, name, formatRelative)
+ *     // { follows: "Follows Slack channel membership", line: "Read 2h ago · 5 public channels, 1 private · 3 of 3 restricted people matched", notes: [] }
+ */
+export function sourcePermissions(
+  a: FoundrySourceAudience,
+  name: (userId: string) => string,
+  relative: (at: string) => string,
+) {
+  const read = audienceRead(a),
+    grantees = a.grantees || 0,
+    unmatched = a.unmatchedUserIds || [],
+    guests = a.guestUserIds || [];
+  const unread =
+    "only owners, admins and members who aren’t restricted read it until a sync reads them again";
+  const readText =
+    read.kind === "never"
+      ? `Not read yet: ${unread}`
+      : read.kind === "stale"
+        ? `Last read ${relative(read.at)}, too long ago: ${unread}`
+        : `Read ${relative(read.at)}`;
+  return {
+    follows: "Follows Slack channel membership",
+    line: [
+      readText,
+      read.kind !== "never" &&
+        `${plural(a.everyoneItems || 0, "public channel")}, ${plural(a.membersItems || 0, "private", "private")}`,
+      `${grantees - unmatched.length} of ${plural(grantees, "restricted person", "restricted people")} matched`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    notes: [
+      unmatched.length > 0 &&
+        `Not in Slack by their email: ${listNames(unmatched.map(name))}. Restricted, they read none of its channels.`,
+      guests.length > 0 &&
+        `${guests.length > 1 ? "Guests" : "A guest"} in Slack: ${listNames(guests.map(name))}. Restricted, they read only the private channels that list them.`,
+      a.problem?.message &&
+        `The last read of who it shares what with failed: ${a.problem.message}.`,
+    ].filter((n): n is string => !!n),
+  };
+}

@@ -11,6 +11,7 @@ import {
   Table2,
   Trash2,
 } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import type { Connector, ConnectorSync } from "../../../shared/wfe";
 import { ApiError } from "../../api";
 import { paths } from "../../paths";
@@ -170,10 +171,22 @@ function details(
       value: config.granola.transcripts ? "Notes and transcripts" : "Notes",
     });
   if (config && "slack" in config)
-    items.push({
-      label: "Message history",
-      value: plural(config.slack.historyDays || 90, "day"),
-    });
+    items.push(
+      {
+        label: "Message history",
+        value: plural(config.slack.historyDays || 90, "day"),
+      },
+      // Hosted, a grant of it gives someone restricted only the channels
+      // they're in (Settings › Access › Source permissions).
+      ...(LOCAL
+        ? []
+        : [
+            {
+              label: "Permissions",
+              value: "Follows channel membership in Slack",
+            },
+          ]),
+    );
   if (config && "databuddy" in config)
     items.push(
       {

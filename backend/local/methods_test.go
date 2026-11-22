@@ -66,6 +66,7 @@ var refused = map[string]string{
 	foundry("ListFoundryAccess"):          noGrantees,
 	foundry("SetFoundryAccessGrants"):     noGrantees,
 	foundry("PreviewFoundryAccessChange"): noGrantees,
+	foundry("ListFoundrySourceAudiences"): noGrantees,
 	foundry("SetFoundryMemberRestricted"): noGrantees,
 	foundry("CreateFoundryTeam"):          noGrantees,
 	foundry("UpdateFoundryTeam"):          noGrantees,

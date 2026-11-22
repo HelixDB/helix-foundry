@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -322,6 +323,19 @@ VALUES (?, ?, ?, 'prop', 'Customer', 'c1', 'name', '"x"', ?, NOW(6))`, l.LoadID,
 		_, err = testDB.Exec(`DELETE FROM foundry_load_enrichments WHERE load_id=?`, l.LoadID)
 		require.NoError(t, err)
 	})
+	t.Run("a connector's document holds its set's stream and its row's key", func(t *testing.T) {
+		c := newConnectorSync(t, f, "ACL-H")
+		note := c.note("ACL-note", "C1:2026-11-01", "v1", time.Now().UTC())
+		c.published(t, c.publish("ACL-note", []*model.FoundryDocument{note}, nil))
+		_, err := testDB.Exec(`INSERT INTO foundry_load_documents (load_id, document_id, set_id) VALUES (?, ?, ?)`, l.LoadID, note.ID, c.setID)
+		require.NoError(t, err)
+		h, err := f.db.FoundryLoadHoldings(ctx, ws, l.LoadID)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []access.DocumentRef{{ID: doc, Set: access.SetRef{SetID: general}},
+			{ID: note.ID, Set: access.SetRef{SetID: c.setID, ConnectorID: c.connector.ID}, Stream: "notes", ExternalID: "C1:2026-11-01"}}, h.Documents)
+		_, err = testDB.Exec(`DELETE FROM foundry_load_documents WHERE load_id=? AND document_id=?`, l.LoadID, note.ID)
+		require.NoError(t, err)
+	})
 	t.Run("a version's inputs", func(t *testing.T) {
 		in, err := f.db.FoundryVersionInputs(ctx, ws, f.ontology.ID, versionID)
 		require.NoError(t, err)
@@ -422,13 +436,22 @@ reserved_micros=?, charged_at=NOW(6) WHERE id=?`, 50, f.id(2))
 	assert.Contains(t, refusal.Reason, "the workspace has asked")
 
 	seen := access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}
-	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen))
+	items := []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}, {ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "c1"}}
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen, items))
 	stored, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
 	require.NoError(t, err)
 	assert.Equal(t, &seen, stored.Seen)
-	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), nil))
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}, {ConnectorID: "conn-slack", Item: "c1"}},
+		stored.SeenItems, "the channels it read, sorted, told apart by case")
+	// A later attempt's record replaces the items an earlier one recorded.
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen, items[:1]))
 	stored, err = f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
 	require.NoError(t, err)
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}, stored.SeenItems)
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), nil, nil))
+	stored, err = f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
+	require.NoError(t, err)
+	assert.Empty(t, stored.SeenItems)
 	assert.Nil(t, stored.Seen, "the whole load, after all")
 	notSeen, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(2))
 	require.NoError(t, err)

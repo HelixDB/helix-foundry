@@ -49,7 +49,9 @@ import {
   kinds,
   prepare,
   s3Setup,
+  slackAudiences,
   syncTables,
+  type MockAudiences,
   type Source,
   type SourceError,
 } from "./data-sources";
@@ -246,6 +248,24 @@ const connectors = new Map<string, StoredConnector>();
 const syncs: StoredSync[] = [];
 // Each connector's synced tables, by name.
 const tables = new Map<string, Map<string, SyncedTable>>();
+/**
+ * What a Slack connector's syncs last read of who its channels are shared
+ * with (foundry_source_audiences and its rows), by connector id: the
+ * audiences of the newest read that worked and when, and why the newest
+ * read since failed, if one did.
+ */
+type StoredAudiences = Partial<MockAudiences & { readAt: string }> & {
+  problem?: { message: string; at: string };
+};
+const audiences = new Map<string, StoredAudiences>();
+/**
+ * A connector's audiences as its syncs last read them (for ./access.ts),
+ * after bringing its syncs up to now; undefined while none was tried.
+ */
+export function connectorAudiences(connectorId: string) {
+  syncsOf(connectorId);
+  return audiences.get(connectorId);
+}
 /** A workspace's connectors with their synced tables (for other areas' mocks). */
 export function workspaceConnectors(workspaceId: string): Connector[] {
   applyBreaks();
@@ -466,6 +486,19 @@ function advance(s: StoredSync) {
       : documentStreams(c.source, s.finishedAt),
     s.byPerson,
   );
+  // A Slack sync then reads who each channel is shared with, in full, and
+  // stores it in place of what was (the syncer's storeAudiences); a read
+  // that fails keeps what was, says why, and fails nothing.
+  if (c.kind === "slack") {
+    const read = slackAudiences(c.source),
+      was = audiences.get(c.id) || {};
+    audiences.set(
+      c.id,
+      typeof read === "string"
+        ? { ...was, problem: { message: read, at: s.finishedAt } }
+        : { ...read, readAt: s.finishedAt },
+    );
+  }
 }
 
 /**
@@ -1501,6 +1534,7 @@ function seed() {
   connectors.clear();
   syncs.length = 0;
   tables.clear();
+  audiences.clear();
   delete knobs.eventSyncMs;
   delete knobs.signIn;
   delete knobs.accountBroken;

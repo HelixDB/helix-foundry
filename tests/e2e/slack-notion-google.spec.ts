@@ -173,7 +173,7 @@ test("connects Slack, says which scope its token lacks, and keeps a document per
   const documents = conversations.getByRole("link");
   await expect(documents).toHaveCount(50);
   await expect(documents.first()).toHaveText(
-    /^#(general|sales|support|engineering), \d{4}-\d{2}-\d{2}$/,
+    /^#(general|sales|support|engineering|leadership), \d{4}-\d{2}-\d{2}$/,
   );
   // A channel day's page: its messages, from Slack.
   await documents.first().click();

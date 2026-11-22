@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -186,6 +187,7 @@ func (s *agentStore) RecordFoundryAgentThreadGrants(_ context.Context, ws, id st
 				t.Granted.Targets = append(t.Granted.Targets, target)
 			}
 		}
+		t.Granted.Items = access.SortItems(slices.Concat(t.Granted.Items, granted.Items))
 	}
 	return nil
 }
