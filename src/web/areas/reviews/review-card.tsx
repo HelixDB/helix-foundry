@@ -4,8 +4,9 @@
 // line and the verifier's score. A walkthrough card asks one question, says
 // what Founder suggests and what a choice does, then offers the choices, each
 // a button that also has a key (./keys.ts). Members read it, settling nothing.
-import type { ReactNode, Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { Link } from "react-router-dom";
+import type { DecisionApplied } from "../../../shared/wfe";
 import { ArrowLeft, ArrowRight, MessageCircle, Undo2 } from "lucide-react";
 import { Button, Tag, plural } from "../../kit";
 import { paths } from "../../paths";
@@ -18,7 +19,12 @@ import { useOntology } from "../ontology/scope";
 import { settleOf, type Advice, type Decidable, type Effect } from "./advice";
 import type { Choice } from "./choices";
 import type { KeyCommand } from "./keys";
-import { holdingEnds, propValueText, type Statement } from "./model";
+import {
+  holdingEnds,
+  propValueText,
+  resolvedText,
+  type Statement,
+} from "./model";
 import { BAND_TEXT, bandOf, scoreText } from "./queue";
 import { ClaimWritten } from "./settle";
 import { FounderSuggestion } from "./suggestion";
@@ -163,13 +169,19 @@ export function cardLine(card: Decidable): string {
 const keyOf = (c: Choice, i: number) =>
   c.kind === "not_in_data" ? "N" : c.kind === "reject" ? "X" : String(i + 1);
 
-/** What became of a card in this walk, said on it. */
+/**
+ * What became of a card in this walk, said on it; for a name's choice, also
+ * what the current load made of it once that is known (`applied`): linked
+ * in place, or why not, the next load applying it.
+ */
 function OutcomeLine({
   outcome,
+  applied,
   choices,
   coveredBy,
 }: {
   outcome?: Outcome;
+  applied?: DecisionApplied | null;
   choices: readonly Choice[];
   coveredBy?: string;
 }) {
@@ -198,10 +210,17 @@ function OutcomeLine({
             return c.kind === "approve";
         }
       })?.label;
+      const inLoad =
+        outcome.kind === "saved" &&
+        outcome.decision.kind === "resolve" &&
+        applied?.status !== "pending"
+          ? resolvedText(applied)
+          : undefined;
       return (
         <p role="status" className="rv-outcome">
           {outcome.kind === "sending" ? "Saving" : "Saved"}
-          {label ? `: ${label}` : ""}. Undo with Z while it’s your last choice.
+          {label ? `: ${label}` : ""}.{inLoad ? ` ${inLoad}` : ""} Undo with Z
+          while it’s your last choice.
         </p>
       );
     }
@@ -246,7 +265,8 @@ const Kbd = ({ children }: { children: ReactNode }) => (
  * also takes from a key: Accept (with a suggestion), the numbered choices,
  * Skip, Back, Undo, Accept all like this (`batch`, the cards it takes), Ask
  * Founder (`founder`). `readOnly` (a member, or a load that isn't current)
- * shows the card without its choices; a card decided in this walk shows
+ * shows the card without its choices, its reading keys (Back, Next, Ask
+ * Founder, the shortcuts) still working; a card decided in this walk shows
  * what became of it instead.
  */
 export function ReviewCard({
@@ -255,6 +275,7 @@ export function ReviewCard({
   choices,
   effect,
   outcome,
+  applied,
   coveredBy,
   readOnly,
   batch,
@@ -268,6 +289,8 @@ export function ReviewCard({
   choices: readonly Choice[];
   effect: Effect | null;
   outcome?: Outcome;
+  // What the current load made of the saved decision, as last read.
+  applied?: DecisionApplied | null;
   coveredBy?: string;
   readOnly: boolean;
   batch: number;
@@ -287,7 +310,8 @@ export function ReviewCard({
           (c) => JSON.stringify(c.decision) === JSON.stringify(advice.choice),
         )
       : undefined;
-  const headingId = `rv-card-${card.key}`;
+  // A card's key may hold spaces and quotes (a name's is JSON), no IDREF.
+  const headingId = useId();
   return (
     <article className="rv-card" aria-labelledby={headingId}>
       <header className="rv-card-head">
@@ -356,7 +380,12 @@ export function ReviewCard({
         effect={effect}
         label={suggested?.label}
       />
-      <OutcomeLine outcome={outcome} choices={choices} coveredBy={coveredBy} />
+      <OutcomeLine
+        outcome={outcome}
+        applied={applied}
+        choices={choices}
+        coveredBy={coveredBy}
+      />
       {readOnly ? (
         <p className="on-muted">Owners and admins settle reviews.</p>
       ) : (
@@ -435,16 +464,14 @@ export function ReviewCard({
             <MessageCircle size={14} aria-hidden /> Ask Founder
           </Button>
         )}
-        {!readOnly && (
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-keyshortcuts="Shift+?"
-            onClick={() => onCommand({ kind: "help" })}
-          >
-            Shortcuts <Kbd>?</Kbd>
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-keyshortcuts="Shift+?"
+          onClick={() => onCommand({ kind: "help" })}
+        >
+          Shortcuts <Kbd>?</Kbd>
+        </Button>
       </div>
     </article>
   );

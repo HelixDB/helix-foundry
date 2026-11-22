@@ -3,6 +3,7 @@ import {
   BATCH_LABELS,
   SEED_QUOTE,
   advise,
+  asks,
   coveredBy,
   effectOf,
   founderSeed,
@@ -12,7 +13,8 @@ import {
   type Advice,
   type Decidable,
 } from "@/web/areas/reviews/advice";
-import { decisionFor, type Candidate } from "@/web/areas/reviews/model";
+import { choicesOf } from "@/web/areas/reviews/choices";
+import type { Candidate, Settleable } from "@/web/areas/reviews/model";
 import type { Band, ClaimCard, Precision } from "@/web/areas/reviews/queue";
 import {
   ctxOf,
@@ -30,6 +32,12 @@ import {
 const bands = (
   ...b: { band: Band; right: number; total: number }[]
 ): Precision => ({ bands: b, rechecks: { agreed: 0, total: 0 } });
+
+/** Whether a card offers the choice suggested: a suggestion is only ever one of its choices. */
+const offered = (r: Settleable, choice: unknown) =>
+  choicesOf(r, (c) => c.key).some(
+    (c) => JSON.stringify(c.decision) === JSON.stringify(choice),
+  );
 
 const suggested = (a: Advice) => {
   if (a.kind !== "suggest") throw new Error(`no suggestion: ${a.why}`);
@@ -73,18 +81,64 @@ describe("settleOf", () => {
 });
 
 describe("coveredBy", () => {
-  const linked = resolveDecision("d-1", { entityKey: "scus_1" });
-  const card = nameCard("umbrella holdings");
+  const umbrella = { key: "scus_1", entity: entity("scus_1", "Umbrella") };
+  const linked = resolveDecision("d-1", {
+    entityKey: "scus_1",
+    applied: "pending",
+  });
+  const card = nameCard("umbrella holdings", { candidates: [umbrella] });
   it("finds a link of the name in another document while the load asks", () => {
     expect(coveredBy(card, ctxOf({ decisions: [linked] }))).toBe(linked);
+    const written = resolveDecision("d-5", {
+      entityKey: "scus_1",
+      applied: "written",
+    });
+    expect(coveredBy(card, ctxOf({ decisions: [written] }))).toBe(written);
+  });
+  it("ignores a link that can't apply to this load now", () => {
+    for (const applied of [
+      undefined,
+      "",
+      "refused",
+      "missed",
+      "unconfirmed",
+    ] as const)
+      expect(
+        coveredBy(
+          card,
+          ctxOf({
+            decisions: [
+              resolveDecision("d-1", { entityKey: "scus_1", applied }),
+            ],
+          }),
+        ),
+      ).toBeNull();
+    // An entity the read didn't find, or one the card doesn't list.
+    for (const candidates of [
+      [{ key: "scus_1" }],
+      [],
+      [{ key: "scus_2", entity: entity("scus_2", "Other") }],
+    ])
+      expect(
+        coveredBy(
+          nameCard("umbrella holdings", { candidates }),
+          ctxOf({ decisions: [linked] }),
+        ),
+      ).toBeNull();
   });
   it("ignores Not in data, bound names, the same document and other types", () => {
     expect(
-      coveredBy(card, ctxOf({ decisions: [resolveDecision("d-2")] })),
+      coveredBy(
+        card,
+        ctxOf({ decisions: [resolveDecision("d-2", { applied: "pending" })] }),
+      ),
     ).toBeNull();
     expect(
       coveredBy(
-        nameCard("umbrella holdings", { reasons: ["legal_form"] }),
+        nameCard("umbrella holdings", {
+          reasons: ["legal_form"],
+          candidates: [umbrella],
+        }),
         ctxOf({ decisions: [linked] }),
       ),
     ).toBeNull();
@@ -93,7 +147,11 @@ describe("coveredBy", () => {
         card,
         ctxOf({
           decisions: [
-            resolveDecision("d-3", { doc: "doc-1", entityKey: "scus_1" }),
+            resolveDecision("d-3", {
+              doc: "doc-1",
+              entityKey: "scus_1",
+              applied: "pending",
+            }),
           ],
         }),
       ),
@@ -103,11 +161,28 @@ describe("coveredBy", () => {
         card,
         ctxOf({
           decisions: [
-            resolveDecision("d-4", { type: "Vendor", entityKey: "scus_1" }),
+            resolveDecision("d-4", {
+              type: "Vendor",
+              entityKey: "scus_1",
+              applied: "pending",
+            }),
           ],
         }),
       ),
     ).toBeNull();
+  });
+  it("reads the reason of the review the card settles, not its others", () => {
+    // The card settles by its legal_form review (the one with candidates):
+    // the backend saves that for the next load, so nothing is covered.
+    const bound = nameCard("umbrella holdings", {
+      reasons: ["legal_form", "unresolved"],
+      candidates: [umbrella],
+    });
+    expect(asks(bound)).toBe(false);
+    expect(coveredBy(bound, ctxOf({ decisions: [linked] }))).toBeNull();
+    expect(
+      effectOf(bound, { resolve: { entityKey: "scus_1" } }, 2, () => false),
+    ).toEqual({ kind: "next_load" });
   });
 });
 
@@ -135,9 +210,7 @@ describe("advise: names", () => {
     expect(a.batchKey).toBe(
       'precedent:["Customer","umbrella holdings","scus_1"]',
     );
-    expect(decisionFor(bound().review, { entityKey: "scus_1" })).toEqual(
-      a.choice,
-    );
+    expect(offered(bound().review, a.choice)).toBe(true);
   });
   it("doesn't batch a repeat of someone else's choice", () => {
     const decisions = [
@@ -161,7 +234,7 @@ describe("advise: names", () => {
     const a = suggested(advise(card, ctxOf({ decisions })));
     expect(a.choice).toEqual({ resolve: { notInData: true } });
     expect(a.batchKey).toBe('precedent:["Customer","umbrella holdings",null]');
-    expect(decisionFor(card.review, { entityKey: null })).toEqual(a.choice);
+    expect(offered(card.review, a.choice)).toBe(true);
   });
   it("suggests nothing from decisions that disagree, or name an entity it can't offer", () => {
     expect(
@@ -199,7 +272,7 @@ describe("advise: names", () => {
       strength: { kind: "unmeasured" },
       batchKey: null,
     });
-    expect(decisionFor(card.review, { entityKey: "scus_1" })).toEqual(a.choice);
+    expect(offered(card.review, a.choice)).toBe(true);
   });
   it("says why it can't pick a candidate", () => {
     expect(
@@ -350,9 +423,7 @@ describe("advise: values", () => {
       strength: { kind: "unmeasured" },
       batchKey: null,
     });
-    expect(decisionFor(card.review, { value: { text: "GBP" } })).toEqual(
-      a.choice,
-    );
+    expect(offered(card.review, a.choice)).toBe(true);
     expect(
       suggested(
         advise(

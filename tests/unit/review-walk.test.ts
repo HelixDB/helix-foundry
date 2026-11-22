@@ -9,6 +9,7 @@ import type {
 } from "@/web/areas/reviews/queue";
 import {
   batchOf,
+  batchTakes,
   current,
   progress,
   walkOrder,
@@ -58,7 +59,10 @@ describe("walkOrder", () => {
   });
   const askingToo = nameCard("umbrella", { doc: "doc-2" });
   const bound = nameCard("umbrella", { doc: "doc-3", reasons: ["part_name"] });
-  const covered = nameCard("initech", { doc: "doc-4" });
+  const covered = nameCard("initech", {
+    doc: "doc-4",
+    candidates: [{ key: "scus_7", entity: entity("scus_7", "Initech") }],
+  });
   const model = nameCard("globex", { reasons: ["adjudicated"] });
   const claim = heldCard(1, { doc: "doc-5", subjectType: "Person" });
   const value = valueCard([{ text: "a" }, { text: "a" }, { text: "a" }]);
@@ -95,6 +99,7 @@ describe("walkOrder", () => {
         doc: "doc-9",
         normName: "initech",
         entityKey: "scus_7",
+        applied: "pending",
       }),
     ],
   });
@@ -240,6 +245,25 @@ describe("walkReducer", () => {
     expect(current(undone)).toBe("a");
     expect(undone.undo).toEqual([]);
   });
+  it("opens again what a link covered once the load refuses it in place", () => {
+    const w = run(walkOf(["a", "b", "c", "d"]), {
+      type: "decide",
+      key: "a",
+      choice: approve,
+      how: "chosen",
+      covers: ["b", "c"],
+    });
+    const uncovered = run(w, { type: "uncover", by: new Set(["a"]) });
+    expect(uncovered.outcomes.has("b")).toBe(false);
+    expect(uncovered.outcomes.has("c")).toBe(false);
+    expect(uncovered.outcomes.get("a")?.kind).toBe("sending");
+    expect(progress(uncovered).left).toBe(3);
+    // Nothing more to open: the walk itself.
+    expect(run(uncovered, { type: "uncover", by: new Set(["a"]) })).toBe(
+      uncovered,
+    );
+    expect(run(w, { type: "uncover", by: new Set(["z"]) })).toBe(w);
+  });
   it("ignores a choice on a card still sending, or not in the walk", () => {
     const w = run(walkOf(["a", "b"]), decide("a"));
     expect(run(w, decide("a"))).toBe(w);
@@ -287,6 +311,23 @@ describe("walkReducer", () => {
     expect(
       run(batched, { type: "batch", items: [{ key: "a", choice: approve }] }),
     ).toBe(batched);
+    // Saved, covered or decided elsewhere meanwhile: left as it is; a card
+    // skipped is taken.
+    const meanwhile = walkOf(["a", "b", "c", "d"], {}, [
+      ["a", { kind: "saved", decision: decision("a"), how: "chosen" }],
+      ["b", { kind: "covered", by: "x" }],
+      ["c", { kind: "elsewhere" }],
+      ["d", { kind: "skipped" }],
+    ]);
+    expect(
+      ["a", "b", "c", "d", "z"].filter((k) => batchTakes(meanwhile, k)),
+    ).toEqual(["d"]);
+    const some = run(meanwhile, {
+      type: "batch",
+      items: ["a", "b", "c", "d"].map((key) => ({ key, choice: approve })),
+    });
+    expect(some.undo).toEqual([["d"]]);
+    expect(some.outcomes.get("c")).toEqual({ kind: "elsewhere" });
     const undone = run(batched, { type: "undone", keys: ["a", "c"] });
     expect(undone.undo).toEqual([["b"]]);
     expect(current(undone)).toBe("a");

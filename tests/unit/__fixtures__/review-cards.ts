@@ -1,4 +1,8 @@
-import type { FoundryPropValue, FoundryReviewDecision } from "@/shared/wfe";
+import type {
+  DecisionApplied,
+  FoundryPropValue,
+  FoundryReviewDecision,
+} from "@/shared/wfe";
 import type { EntityRow } from "@/web/areas/explore/model";
 import { adviceContext } from "@/web/areas/reviews/advice";
 import { statementHash, type Unsettled } from "@/web/areas/reviews/model";
@@ -165,6 +169,8 @@ export const resolveDecision = (
     entityKey = undefined as string | undefined,
     user = "u-1",
     at = "2026-11-01T00:00:00Z",
+    // What the current load made of it; unset: not in its list.
+    applied = undefined as DecisionApplied["status"] | undefined,
   } = {},
 ): FoundryReviewDecision => ({
   id,
@@ -175,6 +181,7 @@ export const resolveDecision = (
   ...(entityKey ? { entityKey } : {}),
   decidedByUserId: user,
   decidedAt: at,
+  ...(applied !== undefined ? { applied: { status: applied } } : {}),
 });
 
 export const noBands: Precision = {

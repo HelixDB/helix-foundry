@@ -63,6 +63,7 @@ import { settleAll } from "./settle-pool";
 import { SpotChecks } from "./spot-checks";
 import {
   batchOf,
+  batchTakes,
   current,
   progress,
   walkOrder,
@@ -239,17 +240,23 @@ export function useWalk() {
       });
       void send(s);
     },
-    /** Sends a batch as one undo; what Stop kept from going is open again. */
+    /**
+     * Sends a batch as one undo: only the items the walk takes now
+     * (batchTakes, as its reducer does), so a card decided or dropped from
+     * the walk while the list was read isn't sent; what Stop kept from going
+     * is open again.
+     */
     batch: async (
       items: readonly Sending[],
       signal: AbortSignal,
       onProgress: (done: number) => void,
     ) => {
+      const taken = items.filter((s) => batchTakes(now.current, s.card.key));
       dispatch({
         type: "batch",
-        items: items.map((s) => ({ key: s.card.key, choice: s.choice })),
+        items: taken.map((s) => ({ key: s.card.key, choice: s.choice })),
       });
-      const results = await settleAll(items, send, {
+      const results = await settleAll(taken, send, {
         atOnce: AT_ONCE,
         signal,
         onProgress,
@@ -483,13 +490,17 @@ export function ReviewWalkthrough({
     choices.some((c) => same(c.decision, advice.choice))
       ? advice.choice
       : undefined;
-  const shownEffect = !card
-    ? null
-    : suggestion
-      ? effectFor(card, suggestion)
-      : choices[0]
-        ? effectFor(card, choices[0].decision)
-        : null;
+  // What the suggestion does; with none, what every choice does alike, and
+  // nothing when choices differ (no line reads as a recommendation).
+  const shownEffect = (() => {
+    if (!card) return null;
+    if (suggestion) return effectFor(card, suggestion);
+    const [first, ...rest] = choices.map((c) => effectFor(card, c.decision));
+    return first &&
+      rest.every((e) => JSON.stringify(e) === JSON.stringify(first))
+      ? first
+      : null;
+  })();
   const batch = useMemo(() => {
     if (!key || !manage) return null;
     const openKeys = w.order.filter((k) => {
@@ -499,6 +510,31 @@ export function ReviewWalkthrough({
     return batchOf(openKeys, order.advice, key);
   }, [key, manage, w, order.advice]);
   const p = progress(w);
+  // What the current load made of each choice saved in this walk, by the
+  // decisions read since (the decision a settle answers is read before its
+  // job runs). A name's link it refused in place (a load read before names
+  // could be settled so) applies from the next load, and settles none of
+  // the other documents now: their cards are to decide again.
+  const appliedOf = useMemo(
+    () => new Map((q.decisions.data ?? []).map((d) => [d.id, d.applied])),
+    [q.decisions.data],
+  );
+  const notInPlace = useMemo(
+    () =>
+      new Set(
+        [...w.outcomes].flatMap(([k, x]) =>
+          x.kind === "saved" &&
+          x.decision.kind === "resolve" &&
+          appliedOf.get(x.decision.id)?.status === "refused"
+            ? [k]
+            : [],
+        ),
+      ),
+    [w.outcomes, appliedOf],
+  );
+  useEffect(() => {
+    if (notInPlace.size) api.dispatch({ type: "uncover", by: notInPlace });
+  }, [notInPlace]);
 
   const [dialog, setDialog] = useState<
     | { kind: "help" }
@@ -521,13 +557,15 @@ export function ReviewWalkthrough({
   }, [toast?.n]);
   // Focus goes to the card shown after the person moves the walk, so a
   // screen reader reads the next question; the progress line says how far.
+  // A move made from a dialog (a batch) waits for it to close: the page is
+  // inert behind it, and its own focus return names a card gone.
   const heading = useRef<HTMLHeadingElement>(null);
   const moved = useRef(false);
   useEffect(() => {
-    if (!moved.current) return;
+    if (!moved.current || dialog) return;
     moved.current = false;
     heading.current?.focus();
-  }, [key, synced]);
+  }, [key, synced, dialog]);
 
   const undo = async () => {
     const r = await api.undo();
@@ -606,11 +644,8 @@ export function ReviewWalkthrough({
         return;
     }
   };
-  useWalkKeys(
-    on,
-    manage && synced && lane === "decide" && !dialog,
-    choices.length,
-  );
+  // Members move, open and ask with keys too; deciding needs `manage`.
+  useWalkKeys(on, synced && lane === "decide", choices.length);
 
   const covered = [
     ...new Set([
@@ -705,25 +740,31 @@ export function ReviewWalkthrough({
               { value: "none", label: "Needs you" },
             ]}
           />
-          {offered.types.length > 1 && (
+          {/* Each shows while it offers a choice, or while it filters (a
+              value the queue no longer has stays, to clear). */}
+          {(offered.types.length > 1 || type) && (
             <FilterSelect
               label="Type"
               value={type}
               onChange={(v) => setParam("type", v)}
               options={[
                 { value: "", label: "Any type" },
-                ...offered.types.map((t) => ({ value: t, label: t })),
+                ...[
+                  ...new Set([...offered.types, ...(type ? [type] : [])]),
+                ].map((t) => ({ value: t, label: t })),
               ]}
             />
           )}
-          {offered.docs.length > 1 && (
+          {(offered.docs.length > 1 || doc) && (
             <FilterSelect
               label="Document"
               value={doc}
               onChange={(v) => setParam("doc", v)}
               options={[
                 { value: "", label: "Any document" },
-                ...offered.docs.map((d) => ({ value: d, label: docName(d) })),
+                ...[...new Set([...offered.docs, ...(doc ? [doc] : [])])].map(
+                  (d) => ({ value: d, label: docName(d) }),
+                ),
               ]}
             />
           )}
@@ -798,6 +839,11 @@ export function ReviewWalkthrough({
                 choices={choices}
                 effect={shownEffect}
                 outcome={outcome}
+                applied={
+                  outcome?.kind === "saved"
+                    ? appliedOf.get(outcome.decision.id)
+                    : undefined
+                }
                 coveredBy={coveredBy(card.key)}
                 readOnly={!manage}
                 batch={batch?.items.length ?? 0}
@@ -810,7 +856,22 @@ export function ReviewWalkthrough({
               <WalkDone
                 walk={w}
                 made={api.made}
+                notInPlace={notInPlace}
                 empty={!w.order.length}
+                onClearFilters={
+                  kindParam || adviceParam || type || doc
+                    ? () =>
+                        setParams(
+                          (p) => {
+                            const next = new URLSearchParams(p);
+                            for (const k of ["kind", "advice", "type", "doc"])
+                              next.delete(k);
+                            return next;
+                          },
+                          { replace: true },
+                        )
+                    : undefined
+                }
                 headingRef={heading}
                 onBack={() => on({ kind: "back" })}
                 onReopen={(keys) => {
@@ -900,12 +961,14 @@ export function ReviewWalkthrough({
           onClose={() => setDialog(null)}
         >
           <dl className="rv-keys">
-            {SHORTCUTS.map(([keys, what]) => (
-              <div key={what}>
-                <dt>{keys}</dt>
-                <dd>{what}</dd>
-              </div>
-            ))}
+            {SHORTCUTS.filter(([, , decides]) => manage || !decides).map(
+              ([keys, what]) => (
+                <div key={what}>
+                  <dt>{keys}</dt>
+                  <dd>{what}</dd>
+                </div>
+              ),
+            )}
           </dl>
         </Dialog>
       )}
@@ -913,23 +976,25 @@ export function ReviewWalkthrough({
   );
 }
 
-const SHORTCUTS: readonly (readonly [ReactNode, string])[] = [
-  [<kbd>⏎</kbd>, "Accept Founder’s suggestion"],
-  [<kbd>1–9</kbd>, "Choose that option, saved at once"],
-  [<kbd>N</kbd>, "Not in data"],
-  [<kbd>X</kbd>, "Reject"],
+/** The walk's keys, what each does, and whether it decides (owners and admins only). */
+const SHORTCUTS: readonly (readonly [ReactNode, string, boolean])[] = [
+  [<kbd>⏎</kbd>, "Accept Founder’s suggestion", true],
+  [<kbd>1–9</kbd>, "Choose that option, saved at once", true],
+  [<kbd>N</kbd>, "Not in data", true],
+  [<kbd>X</kbd>, "Reject", true],
   [
     <>
       <kbd>S</kbd> <kbd>→</kbd>
     </>,
-    "Skip",
+    "Skip, or the next card",
+    false,
   ],
-  [<kbd>←</kbd>, "Back"],
-  [<kbd>Z</kbd>, "Undo the last choice"],
-  [<kbd>G</kbd>, "Accept all like this"],
-  [<kbd>O</kbd>, "Open the document"],
-  [<kbd>F</kbd>, "Ask Founder"],
-  [<kbd>?</kbd>, "These shortcuts"],
+  [<kbd>←</kbd>, "Back", false],
+  [<kbd>Z</kbd>, "Undo the last choice", true],
+  [<kbd>G</kbd>, "Accept all like this", true],
+  [<kbd>O</kbd>, "Open the document", false],
+  [<kbd>F</kbd>, "Ask Founder", false],
+  [<kbd>?</kbd>, "These shortcuts", false],
 ];
 
 /**

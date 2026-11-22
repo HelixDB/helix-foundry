@@ -3,7 +3,6 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import type {
   DecisionApplied,
   FoundryPropValue,
-  FoundryReviewChoice,
   FoundryReviewDecision,
   ReviewDecision,
 } from "../../../shared/wfe";
@@ -827,44 +826,6 @@ export function linksGoal(
       return fits(next) ? next : parts;
     }, named);
   return quoted.length ? goal(quoted) : undefined;
-}
-
-/**
- * The choice to send for a review: a candidate it lists or "not in data"
- * (`null`) for a resolve review, a value one of its quotes states for a
- * property review. Anything else is refused.
- *
- * @example
- * decisionFor(review, { entityKey: "scus_1" }); // { resolve: { entityKey: "scus_1" } }
- * decisionFor(review, { entityKey: null }); // { resolve: { notInData: true } }
- * decisionFor(conflict, { value: { integer: "36" } }); // { prop: { integer: "36" } }
- */
-export function decisionFor(
-  r: Settleable,
-  choice: { entityKey: string | null } | { value: StatedValue | undefined },
-): FoundryReviewChoice | undefined {
-  switch (r.settle?.kind) {
-    case "resolve": {
-      if (!("entityKey" in choice)) return;
-      const key = choice.entityKey;
-      if (key === null) return { resolve: { notInData: true } };
-      return r.candidates.some((c) => c.key === key)
-        ? { resolve: { entityKey: key } }
-        : undefined;
-    }
-    case "prop": {
-      if (!("value" in choice)) return;
-      const value = choice.value;
-      return value &&
-        r.settle.values.some(
-          (v) => JSON.stringify(v.value) === JSON.stringify(value),
-        )
-        ? { prop: value }
-        : undefined;
-    }
-    default:
-      return undefined;
-  }
 }
 
 /** Whether a saved decision is the one for this review's identity. */

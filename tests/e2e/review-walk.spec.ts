@@ -203,10 +203,9 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   await expect(page).toHaveURL(new RegExp(`${O}/review$`));
 });
 
-test("a link to a name settles every document asking about it, which go to Covered", async ({
-  page,
-}) => {
-  await mock.configure({ loadStepMs: 200 });
+/** Three documents name Umbrella Holdings; the walk opens on the first. */
+async function naming(page: Page, nameInPlace: "written" | "not_replayed") {
+  await mock.configure({ loadStepMs: 200, nameInPlace });
   await signIn(page);
   await uploadNaming(page, "Umbrella Holdings", 3);
   await makeContractsCurrent(page);
@@ -229,6 +228,12 @@ test("a link to a name settles every document asking about it, which go to Cover
   await expect(
     toast(page, "Linked, with 2 other documents asking about this name."),
   ).toBeVisible();
+}
+
+test("a link to a name settles every document asking about it, which go to Covered", async ({
+  page,
+}) => {
+  await naming(page, "written");
   await expect(lane(page, "Covered")).toHaveText(/^Covered\s*2$/);
   await expect(progress(page)).toHaveText(
     "3 of 3 · 1 accepted · 0 changed · 0 skipped",
@@ -245,6 +250,49 @@ test("a link to a name settles every document asking about it, which go to Cover
   await expect(covered.getByRole("listitem")).toHaveCount(2);
   await expect(covered.getByRole("listitem").first()).toContainText(
     /settled by your link in naming-\d\.md/,
+  );
+  // The load linked the name in place: a fresh walk has none of the three
+  // to decide, and covers none, once its job has run.
+  await expect(async () => {
+    await page.goto(`${O}/review`);
+    await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/, {
+      timeout: 3000,
+    });
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Nothing to decide" }),
+    ).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 20_000 });
+});
+
+test("a link the load can't apply in place waits for the next load, and its other documents are to decide again", async ({
+  page,
+}) => {
+  await naming(page, "not_replayed");
+  // The load refuses it in place (read before names could be settled so):
+  // the two others it would have settled are open again.
+  await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/, {
+    timeout: 15_000,
+  });
+  await expect(progress(page)).toHaveText(
+    "1 of 3 · 1 accepted · 0 changed · 0 skipped",
+  );
+  const done = page.getByRole("region", { name: "2 cards still to decide" });
+  await expect(done).toContainText("Applied nowNone.");
+  await expect(done).toContainText(
+    "From the next load1 choice the current load doesn’t take in place",
+  );
+  await expect(done.getByRole("link", { name: "Load again" })).toBeVisible();
+  await done
+    .getByRole("button", { name: "Go to the first still to decide" })
+    .click();
+  await expect(heading(page)).toContainText("names “Umbrella Holdings");
+  await expect(card(page)).toContainText(
+    /Founder suggests .+RuleYour earlier choice ×1/,
+  );
+  // The link itself says why it waits.
+  await page.keyboard.press("ArrowLeft");
+  await expect(card(page).locator(".rv-outcome")).toContainText(
+    "This load was built before names could be applied at once; the next load applies it.",
   );
 });
 
@@ -335,12 +383,18 @@ test("a new load made current mid-walk says so and rebuilds the walk", async ({
   const tab = await context.newPage();
   await loadVersion3(tab);
   await tab.close();
-  await page.bringToFront();
+  // Nothing on the page polls the loads once none is busy: a visibility
+  // change (the person coming back to the tab) reads them again.
   const banner = page.locator(".rv-banner");
-  await expect(banner).toContainText(
-    "A new load is current. Choices saved before it started were read by it, and the walk now follows it.",
-    { timeout: 20_000 },
-  );
+  await expect(async () => {
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("visibilitychange")),
+    );
+    await expect(banner).toContainText(
+      "A new load is current. Choices saved before it started were read by it, and the walk now follows it.",
+      { timeout: 2000 },
+    );
+  }).toPass({ timeout: 20_000 });
   // The new load wrote the approval: its claim isn't asked about again.
   await expect(progress(page)).toHaveText(
     "0 of 3 · 0 accepted · 0 changed · 0 skipped",
@@ -350,7 +404,7 @@ test("a new load made current mid-walk says so and rebuilds the walk", async ({
   await expect(banner).toHaveCount(0);
 });
 
-test("members read the cards, with Next, but no choices and no keys", async ({
+test("members read the cards, with Next and the reading keys, but no choices", async ({
   page,
 }) => {
   await walk(page, [file("variant.md", HEDGED)], MEASURED(40));
@@ -367,7 +421,12 @@ test("members read the cards, with Next, but no choices and no keys", async ({
   });
   await page.keyboard.press("Enter");
   await page.keyboard.press("1");
+  await page.keyboard.press("x");
+  await expect(heading(page)).toContainText(first);
+  // S and → go to the next card, ← back, marking nothing skipped.
   await page.keyboard.press("s");
+  await expect(heading(page)).toContainText(other);
+  await page.keyboard.press("ArrowLeft");
   await expect(heading(page)).toContainText(first);
   await card(page).getByRole("button", { name: /^Next/ }).click();
   await expect(heading(page)).toContainText(other);
@@ -401,7 +460,7 @@ test("FYI holds a name the model linked, with Undo link", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("F asks Founder: the dock opens with the card in its composer, and nothing is sent", async ({
+test("F asks Founder: the dock opens with the card in its composer, and nothing is sent; keys typed there, in a dialog or on a button are theirs", async ({
   page,
 }) => {
   await walk(page, [file("variant.md", HEDGED)]);
@@ -421,4 +480,50 @@ test("F asks Founder: the dock opens with the card in its composer, and nothing 
     ),
   );
   expect(posts.filter((u) => !u.includes("/review-labels"))).toEqual([]);
+
+  // Typing in the composer settles, skips and undoes nothing.
+  const removes: string[] = [];
+  page.on("request", (r) => {
+    if (isRemove(r)) removes.push(r.url());
+  });
+  await composer.focus();
+  await composer.press("End");
+  await composer.pressSequentially(" 1 2 n x z s g");
+  await composer.press("ArrowRight");
+  await composer.press("ArrowLeft");
+  await expect(composer).toHaveValue(/ 1 2 n x z s g$/);
+  await expect(heading(page)).toContainText(first);
+  await expect(progress(page)).toHaveText(
+    /^0 of \d+ · 0 accepted · 0 changed · 0 skipped$/,
+  );
+
+  // Nor do keys pressed while a dialog is open.
+  await heading(page).focus();
+  await page.keyboard.press("?");
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  for (const key of ["1", "x", "s", "ArrowRight", "Enter"])
+    await page.keyboard.press(key);
+  await page.keyboard.press("Escape");
+  await expect(help).toHaveCount(0);
+  await expect(heading(page)).toContainText(first);
+
+  // Enter on a focused button is that button's: Skip skips, nothing is saved.
+  await card(page).getByRole("button", { name: /^Skip/ }).focus();
+  await page.keyboard.press("Enter");
+  await expect(heading(page)).not.toContainText(first);
+  await expect(progress(page)).toHaveText(
+    /^1 of \d+ · 0 accepted · 0 changed · 1 skipped$/,
+  );
+  // Holding a key down decides one card, not one per repeat.
+  await heading(page).focus();
+  await page.keyboard.down("x");
+  await page.keyboard.down("x");
+  await page.keyboard.down("x");
+  await page.keyboard.up("x");
+  await expect(progress(page)).toHaveText(
+    /^2 of \d+ · 0 accepted · 1 changed · 1 skipped$/,
+  );
+  expect(posts.filter((u) => /:settle$/.test(u))).toHaveLength(1);
+  expect(removes).toEqual([]);
 });

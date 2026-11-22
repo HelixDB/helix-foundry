@@ -222,9 +222,17 @@ export function wilsonLower(right: number, total: number, z = 1.96): number {
   );
 }
 
-/** Whether the load still asks about a name card's name (BLOCKING). */
-const asks = (card: NameCard) =>
-  card.reviews.some((r) => BLOCKING.has(r.reason));
+/**
+ * Whether a name card's choice applies at once: the backend reads the
+ * reason of the review it settles (the card's `review`), and applies a
+ * resolve of a name the load still asks about (BLOCKING) to the current
+ * load, any other from the next load.
+ *
+ * @example
+ * asks(nameCard("acme", { reasons: ["unresolved"] })); // true
+ */
+export const asks = (card: NameCard): boolean =>
+  BLOCKING.has(card.review.reason);
 
 /**
  * A card's lane: a name the model linked, and a value a table holds against
@@ -250,9 +258,15 @@ export function laneOf(card: Decidable): Lane {
 /**
  * The decision that already settles a name card the load still asks about:
  * a resolve to an entity of the same type and name in another document,
- * which the backend applies at once to every document asking. Not in data
- * is per document, and a name the load links already isn't asked about, so
- * neither is covered.
+ * which the backend applies at once to every document asking, while it can
+ * still apply to this load: its job is yet to run (`pending`) or it linked
+ * the name in place (`written`), and its entity is one of this card's
+ * candidates that the read found. One the load read as it was created and
+ * still asks about, refused in place (a load read before names could be
+ * settled so: the next load applies it), or naming an entity the load no
+ * longer holds settles nothing now, so its card stays to decide. Not in
+ * data is per document, and a name the load links already isn't asked
+ * about, so neither is covered.
  *
  * @example
  * coveredBy(umbrellaInDocB, ctxWithUmbrellaLinkedInDocA); // that decision
@@ -265,7 +279,10 @@ export function coveredBy(
   const s = settleOf(card);
   return (
     (ctx.names.get(nameAt(s.type, s.normName)) ?? []).find(
-      (d) => d.docId !== s.docId && !!d.entityKey,
+      (d) =>
+        d.docId !== s.docId &&
+        (d.applied?.status === "pending" || d.applied?.status === "written") &&
+        card.review.candidates.some((c) => c.key === d.entityKey && !!c.entity),
     ) ?? null
   );
 }

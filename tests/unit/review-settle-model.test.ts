@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { choicesOf } from "@/web/areas/reviews/choices";
 import * as model from "@/web/areas/reviews/model";
 import type { EntityRow } from "@/web/areas/explore/model";
 import type { FoundryPropValue, ReviewDecision } from "@/shared/wfe";
@@ -725,48 +726,43 @@ describe("review choices", () => {
     { ...prop, values: `[${stated.map(([raw]) => stored(raw)).join(",")}]` },
     [globex],
   );
-  it("sends a listed candidate or explicit not-in-data", () => {
-    expect(model.decisionFor(review, { entityKey: "scus_GLOBAL02" })).toEqual({
-      resolve: { entityKey: "scus_GLOBAL02" },
-    });
-    expect(model.decisionFor(review, { entityKey: null })).toEqual({
-      resolve: { notInData: true },
-    });
-  });
-  it("refuses unlisted candidates and a value for a name", () => {
-    expect(
-      model.decisionFor(review, { entityKey: "invented" }),
-    ).toBeUndefined();
-    expect(
-      model.decisionFor(review, { value: { integer: "36" } }),
-    ).toBeUndefined();
+  // The choices a card offers (choicesOf), and so the only ones it sends.
+  const sent = (r: model.Settleable) =>
+    choicesOf(r, (c) => c.key).map((c) => c.decision);
+  it("sends a listed candidate or explicit not-in-data, and nothing else for a name", () => {
+    expect(sent(review)).toEqual([
+      { resolve: { entityKey: "scus_GLOBEX01" } },
+      { resolve: { entityKey: "scus_GLOBAL02" } },
+      { resolve: { notInData: true } },
+    ]);
   });
   it("sends the selected value in its arm, including false and zero, and an integer's every digit", () => {
     expect(
       conflict.settle?.kind === "prop" &&
         conflict.settle.values.map((v) => v.value),
     ).toEqual(stated.map(([, value]) => value));
-    for (const [, value] of stated)
-      expect(model.decisionFor(conflict, { value })).toEqual({ prop: value });
+    expect(sent(conflict)).toEqual(
+      stated.map(([, value]) => ({ prop: value })),
+    );
   });
-  it("refuses an unlisted property value, one of another kind and a candidate for a property", () => {
+  it("offers no unlisted property value, none of another kind and no candidate for a property", () => {
+    const json = sent(conflict).map((d) => JSON.stringify(d));
     for (const value of [
       { integer: "48" },
       { text: "36" },
       { number: 0 },
       { integer: "9007199254740992" },
-      undefined,
     ])
-      expect(model.decisionFor(conflict, { value })).toBeUndefined();
-    expect(
-      model.decisionFor(conflict, { entityKey: "scus_GLOBEX01" }),
-    ).toBeUndefined();
+      expect(json).not.toContain(JSON.stringify({ prop: value }));
+    expect(sent(conflict).some((d) => d.resolve)).toBe(false);
   });
   it("offers nothing for a stale review or one nothing settles", () => {
-    const stale = model.settleable({ ...name, type: undefined }, []);
-    expect(model.decisionFor(stale, { entityKey: null })).toBeUndefined();
-    const other = model.settleable({ ...name, reason: "violation" }, []);
-    expect(model.decisionFor(other, { entityKey: null })).toBeUndefined();
+    expect(sent(model.settleable({ ...name, type: undefined }, []))).toEqual(
+      [],
+    );
+    expect(
+      sent(model.settleable({ ...name, reason: "violation" }, [])),
+    ).toEqual([]);
   });
   it("matches overrides by ontology identity, not review or load id", () => {
     const s = review.settle!,

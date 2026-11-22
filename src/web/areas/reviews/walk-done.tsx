@@ -13,7 +13,9 @@ import type { Walk } from "./walk";
 export function WalkDone({
   walk,
   made,
+  notInPlace,
   empty,
+  onClearFilters,
   headingRef,
   onBack,
   onReopen,
@@ -23,8 +25,13 @@ export function WalkDone({
   walk: Walk;
   // What each card decided in this walk does.
   made: ReadonlyMap<string, { card: Decidable; effect: Effect }>;
+  // The cards whose saved choice the current load refused to take in place:
+  // the next load applies it, whatever was foreseen when it was sent.
+  notInPlace: ReadonlySet<string>;
   // The walk took no card: nothing to decide under its filters.
   empty: boolean;
+  // Clears the walk's filters; unset while none is set.
+  onClearFilters?: () => void;
   headingRef: Ref<HTMLHeadingElement>;
   onBack: () => void;
   // Opens the cards again (those skipped), from the first.
@@ -38,7 +45,7 @@ export function WalkDone({
     walk.order.filter((k) => kinds.includes(walk.outcomes.get(k)?.kind ?? ""));
   const decided = of(["sending", "saved"]);
   const later = decided.filter(
-    (k) => made.get(k)?.effect.kind === "next_load",
+    (k) => made.get(k)?.effect.kind === "next_load" || notInPlace.has(k),
   ).length;
   const skipped = of(["skipped"]);
   const left = walk.order.filter((k) => {
@@ -59,8 +66,8 @@ export function WalkDone({
       </h2>
       {empty && (
         <p className="on-muted">
-          No card of the current load’s queue that these filters take is left to
-          decide.
+          No card of the current load’s queue
+          {onClearFilters ? " that these filters take" : ""} is left to decide.
         </p>
       )}
       {decided.length > 0 && (
@@ -68,16 +75,16 @@ export function WalkDone({
           <div>
             <dt>Applied now</dt>
             <dd>
-              {plural(decided.length - later, "choice")}
-              {covered > 0 && `, and ${plural(covered, "name")} they settled`}:
-              the current load takes them as their jobs run.
+              {decided.length > later
+                ? `${plural(decided.length - later, "choice")}${covered > 0 ? `, and ${plural(covered, "name")} they settled` : ""}: the current load takes them as their jobs run.`
+                : "None."}
             </dd>
           </div>
           <div>
             <dt>From the next load</dt>
             <dd>
               {later
-                ? `${plural(later, "choice")}: names this load links already, and claims a name holds. Load again to apply them.`
+                ? `${plural(later, "choice")} the current load doesn’t take in place: names it links already or was read before it could link, and claims a name holds. Load again to apply them.`
                 : "None."}
             </dd>
           </div>
@@ -103,6 +110,9 @@ export function WalkDone({
           <ButtonLink to={paths.newLoad(o)} variant="primary">
             Load again
           </ButtonLink>
+        )}
+        {empty && onClearFilters && (
+          <Button onClick={onClearFilters}>Clear filters</Button>
         )}
       </div>
       <section className="rv-spot" aria-labelledby="rv-spot-title">

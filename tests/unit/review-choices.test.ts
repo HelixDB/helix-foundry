@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { choicesOf } from "@/web/areas/reviews/choices";
-import { decisionFor, type Candidate } from "@/web/areas/reviews/model";
+import type { Candidate } from "@/web/areas/reviews/model";
 import {
   entity,
   heldCard,
@@ -41,12 +41,6 @@ describe("choicesOf", () => {
         decision: { resolve: { notInData: true } },
         kind: "not_in_data",
       },
-    ]);
-    // Each is a choice the review takes.
-    expect(choices.map((c) => c.decision)).toEqual([
-      decisionFor(card.review, { entityKey: "scus_1" }),
-      decisionFor(card.review, { entityKey: "scus_2" }),
-      decisionFor(card.review, { entityKey: null }),
     ]);
   });
   it("tells candidates that read the same apart by their keys", () => {

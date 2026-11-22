@@ -4,6 +4,7 @@ import type {
 } from "../../../shared/wfe";
 import {
   advise,
+  asks,
   coveredBy,
   laneOf,
   settleOf,
@@ -11,7 +12,7 @@ import {
   type AdviceContext,
   type Decidable,
 } from "./advice";
-import { BLOCKING, type Queue, type QueueCard } from "./queue";
+import type { Queue, QueueCard } from "./queue";
 
 // The review walkthrough's state: one card at a time over the queue's
 // decide lane, in its ranked order, and what became of each card. Pure: the
@@ -72,6 +73,9 @@ export type WalkAction =
   | { type: "back" }
   | { type: "jump"; key: string }
   | { type: "undone"; keys: readonly string[] }
+  // The current load refused these keys' links in place (they apply from
+  // the next load): the cards each covered are to decide again.
+  | { type: "uncover"; by: ReadonlySet<string> }
   // The queue read again: a new order (another load's, or a filter's), and
   // the keys no longer in the queue at all (decided, here or elsewhere).
   | {
@@ -155,11 +159,7 @@ export function walkOrder(
         : laneOf(c) === "fyi"
           ? "fyi"
           : "decide";
-    if (
-      c.kind === "name" &&
-      lane === "decide" &&
-      c.reviews.some((r) => BLOCKING.has(r.reason))
-    ) {
+    if (c.kind === "name" && lane === "decide" && asks(c)) {
       const s = settleOf(c),
         at = JSON.stringify([s.type, s.normName]);
       asking.set(at, [...(asking.get(at) ?? []), c.key]);
@@ -182,6 +182,19 @@ export function walkOrder(
 /** Whether a card is still to decide: no outcome, or its choice refused. */
 const open = (o: Outcome | undefined) => !o || o.kind === "refused";
 
+/**
+ * Whether a batch takes the card `key` now: in the walk's order and still to
+ * decide (or skipped). A card decided meanwhile, here or elsewhere, covered
+ * by a link, or no longer in the walk is left as it is.
+ *
+ * @example
+ * batchTakes({ loadId: "L", order: ["a"], at: 0, outcomes: new Map(), undo: [] }, "a"); // true
+ */
+export function batchTakes(w: Walk, key: string): boolean {
+  const o = w.outcomes.get(key);
+  return w.order.includes(key) && (open(o) || o?.kind === "skipped");
+}
+
 /** The first card still to decide from `from` on; the order's length if none. */
 const nextOpen = (
   order: readonly string[],
@@ -196,8 +209,8 @@ const nextOpen = (
  * The walk after an action:
  * - `decide` sends a choice on a card (not one still sending), covers the
  *   open cards it names, and goes to the next card to decide after it;
- * - `batch` sends each item not already sending, as one undo, and goes to
- *   the next card to decide from the current one;
+ * - `batch` sends each item the batch takes (batchTakes), as one undo, and
+ *   goes to the next card to decide from the current one;
  * - `sent` and `refused` say what became of a card still sending; a refusal
  *   to retry puts the card right after the current one (or makes it current
  *   when it is, or the walk is past the end), and a refusal uncovers what
@@ -206,6 +219,7 @@ const nextOpen = (
  *   next to decide; `back` and `jump` move without changing anything;
  * - `undone` forgets the outcomes of the keys (and what they covered), drops
  *   them from the undo stack and shows the first of them again;
+ * - `uncover` opens again the cards that the keys' choices covered;
  * - `rebase` takes a new order: on the same load every outcome stays (a
  *   filter, or a refresh), and each card of the old order gone from the
  *   queue (`gone`) keeps its place, after the card before it that the new
@@ -240,11 +254,7 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
       };
     }
     case "batch": {
-      const items = a.items.filter(
-        (it) =>
-          w.order.includes(it.key) &&
-          w.outcomes.get(it.key)?.kind !== "sending",
-      );
+      const items = a.items.filter((it) => batchTakes(w, it.key));
       if (!items.length) return w;
       const outcomes = new Map(w.outcomes);
       for (const it of items)
@@ -343,6 +353,14 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
           .map((e) => e.filter((k) => !gone.has(k)))
           .filter((e) => e.length),
       };
+    }
+    case "uncover": {
+      const outcomes = new Map(
+        [...w.outcomes].filter(
+          ([, o]) => !(o.kind === "covered" && a.by.has(o.by)),
+        ),
+      );
+      return outcomes.size === w.outcomes.size ? w : { ...w, outcomes };
     }
     case "rebase": {
       const same = a.loadId === w.loadId,

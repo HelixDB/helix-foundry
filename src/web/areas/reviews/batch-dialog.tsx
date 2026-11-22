@@ -20,7 +20,9 @@ export type BatchResult = { key: string; failed?: string; stopped?: boolean };
 type Stage =
   | { kind: "choose"; off: ReadonlySet<string> }
   | { kind: "sending"; done: number; total: number }
-  | { kind: "done"; results: readonly BatchResult[] }
+  // `meanwhile`: cards ticked that were decided or left the walk while the
+  // list was read, so not sent.
+  | { kind: "done"; results: readonly BatchResult[]; meanwhile: number }
   | { kind: "undone" };
 
 /** What a batch's confirm says, by the choice its cards share. */
@@ -45,6 +47,7 @@ export function BatchDialog({
   cards: ReadonlyMap<string, QueueCard>;
   // The shown card's suggestion, which every item shares.
   advice: Advice;
+  // Sends the ticked cards the walk still takes: a result for each sent.
   run: (
     keys: readonly string[],
     signal: AbortSignal,
@@ -79,7 +82,11 @@ export function BatchDialog({
     const results = await run(keys, controller.signal, (done) =>
       setStage({ kind: "sending", done, total: keys.length }),
     );
-    setStage({ kind: "done", results });
+    setStage({
+      kind: "done",
+      results,
+      meanwhile: keys.length - results.length,
+    });
   };
   const sending = stage.kind === "sending";
   return (
@@ -192,6 +199,8 @@ export function BatchDialog({
             )}
             {stage.results.some((r) => r.stopped) &&
               `; ${plural(stage.results.filter((r) => r.stopped).length, "card was", "cards were")} stopped before being sent and ${stage.results.filter((r) => r.stopped).length === 1 ? "is" : "are"} still to decide`}
+            {stage.meanwhile > 0 &&
+              `; ${plural(stage.meanwhile, "card was", "cards were")} decided meanwhile, or left the walk, and ${stage.meanwhile === 1 ? "isn’t" : "aren’t"} sent`}
             .
           </p>
           {stage.results.some((r) => r.failed) && (

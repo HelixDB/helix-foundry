@@ -255,6 +255,44 @@ describe("buildQueue", () => {
     expect(card("globex").held.map((c) => c.key)).toEqual(["held-2"]);
   });
 
+  it("settles a name by a review the load still asks about, among those with candidates", () => {
+    const settledBy = (reviews: QueueReview[]) =>
+      build(reviews).cards.find((c): c is NameCard => c.kind === "name")!.review
+        .settle;
+    // The legal_form review comes first, but the unresolved one is what the
+    // backend applies at once.
+    expect(
+      settledBy([
+        name("n-legal", "globex", { reason: "legal_form", at: 0 }),
+        name("n-asks", "globex", { reason: "unresolved", at: 10 }),
+      ]),
+    ).toMatchObject({ reviewId: "n-asks" });
+    // With no candidate on the one asking, the one with candidates.
+    expect(
+      settledBy([
+        name("n-legal", "globex", { reason: "legal_form", at: 0 }),
+        {
+          ...name("n-asks", "globex", { reason: "unresolved", at: 10 }),
+          candidates: [],
+        },
+      ]),
+    ).toMatchObject({ reviewId: "n-legal" });
+    // With no candidate anywhere, the one asking.
+    const none = (r: QueueReview) => ({ ...r, candidates: [] });
+    expect(
+      settledBy([
+        none(name("n-legal", "globex", { reason: "legal_form", at: 0 })),
+        none(name("n-asks", "globex", { reason: "unresolved", at: 10 })),
+      ]),
+    ).toMatchObject({ reviewId: "n-asks" });
+    expect(
+      settledBy([
+        none(name("n-legal", "globex", { reason: "legal_form", at: 0 })),
+        none(name("n-part", "globex", { reason: "part_name", at: 10 })),
+      ]),
+    ).toMatchObject({ reviewId: "n-legal" });
+  });
+
   it("keeps a name per document: the same name elsewhere is another decision", () => {
     const queue = build([
       name("a", "initech", { doc: "doc-1", link: "partner_of" }),

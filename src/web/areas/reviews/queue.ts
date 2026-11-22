@@ -491,8 +491,15 @@ export function buildQueue({
     return {
       kind: "name",
       key,
-      // A review with a candidate to choose, else the first.
-      review: sorted.find((r) => r.candidates.length > 0) ?? sorted[0]!,
+      // The review the card's choice settles, whose reason the backend reads
+      // to apply it at once (BLOCKING) or from the next load: one with a
+      // candidate to choose, the load still asking about the name first;
+      // else one the load asks about; else the first.
+      review:
+        sorted.find((r) => r.candidates.length > 0 && BLOCKING.has(r.reason)) ??
+        sorted.find((r) => r.candidates.length > 0) ??
+        sorted.find((r) => BLOCKING.has(r.reason)) ??
+        sorted[0]!,
       reviews: sorted,
       blocked: sorted.filter((r) => BLOCKING.has(r.reason) && !!r.suggestedLink)
         .length,
