@@ -46,7 +46,7 @@ func newSignInBackend() *signInBackend {
 	}}
 	for _, kind := range []struct{ kind, display string }{
 		{"linear", "Linear"}, {"slack", "Slack"}, {"notion", "Notion"}, {"posthog", "PostHog"},
-		{"calcom", "Cal.com"}, {"stripe", "Stripe"}, {"google", "Google Workspace"},
+		{"calcom", "Cal.com"}, {"stripe", "Stripe"}, {"google", "Google Workspace"}, {"attio", "Attio"},
 	} {
 		b.kinds = append(b.kinds, &foundryv1.ConnectorKind{Kind: kind.kind, DisplayName: kind.display, Available: true, SignIn: true})
 	}
@@ -327,6 +327,7 @@ func TestConnectSignsIn(t *testing.T) {
 		"notion": &foundryv1.NotionConnectorConfig{}, "calcom": &foundryv1.CalcomConnectorConfig{},
 		"stripe": &foundryv1.StripeConnectorConfig{}, "google": &foundryv1.GoogleWorkspaceConnectorConfig{},
 		"posthog": &foundryv1.PostHogConnectorConfig{Region: "us"}, "github": &foundryv1.GitHubConnectorConfig{},
+		"attio": &foundryv1.AttioConnectorConfig{},
 	} {
 		t.Run("starts "+kind+" from its default settings", func(t *testing.T) {
 			b := newSignInBackend()
@@ -398,7 +399,7 @@ func TestConnectSignsIn(t *testing.T) {
 		"a connector with_key":           {map[string]any{"kind": "github", "connector_id": "connector-7", "with_key": true}, fmt.Sprintf(form, "GitHub")},
 		"repos with_key":                 {map[string]any{"kind": "github", "repos": []string{"acme/api"}, "with_key": true}, fmt.Sprintf(form, "GitHub")},
 		"a project with_key":             {map[string]any{"kind": "posthog", "project_id": "4242", "with_key": true}, fmt.Sprintf(form, "PostHog")},
-		"an unknown kind":                {map[string]any{"kind": "jira"}, `invalid_arguments: Foundry has no "jira" connector; it offers granola, github, linear, slack, notion, posthog, calcom, stripe, google`},
+		"an unknown kind":                {map[string]any{"kind": "jira"}, `invalid_arguments: Foundry has no "jira" connector; it offers granola, github, linear, slack, notion, posthog, calcom, stripe, google, attio`},
 		"a long client token":            {map[string]any{"kind": "github", "client_token": strings.Repeat("x", 65)}, "invalid_arguments"},
 		"a malformed connector":          {map[string]any{"kind": "github", "connector_id": "a b"}, "invalid_arguments"},
 		"a malformed connector for form": {map[string]any{"kind": "granola", "connector_id": "a b"}, "invalid_arguments"},
@@ -584,7 +585,7 @@ func TestSignInConnectors(t *testing.T) {
 			signIn[kind.(map[string]any)["kind"].(string)] = kind.(map[string]any)["sign_in"]
 		}
 		assert.Equal(t, map[string]any{"granola": false, "github": true, "linear": true, "slack": true, "notion": true,
-			"posthog": true, "calcom": true, "stripe": true, "google": true}, signIn)
+			"posthog": true, "calcom": true, "stripe": true, "google": true, "attio": true}, signIn)
 	})
 	// Where the host offers signing in, a kind that signs in starts a sign-in; elsewhere the
 	// same kind links its form, and nothing starts.

@@ -23,6 +23,7 @@ func TestSignedInKindsPrepare(t *testing.T) {
 		{"calcom", `{}`, "an-opaque-vended-token"},
 		{"stripe", `{}`, "an-opaque-vended-token"},
 		{"google", `{"event_days":30}`, "an-opaque-vended-token"},
+		{"attio", `{}`, "an-opaque-vended-token"},
 	} {
 		for _, secret := range []string{tc.vended, ""} {
 			if _, err := kindOf(t, catalog, tc.kind).Prepare(Source{Secret: secret, Settings: json.RawMessage(tc.settings), SignIn: true}); err != nil {
@@ -88,10 +89,17 @@ func TestSignedInKindsIdentity(t *testing.T) {
 			}
 			return http.StatusOK, `{"user":{"emailAddress":"ada@acme.test","displayName":"Ada","permissionId":"0123"}}`
 		},
+		"/v2/self": func(r *http.Request) (int, string) {
+			if r.Header.Get("Authorization") != "Bearer vended-attio" {
+				return http.StatusUnauthorized, `{}`
+			}
+			return http.StatusOK, `{"active":true,"scope":"record_permission:read","token_type":"Bearer","token_level":"workspace",` +
+				`"workspace_id":"ws-attio","workspace_name":"Acme CRM","workspace_slug":"acme"}`
+		},
 	}
 	url := routeServer(t, routes)
 	catalog := NewCatalog(Endpoints{Slack: url + "/api", Notion: url, PostHogUS: url, PostHogEU: url, Calcom: url, Stripe: url, Google: url,
-		GoogleToken: url + "/token"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
+		GoogleToken: url + "/token", Attio: url}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
 	for _, tc := range []struct {
 		kind, settings, secret, want, id string
 	}{
@@ -101,6 +109,7 @@ func TestSignedInKindsIdentity(t *testing.T) {
 		{"calcom", `{}`, "vended-calcom", "ada", "7"},
 		{"stripe", `{}`, "vended-stripe", "Acme", "acct_1"},
 		{"google", `{"event_days":30}`, "vended-google", "ada@acme.test", "0123"},
+		{"attio", `{}`, " vended-attio ", "Acme CRM", "ws-attio"},
 	} {
 		got, id, err := kindOf(t, catalog, tc.kind).(Identifier).Identity(ctx, Source{Secret: tc.secret, Settings: json.RawMessage(tc.settings),
 			SignIn: true})
@@ -142,11 +151,13 @@ func TestSignedInKindsRejectToken(t *testing.T) {
 		"/v2/me":          rejecting,
 		"/v1/account":     rejecting,
 		"/drive/v3/about": rejecting,
+		// Attio answers a token it doesn't know as inactive, not with a 401.
+		"/v2/self": func(*http.Request) (int, string) { return http.StatusOK, `{"active":false}` },
 	})
 	catalog := NewCatalog(Endpoints{Slack: url + "/api", Notion: url, PostHogUS: url, PostHogEU: url, Calcom: url, Stripe: url, Google: url,
-		GoogleToken: url + "/token"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
+		GoogleToken: url + "/token", Attio: url}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
 	for kind, settings := range map[string]string{"slack": `{}`, "notion": `{}`, "posthog": `{"region":"us"}`, "calcom": `{}`, "stripe": `{}`,
-		"google": `{"event_days":30}`} {
+		"google": `{"event_days":30}`, "attio": `{}`} {
 		_, _, err := kindOf(t, catalog, kind).(Identifier).Identity(ctx, Source{Secret: "rejected", Settings: json.RawMessage(settings), SignIn: true})
 		var authErr *AuthError
 		var refusedErr *RefusedError

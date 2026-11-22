@@ -159,12 +159,16 @@ type attioKind struct {
 func (k *attioKind) Name() string        { return "attio" }
 func (k *attioKind) DisplayName() string { return "Attio" }
 
+var _ Identifier = (*attioKind)(nil)
+
 // Prepare takes a token of 64 characters with no space or control
 // character, and no settings: the connector reads everything the token's
-// scopes allow.
+// scopes allow. A token the broker vended (an OAuth app's) has no format of
+// ours to check.
 func (k *attioKind) Prepare(src Source) (json.RawMessage, error) {
 	token := strings.TrimSpace(src.Secret)
-	if len(token) != attioTokenLength || strings.ContainsFunc(token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+	if !src.SignIn && (len(token) != attioTokenLength ||
+		strings.ContainsFunc(token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })) {
 		return nil, invalid("enter an Attio access token (64 characters)")
 	}
 	if err := emptySettings(src.Settings); err != nil {
@@ -174,6 +178,28 @@ func (k *attioKind) Prepare(src Source) (json.RawMessage, error) {
 }
 
 func (k *attioKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 0) }
+
+// Identity is the name of the workspace the token reads, from Attio's
+// introspection (/v2/self), and its id: an OAuth app's token is installed in
+// one workspace. A token Attio answers as inactive is rejected.
+func (k *attioKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	var self struct {
+		Active        bool   `json:"active"`
+		WorkspaceID   string `json:"workspace_id"`
+		WorkspaceName string `json:"workspace_name"`
+		WorkspaceSlug string `json:"workspace_slug"`
+	}
+	if err := k.client(src.Secret).get(ctx, "/v2/self", nil, &self); err != nil {
+		return "", "", err
+	}
+	if !self.Active {
+		return "", "", attioRejected()
+	}
+	if name := cmp.Or(strings.TrimSpace(self.WorkspaceName), self.WorkspaceSlug); name != "" {
+		return name, self.WorkspaceID, nil
+	}
+	return "", "", errors.New("attio /v2/self names no workspace")
+}
 
 // Streams are the notes, always.
 func (k *attioKind) Streams(Source) []Stream { return []Stream{attioNotesStream} }
