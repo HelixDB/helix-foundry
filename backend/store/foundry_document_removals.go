@@ -115,3 +115,77 @@ func (s *mysqlDB) oweFoundryRemovals(ctx context.Context, ontologies []*model.Fo
 	}
 	return nil
 }
+
+// expireFoundryDocuments has documents of set setID that left their
+// source's retention window (ids, which the caller deleted) leave every load
+// of ontologies, the workspace's live ones, whose locks the caller holds:
+//   - each one's live job's load (unless it deletes) and current load take
+//     every deleted document out with an extract, refresh on or off
+//     (oweFoundryRemovals);
+//   - each of its other loads that can still be read or made current
+//     (ready, partial, failed or delete_failed) holding a deleted document
+//     of the set no newer at the source than the newest of ids is deleted:
+//     its delete is queued now with no job live, else at the job's end.
+//
+// The second rule also takes a load that a live job was writing when an
+// earlier window exit came, and that then ended neither current nor
+// deleted, and a load holding only an older version of a document still in
+// the window: an older load is a convenience, the window is not. ids not in
+// the set expire nothing.
+func (s *mysqlDB) expireFoundryDocuments(ctx context.Context, ontologies []*model.FoundryOntology, setID string, ids []string) error {
+	var newest sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(source_at) FROM foundry_documents WHERE id IN (`+idPlaceholders(len(ids))+`) AND set_id=?`,
+		append(toAnySlice(ids), setID)...).Scan(&newest); err != nil {
+		return fmt.Errorf("read the newest expired document of set %s: %w", setID, err)
+	}
+	var deleting []*model.FoundryOntology
+	for _, o := range ontologies {
+		if !newest.Valid {
+			break
+		}
+		live, err := s.liveFoundryGraphJob(ctx, o.ID)
+		if err != nil {
+			return err
+		}
+		// "" matches no load: the ids are CHAR(26).
+		current, writing := "", ""
+		if o.CurrentLoadID != nil {
+			current = *o.CurrentLoadID
+		}
+		if live != nil {
+			writing = live.LoadID
+		}
+		res, err := s.db.ExecContext(ctx, `UPDATE foundry_loads l SET l.status='deleting'
+WHERE l.ontology_id=? AND l.status IN ('ready', 'partial', 'failed', 'delete_failed') AND l.id NOT IN (?, ?)
+  AND EXISTS (SELECT 1 FROM foundry_load_documents m JOIN foundry_documents d ON d.id=m.document_id
+    WHERE m.load_id=l.id AND m.set_id=? AND d.status='deleted' AND d.source_at <= ?)`, o.ID, current, writing, setID, newest.Time)
+		if err != nil {
+			return fmt.Errorf("delete the loads of ontology %s holding expired documents: %w", o.ID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			deleting = append(deleting, o)
+		}
+	}
+	if err := s.oweFoundryRemovals(ctx, ontologies, false); err != nil {
+		return err
+	}
+	// After the removals: an extract they queued goes first, and its end
+	// queues the delete.
+	for _, o := range deleting {
+		live, err := s.liveFoundryGraphJob(ctx, o.ID)
+		if err != nil {
+			return err
+		}
+		if live != nil {
+			continue
+		}
+		if err := s.queueNextFoundryDelete(ctx, o, id.New()); err != nil {
+			return err
+		}
+	}
+	return nil
+}

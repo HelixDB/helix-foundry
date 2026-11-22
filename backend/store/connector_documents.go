@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/helixdb/helix-foundry/backend/store/model"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // ErrReservationExpired means a publish came more than half the purge
@@ -103,11 +105,15 @@ func (s *mysqlDB) ReserveConnectorDocuments(ctx context.Context, workspaceID str
 //     every ontology that reads the set (fanOutFoundryDocuments, with
 //     p.Fan): reads holds what that did;
 //   - each of p.Update takes its new name, version, time and link;
-//   - when a document was removed, every ontology with refresh on whose
-//     live or current load holds it takes it out of the graph with an
-//     extract (oweFoundryRemovals).
+//   - each of p.Expire is deleted as Remove's are, and leaves every load
+//     (expireFoundryDocuments): every ontology's live and current loads
+//     take it out with an extract, refresh on or off, and its other loads
+//     holding it are deleted;
+//   - else, when a document was removed, every ontology with refresh on
+//     whose live or current load holds it takes it out of the graph with
+//     an extract (oweFoundryRemovals).
 //
-// A document of Remove or Update no longer uploaded in the set (the graph
+// A document of Remove, Expire or Update no longer uploaded in the set (the graph
 // worker deleted it, its original gone) is left as it is: the next sync's
 // index lacks it and adds its row's document again. An empty publish
 // writes nothing. ErrNotFound means the lease was lost, or the connector or
@@ -115,8 +121,17 @@ func (s *mysqlDB) ReserveConnectorDocuments(ctx context.Context, workspaceID str
 // an uploaded document in the set the publish does not remove.
 func (s *mysqlDB) PublishConnectorDocuments(ctx context.Context, p model.ConnectorDocumentsPublish, syncID, workerID string) (
 	reads []model.FoundryDocumentRead, err error) {
-	if len(p.Add) == 0 && len(p.Update) == 0 && len(p.Remove) == 0 {
+	if len(p.Add) == 0 && len(p.Update) == 0 && len(p.Remove) == 0 && len(p.Expire) == 0 {
 		return []model.FoundryDocumentRead{}, nil
+	}
+	removing := make(map[string]bool, len(p.Remove))
+	for _, id := range p.Remove {
+		removing[id] = true
+	}
+	for _, id := range p.Expire {
+		if removing[id] {
+			return nil, fmt.Errorf("publish connector documents: %s is both removed and expired", id)
+		}
 	}
 	if len(p.Add) > 0 && (p.Grace <= 0 || p.Fan.NewJobID == nil || p.Fan.CanWrite == nil) {
 		return nil, fmt.Errorf("publish connector documents: adds need the sweep's grace and a whole fan-out")
@@ -155,7 +170,7 @@ WHERE id=? AND workspace_id=? AND connector_id=? AND live_key=1 FOR SHARE`, p.Se
 			}
 			return fmt.Errorf("lock connector document set %s: %w", p.SetID, err)
 		}
-		removed, err := tx.removeConnectorDocuments(ctx, p)
+		removed, err := tx.removeConnectorDocuments(ctx, p.WorkspaceID, p.SetID, append(slices.Clone(p.Remove), p.Expire...))
 		if err != nil {
 			return err
 		}
@@ -206,10 +221,14 @@ WHERE id=? AND set_id=? AND status='uploaded'`, u.Name, u.Version, u.At.UTC(), u
 		if reads, err = tx.fanOutFoundryDocuments(ctx, ontologies, p.SetID, added, p.Fan); err != nil {
 			return err
 		}
-		if removed == 0 {
-			return nil
+		switch {
+		case len(p.Expire) > 0:
+			// Every load takes out what refresh-only would leave, Remove's too.
+			return tx.expireFoundryDocuments(ctx, ontologies, p.SetID, p.Expire)
+		case removed > 0:
+			return tx.oweFoundryRemovals(ctx, ontologies, true)
 		}
-		return tx.oweFoundryRemovals(ctx, ontologies, true)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -217,16 +236,16 @@ WHERE id=? AND set_id=? AND status='uploaded'`, u.Name, u.Version, u.At.UTC(), u
 	return reads, nil
 }
 
-// removeConnectorDocuments deletes the documents of p.Remove still uploaded
-// in p.SetID, with a purge row each, and their reads, as
+// removeConnectorDocuments deletes the documents of remove still uploaded
+// in setID, with a purge row each, and their reads, as
 // DeleteFoundryDocument does, and counts them. The caller holds the set's
 // lock.
-func (s *mysqlDB) removeConnectorDocuments(ctx context.Context, p model.ConnectorDocumentsPublish) (int, error) {
-	if len(p.Remove) == 0 {
+func (s *mysqlDB) removeConnectorDocuments(ctx context.Context, workspaceID, setID string, remove []string) (int, error) {
+	if len(remove) == 0 {
 		return 0, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_documents
-WHERE id IN (`+idPlaceholders(len(p.Remove))+`) AND set_id=? AND status='uploaded' FOR UPDATE`, append(toAnySlice(p.Remove), p.SetID)...)
+WHERE id IN (`+idPlaceholders(len(remove))+`) AND set_id=? AND status='uploaded' FOR UPDATE`, append(toAnySlice(remove), setID)...)
 	if err != nil {
 		return 0, fmt.Errorf("lock removed connector documents: %w", err)
 	}
@@ -239,7 +258,7 @@ WHERE id IN (`+idPlaceholders(len(p.Remove))+`) AND set_id=? AND status='uploade
 			return 0, err
 		}
 		ids = append(ids, id)
-		args = append(args, id, p.WorkspaceID)
+		args = append(args, id, workspaceID)
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil || len(ids) == 0 {
