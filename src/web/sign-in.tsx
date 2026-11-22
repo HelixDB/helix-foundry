@@ -2,6 +2,7 @@ import "./sign-in.css";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, Check } from "lucide-react";
 import { signInStarted, trackBeforeLeaving, trackEvent } from "./analytics";
 import { signOut } from "./api";
 import { Button, useTitle } from "./kit";
@@ -129,24 +130,27 @@ export function SignedInAs({ email }: { email?: string }) {
 }
 
 // The narrow page every gate screen shares. `account` is the signed-in
-// user's email, for a page they may need to leave by signing out.
+// user's email, for a page they may need to leave by signing out. `aside`
+// sits beside the card on a wide screen and under it on a phone.
 export function GatePage({
   title,
   lede,
   wide,
   account,
+  aside,
   children,
 }: {
   title: string;
   lede?: ReactNode;
   wide?: boolean;
   account?: string;
+  aside?: ReactNode;
   children?: ReactNode;
 }) {
   useTitle(title);
   return (
     <div className="hf-app">
-      <main className="hf-gate">
+      <main className={"hf-gate" + (aside ? " has-aside" : "")}>
         <div className={"hf-gate-card" + (wide ? " is-wide" : "")}>
           <a href="/" className="hf-gate-brand" aria-label="Helix Foundry">
             <span className="hf-brand-name">
@@ -158,6 +162,7 @@ export function GatePage({
           {children}
           {account !== undefined && <SignedInAs email={account} />}
         </div>
+        {aside}
       </main>
     </div>
   );
@@ -175,6 +180,10 @@ export function SignInPage() {
   // Already signed in: go straight on.
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
+  // Someone who came here cold sees what Foundry is: the app sends a
+  // signed-out user with return_to (but from `/`, and after signing out), a
+  // failed sign-in comes back with ?error=, and a local build has no sign-in.
+  const cold = !LOCAL && !returnTo && !code;
   const start = async (id: Provider["id"]) => {
     setPending(id);
     await signInStarted(id);
@@ -186,6 +195,7 @@ export function SignInPage() {
     <GatePage
       title="Sign in to Helix Foundry"
       lede="Use your Helix account, or continue to create one."
+      aside={cold ? <Pitch /> : undefined}
     >
       {error && (
         <div role="alert" className="hf-gate-alert">
@@ -211,6 +221,43 @@ export function SignInPage() {
       <PasswordSignIn returnTo={returnTo} disabled={!!pending} />
       <Terms />
     </GatePage>
+  );
+}
+
+/** The Ask demo on Foundry's landing page (helix-website's `#foundry-ask`). */
+const ASK_DEMO_URL =
+  "https://www.helix-db.com/?utm_source=foundry&utm_medium=login&utm_campaign=pitch#foundry-ask";
+
+/** What Foundry is, in a line and three points, beside a cold sign-in. */
+function Pitch() {
+  return (
+    <section className="hf-gate-pitch" aria-labelledby="sign-in-pitch">
+      <h2 id="sign-in-pitch" className="hf-gate-pitch-title">
+        Your company’s data as one graph your agents can query.
+      </h2>
+      <ul className="hf-gate-pitch-list">
+        <li>
+          <Check size={14} aria-hidden />
+          <span>Connect Postgres, Stripe, Linear, Slack, Notion and more.</span>
+        </li>
+        <li>
+          <Check size={14} aria-hidden />
+          <span>
+            Agents query it over MCP, and every answer cites its source.
+          </span>
+        </li>
+        <li>
+          <Check size={14} aria-hidden />
+          <span>
+            Open source: use it hosted, or run <code>docker compose up</code>.
+          </span>
+        </li>
+      </ul>
+      <a className="hf-gate-pitch-link" href={ASK_DEMO_URL}>
+        See it answer a question
+        <ArrowRight size={14} aria-hidden />
+      </a>
+    </section>
   );
 }
 
