@@ -61,9 +61,9 @@ func TestSlackPromptSaysWhomTheTurnActsAs(t *testing.T) {
 		slackAsBot: {turn: botMessage("Hi"),
 			says: []string{"shared Helix Foundry bot, not as the person writing to you", "without an owner or admin"},
 			not:  []string{"Run and Dismiss buttons for this person", "their own Foundry account", "on their own computer"}},
-		slackAsOwnerForReader: {turn: readOnly(slackMessage("Hi")),
-			says: []string{"a Foundry its owner runs on their own computer", "you answer as that owner", "reads and asks only", "you show no cards"},
-			not:  []string{"Run and Dismiss buttons for this person", "shared Helix Foundry bot"}},
+		slackAsOwnerReadOnly: {turn: readOnly(slackMessage("Hi")),
+			says: []string{"a Foundry its owner runs on their own computer", "you answer as that owner, reading and asking only", "may be the owner or someone the owner let use it", "you show no cards"},
+			not:  []string{"Run and Dismiss buttons for this person", "shared Helix Foundry bot", "the person writing is someone the owner let use it"}},
 	} {
 		assert.Equal(t, mode, slackIdentityOf(tc.turn))
 		told := surfacePrompt(tc.turn)
@@ -89,7 +89,7 @@ func TestTheLoopTellsASlackTurnItIsInSlack(t *testing.T) {
 		"a Slack turn":                   {turn: slackMessage("Hi"), as: ptr(slackAsPerson)},
 		"a restricted member's in Slack": {turn: slackMessage("Hi"), grantee: true, as: ptr(slackAsPerson)},
 		"a bot's":                        {turn: botMessage("Hi"), as: ptr(slackAsBot)},
-		"a local install's reader's":     {turn: readOnly(slackMessage("Hi")), as: ptr(slackAsOwnerForReader)},
+		"a local install's reader's":     {turn: readOnly(slackMessage("Hi")), as: ptr(slackAsOwnerReadOnly)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, say("Hello."))
@@ -124,7 +124,7 @@ func TestAHelperTellsASlackTurnItIsInSlack(t *testing.T) {
 	}{
 		"a site turn":                {turn: message("Who renewed?")},
 		"a Slack turn":               {turn: slackMessage("Who renewed?"), as: ptr(slackAsPerson)},
-		"a local install's reader's": {turn: readOnly(slackMessage("Who renewed?")), as: ptr(slackAsOwnerForReader)},
+		"a local install's reader's": {turn: readOnly(slackMessage("Who renewed?")), as: ptr(slackAsOwnerReadOnly)},
 	} {
 		hosts, db, _ := newHosts(t)
 		tc.turn.Runtime, tc.turn.Attempts = model.FoundryAgentRuntimeClaudeCode, 0

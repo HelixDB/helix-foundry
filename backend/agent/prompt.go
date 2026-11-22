@@ -107,9 +107,10 @@ const (
 	// slackAsBot is a hosted install's shared bot (bot mode), no one
 	// person, which botPrompt tells the rest of.
 	slackAsBot
-	// slackAsOwnerForReader is a local install's owner, answering someone
-	// the owner let use it, who reads and asks only (a read-only turn).
-	slackAsOwnerForReader
+	// slackAsOwnerReadOnly is a local install's owner, only reading and
+	// asking: for someone the owner let use it, or for the owner when Slack
+	// approvals are off. The turn can't tell which, so its words fit both.
+	slackAsOwnerReadOnly
 )
 
 // slackIdentityOf is whom turn acts as in Slack, from its principal (a
@@ -120,7 +121,7 @@ func slackIdentityOf(turn *model.FoundryAgentTurn) slackIdentity {
 	case isBot(turn.Principal):
 		return slackAsBot
 	case turn.ReadOnly:
-		return slackAsOwnerForReader
+		return slackAsOwnerReadOnly
 	}
 	return slackAsPerson
 }
@@ -137,7 +138,7 @@ var slackIdentityPrompts = map[slackIdentity]string{
 		`A card you prepare shows in Slack with Run and Dismiss buttons for this person; here nothing runs without a card, a new dashboard included.`,
 	slackAsBot: `Here you act as this Slack workspace's shared Helix Foundry bot, not as the person writing to you, as the next part says. ` +
 		`Nothing you prepare runs here without an owner or admin, a new dashboard included.`,
-	slackAsOwnerForReader: `This Slack app belongs to a Foundry its owner runs on their own computer, and you answer as that owner: the person writing is someone the owner let use it, who reads and asks only. ` +
+	slackAsOwnerReadOnly: `This Slack app belongs to a Foundry its owner runs on their own computer, and you answer as that owner, reading and asking only: the person writing may be the owner or someone the owner let use it, so don't assume which. ` +
 		`Nothing is prepared or changed here, so you show no cards.`,
 }
 
