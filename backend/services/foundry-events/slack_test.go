@@ -32,6 +32,13 @@ const (
 	// eventBody is an event as Slack sends it; the door never reads into it.
 	eventBody = `{"type":"event_callback","team_id":"T1","event_id":"Ev1","event":{"type":"app_mention","text":"<@U0BOT> hi"}}`
 	clickBody = `payload=%7B%22type%22%3A%22block_actions%22%7D`
+	// feedBody is a channel message (slack.ClassFeed) of the minute of t0, and replyBody a reply in
+	// its thread (slack.ClassReply).
+	feedBody = `{"type":"event_callback","team_id":"T1","event_id":"Ev2","event_time":1700000000,` +
+		`"event":{"type":"message","channel":"C1","channel_type":"channel","user":"U1","text":"hi","ts":"1700000000.000100"}}`
+	replyBody = `{"type":"event_callback","team_id":"T1","event_id":"Ev3","event_time":1700000000,` +
+		`"event":{"type":"message","channel":"C1","channel_type":"channel","user":"U1","text":"hi","ts":"1700000001.000100",` +
+		`"thread_ts":"1700000000.000100"}}`
 )
 
 // slackTimestamp is the door's clock, t0, as Slack writes it.
@@ -97,17 +104,49 @@ func signed(path, body string) *http.Request {
 	return r
 }
 
-// requireSlackIdle checks the Slack gate holds nothing.
-func (d *door) requireSlackIdle(t *testing.T, cfg config.DoorGateConfig) {
+// reading starts a request to path from address whose body, of unknown length, arrives as the
+// test writes it to reading; its answer comes on done once the test closes reading. It returns
+// once the door is reading the body, holding the read room.
+func (d *door) reading(t *testing.T, path string) (reading *io.PipeWriter, done chan *httptest.ResponseRecorder) {
 	t.Helper()
-	g := d.h.slack.gate
-	require.True(t, g.inFlight.TryAcquire(int64(cfg.MaxInFlight)), "a place in flight is held")
-	g.inFlight.Release(int64(cfg.MaxInFlight))
-	require.True(t, g.bytes.TryAcquire(cfg.MaxBytesInFlight), "bytes are held")
-	g.bytes.Release(cfg.MaxBytesInFlight)
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	require.Empty(t, g.held, "an address's place is held")
+	body, reading := io.Pipe()
+	t.Cleanup(func() { _ = reading.Close() })
+	r := signed(path, "")
+	r.Body, r.ContentLength = body, -1
+	done = make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- d.do(r) }()
+	// The read room takes the address's place, then the body's bytes.
+	room := d.cfg.Endpoint.Slack.MaxBytesInFlight
+	require.Eventually(t, func() bool {
+		if d.h.slack.read.bytes.TryAcquire(room) {
+			d.h.slack.read.bytes.Release(room)
+			return false
+		}
+		return true
+	}, 5*time.Second, time.Millisecond)
+	return reading, done
+}
+
+// requireSlackIdle checks Slack's gates hold nothing: the read room, and each class's room.
+func (d *door) requireSlackIdle(t *testing.T) {
+	t.Helper()
+	cfg := d.cfg.Endpoint
+	for name, c := range map[string]struct {
+		g   *gate
+		cfg config.DoorGateConfig
+	}{
+		"read": {d.h.slack.read, cfg.Slack}, "bot": {d.h.slack.classes[slack.ClassBot], cfg.Slack},
+		"reply": {d.h.slack.classes[slack.ClassReply], cfg.SlackReply}, "feed": {d.h.slack.classes[slack.ClassFeed], cfg.SlackFeed},
+	} {
+		require.True(t, c.g.inFlight.TryAcquire(int64(c.cfg.MaxInFlight)), "a place in flight is held: %s", name)
+		c.g.inFlight.Release(int64(c.cfg.MaxInFlight))
+		require.True(t, c.g.bytes.TryAcquire(c.cfg.MaxBytesInFlight), "bytes are held: %s", name)
+		c.g.bytes.Release(c.cfg.MaxBytesInFlight)
+		c.g.mu.Lock()
+		held := len(c.g.held)
+		c.g.mu.Unlock()
+		require.Zero(t, held, "an address's place is held: %s", name)
+	}
 }
 
 // A request Slack signed is forwarded as it came, and answered as the backend answers.
@@ -139,7 +178,7 @@ func TestSlackForwarding(t *testing.T) {
 			d.backend.mu.Lock()
 			assert.Equal(t, ports.Actor{Source: ports.SourceEventSource}, d.backend.slackActors[0], "the bare door, with no token")
 			d.backend.mu.Unlock()
-			d.requireSlackIdle(t, config.Defaults().Foundry.Events.Endpoint.Slack)
+			d.requireSlackIdle(t)
 		})
 	}
 
@@ -166,7 +205,7 @@ func TestSlackForwarding(t *testing.T) {
 			d.backend.answerSlack(func(context.Context, *foundryv1.ReceiveSlackRequestRequest) (*foundryv1.ReceiveSlackRequestResponse, error) {
 				return &foundryv1.ReceiveSlackRequestResponse{HttpStatus: c.status}, nil
 			})
-			counted := slackRequestsTotal.WithLabelValues("events", c.outcome)
+			counted := slackRequestsTotal.WithLabelValues("events", "bot", c.outcome)
 			before := testutil.ToFloat64(counted)
 			rec := d.do(signed(eventsPath, eventBody))
 			assert.Equal(t, int(c.status), rec.Code)
@@ -276,12 +315,12 @@ func TestSlackPrecheck(t *testing.T) {
 			r := signed(eventsPath, eventBody)
 			r.Body = io.NopCloser(unread{t})
 			c.change(r.Header)
-			counted := slackRequestsTotal.WithLabelValues("events", c.code)
+			counted := slackRequestsTotal.WithLabelValues("events", classNone, c.code)
 			before := testutil.ToFloat64(counted)
 			requireRefused(t, d.do(r), http.StatusBadRequest, c.code)
 			assert.Zero(t, d.backend.slackCount())
 			assert.Equal(t, before+1, testutil.ToFloat64(counted))
-			d.requireSlackIdle(t, config.Defaults().Foundry.Events.Endpoint.Slack)
+			d.requireSlackIdle(t)
 		})
 	}
 
@@ -328,7 +367,7 @@ func TestSlackBodies(t *testing.T) {
 			requireRefused(t, rec, http.StatusRequestEntityTooLarge, codePayloadTooLarge)
 			assert.Equal(t, "close", rec.Header().Get("Connection"))
 			assert.Zero(t, d.backend.slackCount())
-			d.requireSlackIdle(t, config.Defaults().Foundry.Events.Endpoint.Slack)
+			d.requireSlackIdle(t)
 		})
 	}
 
@@ -366,12 +405,12 @@ func TestSlackBackendFailures(t *testing.T) {
 			d.backend.answerSlack(func(context.Context, *foundryv1.ReceiveSlackRequestRequest) (*foundryv1.ReceiveSlackRequestResponse, error) {
 				return nil, c.err
 			})
-			counted := slackRequestsTotal.WithLabelValues("interactivity", c.code)
+			counted := slackRequestsTotal.WithLabelValues("interactivity", "bot", c.code)
 			before := testutil.ToFloat64(counted)
 			requireRefused(t, d.do(signed(interactivityPath, clickBody)), http.StatusInternalServerError, c.code)
 			assert.Equal(t, 1, d.backend.slackCount(), "a click is taken at most once")
 			assert.Equal(t, before+1, testutil.ToFloat64(counted))
-			d.requireSlackIdle(t, config.Defaults().Foundry.Events.Endpoint.Slack)
+			d.requireSlackIdle(t)
 		})
 	}
 
@@ -429,7 +468,7 @@ func TestSlackGate(t *testing.T) {
 		other := signed(eventsPath, eventBody)
 		other.Header.Set("X-Forwarded-For", elsewhere)
 		rec := d.do(other)
-		requireRefused(t, rec, http.StatusTooManyRequests, codeRateLimited)
+		requireRefused(t, rec, http.StatusServiceUnavailable, codeRateLimited)
 		assert.Equal(t, "1", rec.Header().Get("Retry-After"))
 		require.Equal(t, http.StatusOK, d.do(post(validBody)).Code, "a send has the sends' room")
 		require.Equal(t, http.StatusOK, d.do(view(shareToken(1))).Code, "a shared dashboard too")
@@ -437,7 +476,7 @@ func TestSlackGate(t *testing.T) {
 		for _, rec := range <-done {
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		}
-		d.requireSlackIdle(t, config.DoorGateConfig{MaxInFlight: 2, MaxBytesInFlight: config.Defaults().Foundry.Events.Endpoint.Slack.MaxBytesInFlight})
+		d.requireSlackIdle(t)
 	})
 
 	t.Run("refuses sends past their places in flight, while Slack goes on", func(t *testing.T) {
@@ -458,7 +497,8 @@ func TestSlackGate(t *testing.T) {
 		done := make(chan *httptest.ResponseRecorder)
 		go func() { done <- d.do(signed(eventsPath, eventBody)) }()
 		waitFor(t, entered, 1)
-		requireRefused(t, d.do(signed(eventsPath, eventBody)), http.StatusTooManyRequests, codeRateLimited)
+		requireRefused(t, d.do(signed(eventsPath, eventBody)), http.StatusServiceUnavailable, codeRateLimited)
+		requireRefused(t, d.do(signed(interactivityPath, clickBody)), http.StatusTooManyRequests, codeRateLimited)
 		other := signed(eventsPath, eventBody)
 		other.Header.Set("X-Forwarded-For", elsewhere)
 		go func() { done <- d.do(other) }()
@@ -467,7 +507,7 @@ func TestSlackGate(t *testing.T) {
 		for range 2 {
 			require.Equal(t, http.StatusOK, (<-done).Code)
 		}
-		d.requireSlackIdle(t, config.Defaults().Foundry.Events.Endpoint.Slack)
+		d.requireSlackIdle(t)
 	})
 
 	t.Run("refuses Slack past the pod's rate", func(t *testing.T) {
@@ -479,30 +519,62 @@ func TestSlackGate(t *testing.T) {
 		}
 		other := signed(eventsPath, eventBody)
 		other.Header.Set("X-Forwarded-For", elsewhere)
-		requireRefused(t, d.do(other), http.StatusTooManyRequests, codeRateLimited)
+		requireRefused(t, d.do(other), http.StatusServiceUnavailable, codeRateLimited)
 		require.Equal(t, http.StatusOK, d.do(post(validBody)).Code)
-		d.requireSlackIdle(t, config.Defaults().Foundry.Events.Endpoint.Slack)
+		d.requireSlackIdle(t)
 	})
 
-	t.Run("weighs a chunked body as the larger route's cap", func(t *testing.T) {
-		largest := int64(max(config.SlackEventsBodyBytes, config.SlackInteractivityBodyBytes))
-		d := newDoor(t, func(c *config.EventsConfig) { c.Endpoint.Slack.MaxBytesInFlight = 2 * largest })
+	t.Run("weighs a body of unknown length as its route's cap while it is read", func(t *testing.T) {
+		d := newDoor(t, func(c *config.EventsConfig) { c.Endpoint.Slack.MaxBytesInFlight = config.SlackEventsBodyBytes })
+		reading, done := d.reading(t, eventsPath)
+		small := signed(interactivityPath, clickBody)
+		small.Header.Set("X-Forwarded-For", elsewhere)
+		rec := d.do(small)
+		requireRefused(t, rec, http.StatusTooManyRequests, codeRateLimited)
+		assert.Equal(t, "1", rec.Header().Get("Retry-After"))
+		_, _ = io.WriteString(reading, eventBody)
+		require.NoError(t, reading.Close())
+		require.Equal(t, http.StatusOK, (<-done).Code)
+		require.Equal(t, http.StatusOK, d.do(small).Code, "the read room is free once the body is in")
+		d.requireSlackIdle(t)
+	})
+
+	t.Run("holds an address to its places in the read room", func(t *testing.T) {
+		d := newDoor(t, func(c *config.EventsConfig) { c.Endpoint.Slack.AddressMaxInFlight = 1 })
+		reading, done := d.reading(t, eventsPath)
+		counted := slackRequestsTotal.WithLabelValues("events", classNone, codeRateLimited)
+		before := testutil.ToFloat64(counted)
+		r := signed(eventsPath, feedBody)
+		r.Header.Set("X-Slack-Retry-Num", "3")
+		requireRefused(t, d.do(r), http.StatusServiceUnavailable, codeRateLimited)
+		assert.Equal(t, before+1, testutil.ToFloat64(counted), "of no class, so no gap, on the last retry too")
+		assert.Empty(t, d.h.slack.gaps.take())
+		other := signed(eventsPath, eventBody)
+		other.Header.Set("X-Forwarded-For", elsewhere)
+		require.Equal(t, http.StatusOK, d.do(other).Code)
+		require.NoError(t, reading.Close())
+		require.Equal(t, http.StatusOK, (<-done).Code)
+		d.requireSlackIdle(t)
+	})
+
+	t.Run("frees the read room while the backend answers", func(t *testing.T) {
+		d := newDoor(t, func(c *config.EventsConfig) {
+			c.Endpoint.Slack.MaxBytesInFlight = config.SlackEventsBodyBytes
+			c.Endpoint.Slack.AddressMaxInFlight = 1
+		})
 		entered, release := d.backend.holdSlack()
-		done := make(chan []*httptest.ResponseRecorder)
-		go func() {
-			done <- d.parallel(2, func(i int) *http.Request {
-				r := signed(eventsPath, eventBody)
-				r.ContentLength = -1
-				r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
-				return r
-			})
-		}()
-		waitFor(t, entered, 2)
-		requireRefused(t, d.do(signed(eventsPath, eventBody)), http.StatusTooManyRequests, codeRateLimited)
+		done := make(chan *httptest.ResponseRecorder, 2)
+		go func() { done <- d.do(signed(eventsPath, feedBody)) }()
+		waitFor(t, entered, 1)
+		r := signed(eventsPath, eventBody)
+		r.ContentLength = -1
+		go func() { done <- d.do(r) }()
+		waitFor(t, entered, 1)
 		close(release)
-		for _, rec := range <-done {
-			require.Equal(t, http.StatusOK, rec.Code)
+		for range 2 {
+			require.Equal(t, http.StatusOK, (<-done).Code)
 		}
+		d.requireSlackIdle(t)
 	})
 }
 

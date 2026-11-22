@@ -40,22 +40,28 @@
 //	X-Slack-Signature: v0=…
 //	X-Slack-Request-Timestamp: …
 //
-// behind a gate of their own. The door refuses headers no signed request carries, or a time
-// outside Slack's five minutes, and forwards the raw body and headers to
-// FoundryEventsService.ReceiveSlackRequest, which verifies the signature with the app's signing
-// secret, and answers what it answers, url_verification's challenge included.
+// behind gates of their own, one per class of request (slack.Classify: the bot's, replies in
+// threads, and the data connector's channel messages), so a flood of one never refuses another.
+// The door refuses headers no signed request carries, or a time outside Slack's five minutes, and
+// forwards the raw body and headers to FoundryEventsService.ReceiveSlackRequest, which verifies
+// the signature with the app's signing secret, and answers what it answers, url_verification's
+// challenge included. A channel's event Slack is about to drop on its last retry is answered 200,
+// and the minute of its channel sent, once a minute, to
+// FoundryEventsService.RecordFoundrySlackFeedGaps, for the data connector to read again.
 //
 // Another method on a route is 405, and another path 404, from the mux.
 //
 // The role holds nothing: no Secret, database, AWS identity or service-account token; not even the
 // site's secret or Slack's signing secret, only passing the site's hash and Slack's signature on. It reaches only FoundryEventsService, and stores
-// nothing of its own: its buckets and token cache live in memory per pod.
+// nothing of its own: its buckets, token cache and Slack's gaps live in memory per pod, the gaps
+// sent once more as it stops.
 package foundryevents
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"go.uber.org/dig"
@@ -92,6 +98,10 @@ type Deps struct {
 
 type Service struct {
 	ep *endpoint.Endpoint
+	// slack is Slack's door, nil while foundry.slack is off, whose gaps the service flushes.
+	slack *slackDoor
+	// flushing is the flush of Slack's gaps while the service runs.
+	flushing sync.WaitGroup
 }
 
 // New serves the route on foundry.events.endpoint's listeners, in front of the client of
@@ -110,13 +120,37 @@ func New(d Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	ep.RegisterHTTPHandler("/", newHandler(d.Backend, cfg, d.Cfg.Foundry.Slack, logger, time.Now).routes())
-	return &Service{ep: ep}, nil
+	h := newHandler(d.Backend, cfg, d.Cfg.Foundry.Slack, logger, time.Now)
+	ep.RegisterHTTPHandler("/", h.routes())
+	return &Service{ep: ep, slack: h.slack}, nil
 }
 
 func (s *Service) Name() string { return Name }
 
-func (s *Service) Start(ctx context.Context) error { return s.ep.Serve(ctx) }
+// Start serves until ctx ends, flushing Slack's gaps every gapFlushEvery meanwhile.
+func (s *Service) Start(ctx context.Context) error {
+	if s.slack != nil {
+		s.flushing.Go(func() { s.slack.flushGapsEvery(ctx, gapFlushEvery) })
+	}
+	return s.ep.Serve(ctx)
+}
 
-// Stop closes the listeners and waits, within ctx, for the requests in flight to be answered.
-func (s *Service) Stop(ctx context.Context) error { return s.ep.GracefulStop(ctx) }
+// Stop closes the listeners and waits, within ctx, for the requests in flight to be answered,
+// then for Start's flushes to end, and sends the gaps Slack's requests left once more.
+func (s *Service) Stop(ctx context.Context) error {
+	err := s.ep.GracefulStop(ctx)
+	if s.slack == nil {
+		return err
+	}
+	flushed := make(chan struct{})
+	go func() {
+		s.flushing.Wait()
+		close(flushed)
+	}()
+	select {
+	case <-flushed:
+	case <-ctx.Done():
+	}
+	s.slack.flushGaps(ctx)
+	return err
+}

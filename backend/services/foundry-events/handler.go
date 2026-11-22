@@ -39,6 +39,8 @@ type backendAPI interface {
 		*foundryv1.GetSharedFoundryDashboardResponse, error)
 	ReceiveSlackRequest(context.Context, *foundryv1.ReceiveSlackRequestRequest, ...grpc.CallOption) (
 		*foundryv1.ReceiveSlackRequestResponse, error)
+	RecordFoundrySlackFeedGaps(context.Context, *foundryv1.RecordFoundrySlackFeedGapsRequest, ...grpc.CallOption) (
+		*foundryv1.RecordFoundrySlackFeedGapsResponse, error)
 }
 
 // handler serves POST /v1/sources/{source}/pieces. It checks a request in this order, cheapest
@@ -88,7 +90,7 @@ type handler struct {
 }
 
 // newHandler is the handler of foundry.events, with its gate, its send-token admission and the
-// piece limits, and of Slack's routes, with their own gate, while slack (foundry.slack, of which
+// piece limits, and of Slack's routes, with their own gates, while slack (foundry.slack, of which
 // the door reads only Enabled) is on.
 func newHandler(backend backendAPI, cfg config.EventsConfig, slack config.SlackConfig, logger *slog.Logger, now func() time.Time) *handler {
 	lookup := func(ctx context.Context, hash string) (sendtoken.Sender, bool, error) {
@@ -104,10 +106,7 @@ func newHandler(backend backendAPI, cfg config.EventsConfig, slack config.SlackC
 		maxBody: cfg.Endpoint.MaxBodyBytes, readFor: readFor, sendFor: sendFor, logger: logger, now: now,
 	}
 	if slack.Enabled {
-		h.slack = &slackDoor{
-			backend: backend, gate: newGate(cfg.Endpoint.Slack, max(config.SlackEventsBodyBytes, config.SlackInteractivityBodyBytes)),
-			readFor: slackReadFor, answerFor: slackFor, logger: logger, now: now,
-		}
+		h.slack = newSlackDoor(backend, cfg.Endpoint, logger, now)
 	}
 	return h
 }
@@ -115,7 +114,7 @@ func newHandler(backend backendAPI, cfg config.EventsConfig, slack config.SlackC
 // routes is the role's routes on a mux of its own, which answers another method on one 405,
 // and another path 404: the sends, the site's reminders (reminders) and dashboards' public
 // snapshots (shared), which share the handler's gate, and, while foundry.slack is on, Slack's
-// events and clicks (slackDoor), behind a gate of their own, which bound their body by slackReadFor
+// events and clicks (slackDoor), behind gates of their own, which bound their body by slackReadFor
 // instead. Every request's connection gets readFor from the request's start to read its
 // body, the mux's refusals' too: the server reads what a handler leaves of a short body before
 // it answers and again before it reuses the connection, with no deadline of its own once the

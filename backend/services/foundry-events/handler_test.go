@@ -89,6 +89,8 @@ type fakeBackend struct {
 	slackCalls  []*foundryv1.ReceiveSlackRequestRequest
 	slackActors []ports.Actor
 	slackAnswer func(context.Context, *foundryv1.ReceiveSlackRequestRequest) (*foundryv1.ReceiveSlackRequestResponse, error)
+	// slackGaps are the gaps of Slack's events sent (gaps_test.go).
+	slackGaps gapCalls
 }
 
 func (b *fakeBackend) ValidateFoundryEventSourceToken(ctx context.Context, req *foundryv1.ValidateFoundryEventSourceTokenRequest) (
@@ -212,6 +214,8 @@ type door struct {
 	h       *handler
 	backend *fakeBackend
 	clock   *clock
+	// cfg is the door's foundry.events.
+	cfg config.EventsConfig
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -226,7 +230,7 @@ func newDoor(t *testing.T, change func(*config.EventsConfig)) *door {
 	backend := &fakeBackend{live: map[string]sendtoken.Sender{sendtoken.Hash(liveToken): sender1}}
 	clock := &clock{at: t0}
 	h := newHandler(dial(t, backend), cfg, config.SlackConfig{Enabled: true}, discard(), clock.now)
-	return &door{Handler: h.routes(), h: h, backend: backend, clock: clock}
+	return &door{Handler: h.routes(), h: h, backend: backend, clock: clock, cfg: cfg}
 }
 
 // post is a send of body to source-1 from address, bearing liveToken.
