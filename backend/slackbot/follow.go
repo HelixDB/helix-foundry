@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,10 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
+
+// errUnsendable is a reply message past Block Kit's limits, which no retry
+// sends: its follow ends.
+var errUnsendable = errors.New("slackbot: the reply's message can't be sent")
 
 // follower follows one claimed reply (the spec's §8.6): the turn's reply as
 // its events so far make it, what they have the bot post apart and hasn't
@@ -78,7 +83,8 @@ func (b *Bot) NextFollow(ctx context.Context) (func(context.Context), error) {
 
 // run follows until the reply is done, and names how its follow ended:
 // finished, gone (its install or turn went), released (tried again after a
-// while), deferred (a rate limit), lost or gave_up (Slack won't take it).
+// while), deferred (a rate limit), lost or gave_up (Slack refused the
+// reply's own message for good, or can't act there any more).
 func (f *follower) run(ctx context.Context) string {
 	b := f.b
 	release := func(after time.Duration) {
@@ -113,8 +119,12 @@ func (f *follower) run(ctx context.Context) string {
 		case limited:
 			release(wait)
 			return "deferred"
-		case slackGone(err):
+		case slackGone(err) || slackRefused(err) || errors.Is(err, errUnsendable):
 			log.From(ctx).Warn("Slack won't take the reply; its follow ends", "err", err)
+			// Messages waiting on the turn needn't wait for the follow.
+			if _, err := b.db.WakeFoundrySlackIntake(context.WithoutCancel(ctx), f.r.TurnID); err != nil {
+				log.From(ctx).Warn("wake the messages waiting on a turn failed; their wait runs out", "err", err)
+			}
 			return f.finish(ctx, "gave_up")
 		case err != nil:
 			log.From(ctx).Warn("a Slack follow failed; it is tried again", "err", err)
@@ -191,13 +201,25 @@ func (f *follower) step(ctx context.Context) (bool, error) {
 				case slack.CardDue, slack.QuestionsDue:
 					f.waiting = true
 				}
-				if due != nil && !model.ValidSlackTS(f.posted[due.Key()]) {
+				// Each due once: Founder polls a question with get_question,
+				// whose every answer names it again.
+				if due != nil && !model.SlackPostDone(f.posted[due.Key()]) &&
+					!slices.ContainsFunc(f.due, func(d slack.Due) bool { return d.Key() == due.Key() }) {
 					f.due = append(f.due, due)
 				}
 			}
 			if len(events) < eventsPage {
 				break
 			}
+		}
+		if !turn.Status.Live() && f.seq < turn.LastSeq {
+			// It ended, and its events up to its last are gone: its thread
+			// was purged or deleted. There is nothing more to show.
+			log.From(ctx).Info("a followed turn's events are gone; its reply ends", "seq", f.seq, "last_seq", turn.LastSeq)
+			if f.reply.End == nil {
+				f.reply.End = slack.Stopped{}
+			}
+			f.due = nil
 		}
 		if !turn.Status.Live() && f.seq >= turn.LastSeq && f.reply.End == nil {
 			switch turn.Status {
@@ -219,8 +241,12 @@ func (f *follower) step(ctx context.Context) (bool, error) {
 		f.endedAt = b.now()
 	}
 	if f.r.MessageTS == nil {
-		// Its intake worker died between holding it and posting.
-		ts, err := b.slack.PostMessage(ctx, f.bot, slack.Post{Channel: f.r.ChannelID, ThreadTS: f.r.ThreadTS, Message: b.site.Reply(f.reply)[0]})
+		// Its intake worker died between holding it and posting, or gave up.
+		first := b.site.Reply(f.reply)[0]
+		if err := first.Check(); err != nil {
+			return false, fmt.Errorf("%w: %w", errUnsendable, err)
+		}
+		ts, err := b.slack.PostMessage(ctx, f.bot, slack.Post{Channel: f.r.ChannelID, ThreadTS: f.r.ThreadTS, Message: first})
 		if err != nil {
 			return false, err
 		}
@@ -230,6 +256,10 @@ func (f *follower) step(ctx context.Context) (bool, error) {
 		f.r.MessageTS = &ts
 	}
 	for len(f.due) > 0 {
+		if model.SlackPostDone(f.posted[f.due[0].Key()]) {
+			f.due = f.due[1:]
+			continue
+		}
 		posted, err := f.post(ctx, f.due[0], live)
 		if err != nil {
 			return false, err
@@ -282,6 +312,9 @@ func (f *follower) write(ctx context.Context) error {
 	msgs := b.site.Reply(f.reply)
 	shown := make([]string, len(msgs))
 	for i, m := range msgs {
+		if err := m.Check(); err != nil {
+			return fmt.Errorf("%w: %w", errUnsendable, err)
+		}
 		raw, err := json.Marshal(m.Blocks)
 		if err != nil {
 			return err
@@ -330,26 +363,52 @@ func (f *follower) write(ctx context.Context) error {
 	return f.update(ctx, model.SlackReplyUpdate{UpdateAfter: &gap})
 }
 
-// posting posts msgs in the reply's thread under key, at least once: the
-// key is recorded pending first, then the first message's ts.
+// posting posts msgs in the reply's thread under key, at least once: each
+// message's key is recorded pending, then its ts once posted, so a post
+// cut short (a rate limit between two messages) goes on from the first
+// message not posted; then key, the first message's ts. One message's key
+// is key itself; the i-th of several is key and ".<i>".
 func (f *follower) posting(ctx context.Context, key string, msgs []slack.Message) error {
-	if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{key: model.SlackPostPending}}); err != nil {
-		return err
-	}
 	first := ""
-	for _, m := range msgs {
-		ts, err := f.b.slack.PostMessage(ctx, f.bot, slack.Post{Channel: f.r.ChannelID, ThreadTS: f.r.ThreadTS, Message: m})
-		if err != nil {
-			return err
+	for i, m := range msgs {
+		part := key
+		if len(msgs) > 1 {
+			part = key + "." + strconv.Itoa(i)
+		}
+		ts := f.posted[part]
+		if !model.ValidSlackTS(ts) {
+			if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{part: model.SlackPostPending}}); err != nil {
+				return err
+			}
+			var err error
+			if ts, err = f.b.slack.PostMessage(ctx, f.bot, slack.Post{Channel: f.r.ChannelID, ThreadTS: f.r.ThreadTS, Message: m}); err != nil {
+				return err
+			}
+			if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{part: ts}}); err != nil {
+				return err
+			}
+			f.posted[part] = ts
 		}
 		if first == "" {
 			first = ts
 		}
 	}
-	if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{key: first}}); err != nil {
+	if len(msgs) > 1 {
+		if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{key: first}}); err != nil {
+			return err
+		}
+		f.posted[key] = first
+	}
+	return nil
+}
+
+// refused records key refused for good, never to be posted or tried again.
+func (f *follower) refused(ctx context.Context, key string, why error) error {
+	log.From(ctx).Warn("Slack refused a post for good; it is dropped", "key", key, "err", why)
+	if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{key: model.SlackPostRefused}}); err != nil {
 		return err
 	}
-	f.posted[key] = first
+	f.posted[key] = model.SlackPostRefused
 	return nil
 }
 
@@ -357,7 +416,9 @@ func (f *follower) posting(ctx context.Context, key string, msgs []slack.Message
 // an Analyst question's answer once it has ended (false, nothing posted,
 // while it is live, until questionWait after the turn ended), the card of
 // an action as the store has it now, or the questions the turn asks. One
-// whose question, action or drawing is gone is dropped.
+// whose question, action or drawing is gone is dropped; one past Block
+// Kit's limits, or that Slack refuses for good while the reply's thread
+// still takes posts, is recorded refused (SlackPostRefused) and dropped.
 func (f *follower) post(ctx context.Context, due slack.Due, turnLive bool) (bool, error) {
 	b := f.b
 	ws := f.install.WorkspaceID
@@ -414,5 +475,16 @@ func (f *follower) post(ctx context.Context, due slack.Due, turnLive bool) (bool
 	if len(msgs) == 0 || strings.TrimSpace(msgs[0].Text.String()) == "" {
 		return true, nil
 	}
-	return true, f.posting(ctx, due.Key(), msgs)
+	for _, m := range msgs {
+		if err := m.Check(); err != nil {
+			return true, f.refused(ctx, due.Key(), err)
+		}
+	}
+	switch err := f.posting(ctx, due.Key(), msgs); {
+	case err != nil && slackRefused(err) && !slackGone(err):
+		return true, f.refused(ctx, due.Key(), err)
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }

@@ -874,6 +874,101 @@ func TestContinuationIsFollowedWhenItsCardCantBeRedrawn(t *testing.T) {
 	}
 }
 
+func TestFollowOfAPurgedThreadEnds(t *testing.T) {
+	w := newWorld(t)
+	w.message(ada, dmAda, ts(1), ts(1), "hello")
+	w.handle()
+	turn := w.only()
+	run := w.claimTurn(turn.ID)
+	run.emit(agent.Said{Step: 1, Text: "Half an answer"})
+	// The thread is purged while its turn runs: its events go, its turn
+	// is cancelled and kept.
+	_, err := testDB.Exec(`UPDATE foundry_slack_threads SET last_at=NOW(6) - INTERVAL 31 DAY`)
+	require.NoError(t, err)
+	w.bot.Sweep(w.ctx)
+	require.Zero(t, w.threads())
+	w.until("the reply", w.replyDone(turn.ID))
+	updates := w.slack.of("chat.update")
+	require.NotEmpty(t, updates)
+	assert.Contains(t, updates[len(updates)-1].text(), "Stopped.")
+	assert.NotContains(t, updates[len(updates)-1].text(), slack.ActionStop)
+}
+
+func TestAnalystAnswerIsPostedOnceHoweverOftenItIsPolled(t *testing.T) {
+	w := newWorld(t)
+	w.message(ada, dmAda, ts(1), ts(1), "how many invoices?")
+	w.handle()
+	turn := w.only()
+	q := w.question()
+	run := w.claimTurn(turn.ID)
+	ref := &agent.QuestionRef{OntologyID: q.OntologyID, ID: q.ID}
+	run.emit(agent.ToolReturned{ToolUseID: "t1", Name: "helix_foundry_ask", Question: ref},
+		agent.ToolReturned{ToolUseID: "t2", Name: "helix_foundry_get_question", Question: ref})
+	w.follow(300 * time.Millisecond)
+	run.emit(agent.ToolReturned{ToolUseID: "t3", Name: "helix_foundry_get_question", Question: ref})
+	result := `{"status":"answered","answer":{"blocks":[{"para":"There are 12 invoices."}],"visuals":[]},"citations":[],"queries":[],` +
+		`"usage":{"input":1,"cache_read":0,"cache_write":0,"output":1,"usd":0.01}}`
+	_, err := testDB.Exec(`UPDATE foundry_questions SET status='answered', result=?, finished_at=NOW(6) WHERE id=?`, result, q.ID)
+	require.NoError(t, err)
+	run.emit(agent.ToolReturned{ToolUseID: "t4", Name: "helix_foundry_get_question", Question: ref})
+	run.finish(agent.StopAnswered, "")
+	w.until("the reply", w.replyDone(turn.ID))
+	assert.Len(t, w.slack.posts("Answer from"), 1)
+}
+
+func TestPostOfSeveralMessagesGoesOnWhereItStopped(t *testing.T) {
+	w := newWorld(t)
+	w.message(ada, dmAda, ts(1), ts(1), "set up my ontology")
+	w.handle()
+	turn := w.only()
+	run := w.claimTurn(turn.ID)
+	// Four long questions fill more than a message's blocks.
+	questions := make([]string, 4)
+	for i := range questions {
+		questions[i] = fmt.Sprintf("Question %d: %s ends?", i+1, strings.Repeat("words ", 7000))
+	}
+	run.ask(questions...)
+	run.finish(agent.StopAsked, "")
+	w.until("the reply", w.replyDone(turn.ID))
+	// The channel takes a message a second: the second message of the
+	// questions waits for it, and the first isn't posted again.
+	assert.Len(t, w.slack.posts("Founder has 4 questions"), 1)
+	assert.Len(t, w.slack.posts("ends?"), 2, "its two messages, each once")
+	r, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
+	require.NoError(t, err)
+	key := "k:" + turn.ID
+	assert.True(t, model.ValidSlackTS(r.Posted[key]))
+	assert.Equal(t, r.Posted[key+".0"], r.Posted[key], "its first message's ts")
+	assert.True(t, model.ValidSlackTS(r.Posted[key+".1"]))
+}
+
+func TestSlackRefusingAPostForGoodDropsIt(t *testing.T) {
+	w := newWorld(t)
+	w.message(ada, dmAda, ts(1), ts(1), "load Sales")
+	w.handle()
+	turn := w.only()
+	run := w.claimTurn(turn.ID)
+	refused := run.card(time.Now().Add(time.Hour))
+	next := run.card(time.Now().Add(time.Hour))
+	run.finish(agent.StopAnswered, "")
+	w.slack.queue("chat.postMessage", http.StatusOK, "", `{"ok":false,"error":"invalid_blocks"}`)
+	w.until("the reply", w.replyDone(turn.ID))
+	r, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SlackPostRefused, r.Posted["a:"+refused.ID])
+	assert.True(t, model.ValidSlackTS(r.Posted["a:"+next.ID]), "the next card is posted")
+	statuses := w.slack.of("agents.sessions.setStatus")
+	assert.Equal(t, "suspended", statuses[len(statuses)-1].args["status"])
+
+	// The reply's own message refused for good ends its follow.
+	w.message(ada, dmAda, ts(2), ts(2), "again")
+	w.handle()
+	again := w.last()
+	w.claimTurn(again.ID).finish(agent.StopAnswered, "")
+	w.slack.queue("chat.update", http.StatusOK, "", `{"ok":false,"error":"msg_too_long"}`)
+	w.until("the second reply", w.replyDone(again.ID))
+}
+
 func TestSlackStopOfOnesOwnTurnBesideAnothersSaysNothing(t *testing.T) {
 	w := newWorld(t)
 	w.message(ada, general, ts(1), ts(1), "<@U0BOT> count everything")
