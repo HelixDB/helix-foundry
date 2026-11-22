@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +18,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sourceaccess"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -58,6 +60,7 @@ func guarded(desc *grpc.ServiceDesc, authorize grpc.UnaryServerInterceptor) *grp
 // ontology's method, the current load its grants cover) on the handler's
 // context, for the handler to narrow what it answers.
 func (s *Service) authorize(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	ctx = context.WithValue(ctx, sourceReadsKey{}, sourceaccess.New(s.deps.DB, s.deps.People, time.Now()))
 	g, ok, err := s.granteeOf(ctx, actor(ctx), req)
 	if err != nil {
 		return nil, err
@@ -186,13 +189,38 @@ func (s *Service) admit(ctx context.Context, g access.Grantee, rule access.Rule,
 	return context.WithValue(ctx, granteeLoadKey{}, load), nil
 }
 
-// grantsOf are the targets the principals hold together.
-func (s *Service) grantsOf(ctx context.Context, workspaceID string, principals []access.Principal) (access.Grants, error) {
-	targets, err := s.targetsOf(ctx, workspaceID, principals)
-	if err != nil {
-		return access.Grants{}, err
+type sourceReadsKey struct{}
+
+// sourceReads reads grants and what sources share for the call ctx is of,
+// once each (authorize gives every call its own); a fresh one for a call
+// that never passed authorize.
+func (s *Service) sourceReads(ctx context.Context) *sourceaccess.Reads {
+	if r, ok := ctx.Value(sourceReadsKey{}).(*sourceaccess.Reads); ok {
+		return r
 	}
-	return access.NewGrants(targets), nil
+	return sourceaccess.New(s.deps.DB, s.deps.People, time.Now())
+}
+
+// grantsOf are what g holds, through itself and its teams, narrowed by what
+// each source that reports its permissions shares with it
+// (sourceaccess.Reads.Grants): every check of what a grantee reads starts
+// here.
+func (s *Service) grantsOf(ctx context.Context, g access.Grantee) (access.Grants, error) {
+	grants, err := s.sourceReads(ctx).Grants(ctx, g)
+	if err != nil {
+		return access.Grants{}, status.Errorf(codes.Internal, "read grants: %v", err)
+	}
+	return grants, nil
+}
+
+// principalGrants are targets, held by principal p in workspaceID, as p
+// reads them (sourceaccess.Reads.Of), for telling who reads what.
+func (s *Service) principalGrants(ctx context.Context, workspaceID string, p access.Principal, targets []access.Target) (access.Grants, error) {
+	grants, err := s.sourceReads(ctx).Of(ctx, workspaceID, p, targets)
+	if err != nil {
+		return access.Grants{}, status.Errorf(codes.Internal, "read grants: %v", err)
+	}
+	return grants, nil
 }
 
 // targetsOf are the targets principals' grants give in workspaceID.
@@ -210,9 +238,9 @@ func (s *Service) targetsOf(ctx context.Context, workspaceID string, principals 
 
 // granteeLoads are the current loads g's grants hold anything of, by ontology:
 // of ontologyIDs, or of every live ontology when it names none. One they hold
-// only some of is Partial.
+// only some of, or whose sources share only some of it with g, is Partial.
 func (s *Service) granteeLoads(ctx context.Context, g access.Grantee, ontologyIDs []string) (map[string]foundrymodel.FoundryLoadInputs, error) {
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil || grants.Empty() {
 		return map[string]foundrymodel.FoundryLoadInputs{}, err
 	}
@@ -235,7 +263,7 @@ func (s *Service) granteeLoads(ctx context.Context, g access.Grantee, ontologyID
 
 // granteePart is what g holds of a load it holds only some of.
 func (s *Service) granteePart(ctx context.Context, g access.Grantee, loadID string) (access.Part, error) {
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return access.Part{}, err
 	}
@@ -247,29 +275,6 @@ func (s *Service) granteePart(ctx context.Context, g access.Grantee, loadID stri
 		return access.Part{}, status.Errorf(codes.Internal, "read the load's holdings: %v", err)
 	}
 	return grants.Part(holdings), nil
-}
-
-// granteeSets are the workspace's document sets g's grants cover.
-func (s *Service) granteeSets(ctx context.Context, g access.Grantee) ([]string, error) {
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
-	if err != nil {
-		return nil, err
-	}
-	sets, err := s.deps.DB.ListFoundryDocumentSets(ctx, g.WorkspaceID)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list sets: %v", err)
-	}
-	held := []string{}
-	for _, set := range sets {
-		ref := access.SetRef{SetID: set.ID}
-		if set.Owner != nil {
-			ref.ConnectorID = set.Owner.ConnectorID
-		}
-		if grants.CoversSet(ref) {
-			held = append(held, set.ID)
-		}
-	}
-	return held, nil
 }
 
 // granteeVisibility is what a grantee's call sends the agent of a load it holds
@@ -329,11 +334,18 @@ func (s *Service) ListFoundryAccess(ctx context.Context, req *foundryv1.ListFoun
 		}
 		held[gr.Principal] = append(held[gr.Principal], gr.Target)
 	}
+	readAs := map[access.Principal]access.Grants{}
+	for _, p := range principals {
+		if readAs[p], err = s.principalGrants(ctx, req.GetWorkspaceId(), p, held[p]); err != nil {
+			return nil, err
+		}
+	}
 	for _, ontologyID := range slices.Sorted(maps.Keys(loads)) {
 		l := loads[ontologyID]
 		out := &foundryv1.FoundryOntologyAccess{OntologyId: ontologyID, LoadId: l.LoadID, Inputs: inputsToProto(l.Inputs)}
 		for _, p := range principals {
-			switch grants := access.NewGrants(held[p]); {
+			// A team reads as no one in any source: each member reads as themselves.
+			switch grants := readAs[p]; {
 			case grants.Covers(l.Inputs):
 				out.Readers = append(out.Readers, principalToProto(p))
 			case grants.Reaches(l.Inputs):
@@ -494,7 +506,7 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 			return &foundryv1.GetMyFoundryAccessResponse{Workflows: true}, nil
 		}
 	}
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return nil, err
 	}
@@ -610,12 +622,25 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 			heldAfter[gr.Principal] = append(heldAfter[gr.Principal], gr.Target)
 		}
 	}
+	type readAs struct{ then, next access.Grants }
+	narrowed := map[access.Principal]readAs{}
+	for _, p := range principals {
+		then, err := s.principalGrants(ctx, ws, p, held[p])
+		if err != nil {
+			return nil, err
+		}
+		next, err := s.principalGrants(ctx, ws, p, heldAfter[p])
+		if err != nil {
+			return nil, err
+		}
+		narrowed[p] = readAs{then, next}
+	}
 	resp := &foundryv1.PreviewFoundryAccessChangeResponse{}
 	for _, ontologyID := range slices.Sorted(maps.Keys(after)) {
 		was, ok := before[ontologyID]
 		for _, p := range principals {
 			// Whoever read it whole and no longer would, and whoever read part of it and would read none.
-			then, next, now := access.NewGrants(held[p]), access.NewGrants(heldAfter[p]), after[ontologyID]
+			then, next, now := narrowed[p].then, narrowed[p].next, after[ontologyID]
 			if ok && (then.Covers(was) && !next.Covers(now) || then.Reaches(was) && !next.Reaches(now)) {
 				resp.Losses = append(resp.Losses, &foundryv1.FoundryAccessLoss{Principal: principalToProto(p), OntologyId: ontologyID,
 					KeepsPart: next.Reaches(now)})

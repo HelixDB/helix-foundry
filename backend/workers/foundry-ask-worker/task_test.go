@@ -162,6 +162,16 @@ type memStore struct {
 	currentLoads map[string]model.FoundryLoadInputs
 	// teams are each user's teams.
 	teams map[string][]string
+	// slack adds a Slack connection, conn-slack, whose source's permissions
+	// sharing says, by reader's email.
+	slack   bool
+	sharing map[string][]model.FoundrySourceSharing
+}
+
+func (s *memStore) SourceSharingFor(_ context.Context, _, email string) ([]model.FoundrySourceSharing, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sharing[email], nil
 }
 
 func (s *memStore) GetActiveFoundryAIConfig(context.Context, string) (*model.FoundryAIConfig, error) {
@@ -221,7 +231,11 @@ func (s *memStore) GetOntologyGeneration(_ context.Context, _, id string) (*mode
 }
 
 func (s *memStore) ListConnectors(context.Context, string) ([]*model.Connector, error) {
-	return []*model.Connector{{ID: "conn-1", WorkspaceID: "ws-1", Kind: "stripe", Name: "Stripe"}}, nil
+	out := []*model.Connector{{ID: "conn-1", WorkspaceID: "ws-1", Kind: "stripe", Name: "Stripe"}}
+	if s.slack {
+		out = append(out, &model.Connector{ID: "conn-slack", WorkspaceID: "ws-1", Kind: "slack", Name: "Slack"})
+	}
+	return out, nil
 }
 
 // ListFoundryDocumentSets knows set-1, Contracts, and set-notes, a Granola

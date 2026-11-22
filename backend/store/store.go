@@ -152,7 +152,7 @@ type ReadStore interface {
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	GetOntologyVersionSources(ctx context.Context, ontologyID, versionID string) (*model.OntologyVersionSources, error)
 	GetOntologyVersionMappings(ctx context.Context, ontologyID, versionID string) (string, error)
-	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string, filter model.FoundryDocumentFilter,
+	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, held *[]string, filter model.FoundryDocumentFilter,
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)
 	FoundryLoadHoldsDocument(ctx context.Context, loadID, documentID string) (bool, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)

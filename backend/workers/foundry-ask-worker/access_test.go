@@ -1,16 +1,19 @@
 package foundryaskworker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -314,6 +317,112 @@ func TestGranteeQuestions(t *testing.T) {
 		settled := h.run(t, q)
 		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || settled[0].Error != noLongerGranted ||
 			settled[0].Result != nil || len(h.agent.calls()) != 1 {
+			t.Fatalf("settled %+v", settled)
+		}
+	})
+}
+
+// emails are the members' verified emails, by user id.
+type emails map[string]string
+
+func (emails) MayManageAI(context.Context, string, string) bool { return false }
+
+func (emails) DisplayName(context.Context, string) (string, error) { return "", nil }
+
+func (e emails) Member(_ context.Context, _, userID string) (ports.Member, error) {
+	return ports.Member{Role: ports.RoleMember, Email: e[userID]}, nil
+}
+
+// slackHarness is the harness with a question Ada asked through a grant of
+// conn-slack, a Slack connection whose load holds a day of #general (C1,
+// public) and of #deals (C2, private, which lists Ada while inAll).
+func slackHarness(t *testing.T, inAll bool) (*harness, *model.FoundryQuestion) {
+	t.Helper()
+	h := newHarness(t)
+	ada := access.Principal{Kind: access.PrincipalUser, ID: "user-ada"}
+	h.task.runner.people = emails{"user-ada": "Ada@Example.com"}
+	h.store.slack = true
+	h.store.grants = []model.FoundryAccessGrant{{WorkspaceID: "ws-1", Principal: ada, Target: access.ConnectorTarget("conn-slack")}}
+	conversations := access.SetRef{SetID: "set-slack", ConnectorID: "conn-slack"}
+	h.store.currentLoads = map[string]model.FoundryLoadInputs{"ont-1": {LoadID: "load-1", VersionID: "ver-3", Inputs: access.Inputs{
+		Sets: []access.SetRef{conversations},
+	}}}
+	h.store.holdings = map[string]access.Holdings{"load-1": {Documents: []access.DocumentRef{
+		{ID: "doc-general", Set: conversations, Stream: "conversations", ExternalID: "C1:2026-11-01"},
+		{ID: "doc-deals", Set: conversations, Stream: "conversations", ExternalID: "C2:2026-11-01"},
+	}}}
+	now := time.Now()
+	visible := []string{"C1"}
+	if inAll {
+		visible = []string{"C1", "C2"}
+	}
+	h.store.sharing = map[string][]model.FoundrySourceSharing{
+		"Ada@Example.com": {{ConnectorID: "conn-slack", ReadAt: &now, Visible: visible, Items: 2}},
+		"":                {{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}, Items: 2}},
+	}
+	q := question(1)
+	q.Grantee = &ada
+	return h, q
+}
+
+func TestGranteeQuestionsFollowSlack(t *testing.T) {
+	// The channels Slack shares with Ada are what her question reads, and
+	// what it read stays with it, as the API keeps it readable (Keeps).
+	t.Run("only her channels", func(t *testing.T) {
+		h, q := slackHarness(t, false)
+		if settled := h.run(t, q); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		req := askedWithin(t, h)
+		if req.Visibility == nil || req.Visibility.Documents.All || fmt.Sprint(req.Visibility.Documents.Only) != "[doc-general]" {
+			t.Fatalf("visibility %+v", req.Visibility)
+		}
+		seen := h.store.seen[q.ID]
+		if seen == nil || fmt.Sprint(seen.Sets) != "[{set-slack conn-slack}]" {
+			t.Fatalf("seen %+v", seen)
+		}
+	})
+	t.Run("every channel shared with her reads the load whole", func(t *testing.T) {
+		h, q := slackHarness(t, true)
+		h.run(t, q)
+		req := askedWithin(t, h)
+		if req.Visibility == nil || !req.Visibility.Documents.All {
+			t.Fatalf("visibility %+v", req.Visibility)
+		}
+		if got, ok := h.store.seen[q.ID]; ok {
+			t.Fatalf("seen %+v", got)
+		}
+	})
+	t.Run("no email reads as no one: public channels only", func(t *testing.T) {
+		h, q := slackHarness(t, true)
+		h.task.runner.people = nil
+		h.run(t, q)
+		req := askedWithin(t, h)
+		if req.Visibility == nil || fmt.Sprint(req.Visibility.Documents.Only) != "[doc-general]" {
+			t.Fatalf("visibility %+v", req.Visibility)
+		}
+	})
+	t.Run("audiences never read: nothing of it", func(t *testing.T) {
+		h, q := slackHarness(t, true)
+		h.store.sharing = nil
+		settled := h.run(t, q)
+		if len(settled) != 1 || settled[0].Error != noLongerGranted || len(h.agent.calls()) != 0 {
+			t.Fatalf("settled %+v", settled)
+		}
+	})
+	// Taken out of #general while it runs, she no longer reads what it read.
+	t.Run("a channel she leaves while it runs", func(t *testing.T) {
+		h, q := slackHarness(t, true)
+		answerIt := h.agent.ask
+		h.agent.ask = func(req string, stream agentv1.Agent_AskServer) error {
+			h.store.mu.Lock()
+			now := time.Now()
+			h.store.sharing["Ada@Example.com"] = []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}, Items: 2}}
+			h.store.mu.Unlock()
+			return answerIt(req, stream)
+		}
+		settled := h.run(t, q)
+		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || settled[0].Error != noLongerGranted {
 			t.Fatalf("settled %+v", settled)
 		}
 	})

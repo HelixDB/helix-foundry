@@ -358,7 +358,7 @@ func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.Li
 	}
 	var keep func(*foundrymodel.FoundryAgentThread) bool
 	if g, grantee := access.GranteeFrom(ctx); grantee {
-		grants, err := s.grantsOf(ctx, ws, g.Principals())
+		grants, err := s.grantsOf(ctx, g)
 		if err != nil {
 			return nil, err
 		}
@@ -398,7 +398,7 @@ func (s *Service) agentThread(ctx context.Context, workspaceID, userID, threadID
 	if t.Granted == nil {
 		return nil, status.Error(codes.NotFound, "thread not found")
 	}
-	grants, err := s.grantsOf(ctx, workspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return nil, err
 	}

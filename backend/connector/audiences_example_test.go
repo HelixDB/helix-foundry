@@ -31,3 +31,17 @@ func ExampleMembersAudience() {
 	// true [ada@example.com grace@example.com]
 	// true []
 }
+
+// Slack reports who each channel is shared with, and tells a conversations
+// document's channel by its row's key; Stripe reports nothing.
+func ExampleAudiencedKind() {
+	slack, ok := connector.AudiencedKind("slack")
+	fmt.Println(ok)
+	fmt.Println(slack.ItemOfDocument("conversations", "C123:2026-11-01"))
+	_, ok = connector.AudiencedKind("stripe")
+	fmt.Println(ok)
+	// Output:
+	// true
+	// C123 true
+	// false
+}

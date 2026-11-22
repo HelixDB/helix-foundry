@@ -205,10 +205,10 @@ func (g Grants) givesSet(s SetRef) bool {
 // when that connector's source reports its permissions.
 func (g Grants) CoversSet(s SetRef) bool { return g.givesSet(s) && g.sharing.whole(s.ConnectorID) }
 
-// reachesSet reports whether the grants give some documents of set s: it is
+// ReachesSet reports whether the grants give some documents of set s: it is
 // granted, and the source of an audienced connector that owns it shares an
-// item with the reader.
-func (g Grants) reachesSet(s SetRef) bool { return g.givesSet(s) && g.sharing.some(s.ConnectorID) }
+// item with the reader, so a reader of part of a load is told of the set.
+func (g Grants) ReachesSet(s SetRef) bool { return g.givesSet(s) && g.sharing.some(s.ConnectorID) }
 
 // Reads reports whether the grants give document d of a load: its set is
 // granted, and the source of an audienced connector that owns the set shares
@@ -269,7 +269,7 @@ func (g Grants) Covers(in Inputs) bool {
 //	g.Keeps(access.Inputs{Sets: []access.SetRef{{SetID: "conversations", ConnectorID: "slack"}}}) // true
 func (g Grants) Keeps(seen Inputs) bool {
 	held := len(seen.Tables)+len(seen.Sets) > 0 || seen.Enrichment
-	sets := !slices.ContainsFunc(seen.Sets, func(s SetRef) bool { return !g.reachesSet(s) }) &&
+	sets := !slices.ContainsFunc(seen.Sets, func(s SetRef) bool { return !g.ReachesSet(s) }) &&
 		!slices.ContainsFunc(seen.DecisionSets, func(s SetRef) bool { return !g.CoversSet(s) })
 	return held && sets && !slices.ContainsFunc(seen.Tables, func(t TableRef) bool { return !g.CoversTable(t) }) &&
 		(g.enrichment || !seen.Enrichment) && !seen.Uncoverable && !seen.Unknown
@@ -286,7 +286,7 @@ func (g Grants) Reaches(in Inputs) bool {
 	if in.Unknown {
 		return false
 	}
-	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.CoversTable) || slices.ContainsFunc(in.Sets, g.reachesSet)
+	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.CoversTable) || slices.ContainsFunc(in.Sets, g.ReachesSet)
 }
 
 // DocumentRef is a document or table file of a load, and the set it is in now.

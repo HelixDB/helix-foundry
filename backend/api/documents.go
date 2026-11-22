@@ -317,10 +317,11 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 	return resp, nil
 }
 
-// granteeDocuments takes out of byID every document in a set g's grants
-// don't cover.
+// granteeDocuments takes out of byID every document g's grants don't read
+// (access.Grants.Reads): one in a set they don't give, or of an item its
+// connector's source doesn't share with g.
 func (s *Service) granteeDocuments(ctx context.Context, g access.Grantee, byID map[string]*foundrymodel.FoundryDocument) error {
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return err
 	}
@@ -328,14 +329,21 @@ func (s *Service) granteeDocuments(ctx context.Context, g access.Grantee, byID m
 	if err != nil {
 		return status.Errorf(codes.Internal, "list sets: %v", err)
 	}
-	owner := map[string]string{}
+	owners := map[string]*foundrymodel.FoundryDocumentSetOwner{}
 	for _, set := range sets {
 		if set.Owner != nil {
-			owner[set.ID] = set.Owner.ConnectorID
+			owners[set.ID] = set.Owner
 		}
 	}
 	for id, d := range byID {
-		if !grants.CoversSet(access.SetRef{SetID: d.SetID, ConnectorID: owner[d.SetID]}) {
+		ref := access.DocumentRef{ID: d.ID, Set: access.SetRef{SetID: d.SetID}}
+		if owner := owners[d.SetID]; owner != nil {
+			ref.Set.ConnectorID, ref.Stream = owner.ConnectorID, owner.Stream
+		}
+		if d.Source != nil {
+			ref.ExternalID = d.Source.ExternalID
+		}
+		if !grants.Reads(ref) {
 			delete(byID, id)
 		}
 	}
@@ -594,21 +602,21 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 		currentLoad = *o.CurrentLoadID
 	}
 	// A grantee lists the documents of the load its grants cover, and no
-	// others of the scope; of a load it holds only some of, only those of the
-	// sets it holds.
-	var heldSets *[]string
+	// others of the scope; of a load it holds only some of, only the
+	// documents of it they read.
+	var held *[]string
 	if granted, ok := granteeLoad(ctx); ok {
 		currentLoad, reader.scope = granted.LoadID, []string{}
 		if granted.Partial {
 			g, _ := access.GranteeFrom(ctx)
-			held, err := s.granteeSets(ctx, g)
+			part, err := s.granteePart(ctx, g, granted.LoadID)
 			if err != nil {
 				return nil, err
 			}
-			heldSets = &held
+			held = &part.Documents
 		}
 	}
-	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, heldSets, filter, req.GetPageToken(), foundryPageSize)
+	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, held, filter, req.GetPageToken(), foundryPageSize)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")

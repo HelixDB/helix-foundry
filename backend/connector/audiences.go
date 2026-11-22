@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Audienced is a kind that reports its source's own permissions: who each
@@ -19,6 +20,26 @@ type Audienced interface {
 	// external id; ok is false for a document of no item the kind knows,
 	// which only full readers read.
 	ItemOfDocument(stream, externalID string) (item string, ok bool)
+}
+
+// audiencedKinds are the catalog's kinds that are Audienced, by name. Their
+// ItemOfDocument reads nothing of the network, so a catalog wired to none
+// tells them.
+var audiencedKinds = sync.OnceValue(func() map[string]Audienced {
+	out := map[string]Audienced{}
+	for _, k := range NewCatalog(Endpoints{}, Guard{}, S3Options{}, EventsOptions{}).Kinds() {
+		if a, ok := k.(Audienced); ok {
+			out[k.Name()] = a
+		}
+	}
+	return out
+})
+
+// AudiencedKind is the kind named kind when it reports its source's
+// permissions; ok is false for any other kind, or none.
+func AudiencedKind(kind string) (_ Audienced, ok bool) {
+	a, ok := audiencedKinds()[kind]
+	return a, ok
 }
 
 // Audiences are a source's permissions at one read: its people, by email,

@@ -35,8 +35,8 @@ type accessStore struct {
 	// its other loads, by load.
 	inputs     map[string]foundrymodel.FoundryLoadInputs
 	olderLoads map[string]foundrymodel.FoundryLoadInputs
-	// heldSets is what the last list of an ontology's documents was kept to.
-	heldSets *[]string
+	// held is what the last list of an ontology's documents was kept to.
+	held *[]string
 	// holdings are what each load holds, document by document.
 	holdings map[string]access.Holdings
 	// granteeSpend is what each grantee's questions charged to the month.
@@ -101,14 +101,14 @@ func (s *accessStore) ListFoundryLoadInputs(_ context.Context, workspaceID strin
 	return out, nil
 }
 
-func (s *accessStore) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string,
+func (s *accessStore) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, held *[]string,
 	filter foundrymodel.FoundryDocumentFilter, pageToken string, limit int) ([]*foundrymodel.FoundryDocument, string, error) {
-	s.heldSets = heldSets
-	docs, next, err := s.questionStore.ListFoundryOntologyDocuments(ctx, workspaceID, currentLoadID, scope, heldSets, filter, pageToken, limit)
-	if err != nil || heldSets == nil {
+	s.held = held
+	docs, next, err := s.questionStore.ListFoundryOntologyDocuments(ctx, workspaceID, currentLoadID, scope, held, filter, pageToken, limit)
+	if err != nil || held == nil {
 		return docs, next, err
 	}
-	return slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return !slices.Contains(*heldSets, d.SetID) }), next, nil
+	return slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return !slices.Contains(*held, d.ID) }), next, nil
 }
 
 func (s *accessStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
@@ -830,8 +830,8 @@ func TestGranteePartial(t *testing.T) {
 		if _, err := client.GetFoundryOntologyDocument(ctx, &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
 			t.Fatal(err)
 		}
-		if got := store.heldSets; got == nil || !slices.Contains(*got, "set-general") || slices.Contains(*got, "set-hr") {
-			t.Fatalf("listed by sets %v", got)
+		if got := store.held; got == nil || !slices.Equal(*got, []string{"doc-general"}) {
+			t.Fatalf("listed by documents %v", got)
 		}
 		if _, err := client.GetFoundryDocumentContent(ctx, &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
 			t.Fatalf("the text of a document it doesn't hold: %v", err)

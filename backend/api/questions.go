@@ -336,13 +336,18 @@ func (s *Service) foundryQuestion(ctx context.Context, ontologyID, id string) (*
 
 // readableQuestions keeps, for a grantee, the questions on loads its grants
 // cover now: an answer says what its load held, so it reads only while that
-// load does, whichever load is current. The host's caller keeps them all.
+// load does, whichever load is current. One that read only part of its load
+// (Seen) reads while its grants keep that part (access.Grants.Keeps): Seen
+// names sets, so a set of a connector whose source shares only some items
+// with the grantee counts while the source shares any, as it did when it
+// was asked; requiring all would hide every such grantee's own answers. The
+// host's caller keeps them all.
 func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymodel.FoundryQuestion) ([]*foundrymodel.FoundryQuestion, error) {
 	g, ok := access.GranteeFrom(ctx)
 	if !ok || len(questions) == 0 {
 		return questions, nil
 	}
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +367,7 @@ func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymod
 			return true
 		case q.Seen != nil:
 			// It read only part of the load: that part is what it says.
-			return !grants.Covers(*q.Seen)
+			return !grants.Keeps(*q.Seen)
 		default:
 			return !grants.Covers(l.Inputs)
 		}

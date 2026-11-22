@@ -63,6 +63,10 @@ type Deps struct {
 	Databases ports.Databases `optional:"true"`
 	// Plans says which workspaces' plans let them ask on their own provider.
 	Plans ports.PlanReader `optional:"true"`
+	// People tells a grantee's verified email, which what a source shares
+	// with it is matched by; without it a grantee reads only what sources
+	// share with everyone.
+	People ports.People `optional:"true"`
 }
 
 type questionQueue interface {
@@ -138,7 +142,7 @@ func New(d Deps) (*Task, error) {
 	return &Task{
 		deps: d, cfg: cfg, queue: d.DB, boosts: d.Boosts, workerID: workerID, now: time.Now, slots: make(chan struct{}, cfg.Concurrency),
 		closeFn: func() error { return errors.Join(proxy.Close(), agent.Close()) },
-		runner:  &runner{db: d.DB, dbs: d.Databases, boosts: d.Boosts, agent: agent, ai: resolver, proxy: proxy, cfg: d.Cfg, workerID: workerID, flushEvery: flushEvery},
+		runner:  &runner{db: d.DB, dbs: d.Databases, people: d.People, boosts: d.Boosts, agent: agent, ai: resolver, proxy: proxy, cfg: d.Cfg, workerID: workerID, flushEvery: flushEvery},
 		prober: &prober{
 			queue: d.DB, agent: agent, keys: resolver.Keyring, deployment: resolver.Deployment, cfg: probe, owner: workerID, checkTools: checkTools,
 		},

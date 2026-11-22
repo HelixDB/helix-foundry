@@ -22,6 +22,7 @@ import (
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sourceaccess"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -47,6 +48,7 @@ type store interface {
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
 	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
+	SourceSharingFor(ctx context.Context, workspaceID, email string) ([]model.FoundrySourceSharing, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -99,6 +101,10 @@ type attempt struct {
 type runner struct {
 	db  store
 	dbs ports.Databases
+	// people tells a grantee's verified email, which what its sources share
+	// with it is matched by; nil tells none, so a grantee reads only what
+	// sources share with everyone.
+	people ports.People
 	// boosts lift its database's rate limit for an attempt; nil never does.
 	boosts ports.Boosts
 	agent  agent
@@ -247,30 +253,26 @@ func (h heldLoad) within(before heldLoad) bool {
 }
 
 // granted is what the grants of the grantee that asked q (and of its teams,
-// now) hold of its load, none for a question someone else asked: q's load must
-// still be its ontology's current one, and they must hold some of it, or the
-// question fails (errNoLongerGranted).
+// now) hold of its load, narrowed by what its sources share with it as the
+// API narrows them (package sourceaccess), none for a question someone else
+// asked: q's load must still be its ontology's current one, and they must
+// hold some of it, or the question fails (errNoLongerGranted).
 func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (heldLoad, error) {
 	if q.Grantee == nil {
 		return heldLoad{}, nil
 	}
-	principals := []access.Principal{*q.Grantee}
+	g := access.Grantee{WorkspaceID: q.WorkspaceID, Principal: *q.Grantee}
 	if q.Grantee.Kind == access.PrincipalUser {
 		teams, err := r.db.FoundryTeamsOf(ctx, q.WorkspaceID, q.Grantee.ID)
 		if err != nil {
 			return heldLoad{}, retry("could not read your access; Helix will retry", err)
 		}
-		principals = access.Grantee{Principal: *q.Grantee, Teams: teams}.Principals()
+		g.Teams = teams
 	}
-	held, err := r.db.ListFoundryAccessGrants(ctx, q.WorkspaceID, principals)
+	grants, err := sourceaccess.New(r.db, r.people, time.Now()).Grants(ctx, g)
 	if err != nil {
 		return heldLoad{}, retry("could not read your access; Helix will retry", err)
 	}
-	targets := make([]access.Target, len(held))
-	for i, g := range held {
-		targets[i] = g.Target
-	}
-	grants := access.NewGrants(targets)
 	loads, err := r.db.ListFoundryCurrentLoadInputs(ctx, q.WorkspaceID, []string{q.OntologyID})
 	if err != nil {
 		return heldLoad{}, retry("could not read your access; Helix will retry", err)
@@ -399,7 +401,8 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 			if h.Seen != nil {
 				read = *h.Seen
 			}
-			if !ok || !grants.Covers(read) {
+			// As the API keeps a grantee's questions (readableQuestions).
+			if !ok || h.Seen == nil && !grants.Covers(read) || h.Seen != nil && !grants.Keeps(read) {
 				return true
 			}
 			told = told.Union(read)
@@ -482,9 +485,9 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 		if s.Owner != nil {
 			ref.ConnectorID = s.Owner.ConnectorID
 		}
-		// A grantee's catalog names only the sets it holds; of a load it holds
-		// all of, its tables and files are all covered.
-		if grants == nil || grants.CoversSet(ref) {
+		// A grantee's catalog names only the sets it holds any of; of a load it
+		// holds all of, its tables and files are all covered.
+		if grants == nil || grants.ReachesSet(ref) {
 			setNames[s.ID] = s.DisplayName()
 		}
 	}
