@@ -80,7 +80,7 @@ func (r *Runner) automationStep(ctx context.Context, turn *model.FoundryAgentTur
 // install's bot's (botPrompt), a read-only turn's (readOnlyPrompt) or an
 // automation's turn's own.
 func (t *turnRun) system() string {
-	out := system(t.turn.WorkspaceID) + surfacePrompt(t.turn.Surface)
+	out := system(t.turn.WorkspaceID) + surfacePrompt(t.turn)
 	switch t.reach {
 	case ReachGrants:
 		out += "\n\n" + granteePrompt

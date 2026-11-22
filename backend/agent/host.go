@@ -512,7 +512,7 @@ func (h *Hosts) open(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 		readOnly = "\n\n" + readOnlyPrompt
 	}
 	return &HostTurn{
-		Turn: turn, System: system(turn.WorkspaceID) + surfacePrompt(turn.Surface) + readOnly + hostSystem(runtime), Prompt: text, Resume: thread.RuntimeSessionID,
+		Turn: turn, System: system(turn.WorkspaceID) + surfacePrompt(turn) + readOnly + hostSystem(runtime), Prompt: text, Resume: thread.RuntimeSessionID,
 		History: history(all, turn.ID), MaxSteps: h.Cfg.MaxSteps,
 	}, nil
 }

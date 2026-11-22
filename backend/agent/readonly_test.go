@@ -116,7 +116,7 @@ func TestAHelpersReadOnlyTurn(t *testing.T) {
 	claimed, err := hosts.Claim(context.Background(), model.FoundryAgentRuntimeClaudeCode, "host:1")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	assert.Equal(t, system(ws)+surfacePrompt(turn.Surface)+"\n\n"+readOnlyPrompt+hostSystem(model.FoundryAgentRuntimeClaudeCode), claimed.System)
+	assert.Equal(t, system(ws)+surfacePrompt(turn)+"\n\n"+readOnlyPrompt+hostSystem(model.FoundryAgentRuntimeClaudeCode), claimed.System)
 
 	hosts, db, _ = newHosts(t)
 	turn = readOnly(message("Load the Sales graph"))
