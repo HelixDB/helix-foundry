@@ -596,6 +596,148 @@ describe("Records through grants", () => {
     });
   });
 
+  it("tests a datetime key by its instant, else reads nothing", () => {
+    const keyed = {
+      name: "Reading",
+      props: [{ name: "taken_at", type: "datetime" }],
+      key: ["taken_at"],
+      names: [],
+    };
+    const where = (search: string) => {
+      const r = typedRecordsRead(keyed, view({ search }), naming);
+      return r.kind === "read" && "query" in r.plan.reads[0]!
+        ? r.plan.reads[0].query.start.where
+        : r.kind;
+    };
+    // Helix's rendering of the instant, which the engine types.
+    expect(where("2026-02-01 10:00:00.0009+01:00")).toEqual([
+      { prop: "taken_at", op: "=", value: "2026-02-01T09:00:00.000Z" },
+    ]);
+    // The engine tests only text by text: part of an instant matches none.
+    for (const q of ["2026-02", "2026-02-01", "March"])
+      expect(where(q), q).toBe("none");
+    // A filter sends its instant as Helix renders it too.
+    const filtered = typedRecordsRead(
+      keyed,
+      view({
+        filter: { field: "taken_at", value: "2026-02-01T10:00:00.25+01:00" },
+      }),
+      naming,
+    );
+    expect(
+      filtered.kind === "read" &&
+        "query" in filtered.plan.reads[0]! &&
+        filtered.plan.reads[0].query.start.where,
+    ).toEqual([
+      { prop: "taken_at", op: "=", value: "2026-02-01T09:00:00.250Z" },
+    ]);
+    expect(
+      typedRecordsRead(
+        keyed,
+        view({ filter: { field: "taken_at", value: "2026-02-01" } }),
+        naming,
+      ),
+    ).toEqual({
+      kind: "refused",
+      message:
+        "Enter a date and time, such as 2026-03-14T09:30:00Z (kept to the millisecond).",
+    });
+  });
+
+  it("compares a datetime by its instant in the mock engine, to the millisecond", () => {
+    const ontology = `version = "draft"
+[types.Reading]
+description = "A reading, keyed by its id."
+props = { id = "string", taken_at = "datetime" }
+key = ["id"]
+`;
+    const g = new MockGraph().view("load_1");
+    for (const [id, ms] of [
+      ["whole", Date.UTC(2017, 0, 1)],
+      ["half", Date.UTC(2017, 0, 1, 0, 0, 0, 500)],
+      ["before", Date.UTC(2016, 11, 31, 23, 59, 59)],
+    ] as const)
+      g.addNode("Reading", {
+        entity_key: `s${id}`,
+        id,
+        taken_at: new HelixDateTime(ms),
+        name: id,
+      });
+    g.addNode("Reading", { entity_key: "snone", id: "none", name: "none" });
+    const model = evaluate(g, compile(ontology));
+    const ask = (op: string, value?: string, order?: boolean) =>
+      answer(model, {
+        query: {
+          start: {
+            type: "Reading",
+            where: [{ prop: "taken_at", op, ...(value ? { value } : {}) }],
+          },
+          return: {
+            rows: {
+              columns: [
+                { at: 0, prop: "id" },
+                { at: 0, prop: "taken_at" },
+              ],
+              ...(order ? { order_by: { at: 0, prop: "taken_at" } } : {}),
+            },
+          },
+        },
+      } as unknown as Parameters<typeof answer>[1]);
+    const ids = (op: string, value?: string) => {
+      const rows = (
+        ask(op, value) as {
+          ok?: { result?: { rows?: { cells: unknown[] }[] } };
+        }
+      ).ok?.result?.rows;
+      return rows?.map((r) => r.cells[0]).sort();
+    };
+    // A leap second is the next second's instant, as Instant::parse reads it.
+    expect(ids("=", "2016-12-31T23:59:60Z")).toEqual(["whole"]);
+    expect(ids("=", "2017-01-01T01:00:00+01:00")).toEqual(["whole"]);
+    expect(ids("=", "2017-01-01T00:00:00.000Z")).toEqual(["whole"]);
+    // Finer than a millisecond: truncated, so .5009 is .500.
+    expect(ids("=", "2017-01-01T00:00:00.5009Z")).toEqual(["half"]);
+    expect(ids("!=", "2017-01-01T00:00:00Z")).toEqual(["before", "half"]);
+    expect(ids(">", "2017-01-01T00:00:00Z")).toEqual(["half"]);
+    expect(ids(">=", "2017-01-01T00:00:00Z")).toEqual(["half", "whole"]);
+    expect(ids("<", "2017-01-01T00:00:00Z")).toEqual(["before"]);
+    expect(ids("<=", "2017-01-01T00:00:00Z")).toEqual(["before", "whole"]);
+    expect(ids("is_null")).toEqual(["none"]);
+    expect(ids("not_null")).toEqual(["before", "half", "whole"]);
+    // The engine's JSON writes an instant with no fraction, or three digits,
+    // and orders rows by instant (a missing one first).
+    const rows = (
+      ask("not_null", undefined, true) as {
+        ok: { result: { rows: { cells: unknown[] }[] } };
+      }
+    ).ok.result.rows.map((r) => r.cells);
+    expect(rows).toEqual([
+      ["before", "2016-12-31T23:59:59Z"],
+      ["whole", "2017-01-01T00:00:00Z"],
+      ["half", "2017-01-01T00:00:00.500Z"],
+    ]);
+    // What isn't an instant is refused, as the engine refuses it.
+    for (const value of ["2017-01-01", "today", "soon"])
+      expect(ask("=", value), value).toMatchObject({
+        error: { code: "invalid", pointer: "/start/where/0/value" },
+      });
+    // What the page sends for a search of the key reads.
+    const read = typedRecordsRead(
+      {
+        name: "Reading",
+        props: [{ name: "taken_at", type: "datetime" }],
+        key: ["taken_at"],
+        names: [],
+      },
+      view({ search: "2017-01-01T01:00:00+01:00" }),
+      naming,
+    );
+    if (read.kind !== "read") throw new Error(read.kind);
+    expect(
+      answer(model, read.plan.reads[0] as Parameters<typeof answer>[1]),
+    ).toMatchObject({ ok: { kind: "query" } });
+  });
+
   it("tests a date or boolean key by equality, and only a string key by its text", () => {
     const keyed = (type: string) => ({
       name: "Day",

@@ -45,6 +45,7 @@ import {
 } from "./model";
 import { readable, type Naming, type TypeNaming } from "./naming";
 import { RULE_BREAK_LIMITS, refKey } from "./rule-breaks";
+import { helixDateTime } from "../../../shared/datetime";
 import { isRecord } from "../../../shared/json";
 
 // Reads of the one load a user's source grants cover, through the WFE's
@@ -618,8 +619,9 @@ const isIsoDate = (s: string) => {
  * (a type with names props, or known by its name), else a test of its
  * first key prop as the engine takes it (query/typed.rs `condition`: a text
  * test only of text): contains for a string, and equals for a number, a
- * boolean or an ISO date; "none" when the text can't match anything of the
- * type, or isn't a value of the key's type.
+ * boolean, an ISO date or, for a datetime, an RFC 3339 instant (as Helix
+ * renders it, to the millisecond, which the engine types); "none" when the
+ * text can't match anything of the type, or isn't a value of the key's type.
  */
 function searchStart(
   t: TypeNaming,
@@ -649,6 +651,10 @@ function searchStart(
     return isIsoDate(q)
       ? { where: [{ prop: key, op: "=", value: q }] }
       : "none";
+  if (type === "datetime") {
+    const at = helixDateTime(q);
+    return at ? { where: [{ prop: key, op: "=", value: at }] } : "none";
+  }
   return { where: [{ prop: key, op: "contains", value: q }] };
 }
 
