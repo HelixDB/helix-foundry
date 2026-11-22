@@ -30,6 +30,19 @@ CREATE TABLE foundry_local_relay_pending (
   KEY foundry_local_relay_pending_expiry (expires_at)
 );
 
+-- Links the install forgot (unlinked, or replaced by a new link) that Helix
+-- hasn't said it revoked: the relay component revokes each, with its token
+-- (sealed as the link's was), until Helix answers, so no link stays live at
+-- Helix that no install holds.
+CREATE TABLE foundry_local_relay_revokes (
+  link_id       CHAR(26)       NOT NULL PRIMARY KEY,
+  hosted_origin VARCHAR(255)   NOT NULL,
+  token_sealed  VARBINARY(512) NOT NULL,
+  key_id        VARCHAR(64)    NOT NULL,
+  forgot_at     DATETIME(6)    NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+);
+
 -- +goose Down
+DROP TABLE foundry_local_relay_revokes;
 DROP TABLE foundry_local_relay_pending;
 DROP TABLE foundry_local_relay;

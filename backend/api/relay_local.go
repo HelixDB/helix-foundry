@@ -39,12 +39,14 @@ type RelayLinker interface {
 	// SetSlackApprovals turns approving changes from Slack on or off:
 	// store.ErrNotFound while unlinked.
 	SetSlackApprovals(ctx context.Context, on bool) error
-	// Unlink revokes the link at Helix, best effort, and forgets it.
+	// Unlink forgets the link and revokes it at Helix, again later while
+	// Helix doesn't answer.
 	Unlink(ctx context.Context) error
 	// StartSlackInstall starts adding Helix's Slack app for the local
 	// workspace workspaceID, through Helix: Slack's page to send the owner
 	// to, which Helix finishes and sends back to Settings › Slack;
-	// store.ErrNotFound while unlinked.
+	// store.ErrNotFound while unlinked, and an error while a link the
+	// install forgot waits to be revoked at the same Helix.
 	StartSlackInstall(ctx context.Context, workspaceID string) (authorizeURL string, err error)
 	// Slack is a Web API client that calls Slack through Helix's relay, and
 	// install's bot it calls as: store.ErrNotFound once the install is gone.

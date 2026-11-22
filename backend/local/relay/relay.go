@@ -17,7 +17,9 @@
 //     §11), and acks what it took on the next claim: a delivery not acked
 //     comes again, and its dedupe key keeps it one row. It backs off from
 //     a second to a minute, jittered, while Helix can't be reached, and
-//     forgets a link Helix revoked;
+//     forgets a link Helix revoked. Linked or not, it revokes the links the
+//     install forgot (unlinked, or replaced by a new link) until Helix
+//     answers, at most every revokeRetry while Helix doesn't;
 //   - the bot's way to Slack (Transport, a slackbot.Relayed), and the API's
 //     (Slack).
 //
@@ -77,6 +79,9 @@ const (
 	callFor = 15 * time.Second
 	// maxAcks is the most ids one claim acks; the rest wait for the next.
 	maxAcks = 2048
+	// revokeRetry is how long the component waits to revoke forgotten links
+	// again after Helix didn't answer.
+	revokeRetry = time.Minute
 	// maxAnswer is the most of the door's answer read: a claim's feed is at
 	// most 4 MiB of payloads, with its JSON around them.
 	maxAnswer = 16 << 20
@@ -100,6 +105,8 @@ type Directory interface {
 	RelayOK(ctx context.Context, linkID string) error
 	StartRelayLink(ctx context.Context, stateHash string, verifierSealed []byte, keyID string) (time.Time, error)
 	SpendRelayLink(ctx context.Context, stateHash string) ([]byte, string, error)
+	RelayRevokes(ctx context.Context) ([]directory.RelayRevoke, error)
+	RelayRevoked(ctx context.Context, linkID string) error
 }
 
 var _ Directory = (*directory.Store)(nil)
@@ -153,12 +160,16 @@ type Relay struct {
 	// the relay's own limits answer the rest.
 	limiter *slack.Limiter
 
-	// idle is how often an unlinked install looks for a link, and backoff
-	// the first wait after a claim that failed: idlePoll and minBackoff, but
-	// in tests.
-	idle, backoff time.Duration
+	// idle is how often an unlinked install looks for a link, backoff the
+	// first wait after a claim that failed, and retry the wait to revoke
+	// forgotten links again: idlePoll, minBackoff and revokeRetry, but in
+	// tests.
+	idle, backoff, retry time.Duration
 
 	mu sync.Mutex
+	// revokeAfter is when Start next revokes the forgotten links: zero for
+	// at once.
+	revokeAfter time.Time
 	// cancel stops a running Start, and done closes once it returned.
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -189,7 +200,7 @@ func New(o Options) (*Relay, error) {
 	if client == nil {
 		client = &http.Client{}
 	}
-	return &Relay{o: o, http: client, logger: o.Logger.With("component", "relay"), limiter: limiter, idle: idlePoll, backoff: minBackoff,
+	return &Relay{o: o, http: client, logger: o.Logger.With("component", "relay"), limiter: limiter, idle: idlePoll, backoff: minBackoff, retry: revokeRetry,
 		installs: map[string]string{}}, nil
 }
 
@@ -251,7 +262,8 @@ func (r *Relay) StartLink(ctx context.Context) (string, error) {
 // verifier, at the door it was started for, and keeps the token as the
 // install's link, approving changes from Slack on: store.ErrNotFound for a
 // state unknown, spent or expired, or a code Helix doesn't know (expired,
-// spent). A link it replaces is revoked at Helix, best effort.
+// spent). A link it replaces is revoked at Helix (revokeForgotten); a token
+// redeemed that it couldn't keep is revoked at once, best effort.
 func (r *Relay) CompleteLink(ctx context.Context, code, state string) error {
 	sealed, keyID, err := r.o.Directory.SpendRelayLink(ctx, hashHex(state))
 	if err != nil {
@@ -273,17 +285,17 @@ func (r *Relay) CompleteLink(ctx context.Context, code, state string) error {
 		return errors.New("Helix answered without a relay token")
 	}
 	tokenSealed, tokenKey, err := r.o.Keys.Seal([]byte(redeemed.GetToken()), tokenContext)
-	if err != nil {
-		return fmt.Errorf("seal the relay token: %w", err)
+	if err == nil {
+		err = r.o.Directory.LinkRelay(ctx, directory.RelayLink{HostedOrigin: r.o.Door, LinkID: redeemed.GetLinkId(), TokenSealed: tokenSealed,
+			KeyID: tokenKey, AccountEmail: redeemed.GetAccountEmail(), SlackApprovals: true})
 	}
-	old, oldErr := r.open(ctx)
-	if err := r.o.Directory.LinkRelay(ctx, directory.RelayLink{HostedOrigin: r.o.Door, LinkID: redeemed.GetLinkId(), TokenSealed: tokenSealed,
-		KeyID: tokenKey, AccountEmail: redeemed.GetAccountEmail(), SlackApprovals: true}); err != nil {
+	if err != nil {
+		if err := r.call(context.WithoutCancel(ctx), r.o.Door, redeemed.GetToken(), "/v1/relay/revoke", nil, nil, callFor); err != nil {
+			r.logger.Warn("revoke a relay token this install couldn't keep failed; it can be revoked in Helix's Settings › Slack", "err", err)
+		}
 		return fmt.Errorf("keep the link: %w", err)
 	}
-	if oldErr == nil && old.link.LinkID != redeemed.GetLinkId() {
-		r.revoke(ctx, old)
-	}
+	r.revokeForgotten(ctx)
 	return nil
 }
 
@@ -294,43 +306,73 @@ func (r *Relay) SetSlackApprovals(ctx context.Context, on bool) error {
 }
 
 // Unlink forgets the link, which removes the install's Slack installs, then
-// revokes it at Helix, best effort: Helix removes them from Slack. Unlinked,
-// it does nothing.
+// revokes it at Helix: Helix removes them from Slack. While Helix doesn't
+// answer, the component revokes it later (revokeForgotten). Unlinked, it
+// does nothing.
 func (r *Relay) Unlink(ctx context.Context) error {
-	open, err := r.open(ctx)
-	switch {
+	switch _, err := r.o.Directory.UnlinkRelay(ctx); {
 	case errors.Is(err, store.ErrNotFound):
 		return nil
 	case err != nil:
-		// A token that can't be opened is forgotten all the same.
-		r.logger.Warn("open the relay token to revoke it failed; the link is forgotten here only", "err", err)
-	}
-	if _, err := r.o.Directory.UnlinkRelay(ctx); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 	if err := r.o.DB.MirrorFoundrySlackInstalls(ctx, nil); err != nil {
 		return fmt.Errorf("remove the link's Slack installs: %w", err)
 	}
-	if open.token != "" {
-		r.revoke(ctx, open)
-	}
+	r.revokeForgotten(ctx)
 	return nil
 }
 
-// revoke revokes a link's token at its door, best effort.
-func (r *Relay) revoke(ctx context.Context, l linked) {
-	if err := r.call(context.WithoutCancel(ctx), l.link.HostedOrigin, l.token, "/v1/relay/revoke", nil, nil, callFor); err != nil {
-		r.logger.Warn("revoke the relay token at Helix failed; it can be revoked in Helix's Settings › Slack", "err", err)
+// revokeForgotten revokes at Helix each link the install forgot, forgetting
+// it for good once Helix revoked it (or refuses its token, revoked
+// already), or when its token can't be opened; one Helix doesn't answer
+// waits, and Start tries it again after revokeRetry. It returns the Helix
+// origins of the links still waiting.
+func (r *Relay) revokeForgotten(ctx context.Context) []string {
+	forgotten, err := r.o.Directory.RelayRevokes(ctx)
+	if err != nil {
+		r.logger.Warn("read the relay links to revoke failed", "err", err)
+		return nil
 	}
+	var waiting []string
+	for _, f := range forgotten {
+		token, err := r.o.Keys.Open(f.TokenSealed, f.KeyID, tokenContext)
+		if err != nil {
+			r.logger.Warn("open a forgotten relay token failed; it can be revoked in Helix's Settings › Slack", "link_id", f.LinkID, "err", err)
+		} else {
+			err = r.call(ctx, f.HostedOrigin, string(token), "/v1/relay/revoke", nil, nil, callFor)
+			var refused *doorError
+			if err != nil && !(errors.As(err, &refused) && refused.status == http.StatusUnauthorized) {
+				r.logger.Warn("revoke a forgotten relay link at Helix failed; it is tried again", "link_id", f.LinkID, "err", err)
+				waiting = append(waiting, f.HostedOrigin)
+				continue
+			}
+		}
+		if err := r.o.Directory.RelayRevoked(ctx, f.LinkID); err != nil {
+			r.logger.Warn("forget a revoked relay link failed", "link_id", f.LinkID, "err", err)
+		}
+	}
+	r.mu.Lock()
+	r.revokeAfter = time.Time{}
+	if len(waiting) > 0 {
+		r.revokeAfter = time.Now().Add(r.retry)
+	}
+	r.mu.Unlock()
+	return waiting
 }
 
 // StartSlackInstall starts adding Helix's Slack app for the local workspace
 // workspaceID: Slack's page to send the owner to, which Helix finishes and
-// sends back to Settings › Slack; store.ErrNotFound while unlinked.
+// sends back to Settings › Slack; store.ErrNotFound while unlinked. While a
+// link the install forgot still waits to be revoked at the same Helix, it
+// starts nothing: Helix would take the install for the old link's.
 func (r *Relay) StartSlackInstall(ctx context.Context, workspaceID string) (string, error) {
 	l, err := r.open(ctx)
 	if err != nil {
 		return "", err
+	}
+	if slices.Contains(r.revokeForgotten(ctx), l.link.HostedOrigin) {
+		return "", errors.New("Helix hasn't revoked this Foundry's earlier link yet; try again once Helix can be reached")
 	}
 	var started foundryv1.StartFoundryRelaySlackInstallResponse
 	if err := r.call(ctx, l.link.HostedOrigin, l.token, "/v1/relay/slack-install",
@@ -467,6 +509,12 @@ func (r *Relay) Start(ctx context.Context) error {
 	var acks []string
 	backoff := time.Duration(0)
 	for ctx.Err() == nil {
+		r.mu.Lock()
+		due := !time.Now().Before(r.revokeAfter)
+		r.mu.Unlock()
+		if due {
+			r.revokeForgotten(ctx)
+		}
 		l, err := r.open(ctx)
 		if errors.Is(err, store.ErrNotFound) {
 			acks = nil
@@ -539,6 +587,10 @@ func (r *Relay) forget(ctx context.Context, linkID string) {
 	if _, err := r.o.Directory.UnlinkRelay(ctx); err != nil && !errors.Is(err, store.ErrNotFound) {
 		r.logger.Warn("forget the revoked relay link failed", "err", err)
 		return
+	}
+	// Helix revoked it already.
+	if err := r.o.Directory.RelayRevoked(ctx, linkID); err != nil {
+		r.logger.Warn("forget the revoked relay link failed", "err", err)
 	}
 	if err := r.o.DB.MirrorFoundrySlackInstalls(ctx, nil); err != nil {
 		r.logger.Warn("remove the revoked link's Slack installs failed", "err", err)

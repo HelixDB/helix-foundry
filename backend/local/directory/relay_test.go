@@ -17,7 +17,7 @@ import (
 func needRelayDB(t *testing.T) *directory.Store {
 	t.Helper()
 	st := needDB(t)
-	for _, table := range []string{"foundry_local_relay", "foundry_local_relay_pending"} {
+	for _, table := range []string{"foundry_local_relay", "foundry_local_relay_pending", "foundry_local_relay_revokes"} {
 		if _, err := testDB.Exec("DELETE FROM " + table); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,6 @@ func TestRelayLinkIsOneRowTheOwnerControls(t *testing.T) {
 		"no token":             func(l *directory.RelayLink) { l.TokenSealed = nil },
 		"a long token":         func(l *directory.RelayLink) { l.TokenSealed = make([]byte, 513) },
 		"no key":               func(l *directory.RelayLink) { l.KeyID = "" },
-		"no account":           func(l *directory.RelayLink) { l.AccountEmail = "" },
 		"a long account email": func(l *directory.RelayLink) { l.AccountEmail = strings.Repeat("a", 321) },
 	} {
 		l := relayLink("01LINK0000000000000000000A")
@@ -74,6 +73,11 @@ func TestRelayLinkIsOneRowTheOwnerControls(t *testing.T) {
 	dev.HostedOrigin = "http://localhost:3000"
 	if err := st.LinkRelay(ctx, dev); err != nil {
 		t.Fatalf("a development origin on this computer: %v", err)
+	}
+	noEmail := relayLink("01LINK0000000000000000000B")
+	noEmail.AccountEmail = ""
+	if err := st.LinkRelay(ctx, noEmail); err != nil {
+		t.Fatalf("an account Helix has no email for: %v", err)
 	}
 	if err := st.LinkRelay(ctx, relayLink("01LINK0000000000000000000B")); err != nil {
 		t.Fatal(err)
@@ -124,6 +128,58 @@ func TestRelayLinkIsOneRowTheOwnerControls(t *testing.T) {
 	}
 	if _, _, err := st.SpendRelayLink(ctx, relayHash("state")); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("a pending link outlived the unlink: %v", err)
+	}
+}
+
+// A link the install forgets, unlinked or replaced, waits with its token
+// until Helix revoked it; linking the same link again forgets nothing.
+func TestAForgottenRelayLinkWaitsToBeRevoked(t *testing.T) {
+	st := needRelayDB(t)
+	ctx := context.Background()
+	revokes := func() []string {
+		t.Helper()
+		got, err := st.RelayRevokes(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, r := range got {
+			if string(r.TokenSealed) != "sealed:"+r.LinkID || r.KeyID != "k1" || r.HostedOrigin != "https://foundry.helix-db.com" {
+				t.Fatalf("a revoke lost its token: %+v", r)
+			}
+			ids = append(ids, r.LinkID)
+		}
+		return ids
+	}
+	if got := revokes(); len(got) != 0 {
+		t.Fatalf("nothing forgotten yet: %v", got)
+	}
+	a, b, c := "01LINK0000000000000000000A", "01LINK0000000000000000000B", "01LINK0000000000000000000C"
+	for _, id := range []string{a, a, b} {
+		if err := st.LinkRelay(ctx, relayLink(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := revokes(); len(got) != 1 || got[0] != a {
+		t.Fatalf("the replaced link waits, once: %v", got)
+	}
+	if _, err := testDB.Exec(`UPDATE foundry_local_relay_revokes SET forgot_at=? WHERE link_id=?`, time.Now().UTC().Add(-time.Hour), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UnlinkRelay(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := revokes(); len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("the unlinked link waits too, oldest first: %v", got)
+	}
+	if err := st.RelayRevoked(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RelayRevoked(ctx, c); err != nil {
+		t.Fatalf("a link it doesn't hold: %v", err)
+	}
+	if got := revokes(); len(got) != 1 || got[0] != b {
+		t.Fatalf("a revoked link is forgotten: %v", got)
 	}
 }
 

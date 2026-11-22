@@ -47,6 +47,41 @@ type dir struct {
 	spent   map[string]bool
 	ok      []string
 	fail    error
+	// revokes are the links forgotten, waiting to be revoked.
+	revokes  []directory.RelayRevoke
+	failLink error
+}
+
+// forgetLink keeps the link for revoking, as the directory does.
+func (d *dir) forgetLink() {
+	if d.link != nil {
+		d.revokes = append(d.revokes, directory.RelayRevoke{LinkID: d.link.LinkID, HostedOrigin: d.link.HostedOrigin, TokenSealed: d.link.TokenSealed,
+			KeyID: d.link.KeyID})
+	}
+}
+
+func (d *dir) RelayRevokes(context.Context) ([]directory.RelayRevoke, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.revokes), nil
+}
+
+func (d *dir) RelayRevoked(_ context.Context, linkID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.revokes = slices.DeleteFunc(d.revokes, func(r directory.RelayRevoke) bool { return r.LinkID == linkID })
+	return nil
+}
+
+// waiting is the ids of the links waiting to be revoked.
+func (d *dir) waiting() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []string
+	for _, r := range d.revokes {
+		out = append(out, r.LinkID)
+	}
+	return out
 }
 
 func (d *dir) Owner(context.Context) (directory.User, error) {
@@ -65,6 +100,12 @@ func (d *dir) RelayLink(context.Context) (directory.RelayLink, error) {
 func (d *dir) LinkRelay(_ context.Context, l directory.RelayLink) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.failLink != nil {
+		return d.failLink
+	}
+	if d.link != nil && d.link.LinkID != l.LinkID {
+		d.forgetLink()
+	}
 	l.LinkedAt = time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
 	d.link = &l
 	return nil
@@ -77,6 +118,7 @@ func (d *dir) UnlinkRelay(context.Context) (directory.RelayLink, error) {
 		return directory.RelayLink{}, store.ErrNotFound
 	}
 	l := *d.link
+	d.forgetLink()
 	d.link = nil
 	return l, nil
 }
@@ -273,7 +315,7 @@ func newFixture(t *testing.T) fixture {
 	r, err := New(Options{Directory: d, DB: s, Keys: keys, Door: dr.URL, Site: "https://foundry.example.com", Origin: "http://localhost:3000",
 		Name: "Ada's laptop", Slack: cfg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
-	r.idle, r.backoff = 10*time.Millisecond, 10*time.Millisecond
+	r.idle, r.backoff, r.retry = 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond
 	return fixture{r: r, dir: d, db: s, door: dr, keys: keys}
 }
 
@@ -382,6 +424,37 @@ func TestLinkingToHelix(t *testing.T) {
 	require.Len(t, revoked, 1)
 	assert.Equal(t, "Bearer "+tokenA, revoked[0].auth)
 	assert.Equal(t, linkB, f.dir.link.LinkID)
+	assert.Empty(t, f.dir.waiting(), "Helix revoked it")
+}
+
+// A token redeemed that the install couldn't keep is revoked at once: no
+// link is left live at Helix that no install holds. One Helix has no email
+// for links all the same.
+func TestATokenItCantKeepIsRevoked(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.door.route("/v1/relay/token", func(took) (int, string) {
+		return http.StatusOK, `{"token":"` + tokenA + `","link_id":"` + linkA + `"}`
+	})
+	f.door.route("/v1/relay/revoke", func(took) (int, string) { return http.StatusOK, `{}` })
+	f.dir.failLink = errors.New("disk full")
+	authorize, err := f.r.StartLink(ctx)
+	require.NoError(t, err)
+	u, _ := url.Parse(authorize)
+	assert.ErrorContains(t, f.r.CompleteLink(ctx, "the-code", u.Query().Get("state")), "disk full")
+	revoked := f.door.calls("/v1/relay/revoke")
+	require.Len(t, revoked, 1)
+	assert.Equal(t, "Bearer "+tokenA, revoked[0].auth)
+
+	f.dir.failLink = nil
+	authorize, _ = f.r.StartLink(ctx)
+	u, _ = url.Parse(authorize)
+	require.NoError(t, f.r.CompleteLink(ctx, "the-code", u.Query().Get("state")))
+	state, err := f.r.Relay(ctx)
+	require.NoError(t, err)
+	assert.True(t, state.Linked)
+	assert.Empty(t, state.AccountEmail, "Helix had no email for the account")
+	assert.Len(t, f.door.calls("/v1/relay/revoke"), 1)
 }
 
 func TestApprovalsUnlinkAndInstalls(t *testing.T) {
@@ -419,13 +492,62 @@ func TestApprovalsUnlinkAndInstalls(t *testing.T) {
 	assert.Equal(t, ws, bot.Token, "the relayed bot names its local workspace")
 
 	// Unlinking forgets the link and its installs here, then revokes it at
-	// Helix; Helix failing to answer doesn't keep it.
+	// Helix; Helix failing to answer doesn't keep it, but its token waits to
+	// be revoked.
 	f.door.route("/v1/relay/revoke", func(took) (int, string) { return http.StatusServiceUnavailable, `{}` })
 	require.NoError(t, f.r.Unlink(ctx))
 	assert.Nil(t, f.dir.link)
 	require.NotEmpty(t, f.db.mirrored)
 	assert.Empty(t, f.db.mirrored[len(f.db.mirrored)-1], "no install is left")
 	assert.Len(t, f.door.calls("/v1/relay/revoke"), 1)
+	assert.Equal(t, []string{linkA}, f.dir.waiting())
+
+	// Linked again to the same Helix, Slack isn't added while the old link
+	// is live there: Helix would take the install for the old link's.
+	sealed, keyID, err := f.keys.Seal([]byte(tokenB), tokenContext)
+	require.NoError(t, err)
+	require.NoError(t, f.dir.LinkRelay(ctx, directory.RelayLink{HostedOrigin: f.door.URL, LinkID: linkB, TokenSealed: sealed, KeyID: keyID}))
+	_, err = f.r.StartSlackInstall(ctx, ws)
+	assert.ErrorContains(t, err, "earlier link")
+	assert.Len(t, f.door.calls("/v1/relay/slack-install"), 1, "nothing started")
+	assert.Equal(t, "Bearer "+tokenA, f.door.calls("/v1/relay/revoke")[1].auth, "it tried again first")
+
+	// Once Helix answers, or says the token is revoked already, it starts.
+	f.door.route("/v1/relay/revoke", func(took) (int, string) { return http.StatusUnauthorized, `{"error":{"code":"invalid_token"}}` })
+	_, err = f.r.StartSlackInstall(ctx, ws)
+	require.NoError(t, err)
+	assert.Empty(t, f.dir.waiting())
+	assert.Len(t, f.door.calls("/v1/relay/slack-install"), 2)
+}
+
+// The component revokes the links the install forgot, linked or not, until
+// Helix answers; a token that can't be opened can never be, and is
+// forgotten.
+func TestTheRelayRevokesForgottenLinks(t *testing.T) {
+	f := newFixture(t)
+	sealed, keyID, err := f.keys.Seal([]byte(tokenA), tokenContext)
+	require.NoError(t, err)
+	f.dir.revokes = []directory.RelayRevoke{{LinkID: linkA, HostedOrigin: f.door.URL, TokenSealed: sealed, KeyID: keyID},
+		{LinkID: linkB, HostedOrigin: f.door.URL, TokenSealed: []byte("garbage"), KeyID: "k1"}}
+	tries := 0
+	f.door.route("/v1/relay/revoke", func(took) (int, string) {
+		if tries++; tries < 3 {
+			return http.StatusServiceUnavailable, `{}`
+		}
+		return http.StatusOK, `{}`
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.r.Start(ctx) }()
+	require.Eventually(t, func() bool { return len(f.dir.waiting()) == 0 }, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, f.r.Stop(context.Background()))
+	require.NoError(t, <-done)
+	revoked := f.door.calls("/v1/relay/revoke")
+	require.Len(t, revoked, 3, "tried until Helix answered")
+	for _, c := range revoked {
+		assert.Equal(t, "Bearer "+tokenA, c.auth)
+	}
 }
 
 // A token that can't be opened is forgotten here all the same.
@@ -436,6 +558,7 @@ func TestUnlinkForgetsATokenItCantOpen(t *testing.T) {
 	require.NoError(t, f.r.Unlink(context.Background()))
 	assert.Nil(t, f.dir.link)
 	assert.Empty(t, f.door.calls("/v1/relay/revoke"), "no token to revoke with")
+	assert.Empty(t, f.dir.waiting(), "nor ever one")
 }
 
 // The component idles while unlinked, claims once linked (without a
@@ -589,4 +712,5 @@ func TestStopAndForgetEdges(t *testing.T) {
 	f.r.forget(context.Background(), linkA)
 	assert.Nil(t, f.dir.link)
 	require.Len(t, f.db.mirrored, 1)
+	assert.Empty(t, f.dir.waiting(), "Helix revoked it already")
 }

@@ -16,7 +16,8 @@ import (
 // owner opts in to: once linked, Slack reaches the install through Helix's
 // relay. The store keeps what the relay component seals (the hx_rl_ token,
 // and a link's PKCE verifier while it is made); it never sees them in the
-// clear.
+// clear. A link it forgets waits, with its token, until Helix revoked it
+// (RelayRevokes).
 
 // RelayPendingTTL is how long a link the owner started waits for Helix to
 // hand its code back.
@@ -43,7 +44,8 @@ type RelayLink struct {
 }
 
 // validate refuses a link the table can't keep, or that names no origin
-// Helix could answer from.
+// Helix could answer from. Its account email may be empty: Helix answers
+// none for an account it can't read one of.
 func (l RelayLink) validate() error {
 	u, err := url.Parse(l.HostedOrigin)
 	switch {
@@ -54,8 +56,8 @@ func (l RelayLink) validate() error {
 		return fmt.Errorf("a relay link's id is Helix's, 26 characters")
 	case len(l.TokenSealed) == 0 || len(l.TokenSealed) > 512 || l.KeyID == "" || len(l.KeyID) > 64:
 		return fmt.Errorf("a relay link's token is sealed under a key, at most 512 bytes")
-	case l.AccountEmail == "" || len(l.AccountEmail) > 320:
-		return fmt.Errorf("a relay link names the Helix account that made it, at most 320 bytes")
+	case len(l.AccountEmail) > 320:
+		return fmt.Errorf("a relay link's Helix account email is at most 320 bytes")
 	}
 	return nil
 }
@@ -77,21 +79,70 @@ func (s *Store) RelayLink(ctx context.Context) (RelayLink, error) {
 	return l, err
 }
 
-// LinkRelay makes l the install's link, linked now, replacing any before
-// (whose token stops being read here; Helix revokes it on its side). Its
-// approvals through Slack start on, as l says.
+// LinkRelay makes l the install's link, linked now, replacing any before,
+// which waits to be revoked at Helix (RelayRevokes). Its approvals through
+// Slack start on, as l says.
 func (s *Store) LinkRelay(ctx context.Context, l RelayLink) error {
 	if err := l.validate(); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `REPLACE INTO foundry_local_relay
+	return inTx(ctx, s.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, relayForget+` WHERE id=1 AND link_id<>?`, l.LinkID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `REPLACE INTO foundry_local_relay
   (id, hosted_origin, link_id, token_sealed, key_id, account_email, slack_approvals, linked_at, last_ok_at)
 VALUES (1, ?, ?, ?, ?, ?, ?, ?, NULL)`, l.HostedOrigin, l.LinkID, l.TokenSealed, l.KeyID, l.AccountEmail, l.SlackApprovals, time.Now().UTC())
+		return err
+	})
+}
+
+// relayForget keeps the link a WHERE names for revoking at Helix.
+const relayForget = `INSERT IGNORE INTO foundry_local_relay_revokes (link_id, hosted_origin, token_sealed, key_id)
+SELECT link_id, hosted_origin, token_sealed, key_id FROM foundry_local_relay`
+
+// RelayRevoke is a link the install forgot, which waits for Helix to
+// revoke it: its id, its Helix origin and its token, sealed under KeyID.
+type RelayRevoke struct {
+	LinkID       string
+	HostedOrigin string
+	TokenSealed  []byte
+	KeyID        string
+}
+
+// maxRelayRevokes is the most links RelayRevokes returns at once.
+const maxRelayRevokes = 50
+
+// RelayRevokes are the links the install forgot that Helix hasn't revoked
+// yet, oldest first, at most maxRelayRevokes.
+func (s *Store) RelayRevokes(ctx context.Context) ([]RelayRevoke, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT link_id, hosted_origin, token_sealed, key_id FROM foundry_local_relay_revokes
+ORDER BY forgot_at, link_id LIMIT ?`, maxRelayRevokes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RelayRevoke
+	for rows.Next() {
+		var r RelayRevoke
+		if err := rows.Scan(&r.LinkID, &r.HostedOrigin, &r.TokenSealed, &r.KeyID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RelayRevoked forgets a link Helix revoked, or that can never be: its token
+// is gone. A link it doesn't hold is nothing to do.
+func (s *Store) RelayRevoked(ctx context.Context, linkID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_local_relay_revokes WHERE link_id=?`, linkID)
 	return err
 }
 
-// UnlinkRelay forgets the install's link and the links it started; it
-// returns the link it forgot, store.ErrNotFound when it had none.
+// UnlinkRelay forgets the install's link, which waits to be revoked at
+// Helix (RelayRevokes), and the links it started; it returns the link it
+// forgot, store.ErrNotFound when it had none.
 func (s *Store) UnlinkRelay(ctx context.Context) (RelayLink, error) {
 	var out RelayLink
 	err := inTx(ctx, s.db, func(tx *sql.Tx) error {
@@ -107,7 +158,7 @@ func (s *Store) UnlinkRelay(ctx context.Context) (RelayLink, error) {
 		if ok.Valid {
 			out.LastOKAt = &ok.Time
 		}
-		for _, stmt := range []string{`DELETE FROM foundry_local_relay WHERE id=1`, `DELETE FROM foundry_local_relay_pending`} {
+		for _, stmt := range []string{relayForget + ` WHERE id=1`, `DELETE FROM foundry_local_relay WHERE id=1`, `DELETE FROM foundry_local_relay_pending`} {
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return err
 			}
