@@ -328,6 +328,16 @@ test("every main page in both themes", async ({ page }, info) => {
   await mock.configure({ slackBotBroken: true });
   await visit("slack-bot", "/settings/slack");
   await visit("slack-connection", `/data/connections/${slackConnection}`);
+  // A Foundry on someone's computer asking to be linked through Helix's relay.
+  await visit(
+    "relay-link",
+    `/relay/link?${new URLSearchParams({
+      state: "s".repeat(16),
+      code_challenge: "c".repeat(43),
+      redirect_uri: "http://localhost:3999/settings/slack",
+      name: "Ada’s laptop",
+    })}`,
+  );
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();
   await shoot("billing-switch");
