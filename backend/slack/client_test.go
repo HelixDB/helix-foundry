@@ -285,6 +285,37 @@ func TestUserInfo(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestUserInfoAdmin(t *testing.T) {
+	fake, client, _ := newFake(t)
+	ctx := context.Background()
+	for flag, admin := range map[string]bool{"is_admin": true, "is_owner": true, "is_primary_owner": true, "is_restricted": false} {
+		fake.answers["users.info"] = answer(200, `{"ok":true,"user":{"id":"U1","team_id":"T1","`+flag+`":true}}`)
+		u, err := client.UserInfo(ctx, bot, "U1")
+		require.NoError(t, err)
+		require.Equal(t, admin, u.Admin, flag)
+	}
+}
+
+func TestBotID(t *testing.T) {
+	fake, client, _ := newFake(t)
+	ctx := context.Background()
+	fake.answers["auth.test"] = answer(200, `{"ok":true,"team_id":"T1","user_id":"U0BOT","bot_id":"B0FOUNDRY"}`)
+	id, err := client.BotID(ctx, bot)
+	require.NoError(t, err)
+	require.Equal(t, "B0FOUNDRY", id)
+	c := fake.last()
+	require.Equal(t, "Bearer xoxb-1", c.auth)
+	require.Equal(t, "application/x-www-form-urlencoded", c.contentType)
+	for _, body := range []string{`{"ok":true}`, `{"ok":true,"bot_id":"b 1"}`} {
+		fake.answers["auth.test"] = answer(200, body)
+		_, err = client.BotID(ctx, bot)
+		require.ErrorContains(t, err, "without a bot id", body)
+	}
+	fake.answers["auth.test"] = answer(200, `{"ok":false,"error":"invalid_auth"}`)
+	_, err = client.BotID(ctx, bot)
+	require.True(t, slack.IsCode(err, "invalid_auth"))
+}
+
 func TestOpenDM(t *testing.T) {
 	fake, client, _ := newFake(t)
 	ctx := context.Background()

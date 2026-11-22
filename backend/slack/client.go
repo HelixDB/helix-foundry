@@ -334,6 +334,9 @@ type User struct {
 	UltraRestricted bool
 	// Stranger is a user of another organisation, seen through a shared channel.
 	Stranger bool
+	// Admin is a Slack workspace admin or owner (is_admin, is_owner,
+	// is_primary_owner).
+	Admin bool
 	// EnterpriseID and EnterpriseTeams are the Grid org the user is in and
 	// the org's workspaces they belong to; empty outside Grid.
 	EnterpriseID    string
@@ -369,6 +372,9 @@ func (c *Client) UserInfo(ctx context.Context, bot Bot, userID string) (User, er
 			IsUltraRestricted bool   `json:"is_ultra_restricted"`
 			IsStranger        bool   `json:"is_stranger"`
 			IsEmailConfirmed  bool   `json:"is_email_confirmed"`
+			IsAdmin           bool   `json:"is_admin"`
+			IsOwner           bool   `json:"is_owner"`
+			IsPrimaryOwner    bool   `json:"is_primary_owner"`
 			Profile           struct {
 				DisplayName string `json:"display_name"`
 				RealName    string `json:"real_name"`
@@ -392,6 +398,7 @@ func (c *Client) UserInfo(ctx context.Context, bot Bot, userID string) (User, er
 		ID: u.ID, TeamID: u.TeamID, Name: u.Name, RealName: u.RealName, DisplayName: u.Profile.DisplayName, TZ: u.TZ,
 		Email: u.Profile.Email, EmailConfirmed: u.IsEmailConfirmed, IsBot: u.IsBot, Deleted: u.Deleted,
 		Restricted: u.IsRestricted, UltraRestricted: u.IsUltraRestricted, Stranger: u.IsStranger,
+		Admin: u.IsAdmin || u.IsOwner || u.IsPrimaryOwner,
 	}
 	if user.RealName == "" {
 		user.RealName = u.Profile.RealName
@@ -400,6 +407,21 @@ func (c *Client) UserInfo(ctx context.Context, bot Bot, userID string) (User, er
 		user.EnterpriseID, user.EnterpriseTeams = u.EnterpriseUser.EnterpriseID, u.EnterpriseUser.Teams
 	}
 	return user, nil
+}
+
+// BotID is the id Slack gives the install's bot (auth.test's bot_id), which
+// the bot's own messages carry.
+func (c *Client) BotID(ctx context.Context, bot Bot) (string, error) {
+	var out struct {
+		BotID string `json:"bot_id"`
+	}
+	if err := c.call(ctx, request{method: AuthTest, bot: bot, form: url.Values{}}, &out); err != nil {
+		return "", err
+	}
+	if !idRE.MatchString(out.BotID) {
+		return "", errors.New("slack: auth.test answered without a bot id")
+	}
+	return out.BotID, nil
 }
 
 // OpenDM opens the bot's direct message with a user (conversations.open)

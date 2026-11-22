@@ -40,6 +40,8 @@ var (
 	ConversationsInfo = Method{name: "conversations.info", perMinute: 50, form: true}
 	// AgentSessionSetStatus is Tier 3.
 	AgentSessionSetStatus = Method{name: "agents.sessions.setStatus", perMinute: 50}
+	// AuthTest is a special tier, read once an install: hundreds a minute.
+	AuthTest = Method{name: "auth.test", perMinute: 100, form: true}
 	// AppsUninstall is Tier 1.
 	AppsUninstall = Method{name: "apps.uninstall", perMinute: 1, form: true}
 	// OAuthV2Access is the app's, not an install's: no Limiter paces it.
