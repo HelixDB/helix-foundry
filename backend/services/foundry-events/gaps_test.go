@@ -26,12 +26,15 @@ import (
 )
 
 // gapCalls are the gaps the fake backend was sent, a call each, with their Actors; answer answers
-// the n-th call (OK when nil).
+// the n-th call (OK when nil). Signed events are kept apart (signed), each answered by
+// answerSigned (recorded when nil).
 type gapCalls struct {
-	mu     sync.Mutex
-	calls  [][]*foundryv1.FoundrySlackFeedGap
-	actors []ports.Actor
-	answer func(n int) error
+	mu           sync.Mutex
+	calls        [][]*foundryv1.FoundrySlackFeedGap
+	actors       []ports.Actor
+	answer       func(n int) error
+	signed       []*foundryv1.FoundrySlackSignedEvent
+	answerSigned func() (foundryv1.SlackSignedGap, error)
 }
 
 // gaps is the gap calls b was sent.
@@ -42,15 +45,33 @@ func (b *fakeBackend) RecordFoundrySlackFeedGaps(ctx context.Context, req *found
 	g := b.gaps()
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.calls = append(g.calls, req.GetGaps())
 	actor, _ := ports.ActorFrom(ctx)
 	g.actors = append(g.actors, actor)
+	if signed := req.GetSigned(); signed != nil {
+		g.signed = append(g.signed, signed)
+		answer := foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_RECORDED
+		if g.answerSigned != nil {
+			var err error
+			if answer, err = g.answerSigned(); err != nil {
+				return nil, err
+			}
+		}
+		return &foundryv1.RecordFoundrySlackFeedGapsResponse{Signed: answer}, nil
+	}
+	g.calls = append(g.calls, req.GetGaps())
 	if g.answer != nil {
 		if err := g.answer(len(g.calls)); err != nil {
 			return nil, err
 		}
 	}
 	return &foundryv1.RecordFoundrySlackFeedGapsResponse{}, nil
+}
+
+// signedSent is every signed event the backend was sent, and every call's Actor.
+func (g *gapCalls) signedSent() ([]*foundryv1.FoundrySlackSignedEvent, []ports.Actor) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]*foundryv1.FoundrySlackSignedEvent(nil), g.signed...), append([]ports.Actor(nil), g.actors...)
 }
 
 // sent is every gap the backend was sent, by call.
@@ -296,29 +317,121 @@ func TestSlackLastRetry(t *testing.T) {
 	})
 
 	// Its own address's room, or the read room before its body is read,
-	// refusing an event holds no gap: no one verified it was Slack's, and
-	// anyone could send it to mint gaps. It is refused, and counted.
-	for name, change := range map[string]func(*config.EventsConfig){
+	// refusing an event holds no gap from its body: no one verified it was
+	// Slack's, and anyone could send it to mint gaps. The backend verifies
+	// its signature and records its gap, or refuses it.
+	refusing := map[string]func(*config.EventsConfig){
 		"its address's bucket": func(c *config.EventsConfig) {
 			c.Endpoint.SlackFeed.AddressRequestsPerSecond, c.Endpoint.SlackFeed.AddressBurstRequests = 1, 1
 		},
-		"the read room": func(c *config.EventsConfig) { c.Endpoint.Slack.MaxBytesInFlight = 1 },
-	} {
-		t.Run("holds no gap of an event "+name+" refuses", func(t *testing.T) {
-			d := newDoor(t, change)
-			var logs bytes.Buffer
-			d.h.slack.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-			if name == "its address's bucket" {
-				require.Equal(t, http.StatusOK, d.do(signed(eventsPath, feedBody)).Code)
+		"its address's places":                   func(c *config.EventsConfig) { c.Endpoint.SlackFeed.AddressMaxInFlight = 0 },
+		"the read room":                          func(c *config.EventsConfig) { c.Endpoint.Slack.MaxBytesInFlight = 1 },
+		"the read room's places for its address": func(c *config.EventsConfig) { c.Endpoint.Slack.AddressMaxInFlight = 0 },
+	}
+	refused := func(t *testing.T, name string, change func(*config.EventsConfig)) (*door, *bytes.Buffer) {
+		t.Helper()
+		d := newDoor(t, change)
+		if name == "its address's bucket" {
+			require.Equal(t, http.StatusOK, d.do(signed(eventsPath, feedBody)).Code)
+		}
+		logs := &bytes.Buffer{}
+		d.h.slack.logger = slog.New(slog.NewJSONHandler(logs, nil))
+		return d, logs
+	}
+	for name, change := range refusing {
+		t.Run("records the gap of an event "+name+" refuses once the backend verifies it", func(t *testing.T) {
+			d, logs := refused(t, name, change)
+			recorded := slackRequestsTotal.WithLabelValues("events", "feed", "gap_recorded")
+			before := testutil.ToFloat64(recorded)
+			requireGap(t, d.do(retried(eventsPath, feedBody, slackLastRetry)))
+			assert.Equal(t, before+1, testutil.ToFloat64(recorded))
+			sent, actors := d.backend.gaps().signedSent()
+			require.Len(t, sent, 1)
+			assert.Equal(t, feedBody, string(sent[0].GetBody()), "the body as Slack signed it")
+			assert.NotEmpty(t, sent[0].GetSignature())
+			assert.NotEmpty(t, sent[0].GetTimestamp())
+			assert.Equal(t, ports.Actor{Source: ports.SourceEventSource}, actors[0], "as the door")
+			assert.Empty(t, d.h.slack.gaps.take(), "nothing held from the body")
+			assert.Empty(t, logs.String(), "a gap recorded is quiet")
+		})
+
+		t.Run("refuses an event "+name+" refuses whose signature is false", func(t *testing.T) {
+			d, logs := refused(t, name, change)
+			d.backend.gaps().answerSigned = func() (foundryv1.SlackSignedGap, error) {
+				return foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNVERIFIED, nil
 			}
 			unverified := feedGapsTotal.WithLabelValues("unverified")
 			before := testutil.ToFloat64(unverified)
 			requireRefused(t, d.do(retried(eventsPath, feedBody, slackLastRetry)), http.StatusServiceUnavailable, codeRateLimited)
 			assert.Equal(t, before+1, testutil.ToFloat64(unverified))
 			assert.Empty(t, d.h.slack.gaps.take())
-			assert.NotContains(t, logs.String(), "gap_lost")
+			assert.Empty(t, logs.String(), "anyone may send one: no alarm")
 		})
 	}
+
+	t.Run("answers a verified event no feed reads quietly", func(t *testing.T) {
+		d, logs := refused(t, "its address's bucket", refusing["its address's bucket"])
+		d.backend.gaps().answerSigned = func() (foundryv1.SlackSignedGap, error) { return foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNREAD, nil }
+		unattributed := slackRequestsTotal.WithLabelValues("events", "feed", "gap_unattributed")
+		before := testutil.ToFloat64(unattributed)
+		requireGap(t, d.do(retried(eventsPath, feedBody, slackLastRetry)))
+		assert.Equal(t, before+1, testutil.ToFloat64(unattributed))
+		assert.Empty(t, logs.String())
+	})
+
+	t.Run("counts and logs a gap the backend fails to record, which hosted alarms on", func(t *testing.T) {
+		for name, answer := range map[string]func() (foundryv1.SlackSignedGap, error){
+			"unavailable": func() (foundryv1.SlackSignedGap, error) { return 0, status.Error(codes.Unavailable, "down") },
+			"no answer": func() (foundryv1.SlackSignedGap, error) {
+				return foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNSPECIFIED, nil
+			},
+		} {
+			d, logs := refused(t, "the read room", refusing["the read room"])
+			d.backend.gaps().answerSigned = answer
+			unrecorded := slackRequestsTotal.WithLabelValues("events", "feed", "gap_unrecorded")
+			before := testutil.ToFloat64(unrecorded)
+			requireGap(t, d.do(retried(eventsPath, feedBody, slackLastRetry)))
+			assert.Equal(t, before+1, testutil.ToFloat64(unrecorded), name)
+			assert.Contains(t, logs.String(), `"level":"WARN"`, name)
+			assert.Contains(t, logs.String(), `"outcome":"gap_unrecorded"`, name)
+			assert.Contains(t, logs.String(), `"err"`, name)
+		}
+	})
+
+	// The backend verifies at most the last-retry room's worth: past it, a
+	// last retry is lost unrecorded, counted, and logged once a minute, so
+	// a flood of forged ones is no flood of the backend's calls or of lines.
+	t.Run("counts last retries past the last-retry room, and logs them once a flush", func(t *testing.T) {
+		d, logs := refused(t, "its address's bucket", refusing["its address's bucket"])
+		d.h.slack.lastRetry = newGate(config.DoorGateConfig{
+			AddressRequestsPerSecond: 1, AddressBurstRequests: 1, AddressMaxInFlight: 1, RequestsPerSecond: 1, BurstRequests: 1, MaxInFlight: 1,
+			MaxBytesInFlight: config.SlackEventsBodyBytes,
+		}, config.SlackEventsBodyBytes)
+		unrecorded := slackRequestsTotal.WithLabelValues("events", "feed", "gap_unrecorded")
+		before := testutil.ToFloat64(unrecorded)
+		for range 5 {
+			requireGap(t, d.do(retried(eventsPath, feedBody, slackLastRetry)))
+		}
+		sent, _ := d.backend.gaps().signedSent()
+		assert.Len(t, sent, 1, "one verified, within the room's rate")
+		assert.Equal(t, before+4, testutil.ToFloat64(unrecorded))
+		assert.Empty(t, logs.String(), "no line a request")
+		d.h.slack.flushGaps(context.Background())
+		line := strings.TrimSpace(logs.String())
+		assert.Contains(t, line, `"level":"WARN"`)
+		assert.Contains(t, line, `"msg":"foundry slack last retries unrecorded"`)
+		assert.Contains(t, line, `"requests":4`)
+		logs.Reset()
+		d.h.slack.flushGaps(context.Background())
+		assert.Empty(t, logs.String(), "counted once")
+	})
+
+	t.Run("refuses a bot event the read room refused, read in the last-retry room", func(t *testing.T) {
+		d, _ := refused(t, "the read room", refusing["the read room"])
+		requireRefused(t, d.do(retried(eventsPath, eventBody, slackLastRetry)), http.StatusServiceUnavailable, codeRateLimited)
+		sent, _ := d.backend.gaps().signedSent()
+		assert.Empty(t, sent)
+	})
 }
 
 // A gap is read from the body as the backend reads its team, unverified.

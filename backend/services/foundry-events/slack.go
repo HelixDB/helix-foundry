@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,6 +71,16 @@ const slackLastRetry = 3
 // classNone is a request's class in the metric and the log until its body is read and classified.
 const classNone = "none"
 
+// The last-retry room's bounds (slackDoor.lastRetry): a pod's few places, their bodies' bytes and
+// its rate for Slack's last retries the backend verifies, so a flood of forged ones costs the
+// backend no more than that.
+const (
+	lastRetryInFlight  = 4
+	lastRetryPerSecond = 10
+	lastRetryBurst     = 20
+	lastRetryBytes     = lastRetryInFlight * config.SlackEventsBodyBytes
+)
+
 // slackDoor serves Slack's routes, POST /v1/slack/events and POST /v1/slack/interactivity,
 // while foundry.slack is on. The door holds no signing secret: it refuses what no signed
 // request from Slack looks like, and the backend verifies the signature. It checks a request in
@@ -102,11 +113,10 @@ const classNone = "none"
 // for the backend to record as a gap of the Slack data connector, whose backfill reads it again
 // (gap_recorded), or counted gap_lost past the cap, which hosted alarms on; one whose body names no
 // team, or a channel shared with another organisation, which no feed reads, is gap_unattributed.
-// No one has verified such a request was Slack's, so an event its own address's room refuses (its
-// bucket or places, in 3 or 5), or that the read room refuses before its body is read, holds no
-// gap and raises no alarm, which anyone could otherwise do at will: it is refused as any other
-// is, and counted in helix_foundry_slack_feed_gaps_total as unverified. A ClassBot event is never
-// answered so: the bot's events have no backfill.
+// No one has verified such a request was Slack's, and anyone could make its own address's room
+// (its bucket or places, in 3 or 5), or the read room before its body is read, refuse it, so such
+// an event holds no gap from its body: the backend verifies its signature first, in a small room
+// of its own (signedGap). A ClassBot event is never answered so: the bot's events have no backfill.
 //
 // Every refusal but a gap's 200 is the door's JSON error body, which Slack ignores. Each request
 // logs one line, its route, class, status and outcome, never its body, headers or address, but a
@@ -121,6 +131,11 @@ type slackDoor struct {
 	classes map[slack.Class]*gate
 	// gaps are the minutes of channels whose events Slack drops, until flushGaps sends them.
 	gaps *feedGaps
+	// lastRetry is the room of Slack's last retries that signedGap has the backend verify: the
+	// last-retry bounds, pod-wide (no address's own).
+	lastRetry *gate
+	// unrecorded counts the last retries lastRetry had no room for since flushGaps last logged them.
+	unrecorded atomic.Int64
 	// readFor and answerFor are slackReadFor and slackFor, but in tests.
 	readFor   time.Duration
 	answerFor time.Duration
@@ -140,7 +155,11 @@ func newSlackDoor(backend backendAPI, cfg config.EventsEndpointConfig, logger *s
 			slack.ClassReply: newGate(cfg.SlackReply, config.SlackEventsBodyBytes),
 			slack.ClassFeed:  newGate(cfg.SlackFeed, config.SlackEventsBodyBytes),
 		},
-		gaps:    &feedGaps{held: map[feedGap]struct{}{}},
+		gaps: &feedGaps{held: map[feedGap]struct{}{}},
+		lastRetry: newGate(config.DoorGateConfig{
+			AddressRequestsPerSecond: lastRetryPerSecond, AddressBurstRequests: lastRetryBurst, AddressMaxInFlight: lastRetryInFlight,
+			RequestsPerSecond: lastRetryPerSecond, BurstRequests: lastRetryBurst, MaxInFlight: lastRetryInFlight, MaxBytesInFlight: lastRetryBytes,
+		}, config.SlackEventsBodyBytes),
 		readFor: slackReadFor, answerFor: slackFor, logger: logger, now: now,
 	}
 }
@@ -155,8 +174,8 @@ func (s *slackDoor) route(route slackRoute) http.Handler {
 type slackAnswer struct {
 	backend *foundryv1.ReceiveSlackRequestResponse
 	fail    *failure
-	// gap is gap_recorded, gap_lost or gap_unattributed for an event answered 200 with
-	// X-Slack-No-Retry on Slack's last retry; "" otherwise.
+	// gap is gap_recorded, gap_lost, gap_unattributed or gap_unrecorded for an event answered 200
+	// with X-Slack-No-Retry on Slack's last retry; "" otherwise.
 	gap   string
 	class string
 	// cause is the backend's failure behind a gap, logged.
@@ -177,7 +196,7 @@ func (s *slackDoor) serveHTTP(w http.ResponseWriter, r *http.Request, route slac
 	switch {
 	case answer.gap != "":
 		// A gap lost is always logged, which hosted alarms on; any other for room isn't, as a
-		// flood's refusals aren't.
+		// flood's refusals aren't (flushGaps logs how many last retries went unrecorded for room).
 		outcome, httpStatus, quiet = answer.gap, http.StatusOK, answer.cause == nil && answer.gap != "gap_lost"
 		w.Header().Set("X-Slack-No-Retry", "1")
 		w.WriteHeader(http.StatusOK)
@@ -261,7 +280,7 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 	// busy refuses a request the room can't take: a click 429, an event 503, which Slack sends
 	// again, but a lost one 200 with its gap held when its class's pod-wide room refused it
 	// (held). A lost one its own address's room refused, or an event on Slack's last retry
-	// refused before its body is read, is refused all the same, and counted unverified.
+	// refused before its body is read, goes to signedGap.
 	busy := func(after time.Duration, message string, held bool) slackAnswer {
 		answer := slackAnswer{fail: limited(after, message), class: name}
 		events := route.route == foundryv1.SlackRoute_SLACK_ROUTE_EVENTS
@@ -272,7 +291,7 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 		case lost && held:
 			answer.gap = s.holdGap(body, now)
 		case lost || body == nil && events && retry >= slackLastRetry:
-			feedGapsTotal.WithLabelValues("unverified").Inc()
+			return s.signedGap(w, r, route, answer, signedEvent{body: body, signature: signatures[0], timestamp: timestamps[0]}, start, now)
 		}
 		return answer
 	}
@@ -293,15 +312,7 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 	s.read.bytes.Release(weight)
 	leave()
 	if err != nil {
-		// What is left of the body is no request to read next.
-		w.Header().Set("Connection", "close")
-		if tooBig, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			return fail(tooLarge(tooBig.Limit))
-		}
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return fail(&failure{status: http.StatusRequestTimeout, code: codeRequestTimeout, message: "the body took too long to arrive"})
-		}
-		return fail(invalid("the body was cut short"))
+		return fail(readFailure(w, err))
 	}
 	_ = deadline.SetReadDeadline(time.Time{})
 
@@ -356,4 +367,88 @@ func (s *slackDoor) serve(w http.ResponseWriter, r *http.Request, route slackRou
 		return slackAnswer{gap: s.holdGap(body, now), class: name, cause: failed.cause}
 	}
 	return slackAnswer{fail: failed, class: name}
+}
+
+// readFailure is the failure of a body that couldn't be read whole: 413, 408 or 400, its connection
+// closed, as what is left of it is no request to read next.
+func readFailure(w http.ResponseWriter, err error) *failure {
+	w.Header().Set("Connection", "close")
+	if tooBig, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return tooLarge(tooBig.Limit)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return &failure{status: http.StatusRequestTimeout, code: codeRequestTimeout, message: "the body took too long to arrive"}
+	}
+	return invalid("the body was cut short")
+}
+
+// signedEvent is an event on Slack's last retry as Slack signed it: its body, nil until read, and
+// its signature headers.
+type signedEvent struct {
+	body                 []byte
+	signature, timestamp string
+}
+
+// signedGap answers an event of the events route on Slack's last retry, taken at start, that its
+// own address's room, or the read room before its body was read, refused (refused, the answer any
+// other request gets). Anyone could make those refuse it, so its gap is recorded only once the
+// backend verifies its signature (RecordFoundrySlackFeedGaps' signed event), in the last-retry
+// room, small and pod-wide, so a flood of forged ones costs the backend no more than that room.
+// Its body is read there when the read room refused it (a body that can't be read is refused as
+// the read refuses it); a ClassBot event, which has no backfill, is refused. The backend's answer:
+//   - recorded: 200 with X-Slack-No-Retry, gap_recorded;
+//   - verified, but no feed reads it: the same, gap_unattributed, quietly;
+//   - a false signature: refused, counted unverified, quietly, as anyone may send one.
+//
+// One the room has no place for, or whose gap the backend fails to record (or says nothing of), is
+// lost to Slack:
+// 200 with X-Slack-No-Retry, gap_unrecorded, which hosted alarms on. The backend's failure is
+// logged at once; the room's refusals, which a flood of forged ones also makes, are counted and
+// logged once a minute (flushGaps), so a flood is no flood of lines.
+func (s *slackDoor) signedGap(w http.ResponseWriter, r *http.Request, route slackRoute, refused slackAnswer, event signedEvent,
+	start, now time.Time) slackAnswer {
+	weight := int64(len(event.body))
+	if event.body == nil {
+		weight = r.ContentLength
+	}
+	release, ok := s.lastRetry.enter(weight, now)
+	if !ok {
+		s.unrecorded.Add(1)
+		feedGapsTotal.WithLabelValues("unrecorded").Inc()
+		return slackAnswer{gap: "gap_unrecorded", class: refused.class}
+	}
+	defer release()
+	if event.body == nil {
+		var err error
+		if event.body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, route.maxBody)); err != nil {
+			return slackAnswer{fail: readFailure(w, err), class: refused.class}
+		}
+		_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+		class := slack.Classify(event.body)
+		if refused.class = class.String(); class == slack.ClassBot {
+			return refused
+		}
+	}
+	ctx, cancel := context.WithDeadline(foundryapi.AttachActor(r.Context(), ports.Actor{Source: ports.SourceEventSource}), start.Add(s.answerFor))
+	defer cancel()
+	answer, err := s.backend.RecordFoundrySlackFeedGaps(ctx, &foundryv1.RecordFoundrySlackFeedGapsRequest{
+		Signed: &foundryv1.FoundrySlackSignedEvent{Body: event.body, Signature: event.signature, Timestamp: event.timestamp},
+	})
+	switch {
+	case err != nil:
+		feedGapsTotal.WithLabelValues("unrecorded").Inc()
+		return slackAnswer{gap: "gap_unrecorded", class: refused.class, cause: err}
+	case answer.GetSigned() == foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_RECORDED:
+		feedGapsTotal.WithLabelValues("verified").Inc()
+		return slackAnswer{gap: "gap_recorded", class: refused.class}
+	case answer.GetSigned() == foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNREAD:
+		feedGapsTotal.WithLabelValues("unattributed").Inc()
+		return slackAnswer{gap: "gap_unattributed", class: refused.class}
+	case answer.GetSigned() == foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNVERIFIED:
+		feedGapsTotal.WithLabelValues("unverified").Inc()
+		return refused
+	}
+	// A backend that doesn't know signed events says nothing of it.
+	feedGapsTotal.WithLabelValues("unrecorded").Inc()
+	return slackAnswer{gap: "gap_unrecorded", class: refused.class, cause: fmt.Errorf("the backend didn't say what became of the gap")}
 }

@@ -390,6 +390,24 @@
       },
       "description": "FoundrySlackFeedGap is one minute of one channel's events Slack dropped."
     },
+    "v1FoundrySlackSignedEvent": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "format": "byte",
+          "description": "The body exactly as Slack sent it: the signature is over these bytes."
+        },
+        "signature": {
+          "type": "string",
+          "description": "X-Slack-Signature and X-Slack-Request-Timestamp."
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "description": "FoundrySlackSignedEvent is a request to the events URL as Slack signed it."
+    },
     "v1GetSharedFoundryDashboardResponse": {
       "type": "object",
       "properties": {
@@ -420,7 +438,13 @@
       "description": "ReceiveSlackRequestResponse is the HTTP answer the door gives Slack."
     },
     "v1RecordFoundrySlackFeedGapsResponse": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "signed": {
+          "$ref": "#/definitions/v1SlackSignedGap",
+          "description": "What became of signed's gap; UNSPECIFIED without one."
+        }
+      }
     },
     "v1RedeemFoundryRelayCodeResponse": {
       "type": "object",
@@ -479,6 +503,17 @@
       ],
       "default": "SLACK_ROUTE_UNSPECIFIED",
       "description": "SlackRoute is the door's route a Slack request came to.\n\n - SLACK_ROUTE_EVENTS: POST /v1/slack/events: the Events API, a JSON body.\n - SLACK_ROUTE_INTERACTIVITY: POST /v1/slack/interactivity: clicks, a form whose payload is JSON."
+    },
+    "v1SlackSignedGap": {
+      "type": "string",
+      "enum": [
+        "SLACK_SIGNED_GAP_UNSPECIFIED",
+        "SLACK_SIGNED_GAP_RECORDED",
+        "SLACK_SIGNED_GAP_UNREAD",
+        "SLACK_SIGNED_GAP_UNVERIFIED"
+      ],
+      "default": "SLACK_SIGNED_GAP_UNSPECIFIED",
+      "description": "SlackSignedGap is what became of a signed event's gap.\n\n - SLACK_SIGNED_GAP_RECORDED: Its signature verified, and its gap is recorded (or was already) for\nthe live feed reading its team.\n - SLACK_SIGNED_GAP_UNREAD: Its signature verified, but no feed reads it: not a channel event, a\nchannel shared with another organisation, no live install or feed of\nits team, or foundry.slack.feed off.\n - SLACK_SIGNED_GAP_UNVERIFIED: Its signature is false, or its timestamp out of the five-minute window:\nno gap is recorded."
     },
     "v1StartFoundryRelaySlackInstallResponse": {
       "type": "object",

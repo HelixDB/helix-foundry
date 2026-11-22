@@ -50,6 +50,13 @@ service FoundryEventsService {
   // foundry.slack.feed off). The door reads them from bodies it couldn't
   // verify, so a forged one only spends its team's gap budget. A store
   // failure is UNAVAILABLE, and the door sends them again.
+  //
+  // It also takes one signed event at a time: a channel event the door
+  // refused on Slack's last retry for room it keeps per address, or before
+  // reading its body, which anyone could make it refuse. The API verifies
+  // its signature with the app's signing secret, as ReceiveSlackRequest
+  // does, and only then records the gap of its team, channel and minute,
+  // answering what became of it.
   rpc RecordFoundrySlackFeedGaps(RecordFoundrySlackFeedGapsRequest) returns (RecordFoundrySlackFeedGapsResponse);
 
   // Helix's Slack relay (foundry.slack.relay): a standalone Foundry install
@@ -274,8 +281,38 @@ message FoundrySlackFeedGap {
 message RecordFoundrySlackFeedGapsRequest {
   // At most 1,000.
   repeated FoundrySlackFeedGap gaps = 1;
+  // A channel event the door refused on Slack's last retry before it could
+  // be verified, whose gap is recorded only once its signature is.
+  FoundrySlackSignedEvent signed = 2;
 }
-message RecordFoundrySlackFeedGapsResponse {}
+message RecordFoundrySlackFeedGapsResponse {
+  // What became of signed's gap; UNSPECIFIED without one.
+  SlackSignedGap signed = 1;
+}
+
+// FoundrySlackSignedEvent is a request to the events URL as Slack signed it.
+message FoundrySlackSignedEvent {
+  // The body exactly as Slack sent it: the signature is over these bytes.
+  bytes body = 1;
+  // X-Slack-Signature and X-Slack-Request-Timestamp.
+  string signature = 2;
+  string timestamp = 3;
+}
+
+// SlackSignedGap is what became of a signed event's gap.
+enum SlackSignedGap {
+  SLACK_SIGNED_GAP_UNSPECIFIED = 0;
+  // Its signature verified, and its gap is recorded (or was already) for
+  // the live feed reading its team.
+  SLACK_SIGNED_GAP_RECORDED = 1;
+  // Its signature verified, but no feed reads it: not a channel event, a
+  // channel shared with another organisation, no live install or feed of
+  // its team, or foundry.slack.feed off.
+  SLACK_SIGNED_GAP_UNREAD = 2;
+  // Its signature is false, or its timestamp out of the five-minute window:
+  // no gap is recorded.
+  SLACK_SIGNED_GAP_UNVERIFIED = 3;
+}
 
 // SlackRoute is the door's route a Slack request came to.
 enum SlackRoute {

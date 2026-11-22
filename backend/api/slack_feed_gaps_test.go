@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -168,5 +171,102 @@ func TestRecordFoundrySlackFeedGaps(t *testing.T) {
 		db.failGaps = nil
 		db.fail = errors.New("connection refused")
 		assert.Equal(t, codes.Unavailable, status.Code(record(t, f, gap(slackTeam, "", "C1", minute))))
+	})
+}
+
+// An event the door refused on Slack's last retry before it could verify it
+// (its own address's room, or the read room) comes signed: its gap is
+// recorded only once its signature verifies.
+func TestRecordSignedSlackFeedGap(t *testing.T) {
+	setup := func(t *testing.T) (slackFixture, *gapStore) {
+		t.Helper()
+		f := newSlackFixture(t)
+		f.cfg.Foundry.Slack.Feed.Enabled = true
+		f.db.install(t, f.keys, model.SlackPerPerson{})
+		db := &gapStore{slackStore: f.db, outcome: model.SlackAppended}
+		f.s.deps.DB = db
+		return f, db
+	}
+	sign := func(body []byte) *foundryv1.FoundrySlackSignedEvent {
+		req := signed(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, body)
+		return &foundryv1.FoundrySlackSignedEvent{Body: req.GetBody(), Signature: req.GetSignature(), Timestamp: req.GetTimestamp()}
+	}
+	record := func(t *testing.T, f slackFixture, event *foundryv1.FoundrySlackSignedEvent) (foundryv1.SlackSignedGap, error) {
+		t.Helper()
+		resp, err := f.s.RecordFoundrySlackFeedGaps(door(), &foundryv1.RecordFoundrySlackFeedGapsRequest{Signed: event})
+		return resp.GetSigned(), err
+	}
+	taken := func(outcome string) float64 { return testutil.ToFloat64(slackFeedGapsTaken.WithLabelValues(outcome)) }
+
+	t.Run("records the gap of a verified channel message, at the minute it was posted", func(t *testing.T) {
+		f, db := setup(t)
+		got, err := record(t, f, sign(fixture(t, "events/channel_message.json")))
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_RECORDED, got)
+		require.Len(t, db.appended, 1)
+		require.Len(t, db.appended[0].gaps, 1)
+		gap := db.appended[0].gaps[0]
+		assert.Equal(t, "C0GEN0001", gap.ChannelID)
+		assert.False(t, gap.From.After(time.Unix(1795000015, 0)), "the message's minute, not a later one: %s", gap.From)
+	})
+
+	t.Run("records nothing of an event whose signature is false", func(t *testing.T) {
+		for name, event := range map[string]*foundryv1.FoundrySlackSignedEvent{
+			"another secret's": func() *foundryv1.FoundrySlackSignedEvent {
+				e := sign(fixture(t, "events/channel_message.json"))
+				e.Signature = slack.Sign("not the app's secret", e.GetTimestamp(), e.GetBody())
+				return e
+			}(),
+			"a body changed after signing": func() *foundryv1.FoundrySlackSignedEvent {
+				e := sign(fixture(t, "events/channel_message.json"))
+				e.Body = []byte(strings.Replace(string(e.GetBody()), "C0GEN0001", "C0OTHER01", 1))
+				return e
+			}(),
+			"a stale timestamp": func() *foundryv1.FoundrySlackSignedEvent {
+				body := fixture(t, "events/channel_message.json")
+				ts := strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
+				return &foundryv1.FoundrySlackSignedEvent{Body: body, Timestamp: ts, Signature: slack.Sign(slackSigningSecret, ts, body)}
+			}(),
+		} {
+			f, db := setup(t)
+			before := taken("unverified")
+			got, err := record(t, f, event)
+			require.NoError(t, err, name)
+			assert.Equal(t, foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNVERIFIED, got, name)
+			assert.Empty(t, db.appended, name)
+			assert.Equal(t, before+1, taken("unverified"), name)
+		}
+	})
+
+	t.Run("records nothing of a verified event no feed reads", func(t *testing.T) {
+		for name, event := range map[string][]byte{
+			"a mention":         fixture(t, "events/mention.json"),
+			"an ext-shared one": fixture(t, "events/channel_ext_shared.json"),
+			"another team's":    []byte(strings.ReplaceAll(string(fixture(t, "events/channel_message.json")), slackTeam, "T0NOBODY1")),
+			"another app's":     []byte(strings.Replace(string(fixture(t, "events/channel_message.json")), "A0FOUNDRY", "A0OTHER01", 1)),
+			"no JSON":           []byte("payload=x"),
+		} {
+			f, db := setup(t)
+			got, err := record(t, f, sign(event))
+			require.NoError(t, err, name)
+			assert.Equal(t, foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNREAD, got, name)
+			assert.Empty(t, db.appended, name)
+		}
+		f, db := setup(t)
+		db.outcome = model.SlackAppendUnbound
+		got, err := record(t, f, sign(fixture(t, "events/channel_message.json")))
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNREAD, got, "no live feed")
+		f.cfg.Foundry.Slack.Feed.Enabled = false
+		got, err = record(t, f, sign(fixture(t, "events/channel_message.json")))
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_UNREAD, got, "the feed off")
+	})
+
+	t.Run("is unavailable when the store fails, so the door counts it unrecorded", func(t *testing.T) {
+		f, db := setup(t)
+		db.failGaps = errors.New("deadlock")
+		_, err := record(t, f, sign(fixture(t, "events/channel_message.json")))
+		assert.Equal(t, codes.Unavailable, status.Code(err))
 	})
 }

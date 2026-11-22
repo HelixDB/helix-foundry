@@ -77,6 +77,13 @@ type FoundryEventsServiceClient interface {
 	// foundry.slack.feed off). The door reads them from bodies it couldn't
 	// verify, so a forged one only spends its team's gap budget. A store
 	// failure is UNAVAILABLE, and the door sends them again.
+	//
+	// It also takes one signed event at a time: a channel event the door
+	// refused on Slack's last retry for room it keeps per address, or before
+	// reading its body, which anyone could make it refuse. The API verifies
+	// its signature with the app's signing secret, as ReceiveSlackRequest
+	// does, and only then records the gap of its team, channel and minute,
+	// answering what became of it.
 	RecordFoundrySlackFeedGaps(ctx context.Context, in *RecordFoundrySlackFeedGapsRequest, opts ...grpc.CallOption) (*RecordFoundrySlackFeedGapsResponse, error)
 	// Helix's Slack relay (foundry.slack.relay): a standalone Foundry install
 	// linked to a Helix workspace takes Slack's requests for its Slack teams,
@@ -298,6 +305,13 @@ type FoundryEventsServiceServer interface {
 	// foundry.slack.feed off). The door reads them from bodies it couldn't
 	// verify, so a forged one only spends its team's gap budget. A store
 	// failure is UNAVAILABLE, and the door sends them again.
+	//
+	// It also takes one signed event at a time: a channel event the door
+	// refused on Slack's last retry for room it keeps per address, or before
+	// reading its body, which anyone could make it refuse. The API verifies
+	// its signature with the app's signing secret, as ReceiveSlackRequest
+	// does, and only then records the gap of its team, channel and minute,
+	// answering what became of it.
 	RecordFoundrySlackFeedGaps(context.Context, *RecordFoundrySlackFeedGapsRequest) (*RecordFoundrySlackFeedGapsResponse, error)
 	// Helix's Slack relay (foundry.slack.relay): a standalone Foundry install
 	// linked to a Helix workspace takes Slack's requests for its Slack teams,

@@ -153,8 +153,12 @@ func (s *slackDoor) holdGap(body []byte, now time.Time) string {
 // the backend fails are held again, with those it hasn't sent, for the next flush, and the flush
 // stops; but a call the backend refuses for good (an argument, the door's identity, a backend
 // without the method) is lost, as no later flush would take it. Past the cap, what can't be held
-// again is lost. Each is counted.
+// again is lost. Each is counted. It first logs how many of Slack's last retries the last-retry
+// room had no place for since it last did (signedGap), a line hosted alarms on.
 func (s *slackDoor) flushGaps(ctx context.Context) {
+	if n := s.unrecorded.Swap(0); n > 0 {
+		s.logger.Warn("foundry slack last retries unrecorded", "requests", n)
+	}
 	gaps := s.gaps.take()
 	for len(gaps) > 0 {
 		batch := gaps[:min(len(gaps), gapBatch)]

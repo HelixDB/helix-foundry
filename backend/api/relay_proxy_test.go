@@ -567,4 +567,18 @@ func TestRelayedInstallFeed(t *testing.T) {
 		{TeamId: slackTeam, ChannelId: "C0GEN0001", Minute: timestamppb.New(minute)}}})
 	require.NoError(t, err)
 	assert.Len(t, r.relayFeed, 4)
+
+	// A signed event's gap is its local install's too, once verified, and
+	// its channel one the install's calls may name from now, so the gap is
+	// held there.
+	install.FeedOn = true
+	req := signed(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, fixture(t, "events/channel_message.json"))
+	resp, err := f.s.RecordFoundrySlackFeedGaps(door(), &foundryv1.RecordFoundrySlackFeedGapsRequest{
+		Signed: &foundryv1.FoundrySlackSignedEvent{Body: req.GetBody(), Signature: req.GetSignature(), Timestamp: req.GetTimestamp()}})
+	require.NoError(t, err)
+	assert.Equal(t, foundryv1.SlackSignedGap_SLACK_SIGNED_GAP_RECORDED, resp.GetSigned())
+	require.Len(t, r.relayFeed, 5)
+	require.Len(t, r.relayFeed[4].Gaps, 1)
+	assert.Equal(t, "C0GEN0001", r.relayFeed[4].Gaps[0].ChannelID)
+	assert.True(t, r.channels[install.ID+"/C0GEN0001"])
 }
