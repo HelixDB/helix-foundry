@@ -34,7 +34,7 @@ import type {
   ReadFoundryGraphRequest,
   ReadFoundryGraphResponse,
 } from "../../src/shared/wfe";
-import type { Value } from "../graph/store";
+import { HelixDateTime, type Value } from "../graph/store";
 import stripeRows from "../fixtures/stripe-rows.json";
 import { PEOPLE, type PersonRow } from "../fixtures/sales-graph";
 import {
@@ -145,7 +145,9 @@ import { sourceId } from "./ontology-agent";
 // The tables load a fixed set of Acme's Stripe rows (64 customers and 65
 // invoices: the three the seeded contract can name, then
 // fixtures/stripe-rows.json) for mappings that read Stripe's customers and
-// invoices; other tables load nothing. A PDF is read as plain text, the
+// invoices (a datetime prop its mapping parses from a column, such as
+// `created`, as Helix's DateTime, as the agent writes every datetime);
+// other tables load nothing. A PDF is read as plain text, the
 // text its read gave; one whose read failed (a scanned PDF has no text) is
 // recorded failed with the read's code, for good, without a model call, and
 // one still being read waits for its read (./documents.ts wakeReads). Each
@@ -855,6 +857,10 @@ function carryValues(ontologyId: string) {
 function sendValues(l: StoredLoad, at: number) {
   state.valuesOwed.delete(l.id);
   const g = tenantGraph(l.tenantId).view(l.id);
+  const { datetimes } = ontologyOfVersion(
+    (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
+      {}) as Definition,
+  );
   const entity = (d: Decided) =>
     [...g.nodes()].find(
       (n) =>
@@ -871,7 +877,15 @@ function sendValues(l: StoredLoad, at: number) {
     state.was.delete(propertyKey(l.id, d));
     state.kept.delete(propertyKey(l.id, d));
     if (node && was?.value !== undefined) node.props[d.prop] = was.value;
-    else decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+    else
+      decideValue(
+        g,
+        d.type,
+        d.entityKey,
+        d.prop,
+        l.decisions,
+        datetimes.has(`${d.type}.${d.prop}`),
+      );
   }
   state.withdrawn.delete(l.id);
   for (const d of l.decisions) {
@@ -889,7 +903,14 @@ function sendValues(l: StoredLoad, at: number) {
           key,
           d.prop in node.props ? { value: node.props[d.prop]! } : {},
         );
-      decideValue(g, d.type, d.entityKey, d.prop, l.decisions);
+      decideValue(
+        g,
+        d.type,
+        d.entityKey,
+        d.prop,
+        l.decisions,
+        datetimes.has(`${d.type}.${d.prop}`),
+      );
       state.kept.set(key, d.id);
     }
     state.applied.set(appliedKey(l.id, d.id), {
@@ -974,28 +995,51 @@ export function ontologyLoads(
 
 // Acme's Stripe rows, as the customers and invoices tables hold them.
 const STRIPE = "conn_acme_stripe";
+// The `datetime` props the version's invoices mapping fills from a column of
+// the table with `parse = "datetime"` (RFC 3339, as the WFE's Stripe sync
+// writes `created`), by prop: the column each reads.
+function invoiceInstants(mappingsToml: string): [string, string][] {
+  const parsed = parseAgentMappings(mappingsToml);
+  if (!parsed.ok) return [];
+  const m = parsed.value.find(
+    (x) =>
+      x.rows.kind === "source" &&
+      x.rows.source === sourceId(STRIPE, "invoices"),
+  );
+  return (m?.bindings.find((b) => b.type === "Invoice")?.props || []).flatMap(
+    ([prop, f]): [string, string][] =>
+      f.parse === "datetime" && !f.transform.length ? [[prop, f.field]] : [],
+  );
+}
 const customers = [
   ["cus_GLOBEX01", "Globex Corporation", "ap@globex.example", "usd"],
   ["cus_INITECH2", "Initech LLC", "billing@initech.example", "eur"],
   ["cus_HOOLI003", "Hooli Inc", "finance@hooli.example", "usd"],
   ...(stripeRows.customers as [string, string, string, string][]),
 ];
+// Each invoice: its id, customer, amount due, status and `created`, as the
+// WFE's Stripe sync writes it (RFC 3339, to the millisecond).
 const invoices = [
-  ["in_1001", "cus_GLOBEX01", 1200000, "paid"],
-  ["in_1002", "cus_GLOBEX01", 1200000, "open"],
-  ["in_1003", "cus_INITECH2", 104200, "paid"],
-  ["in_1004", "cus_HOOLI003", 54000, "void"],
-  ...(stripeRows.invoices as [string, string, number, string][]),
+  ["in_1001", "cus_GLOBEX01", 1200000, "paid", "2026-01-05T09:00:00.000Z"],
+  ["in_1002", "cus_GLOBEX01", 1200000, "open", "2026-01-06T16:00:00.000Z"],
+  ["in_1003", "cus_INITECH2", 104200, "paid", "2026-01-07T23:00:00.000Z"],
+  ["in_1004", "cus_HOOLI003", 54000, "void", "2026-01-09T06:00:00.000Z"],
+  ...(stripeRows.invoices as [string, string, number, string, string][]),
 ] as const;
 
 type Definition = { ontology_toml?: unknown; mappings_toml?: unknown };
 function ontologyOfVersion(def: Definition): ExtractOntology & {
   links: Map<string, { from: string; to: string }>;
+  datetimes: Set<string>;
 } {
   let doc: {
     types?: Record<
       string,
-      { names?: string[]; identifiers?: Record<string, string> }
+      {
+        names?: string[];
+        identifiers?: Record<string, string>;
+        props?: Record<string, unknown>;
+      }
     >;
     links?: Record<
       string,
@@ -1010,6 +1054,13 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
   const types = doc.types || {};
   return {
     types: new Set(Object.keys(types)),
+    datetimes: new Set(
+      Object.entries(types).flatMap(([t, v]) =>
+        Object.entries(v.props || {}).flatMap(([p, ty]) =>
+          ty === "datetime" ? [`${t}.${p}`] : [],
+        ),
+      ),
+    ),
     names: new Map(
       Object.entries(types).flatMap(([t, v]) =>
         v.names?.length ? [[t, v.names[0]!] as const] : [],
@@ -1067,7 +1118,8 @@ function ingest(j: StoredJob) {
   const g = tenantGraph(j.tenantId).view(j.loadId),
     ontologyVersionName = versionName(j);
   const people = table("customers"),
-    bills = table("invoices");
+    bills = table("invoices"),
+    instants = invoiceInstants(mappings);
   const chunk = (
     t: { source: string; snapshot: string },
     mapping: string,
@@ -1103,11 +1155,24 @@ function ingest(j: StoredJob) {
         name: customer,
         props: { customer_id: customer },
       })),
-      ...invoices.map(([key, customer, amount, status]) => ({
+      ...invoices.map(([key, customer, amount, status, created]) => ({
         type: "Invoice",
         key,
         name: key,
-        props: { invoice_id: key, amount_due: amount, status },
+        props: {
+          invoice_id: key,
+          amount_due: amount,
+          status,
+          // The table's only datetime column; text that isn't an instant
+          // loads nothing (the agent reports the row).
+          ...Object.fromEntries(
+            instants.flatMap(([prop, field]) => {
+              const at =
+                field === "created" ? HelixDateTime.parse(created) : undefined;
+              return at ? [[prop, at]] : [];
+            }),
+          ),
+        },
         links: [{ link: "billed_to", toType: "Customer", toKey: customer }],
       })),
       ...extra.map(({ customer, invoice }) => ({

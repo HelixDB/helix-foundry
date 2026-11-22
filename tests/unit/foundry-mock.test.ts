@@ -17,6 +17,9 @@ import {
 } from "../../mock/review-decisions";
 import { routes } from "../../mock/routes";
 import { tenantGraph } from "../../mock/routes/databases";
+import { decideValue } from "../../mock/graph/extract";
+import { HelixDateTime, MockGraph } from "../../mock/graph/store";
+import stripeRows from "../../mock/fixtures/stripe-rows.json";
 import { owePendingValue } from "../../mock/routes/loads";
 import { MAX_PAGES, textPdf } from "../../mock/pdf-text";
 import { FORMATS, handleDocumentUpload } from "../../mock/routes/documents";
@@ -423,6 +426,97 @@ describe("mock Helix projects and databases", () => {
   });
 });
 
+describe("mock date_time parameters", () => {
+  it("read one as a DateTime through query-read, and refuse what isn't RFC 3339", async () => {
+    const g = tenantGraph("ten_acme_sandbox");
+    g.addNode("T", { at: new HelixDateTime(Date.UTC(2026, 2, 14, 8, 30)) });
+    g.addNode("T", { at: "2026-03-14T08:30:00.000Z" });
+    const at = (p: string, type: string) => ({
+      request_type: "read",
+      query: {
+        read: {
+          entries: [
+            {
+              query: {
+                name: "r",
+                root: {
+                  values: {
+                    input: {
+                      nodes_where: {
+                        predicate: {
+                          eq: {
+                            left: { property: "at" },
+                            right: { param: "p" },
+                          },
+                        },
+                      },
+                    },
+                    properties: ["$id", "at"],
+                  },
+                },
+              },
+            },
+          ],
+          returns: ["r"],
+        },
+      },
+      parameters: { p },
+      parameter_types: { p: type },
+    });
+    // The DateTime only, rendered as Helix renders one.
+    expect(
+      (await read("ten_acme_sandbox", at("2026-03-14T09:30:00+01:00", "date_time")))
+        .body,
+    ).toEqual({ r: [{ $id: 0, at: "2026-03-14T08:30:00.000Z" }] });
+    // As text, the text only.
+    expect(
+      (await read("ten_acme_sandbox", at("2026-03-14T08:30:00.000Z", "string")))
+        .body,
+    ).toEqual({ r: [{ $id: 1, at: "2026-03-14T08:30:00.000Z" }] });
+    const bad = await read("ten_acme_sandbox", at("today", "date_time"));
+    expect([bad.statusCode, bad.body.error]).toEqual([
+      400,
+      "invalid_query_json",
+    ]);
+  });
+});
+
+describe("a mock decision of a datetime prop", () => {
+  it("is written as Helix's DateTime, and as text only for a prop declared otherwise", () => {
+    const g = new MockGraph().view("load_1");
+    const id = g.addNode("Invoice", {
+      entity_key: "sin_1",
+      created_at: new HelixDateTime(Date.UTC(2026, 0, 5, 9)),
+      note: "x",
+    });
+    const decided = (prop: string, text: string) => ({
+      id: `dec_${prop}`,
+      kind: "prop" as const,
+      type: "Invoice",
+      entityKey: "sin_1",
+      prop,
+      value: { text },
+    });
+    const decisions = [
+      decided("created_at", "2026-01-06T16:00:00.250Z"),
+      decided("note", "2026-01-06T16:00:00Z"),
+    ] as unknown as Parameters<typeof decideValue>[4];
+    expect(
+      decideValue(g, "Invoice", "sin_1", "created_at", decisions, true),
+    ).toBe(true);
+    expect(decideValue(g, "Invoice", "sin_1", "note", decisions, false)).toBe(
+      true,
+    );
+    expect(g.node(id)!.props.created_at).toEqual(
+      new HelixDateTime(Date.UTC(2026, 0, 6, 16, 0, 0, 250)),
+    );
+    expect(g.node(id)!.props.note).toBe("2026-01-06T16:00:00Z");
+    expect(decideValue(g, "Invoice", "sin_2", "created_at", decisions, true)).toBe(
+      false,
+    );
+  });
+});
+
 describe("mock ontologies", () => {
   it("binds one ontology to one live database of the workspace", async () => {
     const list = await call("GET", W);
@@ -497,6 +591,39 @@ describe("mock ontologies", () => {
         )
       ).status,
     ).toBe(403);
+  });
+
+  it("loads an invoice's created as Helix's DateTime, as its mapping parses it", async () => {
+    await call("POST", `${O}:set-current`, {
+      versionId: "ver_seed_3",
+      expectedCurrentVersionId: "ver_seed_1",
+    });
+    Object.assign(config, { loadStepMs: 100 });
+    await call("POST", `${O}/loads`, {
+      versionId: "ver_seed_3",
+      clientToken: "l",
+    });
+    vi.setSystemTime(Date.now() + 10_000);
+    expect((await read("ten_acme_contracts", count("Invoice"))).body).toEqual({
+      n: 65,
+    });
+    const created = new Map(
+      [...tenantGraph("ten_acme_contracts").nodes.values()]
+        .filter((n) => n.label === "Invoice")
+        .map((n) => [n.props.invoice_id, n.props.created_at]),
+    );
+    // The table's `created`, as the Stripe sync writes it: every one a
+    // DateTime.
+    expect(created.get("in_1001")).toEqual(
+      new HelixDateTime(Date.UTC(2026, 0, 5, 9)),
+    );
+    for (const [id, , , , at] of stripeRows.invoices)
+      expect(created.get(id), String(id)).toEqual(
+        HelixDateTime.parse(String(at)),
+      );
+    expect(
+      [...created.values()].every((v) => v instanceof HelixDateTime),
+    ).toBe(true);
   });
 
   it("deletes Foundry's rows and its loads, never the database's own data", async () => {
@@ -4427,16 +4554,15 @@ describe("review decisions", () => {
 });
 
 describe("a mock decision's value, as the backend keeps it", () => {
-  it("is the engine's: UTC datetimes, partial dates, no coercion", () => {
+  it("is the engine's: UTC datetimes to the millisecond, partial dates, no coercion", () => {
     for (const [type, value, kept] of [
       ["datetime", "2026-10-19T20:00:00Z", "2026-10-19T20:00:00Z"],
+      ["datetime", "2026-10-19T20:00:00.000Z", "2026-10-19T20:00:00Z"],
       ["datetime", "2026-03-14T09:30:00.25+01:00", "2026-03-14T08:30:00.250Z"],
-      ["datetime", "2026-03-14T08:30:00.0001Z", "2026-03-14T08:30:00.000100Z"],
-      [
-        "datetime",
-        "2026-03-14T08:30:00.000000001Z",
-        "2026-03-14T08:30:00.000000001Z",
-      ],
+      ["datetime", "2026-03-14T08:30:00.0001Z", "2026-03-14T08:30:00Z"],
+      ["datetime", "2026-03-14T08:30:00.123999Z", "2026-03-14T08:30:00.123Z"],
+      ["datetime", "2026-03-14T08:30:00.000000001Z", "2026-03-14T08:30:00Z"],
+      ["datetime", "9999-12-31T23:59:59.999999Z", "9999-12-31T23:59:59.999Z"],
       ["datetime", "0000-01-01T00:30:00+01:00", undefined],
       ["datetime", "9999-12-31T23:30:00-01:00", undefined],
       ["datetime", "2026-10-19", undefined],

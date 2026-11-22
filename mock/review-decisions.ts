@@ -111,8 +111,10 @@ const isDate = (s: string) => {
   return d.getUTCDate() === +m[3] && d.getUTCMonth() === month - 1;
 };
 
-// An RFC 3339 instant as schema keeps a datetime: UTC, Z, its fraction in
-// groups of three; undefined when it isn't one or its UTC year isn't 4 digits.
+// An RFC 3339 instant as schema keeps a datetime (Instant's Display, which the
+// backend's foundryDateTime matches): UTC, Z, truncated to the millisecond,
+// no fraction when that is 0 and three digits otherwise; undefined when it
+// isn't one or its UTC year isn't 4 digits.
 function dateTime(s: string): string | undefined {
   const m =
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(
@@ -128,16 +130,8 @@ function dateTime(s: string): string | undefined {
   at.setUTCMinutes(at.getUTCMinutes() - offset);
   const year = at.getUTCFullYear();
   if (year < 0 || year > 9999) return undefined;
-  const ns = (m[7] || "").padEnd(9, "0");
-  const fraction =
-    ns === "000000000"
-      ? ""
-      : ns.endsWith("000000")
-        ? `.${ns.slice(0, 3)}`
-        : ns.endsWith("000")
-          ? `.${ns.slice(0, 6)}`
-          : `.${ns}`;
-  return `${at.toISOString().slice(0, 19)}${fraction}Z`;
+  const ms = (m[7] || "").slice(0, 3).padEnd(3, "0");
+  return `${at.toISOString().slice(0, 19)}${ms === "000" ? "" : `.${ms}`}Z`;
 }
 
 const INT64 = { min: -(2n ** 63n), max: 2n ** 63n - 1n };

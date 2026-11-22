@@ -14,7 +14,7 @@ import {
   readsOf,
   sweepViolations,
 } from "../../mock/graph/rules";
-import { MockGraph } from "../../mock/graph/store";
+import { HelixDateTime, MockGraph } from "../../mock/graph/store";
 
 // The mock's rules on the read path: a version's rules, link declarations
 // and constraints evaluated over one load, answered with the engine's
@@ -527,6 +527,7 @@ description = "Bills."
 
   it("computes a number from two props as the engine does (contract 4.26.0)", () => {
     const g = new MockGraph().view("load_1");
+    // A datetime is Helix's DateTime, as a load writes it.
     const deal = (k: string, stage: string, props: Record<string, unknown>) =>
       g.addNode("Deal", {
         entity_key: k,
@@ -537,19 +538,19 @@ description = "Bills."
       });
     deal("d1", "won", {
       opened_on: "2026-01-01",
-      closed_at: "2026-01-31T12:00:00Z",
+      closed_at: HelixDateTime.parse("2026-01-31T12:00:00Z"),
       amount: 100,
       cost: 40,
     });
     deal("d2", "won", {
       opened_on: "2026-02-01",
-      closed_at: "2026-02-11T00:00:00Z",
+      closed_at: HelixDateTime.parse("2026-02-11T00:00:00Z"),
       amount: 50,
       cost: 0,
     });
     deal("d3", "lost", {
       opened_on: "2026-03",
-      closed_at: "2026-03-02T00:00:00Z",
+      closed_at: HelixDateTime.parse("2026-03-02T00:00:00Z"),
       amount: 7,
     });
     deal("d4", "open", { opened_on: "2026-04-01" });

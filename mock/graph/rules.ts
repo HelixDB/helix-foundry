@@ -14,7 +14,12 @@ import {
 import { contractErrors } from "../agent-contract";
 import type { QueryExpr } from "../../src/shared/wfe";
 import { normName } from "./extract";
-import type { LoadGraph, MockNode } from "./store";
+import {
+  HelixDateTime,
+  type LoadGraph,
+  type MockNode,
+  type Value,
+} from "./store";
 import {
   MAX_SETTLED_ROWS,
   admit,
@@ -68,9 +73,10 @@ type Constraint = { name: string; severity: Severity; rules: Rule[] };
 
 export type Program = {
   types: Set<string>;
-  // Each type's props and names props, and whether a text search may start
-  // from it (it has `names`, or is known by its name).
-  props: Map<string, Set<string>>;
+  // Each type's props (each with its declared type) and names props, and
+  // whether a text search may start from it (it has `names`, or is known by
+  // its name).
+  props: Map<string, Map<string, string>>;
   names: Map<string, string[]>;
   // Each type's key props, in the order the ontology declares them.
   keys: Map<string, string[]>;
@@ -264,8 +270,10 @@ export function compile(ontologyToml: string): Program {
     props: new Map(
       tables(doc.types).map(([n, t]) => [
         n,
-        new Set(
-          Object.keys(t.props && typeof t.props === "object" ? t.props : {}),
+        new Map(
+          Object.entries(
+            t.props && typeof t.props === "object" ? t.props : {},
+          ).map(([p, ty]) => [p, String(ty)]),
         ),
       ]),
     ),
@@ -803,7 +811,7 @@ function settle(m: Model, view: View, n: MockNode, prop: string): unknown {
       })),
   );
   return s.from === "stored"
-    ? (n.props[prop] ?? null)
+    ? engineValue(n.props[prop])
     : s.from === "quoted"
       ? s.value
       : null;
@@ -1118,15 +1126,32 @@ const heldEvidence = (
 type Query = Extract<Read, { query: unknown }>["query"];
 type Where = NonNullable<Query["start"]["where"]>;
 
-/** Whether a node passes every condition, as the engine tests them. */
+// A prop as the engine's JSON writes it (schema's Instant, AutoSi): a
+// DateTime with no fraction when it is a whole second, else three digits.
+const engineValue = (v: Value | undefined): Value =>
+  v instanceof HelixDateTime
+    ? v.toJSON().replace(/\.000Z$/, "Z")
+    : (v ?? null);
+
+/**
+ * Whether a node passes every condition, as the engine tests them. A
+ * datetime holds Helix's DateTime, and a condition's value (RFC 3339, which
+ * typedQuery has checked) is read as one, to the millisecond: they compare
+ * by instant.
+ */
 function passes(n: MockNode, where: Where): boolean {
   return where.every((c) => {
-    const v = n.props[c.prop] ?? null;
+    const held = n.props[c.prop];
+    const v =
+      held instanceof HelixDateTime ? held.ms : (held ?? null);
     if (c.op === "is_null") return v === null;
     if (c.op === "not_null") return v !== null;
     // A comparison never holds for an absent value, `!=` included.
     if (v === null) return false;
-    const want = c.value as string | number | boolean;
+    const want =
+      held instanceof HelixDateTime
+        ? HelixDateTime.parse(String(c.value))!.ms
+        : (c.value as string | number | boolean);
     switch (c.op) {
       case "=":
         return v === want;
@@ -1165,7 +1190,7 @@ const exprOperands = (e: QueryExpr): [string, string] =>
  * takes, a date isn't to the day, or the result isn't a finite number.
  *
  * @example
- * exprValue({ a: "2026-03-01", b: "2026-03-03T12:00:00Z" }, { days_between: ["a", "b"] }); // 2.5
+ * exprValue({ a: "2026-03-01", b: HelixDateTime.parse("2026-03-03T12:00:00Z") }, { days_between: ["a", "b"] }); // 2.5
  * exprValue({ a: "2026-03", b: "2026-03-03" }, { days_between: ["a", "b"] }); // null
  * exprValue({ a: 7, b: 10 }, { diff: ["a", "b"] }); // -3
  * exprValue({ a: 5, b: 0 }, { ratio: ["a", "b"] }); // null
@@ -1177,15 +1202,14 @@ export function exprValue(
   const [a, b] = exprOperands(e).map((p) => props[p]);
   const finite = (x: number) => (Number.isFinite(x) ? x : null);
   if ("days_between" in e) {
-    // A date to the day from its midnight UTC; a datetime as it is.
+    // A date to the day from its midnight UTC; a datetime's DateTime by
+    // its millisecond.
     const time = (v: unknown) =>
-      typeof v !== "string"
-        ? null
-        : /^\d{4}-\d{2}-\d{2}$/.test(v)
+      v instanceof HelixDateTime
+        ? v.ms
+        : typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)
           ? Date.parse(`${v}T00:00:00Z`)
-          : v.includes("T")
-            ? Date.parse(v)
-            : null;
+          : null;
     const [from, to] = [time(a), time(b)];
     return from === null ||
       to === null ||
@@ -1230,10 +1254,36 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
       s.where || [],
     ]),
   ];
+  // As the engine's `condition`: a text test only of text (`name` is), a
+  // boolean only by = and !=, and a datetime's value an RFC 3339 instant.
+  const typeOf = (at: number, prop: string) =>
+    prop === "name" ? "string" : m.program.props.get(types[at]!)?.get(prop);
   for (const [pointer, at, where] of conditions)
-    for (const [k, c] of where.entries())
+    for (const [k, c] of where.entries()) {
       if (!known(at, c.prop))
         return bad(`${pointer}/${k}/prop`, `\`${c.prop}\` is no property`);
+      const type = typeOf(at, c.prop);
+      if ((c.op === "contains" || c.op === "starts_with") && type !== "string")
+        return bad(`${pointer}/${k}/op`, `\`${c.prop}\` is not text`);
+      if (
+        type === "boolean" &&
+        !["=", "!=", "is_null", "not_null"].includes(c.op)
+      )
+        return bad(
+          `${pointer}/${k}/op`,
+          "booleans are only compared with = and !=",
+        );
+      if (
+        type === "datetime" &&
+        c.op !== "is_null" &&
+        c.op !== "not_null" &&
+        (typeof c.value !== "string" || !HelixDateTime.parse(c.value))
+      )
+        return bad(
+          `${pointer}/${k}/value`,
+          `\`${c.prop}\` is a datetime: compare it with an RFC 3339 instant, such as 2026-03-14T09:30:00Z`,
+        );
+    }
   const preds = steps.map((s) =>
     m.program.binary.has(`link:${s.via}`)
       ? `link:${s.via}`
@@ -1457,10 +1507,17 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
   const { columns, order_by = null, limit = 50, offset = 0 } = ret.rows;
   const named = [...new Set(columns.map((c) => c.at))];
   const value = (n: MockNode, prop: string) =>
-    prop === "name" ? (n.props.name ?? null) : (n.props[prop] ?? null);
-  // What an order or a column reads: a prop, or a number computed from two.
-  const measured = (n: MockNode, by: { prop?: string; expr?: QueryExpr }) =>
-    by.expr ? exprValue(n.props, by.expr) : value(n, by.prop!);
+    prop === "name" ? (n.props.name ?? null) : engineValue(n.props[prop]);
+  // What an order reads: a prop (a DateTime by its instant), or a number
+  // computed from two.
+  const measured = (n: MockNode, by: { prop?: string; expr?: QueryExpr }) => {
+    const held = by.prop === undefined ? undefined : n.props[by.prop];
+    return by.expr
+      ? exprValue(n.props, by.expr)
+      : held instanceof HelixDateTime
+        ? held.ms
+        : value(n, by.prop!);
+  };
   // Distinct over the positions the columns name.
   const rows = [
     ...new Map(
@@ -1575,7 +1632,7 @@ type GroupValue = string | number | boolean | null;
 
 /** A prop's value at a node, as the engine groups by it (`name` its name). */
 const propOf = (m: Model, id: number, prop: string): GroupValue => {
-  const v = m.g.node(id)!.props[prop] ?? null;
+  const v = engineValue(m.g.node(id)!.props[prop]);
   return typeof v === "object" && v !== null ? JSON.stringify(v) : v;
 };
 
