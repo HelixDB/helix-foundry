@@ -603,8 +603,8 @@ export type ConnectorKind = {
   // True when the caller can connect the kind by signing in at its
   // provider (StartConnectorSignIn) instead of entering a key: hosted, the
   // kinds Pipes signs in to that the stamp lists (GitHub, Linear, Slack,
-  // Notion, PostHog, Cal.com, Stripe, Google Workspace), for a member of the
-  // workspace's WorkOS organization.
+  // Notion, PostHog, Cal.com, Stripe, Google Workspace, Attio), for a member
+  // of the workspace's WorkOS organization.
   signIn?: boolean;
 };
 /** helixwfev1ListConnectorKindsResponse */

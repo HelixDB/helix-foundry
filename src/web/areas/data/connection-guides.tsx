@@ -588,6 +588,7 @@ const signInGuides: Record<SignInKind, (installUrl?: string) => ReactNode> = {
         and their entries, notes, tasks and workspace members. It changes
         nothing.
       </li>
+      <li>Only an admin of the Attio workspace can authorize it.</li>
       <KeptBy provider="Attio" instead="An access token" />
     </ol>
   ),

@@ -407,6 +407,9 @@ test("connects Attio with an access token and says which scopes a token lacks", 
   await expect(
     dialog(page).getByRole("button", { name: "Connect with Attio" }),
   ).toBeVisible();
+  await expect(dialog(page).locator(".connection-guide")).toContainText(
+    "Only an admin of the Attio workspace can authorize it.",
+  );
   await chooseKeyForm(dialog(page));
   const guide = dialog(page).locator(".connection-guide");
   await expect(guide).toContainText("Workspace settings → Developers");

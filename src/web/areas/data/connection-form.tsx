@@ -88,8 +88,8 @@ import {
 // its own, with its columns and first rows.
 //
 // A kind that connects by signing in at its provider (`signIn`, hosted:
-// GitHub, Linear, Slack, Notion, PostHog US Cloud, Cal.com, Stripe and Google
-// Workspace) offers Connect with <provider> in place of its credential,
+// GitHub, Linear, Slack, Notion, PostHog US Cloud, Cal.com, Stripe, Google
+// Workspace and Attio) offers Connect with <provider> in place of its credential,
 // with the settings the sign-in can't stand for above it (signInConfig:
 // GitHub's repositories and review history, Slack's history, PostHog's
 // project and event history, Google's event history), sent

@@ -86,7 +86,7 @@ import {
 // then, with a text field, keeps its newest pieces as documents.
 //
 // The kinds Pipes signs in to (GitHub, Linear, Slack, Notion, PostHog,
-// Cal.com, Stripe, Google Workspace) also connect by signing in at the
+// Cal.com, Stripe, Google Workspace, Attio) also connect by signing in at the
 // provider (./sign-ins.ts), except in a local build or with `{"signIn":
 // false}`: such a connector has an account in place of a key, and only the
 // account's member may widen what it reads (widensReach). A signed-in
