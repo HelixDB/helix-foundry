@@ -6,7 +6,7 @@ import stripeRows from "../../mock/fixtures/stripe-rows.json";
 import { extractDocument, ingestChunk } from "../../mock/graph/extract";
 import { scopeOf } from "../../mock/graph/scope";
 import { runQuery } from "../../mock/graph/query";
-import { MockGraph } from "../../mock/graph/store";
+import { HelixDateTime, MockGraph } from "../../mock/graph/store";
 import { FOUNDRY_NODES } from "@/shared/foundry-labels";
 import type { Scope } from "@/web/areas/explore/load-scope";
 import { entityId } from "@/web/areas/explore/model";
@@ -41,7 +41,8 @@ import {
 
 // The Records queries, run through the mock's v3 interpreter over what a
 // load of the contracts draft writes: 64 Stripe customers, 65 invoices and
-// the seeded contract, beside a node of the team's own.
+// the seeded contract, beside a node of the team's own. An invoice's
+// created_at is Helix's DateTime, as a load writes every datetime prop.
 
 const naming = namingOf({
   id: "ver_3",
@@ -60,12 +61,12 @@ const CUSTOMERS: [string, string, string, string][] = [
   ["cus_HOOLI003", "Hooli Inc", "finance@hooli.example", "usd"],
   ...(stripeRows.customers as [string, string, string, string][]),
 ];
-const INVOICES: [string, string, number, string][] = [
-  ["in_1001", "cus_GLOBEX01", 1200000, "paid"],
-  ["in_1002", "cus_GLOBEX01", 1200000, "open"],
-  ["in_1003", "cus_INITECH2", 104200, "paid"],
-  ["in_1004", "cus_HOOLI003", 54000, "void"],
-  ...(stripeRows.invoices as [string, string, number, string][]),
+const INVOICES: [string, string, number, string, string][] = [
+  ["in_1001", "cus_GLOBEX01", 1200000, "paid", "2026-01-05T09:00:00.000Z"],
+  ["in_1002", "cus_GLOBEX01", 1200000, "open", "2026-01-06T16:00:00.000Z"],
+  ["in_1003", "cus_INITECH2", 104200, "paid", "2026-01-07T23:00:00.000Z"],
+  ["in_1004", "cus_HOOLI003", 54000, "void", "2026-01-09T06:00:00.000Z"],
+  ...(stripeRows.invoices as [string, string, number, string, string][]),
 ];
 
 const g = new MockGraph();
@@ -92,11 +93,16 @@ ingestChunk(
 ingestChunk(
   g.view(LOAD),
   { ...chunk, source: "src_invoices", mapping: "invoices" },
-  INVOICES.map(([key, customer, amount, status]) => ({
+  INVOICES.map(([key, customer, amount, status, created]) => ({
     type: "Invoice",
     key,
     name: key,
-    props: { invoice_id: key, amount_due: amount, status },
+    props: {
+      invoice_id: key,
+      amount_due: amount,
+      status,
+      created_at: HelixDateTime.parse(created)!,
+    },
     links: [{ link: "billed_to", toType: "Customer", toKey: customer }],
   })),
 );
@@ -308,6 +314,7 @@ describe("columns and sorts", () => {
       [RECORD_COLUMN, "name"],
       ["invoice_id", "string"],
       ["amount_due", "integer"],
+      ["created_at", "datetime"],
       ["status", "string"],
     ]);
     // Documents fill a Contract's props: they are columns like any other.
@@ -348,6 +355,7 @@ describe("columns and sorts", () => {
     expect(keys(type("Invoice"))).toEqual([
       RECORD_COLUMN,
       "amount_due",
+      "created_at",
       "status",
     ]);
     expect(keys(type("Contract"))).toEqual([
@@ -484,6 +492,35 @@ describe("search and filters", () => {
     });
   });
 
+  it("searches a datetime key by equality with a date_time parameter, never contains", () => {
+    const reading: TypeNaming = {
+      name: "Reading",
+      props: [{ name: "taken_at", type: "datetime" }],
+      key: ["taken_at"],
+      names: [],
+    };
+    expect(searchOf(reading, " 2026-02-01T10:00:00+01:00 ")).toEqual({
+      kind: "match",
+      predicate: {
+        eq: { left: { property: "taken_at" }, right: { param: "qd" } },
+      },
+      params: { qd: { value: "2026-02-01T09:00:00.000Z", type: "date_time" } },
+    });
+    // Text that isn't an instant can't match one.
+    for (const q of ["2026-02-01", "2026", "soon"])
+      expect(searchOf(reading, q), q).toEqual({ kind: "none" });
+    // Beside names, a datetime key adds its equality only when it reads.
+    const named = { ...reading, names: ["label"] };
+    const s = searchOf(named, "2026-02-01T09:00:00Z");
+    expect(s.kind === "match" && Object.keys(s.params).sort()).toEqual([
+      "q",
+      "qd",
+    ]);
+    const words = searchOf(named, "morning");
+    expect(words.kind === "match" && Object.keys(words.params)).toEqual(["q"]);
+    expect(JSON.stringify(words)).not.toContain("taken_at");
+  });
+
   it("reads a filter's value by the prop's type", () => {
     const inv = type("Invoice");
     expect(filterOf(inv, "amount_due", "54000")).toEqual({
@@ -537,6 +574,26 @@ describe("search and filters", () => {
     });
     expect(filterOf(t, "b", "no")).toMatchObject({ value: false });
     expect(filterOf(t, "b", "maybe")).toMatchObject({ ok: false });
+    // A datetime is Helix's DateTime of the instant, to the millisecond.
+    for (const [raw, value] of [
+      [" 2026-01-05T10:00:00.25+01:00 ", "2026-01-05T09:00:00.250Z"],
+      ["2026-01-05T09:00:00.250999Z", "2026-01-05T09:00:00.250Z"],
+      ["2026-01-05 09:00:00Z", "2026-01-05T09:00:00.000Z"],
+      ["2016-12-31T23:59:60Z", "2017-01-01T00:00:00.000Z"],
+      ["0000-01-01T00:00:00Z", "0000-01-01T00:00:00.000Z"],
+    ])
+      expect(filterOf(inv, "created_at", raw!), raw).toEqual({
+        ok: true,
+        property: "created_at",
+        value,
+        type: "date_time",
+      });
+    for (const raw of ["2026-01-05", "today", "9999-12-31T23:59:60Z"])
+      expect(filterOf(inv, "created_at", raw), raw).toEqual({
+        ok: false,
+        error:
+          "Enter a date and time, such as 2026-03-14T09:30:00Z (kept to the millisecond).",
+      });
     expect(
       pageRead(
         SCOPE,
@@ -633,6 +690,22 @@ describe("a page of records", () => {
     });
     const amounts = byAmount.rows.map((r) => r.props.amount_due as number);
     expect(amounts).toEqual([...amounts].sort((a, b) => b - a));
+    // A datetime sorts by its instant.
+    const byCreated = (dir: "asc" | "desc") =>
+      names(page(type("Invoice"), { sort: { column: "created_at", dir } }));
+    const created = [...INVOICES].sort(
+      ([, , , , a], [, , , , b]) => Date.parse(a) - Date.parse(b),
+    );
+    expect(byCreated("asc")).toEqual(
+      created.slice(0, RECORDS_LIMITS.page).map(([k]) => k),
+    );
+    expect(byCreated("asc")[0]).toBe("in_1001");
+    expect(byCreated("desc")).toEqual(
+      [...created]
+        .reverse()
+        .slice(0, RECORDS_LIMITS.page)
+        .map(([k]) => k),
+    );
     // A column the type doesn't have reads in database order.
     expect(
       names(
@@ -664,6 +737,48 @@ describe("a page of records", () => {
         }),
       ),
     ).toEqual(["in_1001", "in_1002"]);
+    // A datetime filter finds its instant however it is written, as one
+    // equality on Helix's DateTime, and its text nowhere.
+    for (const value of [
+      "2026-01-06T16:00:00Z",
+      "2026-01-06T16:00:00.000Z",
+      "2026-01-06T17:00:00+01:00",
+      "2026-01-06 16:00:00.0009Z",
+    ]) {
+      const p = page(type("Invoice"), {
+        filter: { field: "created_at", value },
+      });
+      expect(names(p), value).toEqual(["in_1002"]);
+      expect(p.matched).toEqual({ count: 1, capped: false });
+      expect(p.rows[0]?.props.created_at).toBe("2026-01-06T16:00:00.000Z");
+    }
+    expect(
+      names(
+        page(type("Invoice"), {
+          filter: { field: "created_at", value: "2026-01-06T16:00:00.001Z" },
+        }),
+      ),
+    ).toEqual([]);
+    const typed = pageRead(
+      SCOPE,
+      type("Invoice"),
+      view({ filter: { field: "created_at", value: "2026-01-06T16:00:00Z" } }),
+    );
+    if (typed.kind !== "read") throw new Error(typed.kind);
+    expect(typed.request.parameter_types).toEqual({ fv: "date_time" });
+    expect(typed.request.parameters).toEqual({
+      fv: "2026-01-06T16:00:00.000Z",
+    });
+    // Sent as text, the instant matches nothing: a DateTime is no string.
+    const text = { ...typed.request, parameter_types: { fv: "string" } };
+    expect((run(text) as { rows: unknown[] }).rows).toEqual([]);
+    expect(
+      pageRead(
+        SCOPE,
+        type("Invoice"),
+        view({ filter: { field: "created_at", value: "2026-01-06" } }),
+      ),
+    ).toMatchObject({ kind: "refused", reason: "filter" });
     // A field picked with no value yet reads the whole type, uncounted.
     for (const value of ["", "  "]) {
       const v = view({ filter: { field: "currency", value } });
@@ -837,5 +952,77 @@ describe("records of a type keyed by more than one prop", () => {
         aisle: "a",
       }).map(([k]) => k),
     ).toEqual(["order_number", "line_no", "qty", "aisle", "zone"]);
+  });
+});
+
+describe("records of a type keyed by a datetime", () => {
+  // Readings keyed by when they were taken: Helix's DateTime, as a load
+  // writes it.
+  const reading: TypeNaming = {
+    name: "Reading",
+    props: [
+      { name: "taken_at", type: "datetime" },
+      { name: "level", type: "float" },
+    ],
+    key: ["taken_at"],
+    names: [],
+  };
+  const withReading = {
+    ...naming,
+    types: new Map([...naming.types, ["Reading", reading]]),
+  };
+  const db = new MockGraph(),
+    s = db.view(LOAD);
+  for (const [i, ms] of [
+    Date.UTC(2026, 1, 2, 9, 0, 0, 250),
+    Date.UTC(2026, 1, 1, 10),
+    Date.UTC(2026, 1, 1, 9),
+  ].entries())
+    s.addNode("Reading", {
+      entity_key: `t${new Date(ms).toISOString()}`,
+      taken_at: new HelixDateTime(ms),
+      level: i,
+    });
+  const read = (v: Partial<RecordsView>) => {
+    const r = pageRead(SCOPE, reading, view({ type: "Reading", ...v }));
+    if (r.kind !== "read") throw new Error(r.kind);
+    const answer = runQuery(db, r.request);
+    expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+    return parsePage(answer.body, withReading, reading);
+  };
+
+  it("names them by the instant as Helix renders it", () => {
+    expect(names(read({}))).toEqual([
+      "2026-02-02T09:00:00.250Z",
+      "2026-02-01T10:00:00.000Z",
+      "2026-02-01T09:00:00.000Z",
+    ]);
+    expect(read({}).rows.every((r) => r.by === "key")).toBe(true);
+  });
+
+  it("sorts them by instant", () => {
+    expect(names(read({ sort: { column: RECORD_COLUMN, dir: "asc" } }))).toEqual([
+      "2026-02-01T09:00:00.000Z",
+      "2026-02-01T10:00:00.000Z",
+      "2026-02-02T09:00:00.250Z",
+    ]);
+  });
+
+  it("finds an instant however it is written, and never part of one", () => {
+    const search = (q: string) => names(read({ search: q }));
+    for (const q of [
+      "2026-02-01T09:00:00Z",
+      "2026-02-01T09:00:00.000Z",
+      "2026-02-01 10:00:00+01:00",
+      "2026-02-01T09:00:00.0001Z",
+    ])
+      expect(search(q), q).toEqual(["2026-02-01T09:00:00.000Z"]);
+    expect(search("2026-02-02T09:00:00.25Z")).toEqual([
+      "2026-02-02T09:00:00.250Z",
+    ]);
+    expect(search("2026-02-03T09:00:00Z")).toEqual([]);
+    expect(pageRead(SCOPE, reading, view({ type: "Reading", search: "2026-02" }))).toEqual({
+      kind: "none",
+    });
   });
 });
