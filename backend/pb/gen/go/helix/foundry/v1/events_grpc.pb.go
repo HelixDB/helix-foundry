@@ -25,6 +25,7 @@ const (
 	FoundryEventsService_StopFoundryReminders_FullMethodName            = "/helix.foundry.v1.FoundryEventsService/StopFoundryReminders"
 	FoundryEventsService_GetSharedFoundryDashboard_FullMethodName       = "/helix.foundry.v1.FoundryEventsService/GetSharedFoundryDashboard"
 	FoundryEventsService_ReceiveSlackRequest_FullMethodName             = "/helix.foundry.v1.FoundryEventsService/ReceiveSlackRequest"
+	FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName      = "/helix.foundry.v1.FoundryEventsService/RecordFoundrySlackFeedGaps"
 )
 
 // FoundryEventsServiceClient is the client API for FoundryEventsService service.
@@ -61,6 +62,16 @@ type FoundryEventsServiceClient interface {
 	// event; Slack never retries a click. Wherever foundry.slack is off,
 	// every request is answered 404.
 	ReceiveSlackRequest(ctx context.Context, in *ReceiveSlackRequestRequest, opts ...grpc.CallOption) (*ReceiveSlackRequestResponse, error)
+	// The minutes of channels whose Slack events the door answered on Slack's
+	// last retry without the API taking them (its gate full, or the API
+	// failing), so Slack drops them: the door sends what it gathered once a
+	// minute. The API records each as a gap of the Slack data connector
+	// reading its team, which the backfill reads again within its capped
+	// budget, and skips the rest (no live install or feed, ids of no form,
+	// foundry.slack.feed off). The door reads them from bodies it couldn't
+	// verify, so a forged one only spends its team's gap budget. A store
+	// failure is UNAVAILABLE, and the door sends them again.
+	RecordFoundrySlackFeedGaps(ctx context.Context, in *RecordFoundrySlackFeedGapsRequest, opts ...grpc.CallOption) (*RecordFoundrySlackFeedGapsResponse, error)
 }
 
 type foundryEventsServiceClient struct {
@@ -131,6 +142,16 @@ func (c *foundryEventsServiceClient) ReceiveSlackRequest(ctx context.Context, in
 	return out, nil
 }
 
+func (c *foundryEventsServiceClient) RecordFoundrySlackFeedGaps(ctx context.Context, in *RecordFoundrySlackFeedGapsRequest, opts ...grpc.CallOption) (*RecordFoundrySlackFeedGapsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecordFoundrySlackFeedGapsResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryEventsServiceServer is the server API for FoundryEventsService service.
 // All implementations should embed UnimplementedFoundryEventsServiceServer
 // for forward compatibility.
@@ -165,6 +186,16 @@ type FoundryEventsServiceServer interface {
 	// event; Slack never retries a click. Wherever foundry.slack is off,
 	// every request is answered 404.
 	ReceiveSlackRequest(context.Context, *ReceiveSlackRequestRequest) (*ReceiveSlackRequestResponse, error)
+	// The minutes of channels whose Slack events the door answered on Slack's
+	// last retry without the API taking them (its gate full, or the API
+	// failing), so Slack drops them: the door sends what it gathered once a
+	// minute. The API records each as a gap of the Slack data connector
+	// reading its team, which the backfill reads again within its capped
+	// budget, and skips the rest (no live install or feed, ids of no form,
+	// foundry.slack.feed off). The door reads them from bodies it couldn't
+	// verify, so a forged one only spends its team's gap budget. A store
+	// failure is UNAVAILABLE, and the door sends them again.
+	RecordFoundrySlackFeedGaps(context.Context, *RecordFoundrySlackFeedGapsRequest) (*RecordFoundrySlackFeedGapsResponse, error)
 }
 
 // UnimplementedFoundryEventsServiceServer should be embedded to have
@@ -191,6 +222,9 @@ func (UnimplementedFoundryEventsServiceServer) GetSharedFoundryDashboard(context
 }
 func (UnimplementedFoundryEventsServiceServer) ReceiveSlackRequest(context.Context, *ReceiveSlackRequestRequest) (*ReceiveSlackRequestResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReceiveSlackRequest not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) RecordFoundrySlackFeedGaps(context.Context, *RecordFoundrySlackFeedGapsRequest) (*RecordFoundrySlackFeedGapsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecordFoundrySlackFeedGaps not implemented")
 }
 func (UnimplementedFoundryEventsServiceServer) testEmbeddedByValue() {}
 
@@ -320,6 +354,24 @@ func _FoundryEventsService_ReceiveSlackRequest_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryEventsService_RecordFoundrySlackFeedGaps_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecordFoundrySlackFeedGapsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).RecordFoundrySlackFeedGaps(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).RecordFoundrySlackFeedGaps(ctx, req.(*RecordFoundrySlackFeedGapsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryEventsService_ServiceDesc is the grpc.ServiceDesc for FoundryEventsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -350,6 +402,10 @@ var FoundryEventsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReceiveSlackRequest",
 			Handler:    _FoundryEventsService_ReceiveSlackRequest_Handler,
+		},
+		{
+			MethodName: "RecordFoundrySlackFeedGaps",
+			Handler:    _FoundryEventsService_RecordFoundrySlackFeedGaps_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -40,7 +40,37 @@ service FoundryEventsService {
   // event; Slack never retries a click. Wherever foundry.slack is off,
   // every request is answered 404.
   rpc ReceiveSlackRequest(ReceiveSlackRequestRequest) returns (ReceiveSlackRequestResponse);
+
+  // The minutes of channels whose Slack events the door answered on Slack's
+  // last retry without the API taking them (its gate full, or the API
+  // failing), so Slack drops them: the door sends what it gathered once a
+  // minute. The API records each as a gap of the Slack data connector
+  // reading its team, which the backfill reads again within its capped
+  // budget, and skips the rest (no live install or feed, ids of no form,
+  // foundry.slack.feed off). The door reads them from bodies it couldn't
+  // verify, so a forged one only spends its team's gap budget. A store
+  // failure is UNAVAILABLE, and the door sends them again.
+  rpc RecordFoundrySlackFeedGaps(RecordFoundrySlackFeedGapsRequest) returns (RecordFoundrySlackFeedGapsResponse);
 }
+
+// FoundrySlackFeedGap is one minute of one channel's events Slack dropped.
+message FoundrySlackFeedGap {
+  // The install's team and Grid org ("" outside one), read from the event
+  // as the API reads an event's.
+  string team_id = 1;
+  string enterprise_id = 2;
+  // The channel; "" for every channel the feed reads, when the event named
+  // none the door could read.
+  string channel_id = 3;
+  // The minute's start: the event's event_time, else when the door took it.
+  google.protobuf.Timestamp minute = 4;
+}
+
+message RecordFoundrySlackFeedGapsRequest {
+  // At most 1,000.
+  repeated FoundrySlackFeedGap gaps = 1;
+}
+message RecordFoundrySlackFeedGapsResponse {}
 
 // SlackRoute is the door's route a Slack request came to.
 enum SlackRoute {

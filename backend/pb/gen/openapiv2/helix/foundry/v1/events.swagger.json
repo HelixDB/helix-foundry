@@ -152,6 +152,28 @@
       },
       "description": "FoundryEventPiece is one piece sent to an event source."
     },
+    "v1FoundrySlackFeedGap": {
+      "type": "object",
+      "properties": {
+        "teamId": {
+          "type": "string",
+          "description": "The install's team and Grid org (\"\" outside one), read from the event\nas the API reads an event's."
+        },
+        "enterpriseId": {
+          "type": "string"
+        },
+        "channelId": {
+          "type": "string",
+          "description": "The channel; \"\" for every channel the feed reads, when the event named\nnone the door could read."
+        },
+        "minute": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The minute's start: the event's event_time, else when the door took it."
+        }
+      },
+      "description": "FoundrySlackFeedGap is one minute of one channel's events Slack dropped."
+    },
     "v1GetSharedFoundryDashboardResponse": {
       "type": "object",
       "properties": {
@@ -180,6 +202,9 @@
         }
       },
       "description": "ReceiveSlackRequestResponse is the HTTP answer the door gives Slack."
+    },
+    "v1RecordFoundrySlackFeedGapsResponse": {
+      "type": "object"
     },
     "v1SendFoundryEventsResponse": {
       "type": "object",
