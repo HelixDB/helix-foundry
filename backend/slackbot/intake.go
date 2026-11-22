@@ -25,12 +25,14 @@ import (
 )
 
 // claim is a claimed intake row as its handler reads it: the row, its
-// install and the install's bot.
+// install and the install's bot, and the turn whose reply it held (hold),
+// "" for none, which its handler shares with every copy of the claim.
 type claim struct {
 	in      *model.SlackIntake
 	owner   string
 	install *model.SlackInstall
 	bot     slack.Bot
+	held    *string
 }
 
 // errLost is a claim whose lease was taken by another worker: it writes
@@ -58,9 +60,10 @@ func (b *Bot) handleClaimed(ctx context.Context, in *model.SlackIntake) {
 	if p, err := slack.ReadPayload(in.Payload); err == nil {
 		kind = string(p.Kind)
 	}
-	logger := log.From(ctx).With("intake", in.ID, "install_id", in.InstallID, "kind", kind, "attempt", in.Attempts)
+	logger := log.From(ctx).With("intake", in.ID, "install_id", in.InstallID, "kind", kind, "attempt", in.Attempts, "failures", in.Failures)
 	ctx = log.Into(ctx, logger)
-	outcome, err := b.handle(ctx, in)
+	held := ""
+	outcome, err := b.handle(ctx, in, &held)
 	if errors.Is(err, errLost) {
 		intake.WithLabelValues(kind, "lost").Inc()
 		logger.Warn("lost a Slack intake row's lease while handling it")
@@ -72,6 +75,8 @@ func (b *Bot) handleClaimed(ctx context.Context, in *model.SlackIntake) {
 		label = "failed"
 	case model.SlackIntakeRetry:
 		label = "retried"
+	case model.SlackIntakeDeferred:
+		label = "deferred"
 	case model.SlackIntakeWait:
 		label = "waiting"
 	}
@@ -84,14 +89,21 @@ func (b *Bot) handleClaimed(ctx context.Context, in *model.SlackIntake) {
 	}
 	if g, ok := outcome.(model.SlackIntakeGaveUp); ok {
 		logger.Warn("gave up a Slack intake row", "why", g.Error)
+		// A reply it held, unposted, is the follower's now, not in an hour.
+		if label == "failed" && held != "" {
+			if err := b.db.ReleaseFoundrySlackHold(context.WithoutCancel(ctx), held); err != nil {
+				logger.Warn("release a held Slack reply failed; it is followed once its hold runs out", "turn", held, "err", err)
+			}
+		}
 	}
 	intake.WithLabelValues(kind, label).Inc()
 }
 
 // handle handles a claimed row and says how its claim ends, or errLost once
-// its lease was lost. A row whose install is gone, or that the bot can't
-// read, ends; a Slack rate limit defers it by its Retry-After.
-func (b *Bot) handle(ctx context.Context, in *model.SlackIntake) (model.SlackIntakeOutcome, error) {
+// its lease was lost; held is set to the turn whose reply it held. A row
+// whose install is gone, or that the bot can't read, ends; a Slack rate
+// limit defers it by its Retry-After.
+func (b *Bot) handle(ctx context.Context, in *model.SlackIntake, held *string) (model.SlackIntakeOutcome, error) {
 	if in.Attempts > maxClaims {
 		return model.SlackIntakeGaveUp{Error: fmt.Sprintf("claimed %d times without ending", in.Attempts)}, nil
 	}
@@ -113,7 +125,7 @@ func (b *Bot) handle(ctx context.Context, in *model.SlackIntake) (model.SlackInt
 	if err != nil {
 		return model.SlackIntakeGaveUp{Error: err.Error()}, nil
 	}
-	c := claim{in: in, owner: *in.LeaseOwner, install: install, bot: bot}
+	c := claim{in: in, owner: *in.LeaseOwner, install: install, bot: bot, held: held}
 	var outcome model.SlackIntakeOutcome
 	switch in.Kind {
 	case model.SlackIntakeEvent:
@@ -141,14 +153,14 @@ func (b *Bot) handle(ctx context.Context, in *model.SlackIntake) (model.SlackInt
 }
 
 // failed is how a handler's error ends its claim: errLost stays lost; a
-// rate limit defers the row; Slack saying the bot can't act there gives it
-// up; anything else is tried again.
+// rate limit defers the row, counting no failure; Slack saying the bot
+// can't act there gives it up; anything else is tried again.
 func (b *Bot) failed(c claim, err error) (model.SlackIntakeOutcome, error) {
 	if errors.Is(err, errLost) {
 		return nil, err
 	}
 	if wait, ok := rateLimited(err); ok {
-		return model.SlackIntakeRetry{After: wait, Error: err.Error()}, nil
+		return model.SlackIntakeDeferred{After: wait, Error: err.Error()}, nil
 	}
 	if slackGone(err) {
 		return model.SlackIntakeGaveUp{Error: err.Error()}, nil
@@ -157,14 +169,19 @@ func (b *Bot) failed(c claim, err error) (model.SlackIntakeOutcome, error) {
 }
 
 // retry tries the row again after a back-off that doubles from
-// foundry.slack.retry_backoff, or gives it up once max_attempts claims have
-// tried it.
+// foundry.slack.retry_backoff, or gives it up once this claim's failure is
+// its max_attempts-th (lastTry). Claims that waited or were deferred don't
+// count.
 func (b *Bot) retry(in *model.SlackIntake, err error) model.SlackIntakeOutcome {
-	if in.Attempts >= b.cfg.MaxAttempts {
-		return model.SlackIntakeGaveUp{Error: fmt.Sprintf("%v (gave up after %d attempts)", err, in.Attempts)}
+	if b.lastTry(in) {
+		return model.SlackIntakeGaveUp{Error: fmt.Sprintf("%v (gave up after %d attempts)", err, in.Failures+1)}
 	}
-	return model.SlackIntakeRetry{After: b.cfg.RetryBackoff << min(max(in.Attempts-1, 0), 10), Error: err.Error()}
+	return model.SlackIntakeRetry{After: b.cfg.RetryBackoff << min(in.Failures, 10), Error: err.Error()}
 }
+
+// lastTry reports a claim whose failure would be the row's max_attempts-th:
+// it gives the row up rather than try again.
+func (b *Bot) lastTry(in *model.SlackIntake) bool { return in.Failures+1 >= b.cfg.MaxAttempts }
 
 // event handles an event: a message, or a stop of an agent session.
 // Uninstalls end in the API, as Slack sends them; one queued here ends.
@@ -291,11 +308,11 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	case refusedInWords(err):
 		return tell(sentence(err))
 	default:
-		if c.in.Attempts >= b.cfg.MaxAttempts {
+		if b.lastTry(c.in) {
 			if _, tellErr := tell("Founder couldn't take this message; try again."); tellErr != nil {
 				return nil, tellErr
 			}
-			return model.SlackIntakeGaveUp{Error: fmt.Sprintf("send the message: %v (gave up after %d attempts)", err, c.in.Attempts)}, nil
+			return model.SlackIntakeGaveUp{Error: fmt.Sprintf("send the message: %v (gave up after %d attempts)", err, c.in.Failures+1)}, nil
 		}
 		return b.retry(c.in, fmt.Errorf("send the message: %w", err)), nil
 	}
@@ -325,7 +342,8 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 // busy waits for a busy thread's live turn (the follower wakes the row when
 // it ends), at most busyPoll at a time, until foundry.slack.busy_wait after
 // the message came; then it tells its person to send it again. A thread
-// busy with an action running has no turn to wait on, and is tried again.
+// busy with an action running has no turn to wait on, and is deferred.
+// Neither counts as a failure.
 func (b *Bot) busy(ctx context.Context, c claim, m said, thread *model.SlackThread) (model.SlackIntakeOutcome, error) {
 	waited := b.now().Sub(c.in.CreatedAt)
 	if waited >= b.cfg.BusyWait {
@@ -347,7 +365,7 @@ func (b *Bot) busy(ctx context.Context, c claim, m said, thread *model.SlackThre
 			}
 		}
 	}
-	return model.SlackIntakeRetry{After: wait, Error: "the thread is busy"}, nil
+	return model.SlackIntakeDeferred{After: wait, Error: "the thread is busy"}, nil
 }
 
 // session opens the linked person's Session in the install's workspace. A
@@ -408,16 +426,28 @@ func (b *Bot) linkPrompt(ctx context.Context, c claim, m said) error {
 	return b.tell(ctx, c.bot, m.at.ChannelID, m.at.ThreadTS, m.user, msg)
 }
 
+// hold records turnID's reply in a Slack thread, if it has none, held for
+// the claim c to post its first message (HoldFoundrySlackReply), and keeps
+// the turn as the one c held: should c give up first, the follower posts it.
+func (b *Bot) hold(ctx context.Context, c claim, turnID, channel, threadTS, slackUser string) (*model.SlackReply, error) {
+	r, err := b.db.HoldFoundrySlackReply(ctx, &model.SlackReply{TurnID: turnID, InstallID: c.install.ID, ChannelID: channel, ThreadTS: threadTS,
+		SlackUserID: slackUser})
+	if err != nil {
+		return nil, fmt.Errorf("hold the reply: %w", err)
+	}
+	*c.held = turnID
+	return r, nil
+}
+
 // startReply makes turnID's reply in a Slack thread, if it has none, while
 // the claim c holds its lease: it posts the first message ("Working…", with
 // Stop), records it, and so hands the reply to a follower. A worker killed
 // between the post and the record posts it once more. Then the thread's
 // agent session shows Founder working.
 func (b *Bot) startReply(ctx context.Context, c claim, turnID, channel, threadTS, slackUser string) error {
-	r, err := b.db.HoldFoundrySlackReply(ctx, &model.SlackReply{TurnID: turnID, InstallID: c.install.ID, ChannelID: channel, ThreadTS: threadTS,
-		SlackUserID: slackUser})
+	r, err := b.hold(ctx, c, turnID, channel, threadTS, slackUser)
 	if err != nil {
-		return fmt.Errorf("hold the reply: %w", err)
+		return err
 	}
 	if r.MessageTS == nil {
 		first := b.site.Reply(slack.Reply{TurnID: turnID})[0]

@@ -89,8 +89,26 @@ func TestWords(t *testing.T) {
 func TestRetryBacksOffThenGivesUp(t *testing.T) {
 	b := &Bot{cfg: config.SlackConfig{MaxAttempts: 3, RetryBackoff: time.Second}}
 	assert.Equal(t, model.SlackIntakeRetry{After: time.Second, Error: "x"}, b.retry(&model.SlackIntake{Attempts: 1}, errors.New("x")))
-	assert.Equal(t, model.SlackIntakeRetry{After: 2 * time.Second, Error: "x"}, b.retry(&model.SlackIntake{Attempts: 2}, errors.New("x")))
-	assert.Equal(t, model.SlackIntakeGaveUp{Error: "x (gave up after 3 attempts)"}, b.retry(&model.SlackIntake{Attempts: 3}, errors.New("x")))
+	assert.Equal(t, model.SlackIntakeRetry{After: 2 * time.Second, Error: "x"}, b.retry(&model.SlackIntake{Attempts: 2, Failures: 1}, errors.New("x")))
+	assert.Equal(t, model.SlackIntakeGaveUp{Error: "x (gave up after 3 attempts)"}, b.retry(&model.SlackIntake{Attempts: 3, Failures: 2}, errors.New("x")))
+	assert.Equal(t, model.SlackIntakeRetry{After: time.Second, Error: "x"}, b.retry(&model.SlackIntake{Attempts: 40}, errors.New("x")),
+		"claims that waited or were deferred aren't failures")
+}
+
+func TestSlackRefused(t *testing.T) {
+	for err, refused := range map[error]bool{
+		&slack.APIError{Code: "invalid_blocks"}:    true,
+		&slack.APIError{Code: "msg_too_long"}:      true,
+		&slack.APIError{Code: "channel_not_found"}: true,
+		&slack.APIError{Code: "internal_error"}:    false,
+		&slack.APIError{Code: "fatal_error"}:       false,
+		&slack.APIError{Code: "request_timeout"}:   false,
+		&slack.APIError{Status: 502}:               false,
+		&slack.RateLimitedError{}:                  false,
+		errors.New("no answer"):                    false,
+	} {
+		assert.Equal(t, refused, slackRefused(err), "%v", err)
+	}
 }
 
 func TestNewRefusesWhatItCantRunWith(t *testing.T) {

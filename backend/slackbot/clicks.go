@@ -56,11 +56,11 @@ func cardState(a *model.FoundryAgentAction, by string, now time.Time) slack.Card
 func (b *Bot) click(ctx context.Context, c claim, in slack.Interaction) (model.SlackIntakeOutcome, error) {
 	switch in := in.(type) {
 	case slack.Approve:
-		return b.cardClick(ctx, c, in.Clicked, in.ActionID, approveCall(in.PayloadHash))
+		return b.cardClick(ctx, c, in.Clicked, in.ActionID, approveCall(in.PayloadHash), true)
 	case slack.Dismiss:
-		return b.cardClick(ctx, c, in.Clicked, in.ActionID, dismissCall)
+		return b.cardClick(ctx, c, in.Clicked, in.ActionID, dismissCall, false)
 	case slack.Refresh:
-		return b.cardClick(ctx, c, in.Clicked, in.ActionID, refreshCall)
+		return b.cardClick(ctx, c, in.Clicked, in.ActionID, refreshCall, false)
 	case slack.Stop:
 		return b.stopClick(ctx, c, in)
 	case slack.Unlink:
@@ -112,7 +112,18 @@ func refreshCall(ctx context.Context, s integration.Session, ws, id string) (*fo
 // clicker, with the turn the agent goes on in followed in the card's
 // thread; dismissed; prepared again; or, for a click the action's state
 // refused, as it stands. An expired confirmation offers Prepare again.
-func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID string, call cardCall) (model.SlackIntakeOutcome, error) {
+//
+// Outside a direct message it first asks Slack whether the channel is
+// shared with another organisation (conversations.info), where nothing
+// runs and nothing is posted. A run (run true) of a card that runs only in
+// Foundry (slack.RunsInFoundry) runs nothing: the clicker is sent to
+// Foundry, and the card redrawn with its link.
+//
+// A run's continuation turn has its reply held before the card is redrawn:
+// a retry, which the API answers NOT_PREPARED with no continuation, finds
+// it held and posts it (heldContinuation), and a card Slack lost meanwhile
+// doesn't keep the continuation from being followed.
+func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID string, call cardCall, run bool) (model.SlackIntakeOutcome, error) {
 	notYours := "Only the person this was prepared for can act on it."
 	link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, k.UserID)
 	switch {
@@ -130,28 +141,55 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 	case action.UserID != link.UserID:
 		return b.clickTell(ctx, c, k, notYours)
 	}
-	session, done, err := b.session(ctx, c, link, k.ChannelID, threadOf(k))
-	if done || err != nil {
-		return model.SlackIntakeEnded{}, err
-	}
-	resp, callErr := call(session.Ctx, session, c.install.WorkspaceID, actionID)
-	reason := reasonOf(callErr)
-	switch {
-	case callErr == nil, reason == "FOUNDRY_AGENT_ACTION_EXPIRED", reason == "FOUNDRY_AGENT_ACTION_NOT_PREPARED", reason == "FOUNDRY_AGENT_ACTION_CHANGED":
-	case reason == "FOUNDRY_AGENT_THREAD_BUSY":
-		return b.clickTell(ctx, c, k, "Founder is still answering; try again in a moment.")
-	case refusedInWords(callErr):
-		return b.clickTell(ctx, c, k, sentence(callErr))
-	case status.Code(callErr) == codes.NotFound:
-		return b.clickTell(ctx, c, k, "This action is gone.")
-	default:
-		if c.in.Attempts >= b.cfg.MaxAttempts {
-			if _, tellErr := b.clickTell(ctx, c, k, "Foundry couldn't do that just now; try again."); tellErr != nil {
-				return nil, tellErr
-			}
-			return model.SlackIntakeGaveUp{Error: fmt.Sprintf("act on the card: %v (gave up after %d attempts)", callErr, c.in.Attempts)}, nil
+	if !inDM(k.ChannelID) {
+		shared, err := b.slack.ExtShared(ctx, c.bot, k.ChannelID)
+		switch {
+		case slack.IsCode(err, "missing_scope"):
+			return b.clickTell(ctx, c, k, "Helix Foundry needs to be added to Slack again to act in channels: an owner or admin of your Foundry "+
+				"workspace can do it in Settings › Slack.")
+		case err != nil:
+			return nil, fmt.Errorf("conversations.info: %w", err)
+		case shared:
+			return b.clickTell(ctx, c, k, "Helix Foundry doesn't act in channels shared with other organisations. Message me directly instead.")
 		}
-		return b.retry(c.in, fmt.Errorf("act on the card: %w", callErr)), nil
+	}
+	var resp *foundryv1.FoundryAgentActionResponse
+	reason := ""
+	if run && slack.RunsInFoundry(cardOf(action)) {
+		if _, err := b.clickTell(ctx, c, k, "Review this in Foundry and run it there: Slack can't show what it changes."); err != nil {
+			return nil, err
+		}
+	} else {
+		session, done, err := b.session(ctx, c, link, k.ChannelID, threadOf(k))
+		if done || err != nil {
+			return model.SlackIntakeEnded{}, err
+		}
+		var callErr error
+		resp, callErr = call(session.Ctx, session, c.install.WorkspaceID, actionID)
+		reason = reasonOf(callErr)
+		switch {
+		case callErr == nil, reason == "FOUNDRY_AGENT_ACTION_EXPIRED", reason == "FOUNDRY_AGENT_ACTION_NOT_PREPARED", reason == "FOUNDRY_AGENT_ACTION_CHANGED":
+		case reason == "FOUNDRY_AGENT_THREAD_BUSY":
+			return b.clickTell(ctx, c, k, "Founder is still answering; try again in a moment.")
+		case refusedInWords(callErr):
+			return b.clickTell(ctx, c, k, sentence(callErr))
+		case status.Code(callErr) == codes.NotFound:
+			return b.clickTell(ctx, c, k, "This action is gone.")
+		default:
+			if b.lastTry(c.in) {
+				if _, tellErr := b.clickTell(ctx, c, k, "Foundry couldn't do that just now; try again."); tellErr != nil {
+					return nil, tellErr
+				}
+				return model.SlackIntakeGaveUp{Error: fmt.Sprintf("act on the card: %v (gave up after %d attempts)", callErr, c.in.Failures+1)}, nil
+			}
+			return b.retry(c.in, fmt.Errorf("act on the card: %w", callErr)), nil
+		}
+	}
+	next := resp.GetContinuation().GetId()
+	if next != "" {
+		if _, err := b.hold(ctx, c, next, k.ChannelID, threadOf(k), k.UserID); err != nil {
+			return nil, err
+		}
 	}
 	if action, err = b.db.GetFoundryAgentAction(ctx, c.install.WorkspaceID, actionID); err != nil {
 		return nil, fmt.Errorf("read the action again: %w", err)
@@ -170,14 +208,19 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 		} else {
 			err = b.slack.UpdateMessage(ctx, c.bot, slack.Update{Channel: k.ChannelID, TS: k.MessageTS, Message: msg})
 		}
-		if err != nil {
+		switch {
+		case err != nil && slackGone(err) && next != "":
+			// The card is gone, or closed to the bot: its thread may still
+			// take the continuation, which startReply tries.
+			log.From(ctx).Info("a ran card couldn't be redrawn; its continuation is followed", "action", action.ID, "err", err)
+		case err != nil:
 			return nil, err
 		}
 	}
-	next := resp.GetContinuation().GetId()
 	if next == "" {
 		// An earlier attempt ran it and held its continuation's reply, but
-		// couldn't post it (a rate limit): post it now.
+		// couldn't post it (a rate limit, or a card it couldn't redraw):
+		// post it now.
 		if next, err = b.heldContinuation(ctx, action); err != nil {
 			return nil, err
 		}
@@ -238,26 +281,29 @@ func (b *Bot) stopClick(ctx context.Context, c claim, in slack.Stop) (model.Slac
 }
 
 // sessionStopped stops the turns Slack's stop button stopped: those
-// followed in its thread whose person clicked it. Anyone else is told they
-// can't, and the turn goes on.
+// followed in its thread whose person clicked it. Someone who has none
+// there is told they can't; while anyone else's turn goes on, the thread
+// shows Founder working.
 func (b *Bot) sessionStopped(ctx context.Context, c claim, e slack.SessionStopped) (model.SlackIntakeOutcome, error) {
 	follows, err := b.db.ListFoundrySlackFollows(ctx, c.install.ID, e.At.ChannelID, e.At.ThreadTS)
 	if err != nil {
 		return nil, fmt.Errorf("read the thread's replies: %w", err)
 	}
-	refused := false
+	mine, others := false, false
 	for _, r := range follows {
 		stopped, err := b.stop(ctx, c, r, e.UserID)
 		if err != nil {
 			return nil, err
 		}
-		refused = refused || !stopped
+		mine, others = mine || stopped, others || !stopped
 	}
-	if refused {
+	if others && !mine {
 		if err := b.tell(ctx, c.bot, e.At.ChannelID, e.At.ThreadTS, e.UserID, b.say("Only the person who asked can stop Founder's answer.")); err != nil {
 			return nil, err
 		}
-		// The answer goes on: show it working again.
+	}
+	if others {
+		// Someone else's answer goes on: show it working again.
 		b.setAgentStatus(ctx, c.bot, e.At.ChannelID, e.At.ThreadTS, slack.AgentProcessing)
 	}
 	return model.SlackIntakeEnded{}, nil

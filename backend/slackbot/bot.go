@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,7 @@ type Store interface {
 	ListFoundrySlackFollows(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackReply, error)
 	CountFoundrySlackFollows(ctx context.Context, installID string) (int, error)
 	HoldFoundrySlackReply(ctx context.Context, r *model.SlackReply) (*model.SlackReply, error)
+	ReleaseFoundrySlackHold(ctx context.Context, turnID string) error
 	StartFoundrySlackReply(ctx context.Context, turnID, messageTS, intakeID, intakeOwner string) error
 	ClaimFoundrySlackReply(ctx context.Context, lease time.Duration) (*model.SlackReply, error)
 	UpdateFoundrySlackReply(ctx context.Context, turnID, owner string, u model.SlackReplyUpdate) error
@@ -288,6 +290,16 @@ func rateLimited(err error) (time.Duration, bool) {
 func slackGone(err error) bool {
 	return slack.IsCode(err, "invalid_auth", "account_inactive", "token_revoked", "token_expired", "not_authed", "channel_not_found",
 		"not_in_channel", "is_archived", "message_not_found", "cant_update_message", "user_not_in_channel", "no_permission")
+}
+
+// slackRefused reports a Web API answer refusing what was sent for good:
+// an error code other than Slack's own faults (internal_error, fatal_error,
+// service_unavailable, request_timeout), which trying again gets past. No
+// answer, or an HTTP error, isn't one.
+func slackRefused(err error) bool {
+	var api *slack.APIError
+	return errors.As(err, &api) && api.Code != "" &&
+		!slices.Contains([]string{"internal_error", "fatal_error", "service_unavailable", "request_timeout"}, api.Code)
 }
 
 // sentence is an API refusal's message as Slack shows it: its first letter

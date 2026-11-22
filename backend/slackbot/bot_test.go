@@ -774,3 +774,192 @@ func (brokenStore) ClaimFoundrySlackReply(context.Context, time.Duration) (*mode
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// cardInThread is a turn of Ada's in channel's thread ts(1) that prepared a
+// card, its reply done: the card's action and the card message's ts.
+func (w *world) cardInThread(channel string) (*model.FoundryAgentAction, string) {
+	w.t.Helper()
+	w.message(ada, channel, ts(1), ts(1), "<@U0BOT> load Sales")
+	w.settle()
+	turn := w.last()
+	run := w.claimTurn(turn.ID)
+	a := run.card(time.Now().Add(time.Hour))
+	run.finish(agent.StopAnswered, "")
+	w.until("the card's reply", w.replyDone(turn.ID))
+	r, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
+	require.NoError(w.t, err)
+	require.True(w.t, model.ValidSlackTS(r.Posted["a:"+a.ID]))
+	return a, r.Posted["a:"+a.ID]
+}
+
+// continued is the reply of the turn the agent went on in after a ran, nil
+// for none.
+func (w *world) continued(a *model.FoundryAgentAction) *model.SlackReply {
+	w.t.Helper()
+	for _, t := range w.turns() {
+		if t.Kind == model.FoundryAgentTurnActionResult && t.Input == a.ID {
+			r, err := w.db.GetFoundrySlackReply(w.ctx, t.ID)
+			if err == nil {
+				return r
+			}
+		}
+	}
+	return nil
+}
+
+func TestBusyWaitsAndDeferralsDontUseUpAttempts(t *testing.T) {
+	w := newWorld(t, func(o *Options) { o.Cfg.MaxAttempts = 2 })
+	w.message(ada, dmAda, ts(1), ts(1), "first")
+	w.handle()
+	first := w.only()
+	second := w.message(ada, dmAda, ts(1), ts(2), "second")
+	// Claimed often while the first turn runs: each claim waits.
+	for range 4 {
+		_, err := testDB.Exec(`UPDATE foundry_slack_intake SET next_attempt_at=NOW(6) WHERE id=?`, second)
+		require.NoError(t, err)
+		require.Equal(t, 1, w.handle())
+		require.Equal(t, "queued", w.row(second).status)
+	}
+	r := w.row(second)
+	require.Greater(t, r.attempts, w.cfg.MaxAttempts)
+	assert.Zero(t, r.failures)
+
+	// The first failure after the wait is tried again, not given up.
+	w.founder.sendErr = status.Error(codes.Unavailable, "a rollout")
+	w.claimTurn(first.ID).finish(agent.StopAnswered, "")
+	w.until("the second message tried", func() bool { return w.row(second).failures == 1 })
+	assert.Equal(t, "queued", w.row(second).status)
+	assert.False(t, w.told(ada, "Founder couldn't take this message"))
+	w.founder.sendErr = nil
+	w.settle()
+	assert.Equal(t, "done", w.row(second).status)
+	assert.Len(t, w.turns(), 2)
+}
+
+func TestHeldReplyOfAGivenUpRowIsFollowedAtOnce(t *testing.T) {
+	w := newWorld(t, func(o *Options) { o.Cfg.MaxAttempts = 1 })
+	w.slack.queue("chat.postMessage", http.StatusOK, "", `{"ok":false,"error":"internal_error"}`)
+	in := w.message(ada, dmAda, ts(1), ts(1), "hello")
+	w.handle()
+	assert.Equal(t, "failed", w.row(in).status, "Slack's fault on its last try")
+	turn := w.only()
+	w.claimTurn(turn.ID).finish(agent.StopAnswered, "")
+	w.until("the reply, posted by its follower", w.replyDone(turn.ID))
+	reply, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, reply.MessageTS)
+}
+
+func TestContinuationIsFollowedWhenItsCardCantBeRedrawn(t *testing.T) {
+	for name, refusal := range map[string]func(*fakeSlack){
+		"a rate limit": func(f *fakeSlack) {
+			f.queue("chat.update", http.StatusTooManyRequests, "1", `{"ok":false,"error":"ratelimited"}`)
+		},
+		"a card Slack lost": func(f *fakeSlack) {
+			f.queue("chat.update", http.StatusOK, "", `{"ok":false,"error":"message_not_found"}`)
+		},
+		"Slack's fault": func(f *fakeSlack) { f.queue("chat.update", http.StatusOK, "", `{"ok":false,"error":"internal_error"}`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			a, cardTS := w.cardInThread(dmAda)
+			refusal(w.slack)
+			w.click(slack.Approve{Clicked: w.clicked(ada, dmAda, ts(1), cardTS), ActionID: a.ID, PayloadHash: a.PayloadHash}, ada)
+			w.settle()
+			r := w.continued(a)
+			require.NotNil(t, r, "the continuation's reply")
+			assert.NotNil(t, r.MessageTS, "posted")
+			assert.Equal(t, ts(1), r.ThreadTS)
+		})
+	}
+}
+
+func TestSlackStopOfOnesOwnTurnBesideAnothersSaysNothing(t *testing.T) {
+	w := newWorld(t)
+	w.message(ada, general, ts(1), ts(1), "<@U0BOT> count everything")
+	w.settle()
+	adas := w.last()
+	w.message(grace, general, ts(1), ts(2), "<@U0BOT> and mine")
+	w.settle()
+	graces := w.last()
+	require.NotEqual(t, adas.ID, graces.ID)
+	w.claimTurn(adas.ID)
+	w.claimTurn(graces.ID)
+	w.queueEvent(slack.SessionStopped{At: slack.Conversation{TeamID: team, ChannelID: general, ThreadTS: ts(1)}, UserID: ada}, ada, "")
+	w.handle()
+	got, err := w.db.GetFoundryAgentTurn(w.ctx, w.ws, adas.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentTurnCancelled, got.Status)
+	got, err = w.db.GetFoundryAgentTurn(w.ctx, w.ws, graces.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentTurnRunning, got.Status)
+	assert.False(t, w.told(ada, "Only the person who asked"), "Ada's answer stopped")
+	statuses := w.slack.of("agents.sessions.setStatus")
+	assert.Equal(t, "processing", statuses[len(statuses)-1].args["status"], "Grace's answer goes on")
+}
+
+func TestClicksInChannelsSharedWithOtherOrganisations(t *testing.T) {
+	w := newWorld(t)
+	a, cardTS := w.cardInThread(general)
+	approve := func() {
+		w.click(slack.Approve{Clicked: w.clicked(ada, general, ts(1), cardTS), ActionID: a.ID, PayloadHash: a.PayloadHash}, ada)
+		w.settle()
+	}
+	prepared := func() bool {
+		got, err := w.db.GetFoundryAgentAction(w.ctx, w.ws, a.ID)
+		require.NoError(t, err)
+		return got.Status == model.FoundryAgentActionPrepared
+	}
+
+	// Shared since the card was posted: nothing runs, nothing is posted.
+	w.slack.mu.Lock()
+	w.slack.shared[general] = true
+	w.slack.mu.Unlock()
+	posts := len(w.slack.of("chat.postMessage"))
+	approve()
+	assert.True(t, w.told(ada, "doesn't act in channels shared with other organisations"))
+	assert.True(t, prepared())
+	assert.Len(t, w.slack.of("chat.postMessage"), posts)
+	assert.Equal(t, general, w.slack.of("conversations.info")[0].args["channel"])
+
+	// An install without the scope to tell: nothing runs.
+	w.slack.mu.Lock()
+	w.slack.shared[general], w.slack.infoRefusal = false, "missing_scope"
+	w.slack.mu.Unlock()
+	approve()
+	assert.True(t, w.told(ada, "needs to be added to Slack again"))
+	assert.True(t, prepared())
+
+	// Not shared: it runs, and its continuation is followed in the thread.
+	w.slack.mu.Lock()
+	w.slack.infoRefusal = ""
+	w.slack.mu.Unlock()
+	approve()
+	assert.False(t, prepared())
+	r := w.continued(a)
+	require.NotNil(t, r)
+	assert.Equal(t, general, r.ChannelID)
+	assert.NotNil(t, r.MessageTS)
+}
+
+func TestWorkflowCardsRunOnlyInFoundry(t *testing.T) {
+	w := newWorld(t)
+	w.message(ada, dmAda, ts(1), ts(1), "make a workflow")
+	w.handle()
+	turn := w.only()
+	run := w.claimTurn(turn.ID)
+	a := run.prepared("create_workflow", agent.CreateAutomationDisplay{Name: "Weekly renewals"}, time.Now().Add(time.Hour))
+	run.finish(agent.StopAnswered, "")
+	w.until("the reply", w.replyDone(turn.ID))
+	r, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
+	require.NoError(t, err)
+	// A Run of a card drawn before workflows ran only in Foundry.
+	w.click(slack.Approve{Clicked: w.clicked(ada, dmAda, ts(1), r.Posted["a:"+a.ID]), ActionID: a.ID, PayloadHash: a.PayloadHash}, ada)
+	w.settle()
+	assert.True(t, w.told(ada, "Review this in Foundry and run it there"))
+	got, err := w.db.GetFoundryAgentAction(w.ctx, w.ws, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentActionPrepared, got.Status, "nothing ran")
+	updates := w.slack.of("chat.update")
+	assert.Contains(t, updates[len(updates)-1].text(), "Review in Foundry", "the card redrawn with its link")
+}

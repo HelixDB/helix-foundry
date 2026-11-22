@@ -152,10 +152,15 @@ type fakeSlack struct {
 	lastTS  atomic.Int64
 	onCall  func(call)
 	deleted map[string]bool
+	// shared is the channels shared with another organisation;
+	// infoRefusal, when set, is conversations.info's error code.
+	shared      map[string]bool
+	infoRefusal string
 }
 
 func newFakeSlack(t *testing.T) *fakeSlack {
-	f := &fakeSlack{queued: map[string][]func(call) (int, http.Header, string){}, users: map[string]map[string]any{}, deleted: map[string]bool{}}
+	f := &fakeSlack{queued: map[string][]func(call) (int, http.Header, string){}, users: map[string]map[string]any{}, deleted: map[string]bool{},
+		shared: map[string]bool{}}
 	f.lastTS.Store(1_700_000_000_000_000)
 	for _, u := range []string{ada, grace, alan} {
 		f.users[u] = map[string]any{"id": u, "team_id": team, "name": strings.ToLower(u[2:]), "real_name": "Person " + u[2:], "tz": "Europe/London",
@@ -217,6 +222,15 @@ func (f *fakeSlack) answer(c call) string {
 		return string(b)
 	case "conversations.open":
 		return `{"ok":true,"channel":{"id":"D0OPENED"}}`
+	case "conversations.info":
+		channel := fmt.Sprint(c.args["channel"])
+		f.mu.Lock()
+		shared, refusal := f.shared[channel], f.infoRefusal
+		f.mu.Unlock()
+		if refusal != "" {
+			return fmt.Sprintf(`{"ok":false,"error":%q}`, refusal)
+		}
+		return fmt.Sprintf(`{"ok":true,"channel":{"id":%q,"is_ext_shared":%t}}`, channel, shared)
 	}
 	return `{"ok":true}`
 }
@@ -520,10 +534,11 @@ func (w *world) clicked(user, channel, threadTS, messageTS string) slack.Clicked
 		ActionTS: fmt.Sprintf("1700000500.%06d", w.clicks.Add(1))}
 }
 
-// intakeRow is an intake row's status, attempts and wait.
+// intakeRow is an intake row's status, attempts, failures and wait.
 type intakeRow struct {
 	status   string
 	attempts int
+	failures int
 	waits    sql.NullString
 	next     time.Time
 	error    sql.NullString
@@ -532,8 +547,8 @@ type intakeRow struct {
 func (w *world) row(id string) intakeRow {
 	w.t.Helper()
 	var r intakeRow
-	require.NoError(w.t, testDB.QueryRow(`SELECT status, attempts, waits_on_turn, next_attempt_at, error FROM foundry_slack_intake WHERE id=?`, id).
-		Scan(&r.status, &r.attempts, &r.waits, &r.next, &r.error))
+	require.NoError(w.t, testDB.QueryRow(`SELECT status, attempts, failures, waits_on_turn, next_attempt_at, error FROM foundry_slack_intake WHERE id=?`,
+		id).Scan(&r.status, &r.attempts, &r.failures, &r.waits, &r.next, &r.error))
 	return r
 }
 
@@ -660,14 +675,22 @@ func (r *stubRun) emit(events ...agent.Event) {
 // expiring at expires, with its card event.
 func (r *stubRun) card(expires time.Time) *model.FoundryAgentAction {
 	r.w.t.Helper()
-	display, err := json.Marshal(agent.CreateLoadDisplay{Ontology: agent.Ref{ID: "ont_1", Name: "Sales"}, Version: agent.VersionRef{ID: "ver_3", Number: 3}})
+	return r.prepared("create_load", agent.CreateLoadDisplay{Ontology: agent.Ref{ID: "ont_1", Name: "Sales"}, Version: agent.VersionRef{ID: "ver_3", Number: 3}},
+		expires)
+}
+
+// prepared records an action of operation the turn prepared, drawn as
+// shown, its confirmation expiring at expires, with its card event.
+func (r *stubRun) prepared(operation string, shown any, expires time.Time) *model.FoundryAgentAction {
+	r.w.t.Helper()
+	display, err := json.Marshal(shown)
 	require.NoError(r.w.t, err)
 	actionID := id.New()
 	sealed, keyID, err := r.w.keys.Seal([]byte("token"), actionID)
 	require.NoError(r.w.t, err)
 	hash := fmt.Sprintf("%064x", time.Now().UnixNano())
 	a, err := r.w.db.RecordFoundryAgentAction(r.w.ctx, r.worker, &model.FoundryAgentAction{ID: actionID, TurnID: r.turn.ID, ThreadID: r.turn.ThreadID,
-		WorkspaceID: r.w.ws, UserID: r.turn.UserID, Operation: "create_load", Target: "ont_1", Payload: json.RawMessage(`{"version_id":"ver_3"}`),
+		WorkspaceID: r.w.ws, UserID: r.turn.UserID, Operation: operation, Target: "ont_1", Payload: json.RawMessage(`{"version_id":"ver_3"}`),
 		PayloadHash: hash, Display: display, ConfirmationID: "conf-1", TokenSealed: sealed, KeyID: keyID, Status: model.FoundryAgentActionPrepared,
 		ExpiresAt: expires}, 5, func(a *model.FoundryAgentAction) (json.RawMessage, error) {
 		return agent.MarshalEvent(cardOf(a))
