@@ -602,10 +602,12 @@ type SlackChannelJoin struct {
 }
 
 // SlackBackfillProgress is what a feed's backfill has left: its bound and
-// joined windows, the threads still queued, when each slot may call next,
-// and how many days are lossy.
+// joined windows, how many gap windows are still queued or being read, the
+// threads still queued, when each slot may call next, and how many days are
+// lossy.
 type SlackBackfillProgress struct {
 	Windows       []SlackBackfillWindow
+	LiveGaps      int
 	QueuedThreads int
 	HistoryAt     time.Time
 	RepliesAt     time.Time

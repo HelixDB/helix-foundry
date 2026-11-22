@@ -1405,8 +1405,10 @@ FROM foundry_slack_backfill WHERE feed_id=? AND reason IN ('bound', 'joined') OR
 		return p, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT
+  (SELECT COUNT(*) FROM foundry_slack_backfill WHERE feed_id=? AND reason='gap' AND status IN ('queued', 'running')),
   (SELECT COUNT(*) FROM foundry_slack_backfill_threads WHERE feed_id=? AND status='queued'),
-  (SELECT COUNT(*) FROM foundry_slack_feed_days WHERE feed_id=? AND state='lossy')`, feedID, feedID).Scan(&p.QueuedThreads, &p.LossyDays); err != nil {
+  (SELECT COUNT(*) FROM foundry_slack_feed_days WHERE feed_id=? AND state='lossy')`, feedID, feedID, feedID).Scan(&p.LiveGaps, &p.QueuedThreads,
+		&p.LossyDays); err != nil {
 		return p, err
 	}
 	slots, err := s.db.QueryContext(ctx, `SELECT method, next_at FROM foundry_slack_slots WHERE install_id=?`, feed.InstallID)

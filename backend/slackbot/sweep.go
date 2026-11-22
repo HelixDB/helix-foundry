@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/connector"
@@ -146,7 +147,7 @@ func (b *Bot) orphan(ctx context.Context, feed *model.SlackFeed) string {
 }
 
 // feeds goes through the live feeds of live installs: each staged switch
-// whose bound windows and threads are read flips to the app (flip), and,
+// whose windows and threads are read flips to the app (flip), and,
 // once a day at foundry.slack.feed.close_at past midnight UTC, yesterday's
 // days close and every pushed connector syncs, so their documents are
 // offered.
@@ -191,8 +192,9 @@ func (b *Bot) feeds(ctx context.Context) {
 }
 
 // flip ends feed's connector's staged switch once the backfill read what
-// its bound windows and threads hold, so its mirror covers its window: its
-// days are closed and folded, then the connector reads through the app,
+// its windows (bound, joined and gap ones) and threads hold, so its mirror
+// covers its window: its days are closed and folded, then, unless that
+// fold found channels to read, the connector reads through the app,
 // in full (store.FlipSlackAppConnector). It names how it went: flipped,
 // waiting (a sync live, or the settings changed meanwhile) or error; ""
 // for a connector not staged, or whose backfill is still reading.
@@ -210,20 +212,26 @@ func (b *Bot) flip(ctx context.Context, feed *model.SlackFeed) string {
 	if json.Unmarshal(c.Config, &s) != nil || !s.Staged {
 		return ""
 	}
-	progress, err := b.db.FoundrySlackBackfillProgress(ctx, feed.ID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return ""
-	case err != nil:
-		logger.Warn("read a Slack feed's backfill failed", "err", err)
-		return "error"
-	case progress.QueuedThreads > 0:
-		return ""
-	}
-	for _, w := range progress.Windows {
-		if w.Reason == model.SlackBackfillBound && (w.Status == model.SlackBackfillQueued || w.Status == model.SlackBackfillRunning) {
-			return ""
+	// Each day a window still reads is partial, so the flip's full read
+	// would give it no document: it waits for every window, whatever its
+	// reason, and asks again once the settle's fold has queued the joined
+	// windows of the channels it found.
+	backfilling := func() (bool, string) {
+		progress, err := b.db.FoundrySlackBackfillProgress(ctx, feed.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return true, ""
+		case err != nil:
+			logger.Warn("read a Slack feed's backfill failed", "err", err)
+			return true, "error"
 		}
+		live := progress.QueuedThreads > 0 || progress.LiveGaps > 0 || slices.ContainsFunc(progress.Windows, func(w model.SlackBackfillWindow) bool {
+			return w.Status == model.SlackBackfillQueued || w.Status == model.SlackBackfillRunning
+		})
+		return live, ""
+	}
+	if waiting, outcome := backfilling(); waiting {
+		return outcome
 	}
 	install, err := b.db.GetFoundrySlackInstallByID(ctx, feed.InstallID)
 	if err != nil {
@@ -231,6 +239,9 @@ func (b *Bot) flip(ctx context.Context, feed *model.SlackFeed) string {
 		return "error"
 	}
 	b.settle(ctx, feed, b.appOf(install))
+	if waiting, outcome := backfilling(); waiting {
+		return outcome
+	}
 	s.Staged = false
 	flipped, _ := json.Marshal(s) // plain fields
 	sealed, keyID, err := b.keys.Seal([]byte(""), connector.SecretContext(c.ID))

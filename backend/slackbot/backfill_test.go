@@ -507,6 +507,50 @@ func TestStagedSwitchFlipsOnceItsHistoryIsRead(t *testing.T) {
 	assert.Equal(t, 2, dbCount(t, `SELECT COUNT(*) FROM connector_syncs WHERE connector_id=?`, c.ID), "the sync that held it, and the full read")
 }
 
+// A staged switch waits for every window, not only the bound ones: a
+// channel the bot joined meanwhile, one the settle's fold finds, and a gap
+// all leave days partial, which the flip's full read would give no document.
+func TestStagedSwitchWaitsForEveryWindow(t *testing.T) {
+	w := newFeedWorld(t)
+	const sales, support = "C0SALES", "C0SUPPORT"
+	w.slack.history[general] = []map[string]any{msg(daysAgo(2).Add(time.Hour), ada, "hi")}
+	w.stage(5, general)
+	w.drain()
+	staged := func(why string) {
+		t.Helper()
+		w.bot.Sweep(w.ctx)
+		c, err := w.db.GetConnector(w.ctx, w.ws, w.conn.ID)
+		require.NoError(t, err)
+		assert.False(t, c.Pushed, why)
+	}
+
+	_, err := w.db.JoinFoundrySlackChannels(w.ctx, w.feed.ID, []model.SlackChannelJoin{{ChannelID: sales, CoveredFrom: daysAgo(1), Oldest: daysAgo(5)}})
+	require.NoError(t, err)
+	staged("a joined window is still read")
+	w.drain()
+
+	_, err = w.db.AppendFoundrySlackFeedGaps(w.ctx, w.install.ID, []model.SlackFeedGap{model.SlackMinuteGap(general, daysAgo(2).Add(3*time.Hour))},
+		time.Minute)
+	require.NoError(t, err)
+	staged("a gap window is still read")
+	w.drain()
+
+	joinedAt := daysAgo(1).Add(time.Hour)
+	payload, _ := json.Marshal(map[string]any{"user_id": botUser, "joined_at": joinedAt.Format(time.RFC3339)})
+	_, err = w.db.AppendFoundrySlackFeed(w.ctx, w.install.ID, model.SlackFeedBatch{At: time.Now(), Rows: []model.SlackFeedRow{{
+		DedupeKey: model.SlackEventDedupe("Ev" + id.New()), ChannelID: support, Day: model.SlackDay(joinedAt), Kind: model.SlackRowJoined,
+		Source: model.SlackFeedFromEvent, Payload: payload}}}, model.SlackFeedLimits{Spacing: time.Minute, MaxRows: 1000})
+	require.NoError(t, err)
+	staged("the settle's fold queued a joined window")
+	assert.Equal(t, model.SlackBackfillQueued, w.window(support, model.SlackBackfillJoined).Status)
+	w.drain()
+
+	w.bot.Sweep(w.ctx)
+	c, err := w.db.GetConnector(w.ctx, w.ws, w.conn.ID)
+	require.NoError(t, err)
+	assert.True(t, c.Pushed, "every window read, it flips")
+}
+
 func TestOrphansAreDeletedPastTheirRetention(t *testing.T) {
 	removed := func(w *feedWorld, ago time.Duration) {
 		w.t.Helper()
