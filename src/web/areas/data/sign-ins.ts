@@ -43,6 +43,7 @@ const SIGN_IN_KINDS = {
   calcom: ["Cal.com", "Use an API key instead"],
   stripe: ["Stripe", "Use a restricted key instead"],
   google: ["Google", "Use a service account key instead"],
+  attio: ["Attio", "Use an access token instead"],
 } as const;
 export type SignInKind = keyof typeof SIGN_IN_KINDS;
 

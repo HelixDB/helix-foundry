@@ -13,7 +13,7 @@ The proof of concept on branch `poc/workos-pipes` (`backend/cmd/pipes-poc`, and 
 
 - In: every kind Pipes can sign in to.
   - GitHub, through a read-only GitHub App.
-  - Linear, Slack, Notion, PostHog, Cal.com, Stripe and Google Workspace, through OAuth apps.
+  - Linear, Slack, Notion, PostHog, Cal.com, Stripe, Google Workspace and Attio, through OAuth apps.
   - Accounts are owned by the organization, and Pipes is used for OAuth only.
   - Each kind is offered only once hosted lists it in `pipes.kinds` and its Pipes integration exists ("One-time setup"). The code for all of them ships together and stays dormant until then. Stripe (a Stripe Connect platform) and Google (app verification) need a decision before they are switched on.
 - Out:
@@ -440,6 +440,7 @@ Each kind keeps its connector code and tables. A vended token replaces the key: 
 | `calcom`  | `cal-dot-com`                                  | the user's Cal.com account, through `/v2`                                                                                                                                                                                  | `/v2/me`'s username                              | nothing: no settings                  |
 | `stripe`  | `stripe`                                       | the connected account, with a `read_only` grant. `mode` comes from the vended key's prefix, as from a pasted one                                                                                                           | `/v1/account`'s display name                     | nothing                               |
 | `google`  | `google`                                       | as the signed-in user: their Drive and Calendar, and the directory only for an admin (otherwise that table is unavailable, a discovery problem, not a failure). It skips the service-account exchange and has no `subject` | Drive's `about.user.emailAddress`                | nothing: `event_days` only            |
+| `attio`   | `attio`                                        | the workspace the app is installed in, as far as the app's scopes reach; the token goes as a Bearer token, as a pasted access token does                                                                                   | `/v2/self`'s workspace name and id               | nothing: no settings                  |
 
 ## Hosted Helix (`helix-hyperscale/backend`)
 
@@ -497,7 +498,7 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
 
 - `pipes.enabled`, which gates `Kinds` only, so connectors that already have accounts keep syncing;
 - `pipes.api_key`;
-- `pipes.kinds`: Foundry kind to Pipes slug (`github: github`, `linear: linear`, `slack: slack`, `notion: notion`, `posthog: posthog`, `calcom: cal-dot-com`, `stripe: stripe`, `google: google`). Each stamp lists only the kinds whose integration exists; dev and prod start with `github` and `linear`;
+- `pipes.kinds`: Foundry kind to Pipes slug (`github: github`, `linear: linear`, `slack: slack`, `notion: notion`, `posthog: posthog`, `calcom: cal-dot-com`, `stripe: stripe`, `google: google`, `attio: attio`). Each stamp lists only the kinds whose integration exists; dev and prod start with `github` and `linear`;
 - Foundry's `foundry.connectors.sign_in_return_to` and `foundry.connectors.github_app_install_url`, per stamp.
 
 **Wiring:**
@@ -708,6 +709,7 @@ The dev stamp uses WorkOS staging; production uses WorkOS production.
      - **Cal.com:** an OAuth client, which Cal.com approves.
      - **Stripe:** a Connect platform with `read_only`.
      - **Google:** a verified OAuth client with `drive.readonly`, `calendar.readonly` and `admin.directory.user.readonly`. Drive's scope is restricted and needs Google's security assessment.
+     - **Attio:** an OAuth app at build.attio.com with the scopes `record_permission:read object_configuration:read list_entry:read list_configuration:read note:read task:read user_management:read` (set in the app's settings, not per request). Until Attio reviews and publishes it, the app installs in at most 25 workspaces.
 3. **Pipes integrations**, one per kind switched on (`github`, `linear`, then the others' slugs):
    - organization-owned;
    - custom credentials, set in the dashboard or with `PUT /data-integrations/{slug}/organization`.

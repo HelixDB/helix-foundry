@@ -57,6 +57,7 @@ const appChoices: [ConnectorKindName, string, string][] = [
   ["notion", "Notion", "Pages and databases"],
   ["google", "Google Workspace", "Drive docs, calendars and people"],
   ["databuddy", "Databuddy", "Web analytics: sessions, pages and visitors"],
+  ["attio", "Attio", "CRM: people, companies, deals, lists, notes and tasks"],
 ];
 const databaseChoices: [ConnectorKindName, string, string][] = [
   ["postgres", "PostgreSQL", "Import tables from your database."],

@@ -8025,6 +8025,16 @@
         }
       }
     },
+    "v1AttioConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string",
+          "description": "Attio access token (64 characters), made under Workspace settings ›\nDevelopers with read scopes; write-only."
+        }
+      },
+      "description": "AttioConnectorConfig reads an Attio workspace's CRM: its workspace\nmembers, objects and their records, lists and their entries, notes (each\nalso a Markdown document) and tasks, as far as the token's scopes allow."
+    },
     "v1AuthorizeConnectorSignInResponse": {
       "type": "object",
       "properties": {
@@ -8256,6 +8266,9 @@
         },
         "databuddy": {
           "$ref": "#/definitions/v1DatabuddyConnectorConfig"
+        },
+        "attio": {
+          "$ref": "#/definitions/v1AttioConnectorConfig"
         }
       },
       "description": "ConnectorConfig is a connector's settings. Write-only fields come back empty."
@@ -8311,7 +8324,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, databuddy, postgres, mysql, s3 or events."
+          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, databuddy, attio, postgres, mysql, s3 or events."
         },
         "displayName": {
           "type": "string"

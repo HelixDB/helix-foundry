@@ -49,6 +49,7 @@ export const KINDS: readonly ConnectorKindName[] = [
   "notion",
   "google",
   "databuddy",
+  "attio",
   "postgres",
   "mysql",
   "s3",
@@ -798,7 +799,7 @@ export function picked(
 /** The credential form of one kind. Every field is text as typed. */
 export type ConnectionForm =
   | {
-      kind: "stripe" | "workos" | "linear" | "calcom";
+      kind: "stripe" | "workos" | "linear" | "calcom" | "attio";
       apiKey: string;
     }
   | {
@@ -889,6 +890,7 @@ export function emptyForm(kind: CredentialKind): ConnectionForm {
     case "workos":
     case "linear":
     case "calcom":
+    case "attio":
       return { kind, apiKey: "" };
     case "granola":
       return { kind, apiKey: "", transcripts: false };
@@ -1105,6 +1107,8 @@ export function toConfig(
       return { linear: { apiKey: form.apiKey.trim() } };
     case "calcom":
       return { calcom: { apiKey: form.apiKey.trim() } };
+    case "attio":
+      return { attio: { apiKey: form.apiKey.trim() } };
     case "granola":
       return {
         granola: {
@@ -1212,7 +1216,7 @@ export function toConfig(
  * Slack's history, PostHog's project and event history (US Cloud only: EU
  * Cloud and self-hosted keep their key), Google's event history (it reads as the
  * person who signs in, with no service account or subject); nothing for
- * Linear, Notion, Cal.com and Stripe. Undefined for a kind that can't.
+ * Linear, Notion, Cal.com, Stripe and Attio. Undefined for a kind that can't.
  *
  * @example
  * signInConfig({ kind: "slack", credential: "token", botToken: "", historyDays: "30", noticeVersion: 0 }); // { slack: { historyDays: 30 } }
@@ -1253,6 +1257,8 @@ export function signInConfig(
       return { calcom: {} };
     case "stripe":
       return { stripe: {} };
+    case "attio":
+      return { attio: {} };
     default:
       return undefined;
   }
@@ -1320,6 +1326,8 @@ export function suggestedName(form: ConnectionForm) {
       return "Granola";
     case "databuddy":
       return "Databuddy";
+    case "attio":
+      return "Attio";
     case "slack":
       return "Slack";
     case "notion":

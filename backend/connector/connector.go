@@ -308,6 +308,7 @@ type Endpoints struct {
 	Google      string
 	GoogleToken string
 	Databuddy   string
+	Attio       string
 	// S3 and STS replace AWS's own endpoints in tests; empty uses AWS's.
 	S3  string
 	STS string
@@ -332,6 +333,7 @@ func DefaultEndpoints() Endpoints {
 		Google:      "https://www.googleapis.com",
 		GoogleToken: "https://oauth2.googleapis.com/token",
 		Databuddy:   "https://api.databuddy.cc",
+		Attio:       "https://api.attio.com",
 	}
 }
 
@@ -362,6 +364,7 @@ func NewCatalog(endpoints Endpoints, guard Guard, s3 S3Options, pushed EventsOpt
 		&notionKind{base: endpoints.Notion, http: saas},
 		&googleKind{base: endpoints.Google, tokenURL: endpoints.GoogleToken, http: saas},
 		&databuddyKind{base: endpoints.Databuddy, http: saas},
+		&attioKind{base: endpoints.Attio, http: saas},
 		&postgresKind{guard: guard},
 		&mysqlKind{guard: guard},
 		files,

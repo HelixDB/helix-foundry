@@ -52,6 +52,10 @@ import { layout, type Listed } from "./data-files";
 //   Databuddy key reads the websites web_acme and web_docs; one containing
 //   "nocustom" lacks website permission, so custom_events and profiles
 //   can't be read, and a chosen website it doesn't read fails the test.
+//   An Attio access token is 64 characters; one containing "noscope" lacks
+//   the note:read and task:read scopes, so notes, tasks, task_assignees and
+//   task_records can't be read (each saying which scope it lacks) and
+//   nothing is a document.
 // - Databases: the password "wrong" fails authentication, a host ending in
 //   ".invalid" cannot be reached, and private or loopback hosts are refused
 //   as the connector guard refuses them. Every database holds the same small
@@ -67,7 +71,8 @@ import { layout, type Listed } from "./data-files";
 //   Slack sync reads each day with messages of the channels the app is in
 //   (two of every three of the history_days before the sync's, in each of
 //   five channels, private #leadership among them) into Conversations, a Notion sync its 60 pages with a
-//   body into Pages, and a Google Workspace sync its 14 Docs into Docs and
+//   body into Pages, an Attio sync its 23 notes with a body into Notes,
+//   and a Google Workspace sync its 14 Docs into Docs and
 //   its 4 meeting transcripts (.vtt files in Drive, as WebVTT with
 //   google.go's note of where each is) into Transcripts, and 3 of its 4
 //   PDFs into PDFs, as the files themselves, which the document worker
@@ -129,6 +134,7 @@ export const kinds: MockKind[] = [
   { name: "notion", displayName: "Notion", requiresPro: false },
   { name: "google", displayName: "Google Workspace", requiresPro: false },
   { name: "databuddy", displayName: "Databuddy", requiresPro: false },
+  { name: "attio", displayName: "Attio", requiresPro: false },
   { name: "postgres", displayName: "PostgreSQL", requiresPro: true },
   { name: "mysql", displayName: "MySQL", requiresPro: true },
   { name: "s3", displayName: "Amazon S3", requiresPro: true },
@@ -1811,6 +1817,457 @@ export function addSlackFeedMessage(
   return found.id;
 }
 
+// Attio's REST API (api.attio.com/v2), as attio.go reads it with an access
+// token: the workspace's members, its objects and lists, a table per object
+// of its records and per list of its entries, its notes and its tasks with
+// their assignees and the records they link. An object's table is named by
+// its api_slug in snake_case, a list's by "list_" and its api_slug, keyed by
+// record_id or entry_id, with record_id, created_at and web_url (a list's
+// entry_id, parent_object, parent_record_id and created_at), then a column
+// per attribute but created_at, which those hold (created_by, who made it,
+// is one), holding its active value flattened as attio.go flattens it:
+// a multiselect attribute a JSON array, never null, a currency's code in
+// <slug>_currency, a single record reference's object in <slug>_object, a
+// personal name's parts in <slug>_first_name and <slug>_last_name, an
+// interaction's type in <slug>_type and a location the JSON object of its
+// fields. Each table needs the scopes Attio's endpoints ask for; a token
+// without them can't read it, and the table says which it lacks. A test
+// shows the first rows of each object's and list's table. Each note with a
+// body is a document in Notes, linking its record's page at the path the
+// record's web_url gives its object (person, company, deal). Attio's API
+// reads nothing changed since a time, so every sync reads every table in
+// full.
+type AttioTable = {
+  name: string;
+  key: string[];
+  // As attio.go types them: "" for a column of no one JSON type.
+  columns: [name: string, type: string, nullable?: true][];
+  // The token scopes the table's reads need, as Attio's endpoints list them.
+  scopes: string[];
+  preview: Record<string, unknown>[];
+  rows: number;
+};
+const ATTIO_WORKSPACE = "acme";
+/** A UUID-shaped Attio id, one series per prefix (four hex digits). */
+const attioId = (prefix: string, n: number) =>
+  `${prefix}${String(n).padStart(4, "0")}-5e6f-4a7b-8c9d-0e1f2a3b4c5d`;
+const attioAt = (n: number) =>
+  new Date(Date.parse("2026-03-02T09:00:00.000Z") + n * 86_400_000)
+    .toISOString()
+    .replace(/Z$/, "000000Z");
+const ATTIO_MEMBERS = [
+  ["Ada", "Lovelace", "ada@example.com", "admin"],
+  ["Alan", "Turing", "alan@example.com", "member"],
+  ["Hedy", "Lamarr", "hedy@example.com", "member"],
+  ["Margaret", "Hamilton", "margaret@example.com", "member"],
+] as const;
+const attioMember = (n: number) => attioId("3e3b", n + 1);
+const ATTIO_COMPANIES = [
+  ["Globex", "globex.example.com", "51-250", "London", "GB"],
+  ["Initech", "initech.example.com", "251-1K", "Austin", "US"],
+  ["Umbrella Holdings", "umbrella.example.com", "1K-5K", "Raccoon City", "US"],
+  ["Hooli", "hooli.example.com", "5K-10K", "Palo Alto", "US"],
+  ["Vandelay Industries", "vandelay.example.com", "11-50", "New York", "US"],
+] as const;
+const ATTIO_PEOPLE = [
+  ["Grace", "Hopper", "Head of Operations", 0, "email"],
+  ["Katherine", "Johnson", "VP Engineering", 1, "meeting"],
+  ["Barbara", "Liskov", "CTO", 2, "calendar-event"],
+  ["Frances", "Allen", "Procurement lead", 3, "email"],
+  ["Radia", "Perlman", "Founder", 4, "meeting"],
+] as const;
+const attioCompany = (n: number) => attioId("c0a1", n + 1);
+const attioPerson = (n: number) => attioId("a771", n + 1);
+const attioDeal = (n: number) => attioId("dea1", n + 1);
+const attioRecord = (
+  prefix: string,
+  noun: string,
+  n: number,
+  values: Record<string, unknown>,
+) => {
+  const id = attioId(prefix, n + 1);
+  return {
+    record_id: id,
+    created_at: attioAt(n),
+    web_url: `https://app.attio.com/${ATTIO_WORKSPACE}/${noun}/${id}`,
+    ...values,
+  };
+};
+const attioRecordColumns: AttioTable["columns"] = [
+  ["record_id", "string"],
+  ["created_at", "string", true],
+  ["web_url", "string", true],
+];
+const attioEntryColumns: AttioTable["columns"] = [
+  ["entry_id", "string"],
+  ["parent_object", "string", true],
+  ["parent_record_id", "string", true],
+  ["created_at", "string", true],
+];
+const ATTIO_RECORDS = ["record_permission:read", "object_configuration:read"];
+const ATTIO_TASKS = [
+  "task:read",
+  "object_configuration:read",
+  "record_permission:read",
+  "user_management:read",
+];
+const attioTables: AttioTable[] = [
+  {
+    name: "workspace_members",
+    key: ["workspace_member_id"],
+    columns: [
+      ["workspace_member_id", "string"],
+      ["first_name", "string", true],
+      ["last_name", "string", true],
+      ["email_address", "string", true],
+      ["access_level", "string", true],
+      ["created_at", "string", true],
+    ],
+    scopes: ["user_management:read"],
+    preview: [],
+    rows: ATTIO_MEMBERS.length,
+  },
+  {
+    name: "objects",
+    key: ["object_id"],
+    columns: [
+      ["object_id", "string"],
+      ["api_slug", "string", true],
+      ["singular_noun", "string", true],
+      ["plural_noun", "string", true],
+      ["created_at", "string", true],
+    ],
+    scopes: ["object_configuration:read"],
+    preview: [],
+    rows: 3,
+  },
+  {
+    // The standard People object: Name (personal-name), Email addresses
+    // (email-address, multiselect), Job title (text), Company
+    // (record-reference), Primary location (location) and Last interaction
+    // (interaction).
+    name: "people",
+    key: ["record_id"],
+    columns: [
+      ...attioRecordColumns,
+      ["name", "string", true],
+      ["name_first_name", "string", true],
+      ["name_last_name", "string", true],
+      ["email_addresses", "array"],
+      ["job_title", "string", true],
+      ["company", "string", true],
+      ["company_object", "string", true],
+      ["primary_location", "object", true],
+      ["last_interaction", "string", true],
+      ["last_interaction_type", "string", true],
+      ["created_by", "string", true],
+    ],
+    scopes: ATTIO_RECORDS,
+    preview: ATTIO_PEOPLE.map(([first, last, title, company, met], i) =>
+      attioRecord("a771", "person", i, {
+        name: `${first} ${last}`,
+        name_first_name: first,
+        name_last_name: last,
+        email_addresses: [
+          `${first.toLowerCase()}@${ATTIO_COMPANIES[company][1]}`,
+        ],
+        job_title: title,
+        company: attioCompany(company),
+        company_object: "companies",
+        primary_location: {
+          locality: ATTIO_COMPANIES[company][3],
+          country_code: ATTIO_COMPANIES[company][4],
+        },
+        last_interaction: attioAt(220 - i * 3),
+        last_interaction_type: met,
+        created_by: attioMember(i % ATTIO_MEMBERS.length),
+      }),
+    ),
+    rows: 240,
+  },
+  {
+    // The standard Companies object: Name (text), Domains (domain,
+    // multiselect), Description (text), Categories (select, multiselect),
+    // Employee range (select), Primary location (location) and Team
+    // (record-reference to people, multiselect).
+    name: "companies",
+    key: ["record_id"],
+    columns: [
+      ...attioRecordColumns,
+      ["name", "string", true],
+      ["domains", "array"],
+      ["description", "string", true],
+      ["categories", "array"],
+      ["employee_range", "string", true],
+      ["primary_location", "object", true],
+      ["team", "array"],
+      ["created_by", "string", true],
+    ],
+    scopes: ATTIO_RECORDS,
+    preview: ATTIO_COMPANIES.map(([name, domain, range, city, country], i) =>
+      attioRecord("c0a1", "company", i, {
+        name,
+        domains: [domain],
+        description: i === 4 ? null : `${name} buys from Acme.`,
+        categories: i % 2 ? ["SaaS"] : ["B2B", "Enterprise"],
+        employee_range: range,
+        primary_location: { locality: city, country_code: country },
+        team: i === 4 ? [] : [attioPerson(i)],
+        created_by: attioMember(0),
+      }),
+    ),
+    rows: 85,
+  },
+  {
+    // The standard Deals object: Deal name (text), Deal stage (status),
+    // Deal owner (actor-reference), Deal value (currency), Associated
+    // company (record-reference) and Associated people (record-reference,
+    // multiselect).
+    name: "deals",
+    key: ["record_id"],
+    columns: [
+      ...attioRecordColumns,
+      ["name", "string", true],
+      ["stage", "string", true],
+      ["owner", "string", true],
+      ["value", "number", true],
+      ["value_currency", "string", true],
+      ["associated_company", "string", true],
+      ["associated_company_object", "string", true],
+      ["associated_people", "array"],
+      ["created_by", "string", true],
+    ],
+    scopes: ATTIO_RECORDS,
+    preview: (
+      [
+        ["Globex renewal", "Won", 48000, 0],
+        ["Initech expansion", "In progress", 31200, 1],
+        ["Umbrella pilot", "Lead", null, 2],
+        ["Hooli platform deal", "In progress", 60000, 3],
+        ["Vandelay win-back", "Lost", 0, 4],
+      ] as const
+    ).map(([name, stage, value, company], i) =>
+      attioRecord("dea1", "deal", i, {
+        name,
+        stage,
+        owner: attioMember(i % ATTIO_MEMBERS.length),
+        value,
+        value_currency: value === null ? null : "USD",
+        associated_company: attioCompany(company),
+        associated_company_object: "companies",
+        associated_people: [attioPerson(company)],
+        created_by: attioMember(i % ATTIO_MEMBERS.length),
+      }),
+    ),
+    rows: 64,
+  },
+  {
+    name: "lists",
+    key: ["list_id"],
+    columns: [
+      ["list_id", "string"],
+      ["api_slug", "string", true],
+      ["name", "string", true],
+      ["parent_object", "", true],
+      ["created_at", "string", true],
+    ],
+    scopes: ["list_configuration:read"],
+    preview: [],
+    rows: 1,
+  },
+  {
+    // The "Sales pipeline" list of companies: Stage (status), Owner
+    // (actor-reference), Priority (select), Deal value (currency) and Next
+    // step (text).
+    name: "list_sales_pipeline",
+    key: ["entry_id"],
+    columns: [
+      ...attioEntryColumns,
+      ["stage", "string", true],
+      ["owner", "string", true],
+      ["priority", "string", true],
+      ["deal_value", "number", true],
+      ["deal_value_currency", "string", true],
+      ["next_step", "string", true],
+      ["created_by", "string", true],
+    ],
+    scopes: ["list_entry:read", "list_configuration:read"],
+    preview: (
+      [
+        ["Closed won", "High", 48000, "Send the renewal order form"],
+        ["Negotiation", "High", 31200, "Security review with their CTO"],
+        ["Qualification", "Medium", null, null],
+        ["Proposal", "Medium", 60000, "Pricing call on Thursday"],
+        ["Closed lost", "Low", 0, null],
+      ] as const
+    ).map(([stage, priority, value, next], i) => ({
+      entry_id: attioId("e471", i + 1),
+      parent_object: "companies",
+      parent_record_id: attioCompany(i),
+      created_at: attioAt(40 + i),
+      stage,
+      owner: attioMember((i + 1) % ATTIO_MEMBERS.length),
+      priority,
+      deal_value: value,
+      deal_value_currency: value === null ? null : "USD",
+      next_step: next,
+      created_by: attioMember((i + 1) % ATTIO_MEMBERS.length),
+    })),
+    rows: 48,
+  },
+  {
+    // A note's body is its document, not a column.
+    name: "notes",
+    key: ["note_id"],
+    columns: [
+      ["note_id", "string"],
+      ["parent_object", "string", true],
+      ["parent_record_id", "string", true],
+      ["title", "string", true],
+      ["meeting_id", "string", true],
+      ["created_by_type", "string", true],
+      ["created_by_id", "string", true],
+      ["created_at", "string"],
+    ],
+    scopes: [
+      "note:read",
+      "object_configuration:read",
+      "record_permission:read",
+    ],
+    preview: [],
+    rows: 24,
+  },
+  {
+    name: "tasks",
+    key: ["task_id"],
+    columns: [
+      ["task_id", "string"],
+      ["content", "string", true],
+      ["deadline_at", "string", true],
+      ["is_completed", "boolean"],
+      ["completed_at", "string", true],
+      ["created_by_type", "string", true],
+      ["created_by_id", "string", true],
+      ["created_at", "string", true],
+    ],
+    scopes: ATTIO_TASKS,
+    preview: [],
+    rows: 37,
+  },
+  {
+    // One row per person or team a task is assigned to.
+    name: "task_assignees",
+    key: ["task_id", "assignee_type", "assignee_id"],
+    columns: [
+      ["task_id", "string"],
+      ["assignee_type", "string"],
+      ["assignee_id", "string"],
+    ],
+    scopes: ATTIO_TASKS,
+    preview: [],
+    rows: 41,
+  },
+  {
+    // One row per record a task links, its object by api_slug.
+    name: "task_records",
+    key: ["task_id", "target_object", "target_record_id"],
+    columns: [
+      ["task_id", "string"],
+      ["target_object", "string"],
+      ["target_record_id", "string"],
+    ],
+    scopes: ATTIO_TASKS,
+    preview: [],
+    rows: 52,
+  },
+];
+// A task's assignees and linked records hang off it; record references are
+// polymorphic (any object), so nothing else links.
+const attioForeignKeys: Record<string, ConnectorForeignKey[]> = {
+  task_assignees: [fk("task_id", "tasks")],
+  task_records: [fk("task_id", "tasks")],
+};
+/**
+ * The scopes a mock Attio token holds: every read scope, but one containing
+ * "noscope" lacks note:read and task:read.
+ */
+const attioScopes = (secret: string) =>
+  new Set(
+    [
+      "user_management:read",
+      "object_configuration:read",
+      "record_permission:read",
+      "list_configuration:read",
+      "list_entry:read",
+      "note:read",
+      "task:read",
+    ].filter(
+      (s) =>
+        !secret.includes("noscope") || (s !== "note:read" && s !== "task:read"),
+    ),
+  );
+
+const attioNotesStream: MockStream = {
+  name: "notes",
+  table: "notes",
+  title: "Notes",
+  description:
+    "Notes written in Attio on its records, one document each: the note's title as a heading, then its " +
+    "Markdown body. The notes table names the record each is on (parent_object, parent_record_id), its meeting " +
+    "and who wrote it.",
+  mediaType: "text/markdown",
+};
+const ATTIO_NOTES = [
+  [
+    "Discovery call",
+    "## Context\n\n- {who} runs operations and owns the budget.\n- They track renewals in spreadsheets today.\n\n## Next steps\n\n1. Send the **security overview**.\n2. Book a demo with the wider team.",
+  ],
+  [
+    "Pricing follow-up",
+    "{who} asked for annual pricing with a *volume discount*. We offered 12% off for a two-year term.",
+  ],
+  [
+    "Renewal check-in",
+    "## Summary\n\n- Renewal is on track for next quarter.\n- {who} wants SSO before signing.\n\nSee [the renewal terms](https://example.com/terms).",
+  ],
+  [
+    "Security review",
+    "- SOC 2 report sent to {who}.\n- ~~Pen test summary~~ replaced by the 2026 report.\n- Open question: data residency in the EU.",
+  ],
+  ["", "Quick note: {who} is out until Monday; follow up then."],
+  [
+    "QBR prep",
+    "### Agenda\n\n- Usage this quarter\n- ==Expansion== into the support team\n- Roadmap preview",
+  ],
+] as const;
+const ATTIO_PARENTS = ["people", "companies", "deals"] as const;
+/** Each object's segment of its records' web_url paths. */
+const ATTIO_PATHS = { people: "person", companies: "company", deals: "deal" };
+// The workspace's notes, newest first: one on each object in turn, the
+// fifth of each six without a title, and the last with no body, which is
+// no document.
+const attioNotes = Array.from({ length: 24 }, (_, i) => {
+  const [title, body] = ATTIO_NOTES[i % ATTIO_NOTES.length]!,
+    parent = ATTIO_PARENTS[i % ATTIO_PARENTS.length]!,
+    n = i % 5,
+    who = `${ATTIO_PEOPLE[n][0]} ${ATTIO_PEOPLE[n][1]}`;
+  return {
+    id: attioId("a0be", i + 1),
+    title,
+    parentObject: parent,
+    parentRecordId:
+      parent === "people"
+        ? attioPerson(n)
+        : parent === "companies"
+          ? attioCompany(n)
+          : attioDeal(n),
+    createdAt: new Date(
+      Date.parse("2026-10-21T09:30:00.000Z") - i * 31 * 3_600_000,
+    ).toISOString(),
+    markdown: i === 23 ? "" : body.replaceAll("{who}", who),
+  };
+});
+
 /**
  * A source's permissions at one read (connector.Audiences): its people by
  * email, trimmed and lowercased, with its guests, and each item by key with
@@ -1870,7 +2327,8 @@ export function slackAudiences(src: Source): MockAudiences | string {
  * source, as the kinds write it: a Granola note's "1|" and updated_at (an
  * edited one's is the sync's time), a channel day's "2|" and hashes of its
  * messages and of the names they show, a Notion page's "2|", last edit and
- * week of its weekly re-read, and a Drive file's (a Doc, a transcript or a
+ * week of its weekly re-read, an Attio note's "1|" and 32 hex digits of
+ * a hash of its title and body, and a Drive file's (a Doc, a transcript or a
  * PDF) "1|", modified time, Drive's version and a hash of its name, owner
  * and link. A PDF's body is the file itself.
  */
@@ -2055,6 +2513,32 @@ export function documentStreams(
           }),
       },
     ];
+  if ("attio" in s) {
+    const held = attioScopes(src.secret);
+    return [
+      {
+        stream: attioNotesStream,
+        documents: attioTables
+          .find((t) => t.name === attioNotesStream.table)!
+          .scopes.every((scope) => held.has(scope))
+          ? attioNotes
+              .filter((n) => n.markdown)
+              .map((n) => ({
+                externalId: n.id,
+                // attio.go's version: "1|" and 32 hex digits of the SHA-256
+                // of the title and body, which Attio dates no edit of.
+                version: `1|${sha(`${n.title}\0${n.markdown}`, 32)}`,
+                at: n.createdAt,
+                title: n.title || "Untitled note",
+                // attio.go's link: the path the object's records' web_url
+                // give it, then the record's id.
+                url: `https://app.attio.com/${ATTIO_WORKSPACE}/${ATTIO_PATHS[n.parentObject]}/${n.parentRecordId}`,
+                text: `# ${n.title || "Untitled note"}\n\n${n.markdown}`,
+              }))
+          : null,
+      },
+    ];
+  }
   if (!("granola" in s)) return [];
   const transcripts = !!s.granola.transcripts;
   return granolaStreams.map((stream) => ({
@@ -2983,6 +3467,15 @@ export function prepare(
         workspaceId,
       };
     }
+    case "attio": {
+      if (signIn) return signedIn(kind, { attio: {} }, workspaceId);
+      // attio.go's check: Attio's tokens are 64 characters (bytes, as Go
+      // counts them), with no space or control character.
+      const token = String(raw.apiKey || "").trim();
+      if (Buffer.byteLength(token) !== 64 || /[\s\p{Cc}]/u.test(token))
+        return invalid("enter an Attio access token (64 characters)");
+      return { kind, settings: { attio: {} }, secret: token, workspaceId };
+    }
     case "notion": {
       if (signIn) return signedIn(kind, { notion: {} }, workspaceId);
       const token = String(raw.token || "").trim();
@@ -3110,6 +3603,7 @@ export function discover(
           google:
             "Google rejected this service account key; check it and paste it again",
           databuddy: "Databuddy rejected this key; check it and enter it again",
+          attio: "Attio rejected this token; check it and enter it again",
         } as Partial<Record<ConnectorKindName, string>>
       )[src.kind]!,
     );
@@ -3270,6 +3764,46 @@ export function discover(
       settings: s,
     };
   }
+  if ("attio" in s) {
+    // attio.go reads the token's scopes from /v2/self: a table whose
+    // endpoints need a scope the token lacks is unavailable, naming them.
+    const held = attioScopes(src.secret),
+      lacks = (t: AttioTable) => t.scopes.filter((scope) => !held.has(scope)),
+      readable = attioTables.filter((t) => !lacks(t).length),
+      names = new Set(readable.map((t) => t.name));
+    const tables = readable.map(
+      (t): ConnectorTable => ({
+        name: t.name,
+        // A column of no one type (a list's parent_object) has none.
+        columns: t.columns.map(([name, type, nullable]) => ({
+          name,
+          ...(type ? { type } : {}),
+          ...(nullable ? { nullable } : {}),
+        })),
+        primaryKey: t.key,
+        foreignKeys: (attioForeignKeys[t.name] || []).filter((f) =>
+          names.has(f.referencedTable),
+        ),
+        ...(t.preview.length
+          ? { preview: t.preview.map((row) => JSON.stringify(row)) }
+          : {}),
+      }),
+    );
+    const unavailable = attioTables
+      .filter((t) => lacks(t).length)
+      .map((t) => {
+        const missing = lacks(t);
+        return `${t.name}: the token lacks the ${
+          missing.length === 1
+            ? `${missing[0]} scope`
+            : `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)} scopes`
+        }`;
+      });
+    return {
+      discovery: unavailable.length ? { tables, unavailable } : { tables },
+      settings: s,
+    };
+  }
   if ("databuddy" in s) {
     const lost = (s.databuddy.websiteIds || []).find(
       (id) => !databuddySites.includes(id),
@@ -3314,6 +3848,8 @@ export function hint(src: Source) {
     return src.secret.length < 12 ? "…" : "xoxb…" + src.secret.slice(-4);
   if (src.kind === "s3")
     return src.secret ? "secret …" + src.secret.slice(-4) : "IAM role";
+  // An Attio token has no prefix: only its last four characters.
+  if (src.kind === "attio") return keyHint(src.secret, 0);
   return src.kind === "postgres" || src.kind === "mysql"
     ? "password set"
     : keyHint(
@@ -3362,6 +3898,7 @@ export function syncTables(src: Source): SyncedSnapshot[] | string {
           notion: notionTables.map((t) => object(t.name, [], [], t.rows)),
           google: googleObjects,
           databuddy: databuddyObjects,
+          attio: attioTables.map((t) => object(t.name, [], [], t.rows)),
         } as Partial<Record<ConnectorKindName, ApiObject[]>>
       )[src.kind]!;
   // Slack's history is what its days hold: two messages each (a fed day
