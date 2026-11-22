@@ -263,6 +263,8 @@ func TestSlackLastRetry(t *testing.T) {
 	t.Run("counts a gap lost when it names no team, or the pod holds its most", func(t *testing.T) {
 		d := newDoor(t, full)
 		spend(d)
+		var logs bytes.Buffer
+		d.h.slack.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 		lost := slackRequestsTotal.WithLabelValues("events", "feed", "gap_lost")
 		before := testutil.ToFloat64(lost)
 		requireGap(t, d.do(retried(eventsPath, strings.Replace(feedBody, `"T1"`, `"t-1"`, 1), slackLastRetry)))
@@ -272,6 +274,14 @@ func TestSlackLastRetry(t *testing.T) {
 		requireGap(t, d.do(retried(eventsPath, feedBody, slackLastRetry)))
 		assert.Equal(t, before+2, testutil.ToFloat64(lost))
 		assert.Len(t, d.h.slack.gaps.take(), maxFeedGaps)
+		// Each is logged, though refused for room, which hosted alarms on.
+		lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+		require.Len(t, lines, 2)
+		for _, line := range lines {
+			assert.Contains(t, line, `"level":"WARN"`)
+			assert.Contains(t, line, `"msg":"foundry slack request"`)
+			assert.Contains(t, line, `"outcome":"gap_lost"`)
+		}
 	})
 }
 

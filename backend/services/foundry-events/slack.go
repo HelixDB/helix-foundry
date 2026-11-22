@@ -105,8 +105,8 @@ const classNone = "none"
 //
 // Every refusal but a gap's 200 is the door's JSON error body, which Slack ignores. Each request
 // logs one line, its route, class, status and outcome, never its body, headers or address, but a
-// refusal for room, which a flood is answered with; and counts in
-// helix_foundry_slack_requests_total.
+// refusal for room, which a flood is answered with (a gap lost for room is logged all the same);
+// and counts in helix_foundry_slack_requests_total.
 type slackDoor struct {
 	backend backendAPI
 	// read is the room bodies are read in, before their class is known: of its gate (endpoint.slack's
@@ -171,7 +171,9 @@ func (s *slackDoor) serveHTTP(w http.ResponseWriter, r *http.Request, route slac
 	quiet := false
 	switch {
 	case answer.gap != "":
-		outcome, httpStatus, quiet = answer.gap, http.StatusOK, answer.cause == nil
+		// A gap lost is always logged, which hosted alarms on; one recorded for room isn't, as a
+		// flood's refusals aren't.
+		outcome, httpStatus, quiet = answer.gap, http.StatusOK, answer.cause == nil && answer.gap != "gap_lost"
 		w.Header().Set("X-Slack-No-Retry", "1")
 		w.WriteHeader(http.StatusOK)
 	case answer.fail != nil:
