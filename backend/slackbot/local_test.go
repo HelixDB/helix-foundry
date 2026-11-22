@@ -221,13 +221,31 @@ func TestLocalCardsAreTheOwnersWhileApproving(t *testing.T) {
 	stored, err := w.db.GetFoundryAgentAction(w.ctx, w.ws, card.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionPrepared, stored.Status)
-	assert.Empty(t, w.slack.of("conversations.info"), "a relayed install's channels are never shared ones")
+	assert.Empty(t, w.slack.of("conversations.info"), "a direct message is never shared")
 
 	door.approve(true)
 	approve(ada)
 	stored, err = w.db.GetFoundryAgentAction(w.ctx, w.ws, card.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.FoundryAgentActionSucceeded, stored.Status)
+}
+
+// A relayed install asks Slack, through the relay, whether a channel it
+// was sent a card in has been shared with another organisation since: Helix
+// relays the click without asking.
+func TestLocalClicksInChannelsSharedSince(t *testing.T) {
+	w, door := newLocalWorld(t)
+	a, cardTS := w.cardInThread(general)
+	w.slack.mu.Lock()
+	w.slack.shared[general] = true
+	w.slack.mu.Unlock()
+	w.click(slack.Approve{Clicked: w.clicked(ada, general, ts(1), cardTS), ActionID: a.ID, PayloadHash: a.PayloadHash}, ada)
+	w.settle()
+	assert.True(t, w.told(ada, "doesn't act in channels shared with other organisations"))
+	stored, err := w.db.GetFoundryAgentAction(w.ctx, w.ws, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryAgentActionPrepared, stored.Status)
+	assert.Contains(t, door.took(), doorCall{method: "conversations.info", workspace: w.ws}, "asked through the relay")
 }
 
 // A call the relay refuses for good is Slack's refusal: the row gives up,

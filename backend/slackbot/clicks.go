@@ -270,11 +270,11 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 // sharedChannel is why nothing acts where k was clicked, "" for nothing:
 // outside a direct message it asks Slack whether the channel is shared
 // with another organisation (conversations.info), where Helix Foundry acts
-// on nothing, or can't tell (an install without the scope).
+// on nothing, or can't tell (an install without the scope). A relayed
+// install asks too: a channel it was sent a card in may have been shared
+// since, and Helix relays clicks without asking.
 func (b *Bot) sharedChannel(ctx context.Context, c claim, k slack.Clicked) (string, error) {
-	// Helix's relay takes nothing from a channel shared with another
-	// organisation, and a relayed install's calls may name none.
-	if inDM(k.ChannelID) || b.relayed != nil {
+	if inDM(k.ChannelID) {
 		return "", nil
 	}
 	shared, err := b.slack.ExtShared(ctx, c.bot, k.ChannelID)
