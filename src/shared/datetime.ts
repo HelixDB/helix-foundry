@@ -65,7 +65,5 @@ export function helixDateTime(raw: string): string | undefined {
     offset * 60_000 +
     (second === 60 ? 1000 : 0) +
     Number((m[7] || "").slice(0, 3).padEnd(3, "0"));
-  return ms < FIRST_MS || ms > LAST_MS
-    ? undefined
-    : new Date(ms).toISOString();
+  return ms < FIRST_MS || ms > LAST_MS ? undefined : new Date(ms).toISOString();
 }

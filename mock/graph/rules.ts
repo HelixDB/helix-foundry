@@ -1129,9 +1129,7 @@ type Where = NonNullable<Query["start"]["where"]>;
 // A prop as the engine's JSON writes it (schema's Instant, AutoSi): a
 // DateTime with no fraction when it is a whole second, else three digits.
 const engineValue = (v: Value | undefined): Value =>
-  v instanceof HelixDateTime
-    ? v.toJSON().replace(/\.000Z$/, "Z")
-    : (v ?? null);
+  v instanceof HelixDateTime ? v.toJSON().replace(/\.000Z$/, "Z") : (v ?? null);
 
 /**
  * Whether a node passes every condition, as the engine tests them. A
@@ -1142,8 +1140,7 @@ const engineValue = (v: Value | undefined): Value =>
 function passes(n: MockNode, where: Where): boolean {
   return where.every((c) => {
     const held = n.props[c.prop];
-    const v =
-      held instanceof HelixDateTime ? held.ms : (held ?? null);
+    const v = held instanceof HelixDateTime ? held.ms : (held ?? null);
     if (c.op === "is_null") return v === null;
     if (c.op === "not_null") return v !== null;
     // A comparison never holds for an absent value, `!=` included.

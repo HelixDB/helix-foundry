@@ -212,7 +212,9 @@ describe("mock DateTime", () => {
     expect(
       runQuery(
         graph(),
-        read({ aggregate_by: { input: all, function: "median", property: "at" } }),
+        read({
+          aggregate_by: { input: all, function: "median", property: "at" },
+        }),
       ).status,
     ).toBe(400);
   });
@@ -277,7 +279,10 @@ describe("mock typed parameters", () => {
       "value",
       { array: "string", extra: 1 },
     ])
-      expect(eqParam("2026-03-14T08:30:00Z", type).status, JSON.stringify(type)).toBe(400);
+      expect(
+        eqParam("2026-03-14T08:30:00Z", type).status,
+        JSON.stringify(type),
+      ).toBe(400);
   });
 
   it("takes every other type it models", () => {
@@ -296,7 +301,15 @@ describe("mock typed parameters", () => {
     const named = (
       params: Record<string, unknown>,
       types: Record<string, unknown>,
-    ) => runQuery(graph(), read(where({ eq: { left: { property: "at" }, right: dt } }), params, types));
+    ) =>
+      runQuery(
+        graph(),
+        read(
+          where({ eq: { left: { property: "at" }, right: dt } }),
+          params,
+          types,
+        ),
+      );
     expect(named({ x: "a" }, {}).body).toEqual({
       error: "invalid_query_json",
       msg: 'parameter schema names do not match values (missing values: [], extra values: ["x"])',

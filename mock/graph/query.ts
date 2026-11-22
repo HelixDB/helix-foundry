@@ -470,11 +470,18 @@ function typedParam(name: string, type: unknown, v: Value): Value {
               : undefined;
   if (fits === undefined) {
     const of = isRecord(type) ? type.array : undefined;
-    if (Object.keys(type || {}).length !== 1 || (of !== "string" && of !== "i64"))
-      refuse(`parameter '${name}': the mock doesn't model type ${JSON.stringify(type)}`);
+    if (
+      Object.keys(type || {}).length !== 1 ||
+      (of !== "string" && of !== "i64")
+    )
+      refuse(
+        `parameter '${name}': the mock doesn't model type ${JSON.stringify(type)}`,
+      );
     return Array.isArray(v)
       ? v.map((x, i) => typedParam(`${name}[${i}]`, of, x))
-      : refuse(`parameter '${name}' expected array of ${of}, but received ${kindOf(v)}`);
+      : refuse(
+          `parameter '${name}' expected array of ${of}, but received ${kindOf(v)}`,
+        );
   }
   if (!fits)
     refuse(`parameter '${name}' expected ${type}, but received ${kindOf(v)}`);
@@ -489,7 +496,8 @@ function typedParams(req: Ast): Props {
   const values = (req.parameters || {}) as Props;
   if (req.parameter_types === undefined) return values;
   const types = req.parameter_types as Record<string, unknown>;
-  const names = (xs: string[]) => `[${xs.map((x) => JSON.stringify(x)).join(", ")}]`;
+  const names = (xs: string[]) =>
+    `[${xs.map((x) => JSON.stringify(x)).join(", ")}]`;
   const missing = Object.keys(types).filter((k) => !(k in values)),
     extra = Object.keys(values).filter((k) => !(k in types));
   if (missing.length || extra.length)

@@ -51,28 +51,28 @@ func newRebuildFixture(t *testing.T) rebuildFixture {
 	return rebuildFixture{db: db, st: store.NewMySQL(db, Workspaces{}), ws: w.GetId(), log: &bytes.Buffer{}}
 }
 
-// id is a 26-character id from tag.
-func id(tag string) string { return (tag + strings.Repeat("0", 26))[:26] }
+// tagID is a 26-character id from tag.
+func tagID(tag string) string { return (tag + strings.Repeat("0", 26))[:26] }
 
 // ontology makes ontology FO<tag> with a ready current load, FJ<tag>,
 // created before the install first started this release when earlier.
 func (f rebuildFixture) ontology(t *testing.T, tag string, earlier bool) string {
 	t.Helper()
 	ctx := context.Background()
-	o := &model.FoundryOntology{ID: id("FO" + tag), WorkspaceID: f.ws, Name: "Ontology " + tag, ProjectID: id("FP" + tag),
-		TenantID: id("FT" + tag), ClientToken: "ontology-" + tag}
+	o := &model.FoundryOntology{ID: tagID("FO" + tag), WorkspaceID: f.ws, Name: "Ontology " + tag, ProjectID: tagID("FP" + tag),
+		TenantID: tagID("FT" + tag), ClientToken: "ontology-" + tag}
 	if err := f.st.CreateFoundryOntology(ctx, o); err != nil {
 		t.Fatal(err)
 	}
-	v := &model.OntologyVersion{ID: id("FV" + tag), WorkspaceID: f.ws, OntologyID: o.ID, Source: model.OntologySourceGenerated,
+	v := &model.OntologyVersion{ID: tagID("FV" + tag), WorkspaceID: f.ws, OntologyID: o.ID, Source: model.OntologySourceGenerated,
 		Format: model.OntologyFormatAgentBundle, Definition: json.RawMessage(`{}`), DocumentSetIDs: &[]string{}}
 	if err := f.st.CreateOntologyVersion(ctx, v); err != nil {
 		t.Fatal(err)
 	}
 	f.load(t, o.ID, v.ID, "FJ"+tag)
-	f.end(t, id("FJ"+tag), model.FoundryGraphJobSucceeded)
+	f.end(t, tagID("FJ"+tag), model.FoundryGraphJobSucceeded)
 	if earlier {
-		if _, err := f.db.Exec(`UPDATE foundry_loads SET created_at = DATE_SUB(created_at, INTERVAL 1 DAY) WHERE id = ?`, id("FJ"+tag)); err != nil {
+		if _, err := f.db.Exec(`UPDATE foundry_loads SET created_at = DATE_SUB(created_at, INTERVAL 1 DAY) WHERE id = ?`, tagID("FJ"+tag)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,8 +83,8 @@ func (f rebuildFixture) ontology(t *testing.T, tag string, earlier bool) string 
 func (f rebuildFixture) load(t *testing.T, ontologyID, versionID, tag string) {
 	t.Helper()
 	token := "load-" + tag
-	if err := f.st.CreateFoundryLoad(context.Background(), &model.FoundryGraphJob{ID: id(tag), WorkspaceID: f.ws, OntologyID: ontologyID,
-		VersionID: versionID, LoadID: id(tag), Kind: model.FoundryGraphJobLoad, Phase: model.FoundryGraphJobProvisioning, ClientToken: &token}); err != nil {
+	if err := f.st.CreateFoundryLoad(context.Background(), &model.FoundryGraphJob{ID: tagID(tag), WorkspaceID: f.ws, OntologyID: ontologyID,
+		VersionID: versionID, LoadID: tagID(tag), Kind: model.FoundryGraphJobLoad, Phase: model.FoundryGraphJobProvisioning, ClientToken: &token}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -98,7 +98,7 @@ func (f rebuildFixture) end(t *testing.T, jobID string, status model.FoundryGrap
 		t.Fatalf("claim %s: %v, %v", jobID, job, err)
 	}
 	if _, err := f.st.FinishFoundryGraphJob(ctx, job.ID, "w", model.FoundryGraphJobOutcome{Status: status, IngestDone: true,
-		Next: model.FoundryGraphNext{ExtractID: id("NX" + jobID[2:]), DeleteID: id("ND" + jobID[2:]), ResendID: id("NR" + jobID[2:]), RetainLoads: 5}}); err != nil {
+		Next: model.FoundryGraphNext{ExtractID: tagID("NX" + jobID[2:]), DeleteID: tagID("ND" + jobID[2:]), ResendID: tagID("NR" + jobID[2:]), RetainLoads: 5}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -162,13 +162,13 @@ func TestRebuildOwedLoadsOnAnUpgrade(t *testing.T) {
 	old := f.ontology(t, "A", true)
 	busy := f.ontology(t, "B", true)
 	current := f.ontology(t, "C", false)
-	f.load(t, busy, id("FVB"), "UB")
+	f.load(t, busy, tagID("FVB"), "UB")
 
 	f.rebuild(t)
 	if job, origin := f.live(t, old); job == "" || origin != model.FoundryLoadByRefresh {
 		t.Fatalf("old: %q %q", job, origin)
 	}
-	if job, origin := f.live(t, busy); job != id("UB") || origin != model.FoundryLoadByUser {
+	if job, origin := f.live(t, busy); job != tagID("UB") || origin != model.FoundryLoadByUser {
 		t.Fatalf("busy: %q %q", job, origin)
 	}
 	if job, _ := f.live(t, current); job != "" {
@@ -183,9 +183,9 @@ func TestRebuildOwedLoadsOnAnUpgrade(t *testing.T) {
 	rebuilt, _ := f.live(t, old)
 
 	// The next start: the user's load ended, the old rebuild still runs.
-	f.end(t, id("UB"), model.FoundryGraphJobFailed)
+	f.end(t, tagID("UB"), model.FoundryGraphJobFailed)
 	f.rebuild(t)
-	if job, origin := f.live(t, busy); job == "" || job == id("UB") || origin != model.FoundryLoadByRefresh {
+	if job, origin := f.live(t, busy); job == "" || job == tagID("UB") || origin != model.FoundryLoadByRefresh {
 		t.Fatalf("busy, next start: %q %q", job, origin)
 	}
 	if job, _ := f.live(t, old); job != rebuilt {

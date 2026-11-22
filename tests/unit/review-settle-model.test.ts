@@ -962,9 +962,9 @@ describe("whether a stored value is the one a decision chose", () => {
     // A datetime's decision is the backend's text for it (no fraction, or
     // three digits); the load stores Helix's DateTime, read as `…mmmZ`.
     const at = { text: "2026-03-14T08:30:00Z" };
-    expect(
-      model.holdsDecided(at, "2026-03-14T08:30:00.000Z", "datetime"),
-    ).toBe(true);
+    expect(model.holdsDecided(at, "2026-03-14T08:30:00.000Z", "datetime")).toBe(
+      true,
+    );
     expect(
       model.holdsDecided(
         { text: "2026-03-14T08:30:00.250Z" },
@@ -989,13 +989,17 @@ describe("whether a stored value is the one a decision chose", () => {
       expect(model.holdsDecided(at, stored, "datetime"), stored).toBe(false);
     expect(model.holdsDecided(at, 1773477000000, "datetime")).toBe(false);
     expect(
-      model.holdsDecided({ text: "soon" }, "2026-03-14T08:30:00.000Z", "datetime"),
+      model.holdsDecided(
+        { text: "soon" },
+        "2026-03-14T08:30:00.000Z",
+        "datetime",
+      ),
     ).toBe(false);
     // A string prop's text compares as it is.
     expect(model.holdsDecided(at, "2026-03-14T08:30:00Z", "string")).toBe(true);
-    expect(
-      model.holdsDecided(at, "2026-03-14T08:30:00.000Z", "string"),
-    ).toBe(false);
+    expect(model.holdsDecided(at, "2026-03-14T08:30:00.000Z", "string")).toBe(
+      false,
+    );
   });
   it("is never so for a value removed, or a property that holds none", () => {
     expect(model.holdsDecided({ null: null }, "usd", "string")).toBe(false);
@@ -1003,7 +1007,11 @@ describe("whether a stored value is the one a decision chose", () => {
       false,
     );
     expect(
-      model.holdsDecided({ null: null }, "2026-03-14T08:30:00.000Z", "datetime"),
+      model.holdsDecided(
+        { null: null },
+        "2026-03-14T08:30:00.000Z",
+        "datetime",
+      ),
     ).toBe(false);
   });
 });

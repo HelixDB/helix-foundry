@@ -515,9 +515,13 @@ describe("search and filters", () => {
     expect(s.kind === "match" && Object.keys(s.params).sort()).toEqual([
       "q",
       "qd",
+      "qn",
     ]);
     const words = searchOf(named, "morning");
-    expect(words.kind === "match" && Object.keys(words.params)).toEqual(["q"]);
+    expect(words.kind === "match" && Object.keys(words.params).sort()).toEqual([
+      "q",
+      "qn",
+    ]);
     expect(JSON.stringify(words)).not.toContain("taken_at");
   });
 
@@ -1001,7 +1005,9 @@ describe("records of a type keyed by a datetime", () => {
   });
 
   it("sorts them by instant", () => {
-    expect(names(read({ sort: { column: RECORD_COLUMN, dir: "asc" } }))).toEqual([
+    expect(
+      names(read({ sort: { column: RECORD_COLUMN, dir: "asc" } })),
+    ).toEqual([
       "2026-02-01T09:00:00.000Z",
       "2026-02-01T10:00:00.000Z",
       "2026-02-02T09:00:00.250Z",
@@ -1021,7 +1027,9 @@ describe("records of a type keyed by a datetime", () => {
       "2026-02-02T09:00:00.250Z",
     ]);
     expect(search("2026-02-03T09:00:00Z")).toEqual([]);
-    expect(pageRead(SCOPE, reading, view({ type: "Reading", search: "2026-02" }))).toEqual({
+    expect(
+      pageRead(SCOPE, reading, view({ type: "Reading", search: "2026-02" })),
+    ).toEqual({
       kind: "none",
     });
   });

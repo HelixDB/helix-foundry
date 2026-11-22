@@ -465,8 +465,12 @@ describe("mock date_time parameters", () => {
     });
     // The DateTime only, rendered as Helix renders one.
     expect(
-      (await read("ten_acme_sandbox", at("2026-03-14T09:30:00+01:00", "date_time")))
-        .body,
+      (
+        await read(
+          "ten_acme_sandbox",
+          at("2026-03-14T09:30:00+01:00", "date_time"),
+        )
+      ).body,
     ).toEqual({ r: [{ $id: 0, at: "2026-03-14T08:30:00.000Z" }] });
     // As text, the text only.
     expect(
@@ -511,9 +515,9 @@ describe("a mock decision of a datetime prop", () => {
       new HelixDateTime(Date.UTC(2026, 0, 6, 16, 0, 0, 250)),
     );
     expect(g.node(id)!.props.note).toBe("2026-01-06T16:00:00Z");
-    expect(decideValue(g, "Invoice", "sin_2", "created_at", decisions, true)).toBe(
-      false,
-    );
+    expect(
+      decideValue(g, "Invoice", "sin_2", "created_at", decisions, true),
+    ).toBe(false);
   });
 });
 
@@ -621,9 +625,9 @@ describe("mock ontologies", () => {
       expect(created.get(id), String(id)).toEqual(
         HelixDateTime.parse(String(at)),
       );
-    expect(
-      [...created.values()].every((v) => v instanceof HelixDateTime),
-    ).toBe(true);
+    expect([...created.values()].every((v) => v instanceof HelixDateTime)).toBe(
+      true,
+    );
   });
 
   it("deletes Foundry's rows and its loads, never the database's own data", async () => {
