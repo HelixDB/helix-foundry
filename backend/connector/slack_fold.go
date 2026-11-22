@@ -586,9 +586,12 @@ func (f *slackFolding) delete(ctx context.Context, channel, ts, thread string) (
 	if day.Before(f.window) {
 		return true, nil
 	}
-	d, err := f.day(ctx, model.SlackDayKey{ChannelID: channel, Day: day})
-	if err != nil {
-		return true, err
+	// A day the mirror holds was read above.
+	key := model.SlackDayKey{ChannelID: channel, Day: day}
+	d := f.days[key]
+	if d == nil {
+		d = &slackMirrorDay{entries: map[string]*slackEntry{}, state: model.SlackDayPartial}
+		f.days[key] = d
 	}
 	d.entries[ts], d.changed = &slackEntry{Message: gone, Gone: true}, true
 	return true, nil

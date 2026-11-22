@@ -307,6 +307,12 @@ func (k *slackAppKind) Changes(ctx context.Context, src Source, tables []Table, 
 	if err != nil {
 		return nil, err
 	}
+	// The directory's tables are reset, never written here: the names its
+	// documents need are listed without writing rows.
+	directory := map[string]bool{}
+	for _, t := range []string{"users", "channels", "channel_members"} {
+		directory[t], p.read[t] = p.read[t], false
+	}
 	feed, err := k.Feed.GetFoundrySlackFeed(ctx, src.ConnectorID)
 	if err != nil {
 		return nil, fmt.Errorf("read the Slack feed of connector %s: %w", src.ConnectorID, err)
@@ -332,7 +338,7 @@ func (k *slackAppKind) Changes(ctx context.Context, src Source, tables []Table, 
 		Channels: names}
 	if !now.Before(prev.DirectoryAt.Add(k.DirectoryEvery)) || !maps.Equal(prev.Channels, names) {
 		for _, t := range []string{"users", "channels", "channel_members"} {
-			if p.read[t] {
+			if directory[t] {
 				w.Reset(t, "the directory is listed again")
 			}
 		}

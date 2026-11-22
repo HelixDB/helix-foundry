@@ -36,13 +36,22 @@ type slackFeedFake struct {
 	before     func()
 	failCommit error
 	failGet    error
+	// fail is what each method, by name, returns instead of its answer.
+	fail map[string]error
+}
+
+// failed is what method returns instead of its answer, if anything.
+func (f *slackFeedFake) failed(method string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail[method]
 }
 
 var errSlackFakeConflict = errors.New("store: conflict")
 
 func newSlackFeedFake() *slackFeedFake {
 	return &slackFeedFake{feed: model.SlackFeed{ID: "feed1", ConnectorID: "conn1", WorkspaceID: "ws1", TeamID: "T1", InstallID: "inst1"},
-		days: map[model.SlackDayKey]model.SlackFeedDay{}, channels: map[string]model.SlackChannelJoin{}}
+		days: map[model.SlackDayKey]model.SlackFeedDay{}, channels: map[string]model.SlackChannelJoin{}, fail: map[string]error{}}
 }
 
 // append buffers a row of kind on channel's day from source, its payload raw JSON.
@@ -67,7 +76,10 @@ func (f *slackFeedFake) GetFoundrySlackFeed(_ context.Context, connectorID strin
 	return &feed, nil
 }
 
-func (f *slackFeedFake) FoundrySlackFeedAfter(_ context.Context, feedID string, after int64, budget model.SlackFeedBudget) ([]model.SlackFeedRow, error) {
+func (f *slackFeedFake) FoundrySlackFeedAfter(_ context.Context, _ string, after int64, budget model.SlackFeedBudget) ([]model.SlackFeedRow, error) {
+	if err := f.failed("FoundrySlackFeedAfter"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if budget.Rows < 1 {
@@ -121,6 +133,9 @@ func (f *slackFeedFake) CommitFoundrySlackFold(_ context.Context, fold model.Sla
 }
 
 func (f *slackFeedFake) FoundrySlackDaysAfter(_ context.Context, _ string, seq int64) ([]model.SlackFeedDay, error) {
+	if err := f.failed("FoundrySlackDaysAfter"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var days []model.SlackFeedDay
@@ -139,6 +154,9 @@ func (f *slackFeedFake) FoundrySlackDaysAfter(_ context.Context, _ string, seq i
 }
 
 func (f *slackFeedFake) MarkFoundrySlackDaysDocumented(_ context.Context, _ string, days []model.SlackDayKey) error {
+	if err := f.failed("MarkFoundrySlackDaysDocumented"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := slackNow().UTC()
@@ -153,12 +171,18 @@ func (f *slackFeedFake) MarkFoundrySlackDaysDocumented(_ context.Context, _ stri
 }
 
 func (f *slackFeedFake) ListFoundrySlackFeedChannels(context.Context, string) ([]model.SlackChannelJoin, error) {
+	if err := f.failed("ListFoundrySlackFeedChannels"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.SortedFunc(maps.Values(f.channels), func(a, b model.SlackChannelJoin) int { return strings.Compare(a.ChannelID, b.ChannelID) }), nil
 }
 
 func (f *slackFeedFake) JoinFoundrySlackChannels(_ context.Context, _ string, joins []model.SlackChannelJoin) (int, error) {
+	if err := f.failed("JoinFoundrySlackChannels"); err != nil {
+		return 0, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := 0
@@ -176,6 +200,9 @@ func (f *slackFeedFake) JoinFoundrySlackChannels(_ context.Context, _ string, jo
 }
 
 func (f *slackFeedFake) PurgeFoundrySlackChannel(_ context.Context, _, channelID string) error {
+	if err := f.failed("PurgeFoundrySlackChannel"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.purges = append(f.purges, channelID)
