@@ -355,6 +355,35 @@ func TestBotModeKeyRefused(t *testing.T) {
 	assert.NotNil(t, got.RevokedAt)
 }
 
+// A Slack thread whose Founder thread read a source taken from the bot
+// since says so at once and ends, rather than retrying a send Founder
+// refuses for good; a new Slack thread starts afresh.
+func TestBotThreadWhoseSourcesWereTakenEnds(t *testing.T) {
+	w, _, _ := newBotWorld(t, func(o *Options) { o.Cfg.MaxAttempts = 3 })
+	w.botMessage(alan, general, ts(1), ts(1), "<@U0BOT> how many renewals?")
+	w.settle()
+	first := w.only()
+	w.claimTurn(first.ID).finish(agent.StopAnswered, "")
+	w.until("the reply", w.replyDone(first.ID))
+
+	w.founder.mu.Lock()
+	w.founder.sendErr = status.Error(codes.NotFound, "thread not found")
+	sends := w.founder.sends
+	w.founder.mu.Unlock()
+	row := w.botMessage(grace, general, ts(1), ts(2), "<@U0BOT> and last month?")
+	w.settle()
+	assert.Equal(t, "done", w.row(row).status)
+	assert.True(t, w.told(grace, "I can't go on with this conversation"))
+	w.founder.mu.Lock()
+	assert.Equal(t, sends+1, w.founder.sends, "Founder is asked once")
+	w.founder.sendErr = nil
+	w.founder.mu.Unlock()
+
+	w.botMessage(grace, general, ts(3), ts(3), "<@U0BOT> how many renewals?")
+	w.settle()
+	assert.NotEqual(t, first.ThreadID, w.last().ThreadID)
+}
+
 func TestProposalsAreReviewedAndRunByAnOwnerOrAdmin(t *testing.T) {
 	w, _, appr := newBotWorld(t)
 	actions, cards := w.proposed("create_load", time.Now().Add(time.Hour))

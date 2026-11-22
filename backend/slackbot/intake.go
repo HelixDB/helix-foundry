@@ -375,6 +375,11 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	case isBot && status.Code(err) == codes.PermissionDenied:
 		// The API no longer takes the key as the install's bot.
 		return tell(botOff)
+	case thread != nil && status.Code(err) == codes.NotFound:
+		// The Founder thread the Slack thread continues read a source its
+		// principal (the bot, or a restricted member) no longer holds, so
+		// Founder hides it from them for good: the conversation ends here.
+		return tell(threadLost)
 	case refusedInWords(err):
 		return tell(sentence(err))
 	default:
@@ -440,6 +445,11 @@ func (b *Bot) localAccess(ctx context.Context, c claim, m said, u slack.User) (m
 // botOff is what someone talking to the install's bot is told once its key
 // no longer works: Founder refuses it, revoked, changed, or bot mode off.
 const botOff = "Bot mode is off: an owner or admin can turn it on again in Settings › Slack."
+
+// threadLost is what someone is told in a Slack thread whose Founder thread
+// read a source taken from whom it answers as since: it can't go on.
+const threadLost = "I can't go on with this conversation: some of what it read is no longer shared with me. " +
+	"Ask me again in a new message, outside this thread."
 
 // speaker is a Slack user's name as a bot's turn says who wrote it: on one
 // line, without control characters, at most maxSpeakerChars.
