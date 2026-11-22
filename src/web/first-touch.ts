@@ -119,8 +119,8 @@ export function readFirstTouch(
   )
     return null;
   const tag = (key: string) => {
-    const value = v[key];
-    return typeof value === "string" ? sanitiseTag(value) : undefined;
+    const field = v[key];
+    return typeof field === "string" ? sanitiseTag(field) : undefined;
   };
   const touch = {
     source: tag("source"),
