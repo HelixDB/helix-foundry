@@ -1131,7 +1131,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-16", PromptVersion)
+	assert.Equal(t, "assistant-17", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {
