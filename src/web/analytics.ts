@@ -42,6 +42,7 @@ import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
 import type { SignInFailureCode } from "./areas/data/sign-ins";
 import * as localUsage from "./local-usage";
+import { storedFirstTouch, type FirstTouchProperties } from "./first-touch";
 
 // Product analytics, in Databuddy. next.config.ts sets the client id only in
 // a build for a stamp's own origin (the hosted site, whose pages load the
@@ -140,13 +141,15 @@ export type Refusal = "rate_limit" | "refused" | "error";
  * event names only, so every step of the funnel is an event of its own.
  * Properties are a fixed vocabulary: never a person's or resource's name or
  * id, an email, a question, a goal or a file name. Every event also carries
- * the workspace open and the signed-in user's email (`globals`).
+ * the workspace open and the signed-in user's email (`globals`). The sign-up
+ * funnel's events also carry the first touch (./first-touch.ts): campaign
+ * tags, a referring host and a masked path.
  */
 export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
   sign_in_started: {
     method: "github" | "google" | "microsoft" | "password" | "password_sign_up";
-  };
+  } & FirstTouchProperties;
   sign_in_failed: { reason: SignInError };
   // WorkOS emailed a code before it signs the address in (/login/verify):
   // shown, a code refused or not checked, and a right one.
@@ -161,8 +164,10 @@ export type AnalyticsEvents = {
   };
   password_reset_requested: undefined;
   password_reset: undefined;
-  login_completed: { destination: "workspace" | "onboarding" };
-  workspace_created: undefined;
+  login_completed: {
+    destination: "workspace" | "onboarding";
+  } & FirstTouchProperties;
+  workspace_created: FirstTouchProperties;
   // A workspace with no ontology shows only the new-ontology wizard, which
   // first asks how to start: the sample (sample_clicked), the user's own
   // data, or their agent (setup_prompt_copied).
@@ -537,6 +542,13 @@ export async function trackBeforeLeavingAt<Name extends AnalyticsEventName>(
 const SIGNING_IN = "foundry.analytics.signing-in";
 
 /**
+ * The first touch's properties (./first-touch.ts), for the sign-up funnel's
+ * events: none in a local build, which keeps none.
+ */
+export const firstTouch = (): FirstTouchProperties =>
+  LOCAL ? {} : storedFirstTouch();
+
+/**
  * The sign-in page's provider button, before the page leaves for WorkOS:
  * remembered until the user is signed in. Resolves once it may leave.
  */
@@ -549,7 +561,7 @@ export async function signInStarted(
   } catch {
     // Storage blocked: login_completed goes unreported.
   }
-  await trackBeforeLeaving("sign_in_started", { method });
+  await trackBeforeLeaving("sign_in_started", { method, ...firstTouch() });
 }
 
 /** The app signed in, with its workspaces read: reports a sign-in this tab started, once. */
@@ -562,7 +574,7 @@ export function signedIn(
   } catch {
     return;
   }
-  trackEvent("login_completed", { destination });
+  trackEvent("login_completed", { destination, ...firstTouch() });
 }
 
 // Helix's own people: a browser signed in with a company email, or marked

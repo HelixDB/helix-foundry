@@ -90,7 +90,7 @@ export function agentGuide({ origin, mcpUrl, eventsUrl }: Site): string {
 
 > ${SUMMARY}
 
-- Sign in: ${origin}/login (Foundry Free is $0)
+- Sign in: ${origin}/login?utm_source=llms_txt&utm_medium=agent&utm_campaign=guide (Foundry Free is $0; open it exactly as written)
 - Helix MCP: ${mcpUrl}
 - Docs: ${DOCS}/foundry/start-here/introduction
 - Source, to run it on your own machine: ${SOURCE}
@@ -233,16 +233,22 @@ export function llmsFullTxt(
 What “Set up with your agent” copies: from no account to an ontology an agent can ask, through the Helix MCP. Follow it with your user, step by step.
 
 \`\`\`\`markdown
-${setupPrompt(site)}
+${setupPrompt(site, "llms_txt")}
 \`\`\`\`
 
 ${pages ? `## Docs\n\n${pages}` : docsSection(index)}
 `;
 }
 
-/** The setup prompt for someone without a workspace yet. */
-export const setupPrompt = ({ origin, mcpUrl, eventsUrl }: Site): string =>
-  onboardingPrompt({ origin, mcpUrl, eventsUrl, workspace: null }).trim();
+/**
+ * The setup prompt for someone without a workspace yet, its sign-up link
+ * tagged with where it is read (`via`).
+ */
+export const setupPrompt = (
+  { origin, mcpUrl, eventsUrl }: Site,
+  via: "foundry_new" | "llms_txt",
+): string =>
+  onboardingPrompt({ origin, mcpUrl, eventsUrl, via, workspace: null }).trim();
 
 /**
  * /setup.md, what https://foundry.new serves: the setup prompt, under a line
@@ -251,7 +257,7 @@ export const setupPrompt = ({ origin, mcpUrl, eventsUrl }: Site): string =>
 export const setupMd = (site: Site): string =>
   `> Helix Foundry’s setup, for an agent whose user asked it to set up Foundry (“setup https://${SETUP_HOST}”). It is written in your user’s voice: follow it with them, step by step.
 
-${setupPrompt(site)}
+${setupPrompt(site, "foundry_new")}
 `;
 
 /**
