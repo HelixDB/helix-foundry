@@ -1,0 +1,451 @@
+// One card of the review walkthrough (./walkthrough.tsx), and the parts every
+// card of the Review page shares: its head, its evidence (the quote, its
+// document and its section, first, before anything is said of it), a claim's
+// line and the verifier's score. A walkthrough card asks one question, says
+// what Founder suggests and what a choice does, then offers the choices, each
+// a button that also has a key (./keys.ts). Members read it, settling nothing.
+import type { ReactNode, Ref } from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft, ArrowRight, MessageCircle, Undo2 } from "lucide-react";
+import { Button, Tag, plural } from "../../kit";
+import { paths } from "../../paths";
+import { useWorkspace } from "../../ui";
+import { useDocumentNames } from "../documents/documents-api";
+import { evidenceShapeText, heldUnnamed, reviewCopy } from "../documents/model";
+import type { Span } from "../explore/model";
+import type { Naming } from "../explore/naming";
+import { useOntology } from "../ontology/scope";
+import { settleOf, type Advice, type Decidable, type Effect } from "./advice";
+import type { Choice } from "./choices";
+import type { KeyCommand } from "./keys";
+import { holdingEnds, propValueText, type Statement } from "./model";
+import { BAND_TEXT, bandOf, scoreText } from "./queue";
+import { ClaimWritten } from "./settle";
+import { FounderSuggestion } from "./suggestion";
+import type { Outcome } from "./walk";
+
+export function CardHead({
+  title,
+  random,
+}: {
+  title: string;
+  random?: boolean;
+}) {
+  return (
+    <div className="rq-head">
+      <h3>{title}</h3>
+      {random && <Tag tone="accent">Random check</Tag>}
+    </div>
+  );
+}
+
+/**
+ * Where a card's claim is, before anything is said of it: its quote, its
+ * document and its section, linked to the document's review at the quote.
+ */
+export function Evidence({
+  at,
+  quote,
+}: {
+  at: Span & { documentId: string };
+  quote: string;
+}) {
+  const { id: ws } = useWorkspace(),
+    { id: o } = useOntology();
+  const name = useDocumentNames(ws, "a document");
+  const text = quote.trim();
+  return (
+    <div className="rq-evidence">
+      {text ? <blockquote>“{text}”</blockquote> : null}
+      <p>
+        <Link to={paths.document(o, at.documentId, "review", at)}>
+          {name(at.documentId)}
+        </Link>{" "}
+        · section {at.section + 1}
+      </p>
+    </div>
+  );
+}
+
+/** What a claim states: its ends, as named, and its link. */
+export function ClaimLine({
+  from,
+  link,
+  to,
+}: {
+  from?: string;
+  link: string;
+  to?: string;
+}) {
+  return (
+    <>
+      <strong>{from ?? "…"}</strong> <span aria-label="to">→</span>{" "}
+      <code>{link}</code> <span aria-label="to">→</span>{" "}
+      <strong>{to ?? "…"}</strong>
+    </>
+  );
+}
+export const statementLine = (s: Statement, link: string) => (
+  <ClaimLine from={s.subject.name} link={link} to={s.object.name} />
+);
+
+/** The verifier's score, after the evidence: what the model said. */
+export function Score({ confidence }: { confidence?: number }) {
+  return (
+    <p className="rq-score on-muted">
+      {confidence === undefined || bandOf(confidence) === "none"
+        ? "The verifier gave it no score."
+        : `Verifier score ${scoreText(confidence)} (${BAND_TEXT[bandOf(confidence)]}).`}
+    </p>
+  );
+}
+
+/**
+ * How a held claim or value is stated, and, for one the checker scored
+ * high but its part of the document doesn't name the end of (contract
+ * 4.18.0), why it is held anyway: nothing for a shape or reason this site
+ * doesn't know.
+ */
+export function HeldHow({
+  review,
+}: {
+  review: {
+    reason: string;
+    candidates: readonly unknown[];
+    confidence?: number;
+    evidenceShape?: string;
+  };
+}) {
+  const shape = evidenceShapeText(review.evidenceShape);
+  const copy = reviewCopy(
+    review.reason,
+    review.candidates.length,
+    review.confidence,
+  );
+  return (
+    <>
+      {heldUnnamed(review.reason, review.confidence) && (
+        <p role="note">
+          <strong>{copy.title}.</strong> {copy.text}
+        </p>
+      )}
+      {shape && <p className="on-muted">How it’s stated: {shape}</p>}
+    </>
+  );
+}
+
+/**
+ * A card in one line, as the rail, a batch's list and the load-changed
+ * banner name it: a name and its type, a claim's ends and link, a value's
+ * property and entity.
+ *
+ * @example
+ * cardLine(nameCard); // "“Umbrella Holdings” · Customer"
+ */
+export function cardLine(card: Decidable): string {
+  switch (card.kind) {
+    case "name": {
+      const s = settleOf(card);
+      return `“${card.review.quote.trim() || s.normName}” · ${s.type}`;
+    }
+    case "claim": {
+      const { statement: st, link } = settleOf(card);
+      return `${st.subject.name} → ${link} → ${st.object.name}`;
+    }
+    case "value": {
+      const s = settleOf(card);
+      return `${s.prop} of ${card.review.candidates[0]?.entity?.name ?? s.type}`;
+    }
+  }
+}
+
+/** The key a button's choice has, as the walkthrough's keys read it. */
+const keyOf = (c: Choice, i: number) =>
+  c.kind === "not_in_data" ? "N" : c.kind === "reject" ? "X" : String(i + 1);
+
+/** What became of a card in this walk, said on it. */
+function OutcomeLine({
+  outcome,
+  choices,
+  coveredBy,
+}: {
+  outcome?: Outcome;
+  choices: readonly Choice[];
+  coveredBy?: string;
+}) {
+  switch (outcome?.kind) {
+    case undefined:
+      return null;
+    case "sending":
+    case "saved": {
+      // The choice made: sent as it is, or saved as the backend keeps it.
+      const label = choices.find((c) => {
+        if (outcome.kind === "sending")
+          return JSON.stringify(c.decision) === JSON.stringify(outcome.choice);
+        const d = outcome.decision;
+        switch (d.kind) {
+          case "resolve":
+            return (
+              !!c.decision.resolve &&
+              c.decision.resolve.entityKey === d.entityKey &&
+              !!c.decision.resolve.notInData === !d.entityKey
+            );
+          case "prop":
+            return JSON.stringify(c.decision.prop) === JSON.stringify(d.value);
+          case "reject":
+            return c.kind === "reject";
+          default:
+            return c.kind === "approve";
+        }
+      })?.label;
+      return (
+        <p role="status" className="rv-outcome">
+          {outcome.kind === "sending" ? "Saving" : "Saved"}
+          {label ? `: ${label}` : ""}. Undo with Z while it’s your last choice.
+        </p>
+      );
+    }
+    case "refused":
+      return (
+        <p role="alert" className="hf-form-error">
+          Couldn’t save it: {outcome.message}
+          {outcome.retry ? " Choose again." : ""}
+        </p>
+      );
+    case "skipped":
+      return (
+        <p role="status" className="rv-outcome">
+          Skipped. Choose now, or come back to it at the end.
+        </p>
+      );
+    case "covered":
+      return (
+        <p role="status" className="rv-outcome">
+          Settled by your link{coveredBy ? ` of ${coveredBy}` : ""}: the load
+          links this name in every document asking about it.
+        </p>
+      );
+    case "elsewhere":
+      return (
+        <p role="status" className="rv-outcome">
+          Decided by someone else meanwhile.
+        </p>
+      );
+  }
+}
+
+/** A key's hint beside its button, hidden from screen readers (aria-keyshortcuts says it). */
+const Kbd = ({ children }: { children: ReactNode }) => (
+  <kbd aria-hidden>{children}</kbd>
+);
+
+/**
+ * One card of the walkthrough: the question, the evidence, what the card
+ * concerns, Founder's suggestion and what a choice does (`effect`), what
+ * became of it (`outcome`), then its actions, each a command the walkthrough
+ * also takes from a key: Accept (with a suggestion), the numbered choices,
+ * Skip, Back, Undo, Accept all like this (`batch`, the cards it takes), Ask
+ * Founder (`founder`). `readOnly` (a member, or a load that isn't current)
+ * shows the card without its choices; a card decided in this walk shows
+ * what became of it instead.
+ */
+export function ReviewCard({
+  card,
+  advice,
+  choices,
+  effect,
+  outcome,
+  coveredBy,
+  readOnly,
+  batch,
+  founder,
+  naming,
+  headingRef,
+  onCommand,
+}: {
+  card: Decidable;
+  advice: Advice;
+  choices: readonly Choice[];
+  effect: Effect | null;
+  outcome?: Outcome;
+  coveredBy?: string;
+  readOnly: boolean;
+  batch: number;
+  founder: boolean;
+  naming: Naming;
+  headingRef: Ref<HTMLHeadingElement>;
+  onCommand: (c: KeyCommand) => void;
+}) {
+  const { id: ws } = useWorkspace(),
+    { id: o } = useOntology();
+  const docName = useDocumentNames(ws, "A document");
+  const open =
+    !outcome || outcome.kind === "refused" || outcome.kind === "skipped";
+  const suggested =
+    advice.kind === "suggest"
+      ? choices.find(
+          (c) => JSON.stringify(c.decision) === JSON.stringify(advice.choice),
+        )
+      : undefined;
+  const headingId = `rv-card-${card.key}`;
+  return (
+    <article className="rv-card" aria-labelledby={headingId}>
+      <header className="rv-card-head">
+        <Tag>
+          {card.kind === "name"
+            ? "Name"
+            : card.kind === "claim"
+              ? "Held claim"
+              : "Value"}
+        </Tag>
+        <h2 id={headingId} ref={headingRef} tabIndex={-1}>
+          {card.kind === "name"
+            ? `${docName(card.review.documentId)} names “${card.review.quote.trim() || settleOf(card).normName}”. Which ${settleOf(card).type} is it?`
+            : card.kind === "claim"
+              ? `Is this right: ${cardLine(card)}?`
+              : `Which ${settleOf(card).prop} of ${card.review.candidates[0]?.entity?.name ?? `this ${settleOf(card).type}`} is right?`}
+        </h2>
+      </header>
+      <Evidence at={card.review} quote={card.review.quote} />
+      {card.kind === "claim" && (
+        <div className="rv-card-body">
+          <ClaimWritten
+            settle={settleOf(card)}
+            single={
+              !naming.version || naming.oneValued.has(settleOf(card).link)
+            }
+            holding={holdingEnds(
+              settleOf(card).unsettled,
+              !naming.version || naming.oneValued.has(settleOf(card).link),
+            )}
+            link={(path) => path}
+          />
+          <Score confidence={card.review.confidence} />
+          <HeldHow review={card.review} />
+        </div>
+      )}
+      {card.kind === "name" && (card.blocked > 0 || card.held.length > 0) && (
+        <p className="rv-card-body">
+          {card.blocked > 0 &&
+            `Settling it writes ${plural(card.blocked, "fact")} the load holds back for it. `}
+          {card.held.length > 0 &&
+            `${plural(card.held.length, "held claim")} ${card.held.length > 1 ? "wait" : "waits"} on it, next.`}
+        </p>
+      )}
+      {card.kind === "value" && (
+        <div className="rv-card-body">
+          {settleOf(card).table !== undefined && (
+            <p>The table holds another value; documents state these:</p>
+          )}
+          <ul className="ex-evidence-list" aria-label="Conflicting values">
+            {settleOf(card).values.map((v, i) => (
+              <li key={i}>
+                <strong>{propValueText(v.value)}</strong>
+                {" · "}
+                <Link to={paths.document(o, v.documentId, "review", v)}>
+                  “{v.quote}”
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <HeldHow review={card.review} />
+        </div>
+      )}
+      <FounderSuggestion
+        advice={advice}
+        effect={effect}
+        label={suggested?.label}
+      />
+      <OutcomeLine outcome={outcome} choices={choices} coveredBy={coveredBy} />
+      {readOnly ? (
+        <p className="on-muted">Owners and admins settle reviews.</p>
+      ) : (
+        open && (
+          <div className="rv-actions">
+            {suggested && (
+              <Button
+                variant="primary"
+                aria-keyshortcuts="Enter"
+                onClick={() => onCommand({ kind: "accept" })}
+              >
+                Accept <Kbd>⏎</Kbd>
+              </Button>
+            )}
+            <ul className="rv-choices" aria-label="Choices">
+              {choices.map((c, i) => (
+                <li key={c.id}>
+                  <Button
+                    aria-keyshortcuts={keyOf(c, i)}
+                    onClick={() => onCommand({ kind: "choose", index: i })}
+                  >
+                    <Kbd>{keyOf(c, i)}</Kbd> {c.label}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      )}
+      <div className="rv-nav">
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-keyshortcuts="ArrowLeft"
+          onClick={() => onCommand({ kind: "back" })}
+        >
+          <ArrowLeft size={14} aria-hidden /> Back
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-keyshortcuts="S"
+          onClick={() => onCommand({ kind: "skip" })}
+        >
+          {open && !readOnly ? "Skip" : "Next"}{" "}
+          <ArrowRight size={14} aria-hidden />
+        </Button>
+        {!readOnly && (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-keyshortcuts="Z"
+              onClick={() => onCommand({ kind: "undo" })}
+            >
+              <Undo2 size={14} aria-hidden /> Undo
+            </Button>
+            {batch > 1 && open && (
+              <Button
+                size="sm"
+                aria-keyshortcuts="G"
+                onClick={() => onCommand({ kind: "batch" })}
+              >
+                Accept all like this ({batch}) <Kbd>G</Kbd>
+              </Button>
+            )}
+          </>
+        )}
+        {founder && (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-keyshortcuts="F"
+            onClick={() => onCommand({ kind: "founder" })}
+          >
+            <MessageCircle size={14} aria-hidden /> Ask Founder
+          </Button>
+        )}
+        {!readOnly && (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-keyshortcuts="Shift+?"
+            onClick={() => onCommand({ kind: "help" })}
+          >
+            Shortcuts <Kbd>?</Kbd>
+          </Button>
+        )}
+      </div>
+    </article>
+  );
+}

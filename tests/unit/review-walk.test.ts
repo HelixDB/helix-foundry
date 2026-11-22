@@ -397,22 +397,36 @@ describe("walkReducer", () => {
     const w = walkOf(["a", "b"], { at: 1 });
     expect(current(run(w, { type: "undone", keys: ["z"] }))).toBe("b");
   });
-  it("rebases on the same load keeping every outcome", () => {
-    const w = run(walkOf(["a", "b", "c"]), decide("a"), { type: "skip" });
+  it("rebases on the same load keeping every outcome, and gone cards in place", () => {
+    const w = run(walkOf(["a", "b", "c", "e"]), decide("a"), { type: "skip" });
     expect(current(w)).toBe("c");
     const r = run(w, {
       type: "rebase",
       loadId: "L",
       order: ["c", "d"],
-      elsewhere: new Set(["b", "d"]),
+      // e left the walk (a filter) but not the queue.
+      gone: new Set(["a", "b", "x"]),
     });
-    expect(r.order).toEqual(["c", "d"]);
+    expect(r.order).toEqual(["a", "b", "c", "d"]);
     expect(current(r)).toBe("c");
+    // Decided here, then gone from the queue: still this walk's.
     expect(r.outcomes.get("a")?.kind).toBe("sending");
     // Skipped, then decided by someone else.
     expect(r.outcomes.get("b")).toEqual({ kind: "elsewhere" });
-    expect(r.outcomes.get("d")).toEqual({ kind: "elsewhere" });
+    expect(r.outcomes.has("x")).toBe(false);
     expect(r.undo).toEqual([["a"]]);
+  });
+  it("keeps a gone card after the card before it, shown when it was", () => {
+    const w = walkOf(["a", "b", "c"], { at: 1 });
+    const r = run(w, {
+      type: "rebase",
+      loadId: "L",
+      order: ["c", "a"],
+      gone: new Set(["b"]),
+    });
+    expect(r.order).toEqual(["c", "a", "b"]);
+    expect(current(r)).toBe("b");
+    expect(r.outcomes.get("b")).toEqual({ kind: "elsewhere" });
   });
   it("rebases on a new load keeping what is in its order or still sending", () => {
     const w = run(
@@ -426,7 +440,8 @@ describe("walkReducer", () => {
       type: "rebase",
       loadId: "L2",
       order: ["x", "a", "y"],
-      elsewhere: new Set(["a"]),
+      // Another load's queue: nothing of the old order stays for being gone.
+      gone: new Set(["c"]),
     });
     expect(r.loadId).toBe("L2");
     // Saved here, so not someone else's; b is still sending.
@@ -452,7 +467,7 @@ describe("walkReducer", () => {
       type: "rebase",
       loadId: "L2",
       order: ["a", "c"],
-      elsewhere: new Set(),
+      gone: new Set(),
     });
     expect(current(r)).toBe("c");
   });

@@ -253,7 +253,7 @@ export type AnalyticsEvents = {
   // prepared, then run (how it ended), dismissed or refused, with whether
   // the person named its target. Never the text, a name or a payload.
   agent_dock_opened: {
-    from: "shortcut" | "button" | "palette" | "new_dashboard";
+    from: "shortcut" | "button" | "palette" | "new_dashboard" | "review";
   };
   agent_turn_started: { section: AgentSection };
   agent_turn_ended: {

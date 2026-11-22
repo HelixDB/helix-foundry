@@ -112,7 +112,7 @@ function NameReviews({
  * claim (`holding`, holdingEnds), are named as the document writes them,
  * each with the way to its review.
  */
-function ClaimWritten({
+export function ClaimWritten({
   settle,
   single,
   holding,

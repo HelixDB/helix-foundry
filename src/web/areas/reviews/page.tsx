@@ -1,8 +1,8 @@
 // The Review page (/ontology/:ontologyId/review), lazy-loaded by the
 // Ontology area's route table: what needs a person, in two tabs, the tab in
 // the URL (?tab=ontology; Facts, the default, writes none). Facts is the
-// review queue (./index.tsx): what the current load couldn't decide, whose
-// decisions apply from the next load. Ontology is the Suggestions area's
+// review walkthrough (./index.tsx): what the current load couldn't decide,
+// one card at a time. Ontology is the Suggestions area's
 // list: what audits of the current load found the ontology lacks, acted on
 // by drafting a new version. Where this Foundry doesn't audit loads, there
 // is no Ontology tab. Each tab counts what is open in it, and the page
@@ -27,7 +27,7 @@ import { FactsReview, useReviewQueue } from "./index";
 
 const SUBTITLES = {
   facts:
-    "Names and values the current load couldn’t settle on its own. Decisions apply from the next load.",
+    "What the current load couldn’t settle on its own, one card at a time, with Founder’s suggestion where a rule makes one.",
   ontology:
     "What audits of the current load found the ontology lacks. Acting on one drafts a new version.",
 };

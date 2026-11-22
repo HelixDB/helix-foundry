@@ -73,12 +73,12 @@ export type WalkAction =
   | { type: "jump"; key: string }
   | { type: "undone"; keys: readonly string[] }
   // The queue read again: a new order (another load's, or a filter's), and
-  // the keys decided by someone else.
+  // the keys no longer in the queue at all (decided, here or elsewhere).
   | {
       type: "rebase";
       loadId: string;
       order: readonly string[];
-      elsewhere: ReadonlySet<string>;
+      gone: ReadonlySet<string>;
     };
 
 /** Which cards a walk takes: kinds, whether Founder suggests, a type, a document. */
@@ -207,9 +207,11 @@ const nextOpen = (
  * - `undone` forgets the outcomes of the keys (and what they covered), drops
  *   them from the undo stack and shows the first of them again;
  * - `rebase` takes a new order: on the same load every outcome stays (a
- *   filter, or a refresh), on another only those of keys in the order and
- *   choices still sending, whose answers are yet to come; keys decided
- *   elsewhere that this walk hasn't decided are marked so; the card shown
+ *   filter, or a refresh), and each card of the old order gone from the
+ *   queue (`gone`) keeps its place, after the card before it that the new
+ *   order has, marked decided elsewhere unless this walk decided it; on
+ *   another load only the outcomes of keys in the order and of choices
+ *   still sending, whose answers are yet to come, stay; the card shown
  *   stays if it is still in the order, else the next of the old order that
  *   is, else the first to decide.
  * An action that changes nothing returns the walk itself.
@@ -343,26 +345,41 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
       };
     }
     case "rebase": {
-      const inOrder = new Set(a.order),
-        same = a.loadId === w.loadId;
+      const same = a.loadId === w.loadId,
+        inOrder = new Set(a.order);
       const outcomes = new Map(
         [...w.outcomes].filter(
           ([k, o]) => same || inOrder.has(k) || o.kind === "sending",
         ),
       );
-      for (const k of a.elsewhere) {
-        const o = outcomes.get(k);
-        if (open(o) || o?.kind === "skipped")
-          outcomes.set(k, { kind: "elsewhere" });
+      // The cards gone from the queue, by the card of the new order they
+      // follow (null: before the first).
+      const stays = new Map<string | null, string[]>();
+      let anchor: string | null = null;
+      for (const k of same ? w.order : []) {
+        if (inOrder.has(k)) anchor = k;
+        else if (a.gone.has(k)) {
+          const after = stays.get(anchor);
+          if (after) after.push(k);
+          else stays.set(anchor, [k]);
+          const o = outcomes.get(k);
+          if (open(o) || o?.kind === "skipped")
+            outcomes.set(k, { kind: "elsewhere" });
+        }
       }
-      const kept = w.order.slice(w.at).find((k) => inOrder.has(k));
+      const order = [
+        ...(stays.get(null) ?? []),
+        ...a.order.flatMap((k) => [k, ...(stays.get(k) ?? [])]),
+      ];
+      const inNew = new Set(order);
+      const kept = w.order.slice(w.at).find((k) => inNew.has(k));
       return {
         loadId: a.loadId,
-        order: a.order,
+        order,
         at:
           kept === undefined
-            ? nextOpen(a.order, outcomes, 0)
-            : a.order.indexOf(kept),
+            ? nextOpen(order, outcomes, 0)
+            : order.indexOf(kept),
         outcomes,
         undo: w.undo
           .map((e) => e.filter((k) => outcomes.has(k)))
