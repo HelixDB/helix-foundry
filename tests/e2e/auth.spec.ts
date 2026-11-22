@@ -40,6 +40,51 @@ test("signs in and returns to the page it came from", async ({ page }) => {
   expect((await mock.stats()).loginStarts).toBe(1);
 });
 
+test("says what Foundry is only to a cold sign-in", async ({ page }) => {
+  const pitch = page.getByRole("region", {
+    name: "Your company’s data as one graph your agents can query.",
+  });
+  await page.goto("/login");
+  await expect(pitch).toBeVisible();
+  await expect(pitch.getByRole("listitem")).toHaveCount(3);
+  const demo = new URL(
+    (await pitch
+      .getByRole("link", { name: "See it answer a question" })
+      .getAttribute("href")) ?? "",
+  );
+  expect(demo.origin + demo.pathname + demo.hash).toBe(
+    "https://www.helix-db.com/#foundry-ask",
+  );
+  expect(Object.fromEntries(demo.searchParams)).toEqual({
+    utm_source: "foundry",
+    utm_medium: "login",
+    utm_campaign: "pitch",
+  });
+  // On a phone it sits under the sign-in, beside it on a wide screen.
+  const google = page.getByRole("button", { name: "Continue with Google" });
+  const boxes = async () => ({
+    pitch: (await pitch.boundingBox())!,
+    google: (await google.boundingBox())!,
+  });
+  const wide = await boxes();
+  expect(wide.pitch.x).toBeGreaterThan(wide.google.x + wide.google.width);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const phone = await boxes();
+  expect(phone.pitch.y).toBeGreaterThan(phone.google.y + phone.google.height);
+  // The app's own way here (a signed-out page) and a failed sign-in show
+  // only the sign-in.
+  await page.goto("/login?return_to=%2Fdata");
+  await expect(
+    page.getByRole("button", { name: "Continue with GitHub" }),
+  ).toBeVisible();
+  await expect(pitch).toHaveCount(0);
+  await page.goto("/login?error=callback");
+  await expect(
+    page.getByRole("button", { name: "Continue with GitHub" }),
+  ).toBeVisible();
+  await expect(pitch).toHaveCount(0);
+});
+
 test("explains a sign-in that did not finish", async ({ page }) => {
   await page.goto("/login/callback?code=nope&state=unknown");
   await expect(page).toHaveURL(/\/login\?error=callback$/);
