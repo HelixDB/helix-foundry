@@ -4,8 +4,9 @@
 -- row by its own migration with the time it ran, which is when this
 -- install first started that release. At every start foundry queues a full
 -- reload of each live ontology's current load created before owed_since
--- (local.RebuildOwedLoads, store.RebuildFoundryLoads), and marks the row
--- done once none is held back by a live job.
+-- (local.RebuildOwedLoads, store.RebuildFoundryLoads), again every minute
+-- while one is owed (local.Rebuilds), and marks the row done once none is
+-- queued, reloading or held back by a live job.
 CREATE TABLE foundry_local_rebuilds (
   name       VARCHAR(64) NOT NULL PRIMARY KEY,
   owed_since DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

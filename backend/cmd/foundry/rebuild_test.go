@@ -62,7 +62,8 @@ func TestRebuildLoadsOverADatabase(t *testing.T) {
 	if err := runRebuildLoads(ctx, rootDSN+schema, []string{"--current-created-before=2026-11-22T00:00:00.5+01:00"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "queued 0 reloads: \nalready reloading, 0: \nheld back by a live job, 0 (run again once it ends): \n" {
+	if got := out.String(); got != "queued 0 reloads: \nalready reloading, 0: \nheld back by a live job, 0 (run again once it ends): \n" +
+		"given up after 3 reloads that failed, 0 (load each again by hand): \n" {
 		t.Fatalf("output %q", got)
 	}
 }

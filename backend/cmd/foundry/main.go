@@ -18,10 +18,12 @@
 //	foundry --config /etc/foundry/foundry.yaml rebuild-loads --current-created-before=2026-11-22T00:00:00Z
 //
 // queues a full reload of every live ontology's current load created before
-// that time (store.RebuildFoundryLoads), says which a live job held back, and
-// exits (rebuild.go). It reads the database the configuration names, which
-// it doesn't migrate. Run it again once those jobs end; it never queues a
-// reload twice.
+// that time (store.RebuildFoundryLoads), says which are still reloading,
+// which a live job held back and which it gave up on, and exits
+// (rebuild.go). It reads the database the configuration names, which it
+// doesn't migrate. Run it again until nothing is queued, reloading or held
+// back: it never queues a reload while one is live, queues a failed one
+// again, and gives up on a load after store.MaxFoundryRebuilds failed.
 package main
 
 import (

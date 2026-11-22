@@ -13,6 +13,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	directoryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/directory/v1"
+	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -103,11 +104,43 @@ func (f rebuildFixture) end(t *testing.T, jobID string, status model.FoundryGrap
 	}
 }
 
-// rebuild runs RebuildOwedLoads as run does.
-func (f rebuildFixture) rebuild(t *testing.T) {
+// rebuild runs RebuildOwedLoads as run does, and checks whether it reports
+// a rebuild still owed.
+func (f rebuildFixture) rebuild(t *testing.T, owed bool) {
 	t.Helper()
-	if err := RebuildOwedLoads(context.Background(), f.db, f.st, slog.New(slog.NewTextHandler(f.log, nil))); err != nil {
+	got, err := RebuildOwedLoads(context.Background(), f.db, f.st, f.logger())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if got != owed {
+		t.Fatalf("owed = %t, want %t: %s", got, owed, f.log)
+	}
+}
+
+func (f rebuildFixture) logger() *slog.Logger { return slog.New(slog.NewTextHandler(f.log, nil)) }
+
+// drain claims and ends every due job: a load with its ontology's status
+// in loads, anything else (a delete of a load a rebuild replaced)
+// succeeded.
+func (f rebuildFixture) drain(t *testing.T, loads map[string]model.FoundryGraphJobStatus) {
+	t.Helper()
+	ctx := context.Background()
+	for {
+		job, err := f.st.ClaimFoundryGraphJob(ctx, "w", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job == nil {
+			return
+		}
+		status := model.FoundryGraphJobSucceeded
+		if job.Kind == model.FoundryGraphJobLoad {
+			status = loads[job.OntologyID]
+		}
+		if _, err := f.st.FinishFoundryGraphJob(ctx, job.ID, "w", model.FoundryGraphJobOutcome{Status: status, IngestDone: true,
+			Next: model.FoundryGraphNext{ExtractID: id.New(), DeleteID: id.New(), ResendID: id.New(), RetainLoads: 5}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -142,21 +175,22 @@ func TestRebuildOwedLoadsOnAFreshInstall(t *testing.T) {
 	if f.done(t) {
 		t.Fatal("the migration owes the rebuild")
 	}
-	f.rebuild(t)
+	f.rebuild(t, false)
 	if !f.done(t) {
 		t.Fatalf("not done: %s", f.log)
 	}
 	// Done, it is never run again.
 	o := f.ontology(t, "A", true)
-	f.rebuild(t)
+	f.rebuild(t, false)
 	if job, _ := f.live(t, o); job != "" {
 		t.Fatalf("a done rebuild queued %s", job)
 	}
 }
 
-// An upgrade reloads every current load an earlier release wrote, once: an
-// ontology a live job holds back is reloaded at a later start, and the
-// rebuild is done once none is left.
+// An upgrade reloads every current load an earlier release wrote, once
+// each: an ontology a live job holds back is reloaded once it ends, one
+// whose reload failed is reloaded again, and the rebuild is done only once
+// every one is reloaded.
 func TestRebuildOwedLoadsOnAnUpgrade(t *testing.T) {
 	f := newRebuildFixture(t)
 	old := f.ontology(t, "A", true)
@@ -164,7 +198,7 @@ func TestRebuildOwedLoadsOnAnUpgrade(t *testing.T) {
 	current := f.ontology(t, "C", false)
 	f.load(t, busy, tagID("FVB"), "UB")
 
-	f.rebuild(t)
+	f.rebuild(t, true)
 	if job, origin := f.live(t, old); job == "" || origin != model.FoundryLoadByRefresh {
 		t.Fatalf("old: %q %q", job, origin)
 	}
@@ -182,16 +216,81 @@ func TestRebuildOwedLoadsOnAnUpgrade(t *testing.T) {
 	}
 	rebuilt, _ := f.live(t, old)
 
-	// The next start: the user's load ended, the old rebuild still runs.
+	// The user's load ended; the old rebuild still runs.
 	f.end(t, tagID("UB"), model.FoundryGraphJobFailed)
-	f.rebuild(t)
+	f.rebuild(t, true)
 	if job, origin := f.live(t, busy); job == "" || job == tagID("UB") || origin != model.FoundryLoadByRefresh {
-		t.Fatalf("busy, next start: %q %q", job, origin)
+		t.Fatalf("busy, next run: %q %q", job, origin)
 	}
 	if job, _ := f.live(t, old); job != rebuilt {
 		t.Fatalf("old was queued twice: %s, then %s", rebuilt, job)
 	}
+	if f.done(t) {
+		t.Fatal("done while reloads are under way")
+	}
+
+	// The old one's reload failed: it is queued again, and the rebuild is
+	// done once both reloads replaced their loads.
+	f.drain(t, map[string]model.FoundryGraphJobStatus{old: model.FoundryGraphJobFailed, busy: model.FoundryGraphJobSucceeded})
+	f.rebuild(t, true)
+	again, _ := f.live(t, old)
+	if again == "" || again == rebuilt {
+		t.Fatalf("a failed reload isn't queued again: %q", again)
+	}
+	if job, _ := f.live(t, busy); job != "" {
+		t.Fatalf("a replaced load is reloaded again: %s", job)
+	}
+	f.drain(t, map[string]model.FoundryGraphJobStatus{old: model.FoundryGraphJobSucceeded})
+	f.rebuild(t, false)
 	if !f.done(t) {
-		t.Fatalf("not done once every reload is queued: %s", f.log)
+		t.Fatalf("not done once every load is reloaded: %s", f.log)
+	}
+}
+
+// An ontology whose reloads keep failing is given up on, and logged: the
+// rebuild is done.
+func TestRebuildOwedLoadsGivesUp(t *testing.T) {
+	f := newRebuildFixture(t)
+	o := f.ontology(t, "A", true)
+	for range store.MaxFoundryRebuilds {
+		f.rebuild(t, true)
+		f.drain(t, map[string]model.FoundryGraphJobStatus{o: model.FoundryGraphJobFailed})
+	}
+	f.rebuild(t, false)
+	if !f.done(t) || !strings.Contains(f.log.String(), "keep failing") {
+		t.Fatalf("not given up: %s", f.log)
+	}
+}
+
+// Rebuilds runs the rebuild until nothing is owed: a load a live job held
+// back at start is reloaded once that job ends, without a restart.
+func TestRebuildsRunsUntilNothingIsOwed(t *testing.T) {
+	f := newRebuildFixture(t)
+	o := f.ontology(t, "A", true)
+	f.load(t, o, tagID("FVA"), "UA")
+	f.rebuild(t, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	ended := make(chan error, 1)
+	go func() {
+		ended <- Rebuilds{DB: f.db, Store: f.st, Logger: f.logger(), Every: 20 * time.Millisecond}.Start(ctx)
+	}()
+	f.end(t, tagID("UA"), model.FoundryGraphJobFailed)
+	var rebuild string
+	for rebuild == "" || rebuild == tagID("UA") {
+		select {
+		case <-ctx.Done():
+			t.Fatal("no reload queued")
+		case <-time.After(20 * time.Millisecond):
+		}
+		rebuild, _ = f.live(t, o)
+	}
+	f.drain(t, map[string]model.FoundryGraphJobStatus{o: model.FoundryGraphJobSucceeded})
+	if err := <-ended; err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !f.done(t) {
+		t.Fatalf("not done: %s", f.log)
 	}
 }

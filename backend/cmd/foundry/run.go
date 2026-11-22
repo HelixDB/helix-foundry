@@ -102,7 +102,8 @@ var slackWorker = foundryslackworker.New
 //  1. Open the database, migrate it (the directory's set, then Foundry's) and
 //     write the owner's row, their first workspace (until they have one)
 //     and the bucket, then queue the reloads of current loads a release
-//     owes (local.RebuildOwedLoads).
+//     owes (local.RebuildOwedLoads); while any is still owed, a part
+//     (local.Rebuilds) queues them again every minute until none is.
 //  2. Without a configured AI provider, look for one on this machine
 //     (package ai/detect), so model work starts on it.
 //  3. Build the link to Helix's Slack relay (with foundry.slack.enabled),
@@ -153,7 +154,8 @@ func run(parent context.Context, cfg *Config) error {
 	}
 
 	st := store.NewMySQL(db, local.Workspaces{})
-	if err := local.RebuildOwedLoads(ctx, db, st, logger); err != nil {
+	rebuildsOwed, err := local.RebuildOwedLoads(ctx, db, st, logger)
+	if err != nil {
 		return err
 	}
 	probes := newProbes(db.PingContext, logger)
@@ -179,6 +181,9 @@ func run(parent context.Context, cfg *Config) error {
 	// reads whether it was.
 	if link != nil {
 		parts = append(parts, link)
+	}
+	if rebuildsOwed {
+		parts = append(parts, local.Rebuilds{DB: db, Store: st, Logger: logger, Every: local.RebuildEvery})
 	}
 	healthLn, err := net.Listen("tcp", cfg.Local.Listen.Health)
 	if err != nil {
