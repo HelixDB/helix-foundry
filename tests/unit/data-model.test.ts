@@ -70,7 +70,7 @@ const connector = (c: Partial<Connector>): Connector => ({
 });
 
 describe("kinds and roles", () => {
-  it("knows the WFE's fifteen kinds, which are databases and which offer tables", () => {
+  it("knows the WFE's sixteen kinds, which are databases and which offer tables", () => {
     expect(KINDS).toEqual([
       "stripe",
       "workos",
@@ -83,6 +83,7 @@ describe("kinds and roles", () => {
       "notion",
       "google",
       "databuddy",
+      "attio",
       "postgres",
       "mysql",
       "s3",
@@ -90,6 +91,8 @@ describe("kinds and roles", () => {
     ]);
     expect(isKnownKind("databuddy")).toBe(true);
     expect(isDatabase("databuddy")).toBe(false);
+    expect(isKnownKind("attio")).toBe(true);
+    expect(isDatabase("attio")).toBe(false);
     expect(isKnownKind("events")).toBe(true);
     expect(isKnownKind("google")).toBe(true);
     expect(isKnownKind("gdrive")).toBe(false);
@@ -1312,6 +1315,37 @@ describe("credential forms", () => {
     expect(summary()).toBe("Every website");
     expect(summary(["web_a", "web_b"])).toBe("web_a, web_b");
     expect(summary(["a", "b", "c"])).toBe("3 websites");
+  });
+
+  it("sends an Attio access token, trimmed, and nothing else", () => {
+    const token = "a".repeat(60) + "WXYZ";
+    expect(emptyForm("attio")).toEqual({ kind: "attio", apiKey: "" });
+    expect(toConfig({ kind: "attio", apiKey: ` ${token}\n` })).toEqual({
+      attio: { apiKey: token },
+    });
+    // A blank token on an edit keeps the stored one.
+    expect(toConfig(emptyForm("attio"))).toEqual({ attio: { apiKey: "" } });
+    // The token never comes back, and Attio has no other setting.
+    expect(formFromConfig("attio", { attio: { apiKey: "" } })).toEqual(
+      emptyForm("attio"),
+    );
+    expect(formFromConfig("attio", { notion: {} })).toEqual(emptyForm("attio"));
+    expect(hasCredential(emptyForm("attio"))).toBe(false);
+    expect(hasCredential({ kind: "attio", apiKey: " " })).toBe(false);
+    expect(hasCredential({ kind: "attio", apiKey: token })).toBe(true);
+    expect(suggestedName({ kind: "attio", apiKey: token })).toBe("Attio");
+    // Attio connects with a token only.
+    expect(signInConfig(emptyForm("attio"))).toBeUndefined();
+    // Where it reads from is the token's hint.
+    expect(
+      sourceSummary(
+        connector({
+          kind: "attio",
+          config: { attio: {} },
+          secretHint: "…WXYZ",
+        }),
+      ),
+    ).toBe("…WXYZ");
   });
 
   it("sends API keys trimmed and nothing else", () => {
