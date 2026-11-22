@@ -369,15 +369,15 @@ func writeAll(w RowWriter, rows []map[string]any) error {
 
 // attioClient is one read's requests. Attio allows 100 reads a second per
 // workspace, which one read stays under; its notes list allows 10 a
-// second, which notes keeps to.
+// second, which notePace keeps to.
 type attioClient struct {
-	k     *attioKind
-	token string
-	notes *rate.Limiter
+	k        *attioKind
+	token    string
+	notePace *rate.Limiter
 }
 
 func (k *attioKind) client(secret string) *attioClient {
-	return &attioClient{k: k, token: strings.TrimSpace(secret), notes: rate.NewLimiter(rate.Every(attioNotesInterval), 1)}
+	return &attioClient{k: k, token: strings.TrimSpace(secret), notePace: rate.NewLimiter(rate.Every(attioNotesInterval), 1)}
 }
 
 // do sends one request with the token: a GET of path with query, or with
@@ -399,7 +399,7 @@ func (c *attioClient) do(ctx context.Context, method, path string, query url.Val
 	paced := path == "/v2/notes"
 	status, out, err := fetch(ctx, c.k.http, func() (*http.Request, error) {
 		if paced {
-			if err := c.notes.Wait(ctx); err != nil {
+			if err := c.notePace.Wait(ctx); err != nil {
 				return nil, err
 			}
 		}
