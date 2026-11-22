@@ -2145,9 +2145,14 @@ func (u Unimplemented) FoundryRelayWaiting(context.Context, string) (bool, error
 	return false, nil
 }
 
-func (u Unimplemented) KnowsFoundryRelayChannel(context.Context, string, string) (bool, error) {
-	u.unimplemented("KnowsFoundryRelayChannel")
-	return false, nil
+func (u Unimplemented) SeenFoundryRelayChannel(context.Context, string, string) (time.Duration, bool, error) {
+	u.unimplemented("SeenFoundryRelayChannel")
+	return 0, false, nil
+}
+
+func (u Unimplemented) ForgetFoundryRelayChannel(context.Context, string, string) error {
+	u.unimplemented("ForgetFoundryRelayChannel")
+	return nil
 }
 
 func (u Unimplemented) KnowsFoundryRelayUsers(context.Context, string, []string) (bool, error) {

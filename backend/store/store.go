@@ -286,7 +286,7 @@ type ReadStore interface {
 	ListFoundryRelayInstalls(ctx context.Context, linkID string) ([]*model.SlackInstall, error)
 	GetFoundryRelayInstall(ctx context.Context, linkID, localWorkspaceID string) (*model.SlackInstall, error)
 	FoundryRelayWaiting(ctx context.Context, linkID string) (bool, error)
-	KnowsFoundryRelayChannel(ctx context.Context, installID, channelID string) (bool, error)
+	SeenFoundryRelayChannel(ctx context.Context, installID, channelID string) (time.Duration, bool, error)
 	KnowsFoundryRelayUsers(ctx context.Context, installID string, userIDs []string) (bool, error)
 	GetFoundryRelayUsage(ctx context.Context, linkID string, day time.Time) (model.RelayUsage, error)
 	ListFoundrySlackAccessRequests(ctx context.Context, installID string) ([]*model.SlackAccessRequest, error)
@@ -622,6 +622,7 @@ type Store interface {
 	AppendFoundryRelayFeed(ctx context.Context, installID string, a model.RelayFeedAppend, limits model.RelayFeedLimits) (model.RelayFeedAppended, error)
 	ExpireFoundryRelayFeed(ctx context.Context, ttl time.Duration, limit int) (int, error)
 	RecordFoundryRelayChannels(ctx context.Context, installID string, channelIDs []string) error
+	ForgetFoundryRelayChannel(ctx context.Context, installID, channelID string) error
 	CountFoundryRelayUsage(ctx context.Context, linkID string, u model.RelayUsage) error
 	MirrorFoundrySlackInstalls(ctx context.Context, installs []*model.SlackInstall) error
 	AllowFoundrySlackUser(ctx context.Context, installID, slackUserID, userID string) (*model.SlackLink, error)

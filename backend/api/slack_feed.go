@@ -102,7 +102,8 @@ func (f *slackFeedIntake) install(ctx context.Context, db foundrystore.Store, te
 // foundry.slack.follow is on, a reply in a thread the bot follows is
 // taken as a message (FollowSlackReply). Slack's app_rate_limited is
 // recorded on the install, and as gaps of its feed. A channel shared with
-// another organisation, and a team with no install, are dropped; the
+// another organisation, and a team with no install, are dropped, once
+// channel_shared has told the relay (relayChannelShared); the
 // app's own bot's messages are kept without their text.
 func (s *Service) receiveSlackFeed(ctx context.Context, eventID string, e slack.FeedEvent) (*foundryv1.ReceiveSlackRequestResponse, string, error) {
 	cfg := s.deps.Cfg.Foundry.Slack
@@ -120,6 +121,11 @@ func (s *Service) receiveSlackFeed(ctx context.Context, eventID string, e slack.
 		return nil, "", errSlackFeedBusy
 	}
 	team, enterprise, ext := slackFeedPlace(e)
+	if gone, ok := e.(slack.ChannelGone); ok && gone.Why == slack.GoneShared {
+		if err := s.relayChannelShared(ctx, team, enterprise, gone.At.ChannelID); err != nil {
+			return nil, "", err
+		}
+	}
 	if ext {
 		slackFeedTaken.WithLabelValues("dropped_ext_shared").Inc()
 		return slackOK(), "feed", nil

@@ -818,15 +818,27 @@ WHERE kind IN (`+foundryRelayMessageKinds+`) AND expires_at < NOW(6) LIMIT ?`, l
 
 // --- What proxied calls may name, and counts ---
 
-// KnowsFoundryRelayChannel reports whether the relayed install was sent
-// something from the channel within model.RelayChannelSeen: a channel its
-// proxied calls may name.
-func (s *mysqlDB) KnowsFoundryRelayChannel(ctx context.Context, installID, channelID string) (bool, error) {
-	var known bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_relay_channels
-WHERE install_id=? AND channel_id=? AND last_at > NOW(6) - INTERVAL ? MICROSECOND)`, installID, channelID, model.RelayChannelSeen.Microseconds()).
-		Scan(&known)
-	return known, err
+// SeenFoundryRelayChannel reports whether the relayed install was sent
+// something from the channel, or listed it, within model.RelayChannelSeen
+// (a channel its proxied calls may name), and how long ago it last was.
+// Every way a channel is seen leaves out one shared with another
+// organisation, and ForgetFoundryRelayChannel forgets one shared since, so
+// a recent sighting is Slack's word, then, that it wasn't.
+func (s *mysqlDB) SeenFoundryRelayChannel(ctx context.Context, installID, channelID string) (time.Duration, bool, error) {
+	var ago sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(TIMESTAMPDIFF(MICROSECOND, last_at, NOW(6))) FROM foundry_relay_channels
+WHERE install_id=? AND channel_id=? AND last_at > NOW(6) - INTERVAL ? MICROSECOND`, installID, channelID, model.RelayChannelSeen.Microseconds()).
+		Scan(&ago)
+	return time.Duration(max(ago.Int64, 0)) * time.Microsecond, ago.Valid, err
+}
+
+// ForgetFoundryRelayChannel forgets the relayed install's channel, which
+// Slack says is now shared with another organisation (channel_shared): no
+// proxied call may name it until it is seen again, which no shared channel
+// is.
+func (s *mysqlDB) ForgetFoundryRelayChannel(ctx context.Context, installID, channelID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_relay_channels WHERE install_id=? AND channel_id=?`, installID, channelID)
+	return err
 }
 
 // KnowsFoundryRelayUsers reports whether every one of the Slack users (at

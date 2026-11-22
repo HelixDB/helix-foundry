@@ -301,9 +301,10 @@ func TestFoundryRelayDeliveries(t *testing.T) {
 	usage, err := f.db.GetFoundryRelayUsage(ctx, link.ID, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), usage.Deliveries)
-	known, err := f.db.KnowsFoundryRelayChannel(ctx, i.ID, "C1")
+	ago, known, err := f.db.SeenFoundryRelayChannel(ctx, i.ID, "C1")
 	require.NoError(t, err)
 	assert.True(t, known)
+	assert.Less(t, ago, time.Minute, "just now")
 	known, err = f.db.KnowsFoundryRelayUsers(ctx, i.ID, []string{"UGRACE", "UADA", "UADA"})
 	require.NoError(t, err)
 	assert.True(t, known)
@@ -709,17 +710,29 @@ func TestFoundryRelayProxyScope(t *testing.T) {
 	require.NoError(t, f.db.RecordFoundryRelayChannels(ctx, i.ID, []string{"C1"}), "seen again")
 	assert.True(t, dbTrue(t, `SELECT COUNT(*)=501 FROM foundry_relay_channels WHERE install_id=?`, i.ID))
 	for channel, want := range map[string]bool{"C500": true, "C9999": false} {
-		known, err := f.db.KnowsFoundryRelayChannel(ctx, i.ID, channel)
+		_, known, err := f.db.SeenFoundryRelayChannel(ctx, i.ID, channel)
 		require.NoError(t, err)
 		assert.Equal(t, want, known, channel)
 	}
-	known, err := f.db.KnowsFoundryRelayChannel(ctx, own.ID, "C1")
+	_, known, err := f.db.SeenFoundryRelayChannel(ctx, own.ID, "C1")
 	require.NoError(t, err)
 	assert.False(t, known, "per install")
+	dbExec(t, `UPDATE foundry_relay_channels SET last_at=NOW(6) - INTERVAL 2 HOUR WHERE channel_id='C1'`)
+	ago, known, err := f.db.SeenFoundryRelayChannel(ctx, i.ID, "C1")
+	require.NoError(t, err)
+	assert.True(t, known)
+	assert.InDelta(t, 2*time.Hour, ago, float64(time.Minute), "how long ago")
 	dbExec(t, `UPDATE foundry_relay_channels SET last_at=NOW(6) - INTERVAL 31 DAY WHERE channel_id='C1'`)
-	known, err = f.db.KnowsFoundryRelayChannel(ctx, i.ID, "C1")
+	_, known, err = f.db.SeenFoundryRelayChannel(ctx, i.ID, "C1")
 	require.NoError(t, err)
 	assert.False(t, known, "not seen in 30 days")
+	// Shared since: forgotten for the install alone.
+	require.NoError(t, f.db.ForgetFoundryRelayChannel(ctx, i.ID, "C500"))
+	_, known, err = f.db.SeenFoundryRelayChannel(ctx, i.ID, "C500")
+	require.NoError(t, err)
+	assert.False(t, known, "forgotten once shared")
+	require.NoError(t, f.db.ForgetFoundryRelayChannel(ctx, i.ID, "C500"), "forgotten again is nothing")
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=500 FROM foundry_relay_channels WHERE install_id=?`, i.ID))
 
 	require.NoError(t, f.db.QueueFoundryRelayDelivery(ctx, f.delivery(1, i.ID, ""), time.Minute, model.RelaySeen{UserIDs: []string{"UADA"}}))
 	for _, users := range [][]string{nil, {"UADA", "UGRACE"}, {"UGRACE"}} {
@@ -755,7 +768,7 @@ func TestFoundryRelayProxyScope(t *testing.T) {
 		assert.True(t, dbTrue(t, `SELECT COUNT(*)=0 FROM `+table), table)
 	}
 	assert.True(t, dbTrue(t, `SELECT COUNT(*)=1 FROM foundry_relay_codes`), "the link's own, spent but not expired a day")
-	assert.True(t, dbTrue(t, `SELECT COUNT(*)=500 FROM foundry_relay_channels`))
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=499 FROM foundry_relay_channels`), "C1 pruned, C500 forgotten as shared")
 }
 
 func TestPurgeFoundrySlackRelay(t *testing.T) {

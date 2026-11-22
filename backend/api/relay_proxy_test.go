@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -362,6 +363,94 @@ func TestCallSlackForRelaySharedChannels(t *testing.T) {
 	assert.Zero(t, d.slackCalls("chat.update"))
 }
 
+// Asking Slack whether a channel is shared takes the install's share of
+// conversations.info's tier, and Slack's 429 holds both back as a rate
+// limit, never an outage; Slack's word that a channel isn't shared stands
+// an hour where channel_shared reaches Helix, which forgets the channel for
+// every replica; and a data connector's read of a channel seen within that
+// hour asks nothing.
+func TestCallSlackForRelaySharedCheckIsPaced(t *testing.T) {
+	c, install := newRelayCaller(t)
+	for _, ch := range []string{"C0TWO0001", "C0THREE01"} {
+		c.r.channels[install.ID+"/"+ch] = true
+	}
+	c.f.slack.answers["conversations.info"] = func(*http.Request, []byte) (int, string) {
+		return http.StatusTooManyRequests, `{"ok":false,"error":"ratelimited"}`
+	}
+	c.f.slack.Config.Handler = retryAfter(c.f.slack.Config.Handler, "9")
+	out, err := c.call("chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "hi"})
+	require.NoError(t, err, "a 429 is a rate limit, not unavailable")
+	assert.EqualValues(t, 9, out.GetRetryAfterS())
+	out, err = c.call("chat.update", map[string]any{"channel": "C0TWO0001", "ts": "1.2", "text": "x"})
+	require.NoError(t, err)
+	assert.Positive(t, out.GetRetryAfterS(), "Slack's Retry-After holds the install's conversations.info")
+	assert.Equal(t, 1, c.slackCalls("conversations.info"), "held back without asking")
+	assert.Zero(t, c.slackCalls("chat.postMessage")+c.slackCalls("chat.update"))
+
+	// The install's share of conversations.info's tier: 50 a minute at 0.12
+	// is 6, one at a time.
+	d, dInstall := newRelayCaller(t)
+	d.f.cfg.Foundry.Slack.APIShare = 0.12
+	d.r.channels[dInstall.ID+"/C0TWO0001"] = true
+	_, err = d.call("chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "hi"})
+	require.NoError(t, err)
+	out, err = d.call("chat.postMessage", map[string]any{"channel": "C0TWO0001", "text": "hi"})
+	require.NoError(t, err)
+	assert.Positive(t, out.GetRetryAfterS(), "no ask left this second")
+	assert.Equal(t, 1, d.slackCalls("conversations.info"))
+	assert.Equal(t, 1, d.slackCalls("chat.postMessage"))
+	_, err = d.call("chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "again"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, d.slackCalls("chat.postMessage"), "a channel Slack answered for needs no ask")
+
+	// Slack's word stands 5 minutes while channel_shared doesn't reach
+	// Helix, an hour once it does.
+	e, eInstall := newRelayCaller(t)
+	stands := func(channel string) time.Duration {
+		e.f.s.relay.mu.Lock()
+		defer e.f.s.relay.mu.Unlock()
+		return time.Until(e.f.s.relay.shared[eInstall.ID+" "+channel].until)
+	}
+	_, err = e.call("chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "hi"})
+	require.NoError(t, err)
+	assert.InDelta(t, relaySharedFor, stands("C0GEN0001"), float64(time.Minute))
+	e.f.cfg.Foundry.Slack.Feed.Enabled = true
+	e.r.channels[eInstall.ID+"/C0TWO0001"] = true
+	_, err = e.call("chat.postMessage", map[string]any{"channel": "C0TWO0001", "text": "hi"})
+	require.NoError(t, err)
+	assert.InDelta(t, relayUnsharedFor, stands("C0TWO0001"), float64(time.Minute))
+
+	// A data connector's read of a channel seen within the hour asks
+	// nothing; one seen longer ago asks.
+	asked := e.slackCalls("conversations.info")
+	e.r.channels[eInstall.ID+"/C0HIST001"] = true
+	e.f.slack.answer("conversations.history", http.StatusOK, `{"ok":true,"messages":[]}`)
+	_, err = e.call("conversations.history", map[string]any{"channel": "C0HIST001"})
+	require.NoError(t, err)
+	assert.Equal(t, asked, e.slackCalls("conversations.info"), "seen just now")
+	e.r.channels[eInstall.ID+"/C0OLD0001"] = true
+	e.r.seenAgo[eInstall.ID+"/C0OLD0001"] = 2 * time.Hour
+	e.r.slots[model.SlackSlotHistory] = true
+	_, err = e.call("conversations.history", map[string]any{"channel": "C0OLD0001"})
+	require.NoError(t, err)
+	assert.Equal(t, asked+1, e.slackCalls("conversations.info"), "seen two hours ago")
+	assert.Equal(t, 2, e.slackCalls("conversations.history"))
+
+	// channel_shared forgets the channel for every replica, and this one
+	// holds it shared, before the event is dropped as a shared channel's.
+	resp, err := e.f.s.ReceiveSlackRequest(door(), signed(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, fixture(t, "events/channel_shared.json")))
+	require.NoError(t, err)
+	require.EqualValues(t, http.StatusOK, resp.GetHttpStatus())
+	assert.False(t, e.r.channels[eInstall.ID+"/C0GEN0001"], "forgotten in the store")
+	shared, known := e.f.s.relay.knownShared(eInstall.ID, "C0GEN0001", time.Now())
+	assert.True(t, known && shared)
+	_, err = e.call("chat.postMessage", map[string]any{"channel": "C0GEN0001", "text": "hi"})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	e.r.relayFail = errors.New("down")
+	resp, err = e.f.s.ReceiveSlackRequest(door(), signed(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, fixture(t, "events/channel_shared.json")))
+	assert.Equal(t, codes.Unavailable, status.Code(err), "Slack sends it again: %v", resp)
+}
+
 // Past relayCapacity channels, Slack's lapsed words are forgotten first,
 // then all of them.
 func TestRelaySharedIsBounded(t *testing.T) {
@@ -369,14 +458,14 @@ func TestRelaySharedIsBounded(t *testing.T) {
 	l.init(60, 1)
 	now := time.Now()
 	for i := range relayCapacity {
-		l.sawShared("inst", strconv.Itoa(i), false, now.Add(-relaySharedFor))
+		l.sawShared("inst", strconv.Itoa(i), false, now.Add(-relaySharedFor), false)
 	}
-	l.sawShared("inst", "fresh", true, now)
+	l.sawShared("inst", "fresh", true, now, true)
 	assert.Len(t, l.shared, 1, "every lapsed word went")
 	for i := range relayCapacity - 1 {
-		l.sawShared("inst", strconv.Itoa(i), false, now)
+		l.sawShared("inst", strconv.Itoa(i), false, now, false)
 	}
-	l.sawShared("inst", "last", true, now)
+	l.sawShared("inst", "last", true, now, true)
 	assert.Len(t, l.shared, 1, "full of standing words, it starts again")
 	assert.True(t, l.shared["inst last"].shared)
 }

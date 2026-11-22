@@ -49,6 +49,7 @@ type relayStore struct {
 	deliveries []*model.RelayDelivery
 	seenBy     map[string]model.RelaySeen // delivery id → what it let the install name
 	channels   map[string]bool            // install/channel
+	seenAgo    map[string]time.Duration   // install/channel: last seen this long ago (0: just now)
 	users      map[string]bool            // install/user
 	usage      map[string]model.RelayUsage
 	slots      map[model.SlackSlotMethod]bool // due
@@ -61,7 +62,7 @@ type relayStore struct {
 
 func newRelayStore() *relayStore {
 	return &relayStore{slackStore: newSlackStore(), codes: map[string]*model.RelayCode{}, codesUsed: map[string]bool{},
-		links: map[string]*model.RelayLink{}, seenBy: map[string]model.RelaySeen{}, channels: map[string]bool{}, users: map[string]bool{},
+		links: map[string]*model.RelayLink{}, seenBy: map[string]model.RelaySeen{}, channels: map[string]bool{}, seenAgo: map[string]time.Duration{}, users: map[string]bool{},
 		usage: map[string]model.RelayUsage{}, slots: map[model.SlackSlotMethod]bool{model.SlackSlotHistory: true, model.SlackSlotReplies: true},
 		deferred: map[model.SlackSlotMethod]time.Duration{}, feedOut: model.SlackAppended}
 }
@@ -235,8 +236,13 @@ func (r *relayStore) QueueFoundryRelayDelivery(_ context.Context, d *model.Relay
 	return nil
 }
 
-func (r *relayStore) KnowsFoundryRelayChannel(_ context.Context, installID, channelID string) (bool, error) {
-	return r.channels[installID+"/"+channelID], r.relayFail
+func (r *relayStore) SeenFoundryRelayChannel(_ context.Context, installID, channelID string) (time.Duration, bool, error) {
+	return r.seenAgo[installID+"/"+channelID], r.channels[installID+"/"+channelID], r.relayFail
+}
+
+func (r *relayStore) ForgetFoundryRelayChannel(_ context.Context, installID, channelID string) error {
+	delete(r.channels, installID+"/"+channelID)
+	return r.relayFail
 }
 
 func (r *relayStore) KnowsFoundryRelayUsers(_ context.Context, installID string, userIDs []string) (bool, error) {

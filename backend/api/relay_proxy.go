@@ -42,9 +42,14 @@ import (
 // calls a minute (relay.calls_per_minute) and the install's share of
 // Slack's tier for the method on this replica, or a Tier-1 read's slot
 // shared by every replica, have room; and a channel outside a direct
-// message isn't shared with another organisation, as Slack's
-// conversations.info last said within relaySharedFor (a channel can be
-// shared after it was recorded, and a click there carries no word of it).
+// message isn't shared with another organisation (a channel can be shared
+// after it was recorded, and a click there carries no word of it), as
+// Slack's conversations.info last said within relaySharedFor, or
+// relayUnsharedFor where channel_shared reaches Helix, which forgets the
+// channel on every replica; a data connector's read of a channel the
+// install was sent something from within relayUnsharedFor asks nothing
+// more. Asking it takes the install's share of conversations.info's tier,
+// and its 429 holds the call back as Slack's own would.
 // A message is
 // rewritten as the bot's own are (every mrkdwn text verbatim, parse=none,
 // no unfurls, nothing that posts as another name or icon, broadcasts or
@@ -105,9 +110,17 @@ var relayDropped = []string{"username", "icon_url", "icon_emoji", "as_user", "re
 // relayMassMentions are the mentions no relayed call may carry.
 var relayMassMentions = []string{"<!channel", "<!here", "<!everyone", "<!subteam"}
 
-// relaySharedFor is how long Slack's word that an install's channel is or
-// isn't shared with another organisation stands before it is asked again.
+// relaySharedFor is how long Slack's word that an install's channel is
+// shared with another organisation stands before it is asked again, and
+// that it isn't, where channel_shared doesn't reach Helix (its feed off).
 const relaySharedFor = 5 * time.Minute
+
+// relayUnsharedFor is how long Slack's word that a channel isn't shared
+// stands where channel_shared reaches Helix (foundry.slack.feed on, which
+// subscribes it): the event forgets the channel for every replica
+// (relayChannelShared). A channel seen within it (SeenFoundryRelayChannel)
+// is one Slack said then isn't shared.
+const relayUnsharedFor = time.Hour
 
 // relayShared is what Slack last said of a channel: whether it is shared
 // with another organisation, standing until until.
@@ -236,18 +249,20 @@ func (s *Service) callSlackForRelay(ctx context.Context, link *model.RelayLink, 
 		return nil, "failed", status.Errorf(codes.Unavailable, "read the relayed install: %v", err)
 	}
 	// What the call names must be the install's.
+	channel, _ := args[method.channel].(string)
+	var seenAgo time.Duration
 	if method.channel != "" {
-		channel, _ := args[method.channel].(string)
 		if !model.ValidSlackID(channel) {
 			return invalid("%s names its channel in %s", name, method.channel)
 		}
-		knows, err := s.deps.DB.KnowsFoundryRelayChannel(ctx, install.ID, channel)
+		ago, knows, err := s.deps.DB.SeenFoundryRelayChannel(ctx, install.ID, channel)
 		if err != nil {
 			return nil, "failed", status.Errorf(codes.Unavailable, "read the install's channels: %v", err)
 		}
 		if !knows {
 			return refuse("%s names a channel this install wasn't sent anything from", name)
 		}
+		seenAgo = ago
 	}
 	for _, arg := range []string{"channel", "channel_id"} {
 		if _, named := args[arg]; named && arg != method.channel {
@@ -301,16 +316,40 @@ func (s *Service) callSlackForRelay(ctx context.Context, link *model.RelayLink, 
 	l := &s.relay
 	l.init(cfg.Relay.CallsPerMinute, cfg.APIShare)
 	now := time.Now()
-	key := install.ID + " " + name
+	// Whether the channel is shared with another organisation, unless it is
+	// a direct message, or the call is conversations.info, how the bot asks
+	// itself, which answers the same either way: as Slack last said, or as
+	// a data connector's read may take a recent sighting to say, else asked
+	// below, within the same limits as the call.
+	ask := method.channel != "" && name != "conversations.info" && !strings.HasPrefix(channel, "D")
+	if ask {
+		shared, known := l.knownShared(install.ID, channel, now)
+		switch {
+		case known && shared:
+			return refuse("%s names a channel shared with another organisation", name)
+		case known, method.feed && cfg.Feed.Enabled && seenAgo < relayUnsharedFor:
+			ask = false
+		}
+	}
+	keys := []string{install.ID + " " + name}
+	if ask {
+		keys = append(keys, install.ID+" conversations.info")
+	}
 	l.mu.Lock()
-	blocked := l.blocked[key]
+	var blocked time.Duration
+	for _, k := range keys {
+		blocked = max(blocked, l.blocked[k].Sub(now))
+	}
 	l.mu.Unlock()
-	if wait := blocked.Sub(now); wait > 0 {
-		return relayRetry(wait), "limited", nil
+	if blocked > 0 {
+		return relayRetry(blocked), "limited", nil
 	}
 	reservations := []*rate.Reservation{l.links.Reserve(link.ID, now)}
 	if m, ok := l.methods[name]; ok {
 		reservations = append(reservations, m.Reserve(install.ID, now))
+	}
+	if ask {
+		reservations = append(reservations, l.methods["conversations.info"].Reserve(install.ID, now))
 	}
 	if wait := take(now, reservations...); wait > 0 {
 		return relayRetry(wait), "limited", nil
@@ -319,13 +358,13 @@ func (s *Service) callSlackForRelay(ctx context.Context, link *model.RelayLink, 
 	if err != nil {
 		return nil, "failed", status.Errorf(codes.Unavailable, "open the install's token: %v", err)
 	}
-	// conversations.info is how the install's bot asks itself, and answers
-	// the same either way.
-	if channel, _ := args[method.channel].(string); method.channel != "" && name != "conversations.info" && !strings.HasPrefix(channel, "D") {
-		shared, err := s.relayExtShared(ctx, install.ID, bot.Token, channel, now)
+	if ask {
+		shared, wait, err := s.askRelayShared(ctx, install.ID, bot.Token, channel, now)
 		switch {
 		case err != nil:
 			return nil, "failed", status.Errorf(codes.Unavailable, "ask Slack whether %s is shared with another organisation: %v", channel, err)
+		case wait > 0:
+			return relayRetry(wait), "limited", nil
 		case shared:
 			return refuse("%s names a channel shared with another organisation", name)
 		}
@@ -349,18 +388,7 @@ func (s *Service) callSlackForRelay(ctx context.Context, link *model.RelayLink, 
 		return nil, "failed", status.Errorf(codes.Unavailable, "Slack couldn't be reached: %v", err)
 	}
 	if code == http.StatusTooManyRequests {
-		wait := 30 * time.Second
-		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
-			wait = time.Duration(seconds) * time.Second
-		}
-		l.mu.Lock()
-		for k, until := range l.blocked {
-			if !until.After(now) {
-				delete(l.blocked, k)
-			}
-		}
-		l.blocked[key] = now.Add(wait)
-		l.mu.Unlock()
+		wait := l.block(install.ID+" "+name, header, now)
 		if method.slot != "" {
 			if err := s.deps.DB.DeferFoundrySlackSlot(ctx, install.ID, method.slot, wait); err != nil {
 				log.From(ctx).Warn("defer a relayed install's slot failed", "install_id", install.ID, "err", err)
@@ -522,7 +550,7 @@ func (s *Service) learnRelayAnswer(ctx context.Context, installID, method string
 	case "conversations.info":
 		ch, _ := answer["channel"].(map[string]any)
 		if id, _ := ch["id"].(string); model.ValidSlackID(id) {
-			s.relay.sawShared(installID, id, sharedOf(ch), time.Now())
+			s.relay.sawShared(installID, id, sharedOf(ch), time.Now(), s.deps.Cfg.Foundry.Slack.Feed.Enabled)
 		}
 	case "users.conversations":
 		listed, _ := answer["channels"].([]any)
@@ -549,24 +577,47 @@ func (s *Service) learnRelayAnswer(ctx context.Context, installID, method string
 	}
 }
 
-// relayExtShared reports whether the install's channel is shared with
-// another organisation, or invited to be: as Slack last said within
-// relaySharedFor, else as conversations.info says now, with the install's
-// token. An answer that says neither is an error.
-func (s *Service) relayExtShared(ctx context.Context, installID, token, channel string, now time.Time) (bool, error) {
-	l, key := &s.relay, installID+" "+channel
+// knownShared is what Slack last said of whether the install's channel is
+// shared with another organisation, while its word stands (sawShared).
+func (l *relayLimits) knownShared(installID, channel string, now time.Time) (shared, known bool) {
 	l.mu.Lock()
-	known, ok := l.shared[key]
-	l.mu.Unlock()
-	if ok && now.Before(known.until) {
-		return known.shared, nil
+	defer l.mu.Unlock()
+	said, ok := l.shared[installID+" "+channel]
+	return said.shared, ok && now.Before(said.until)
+}
+
+// block holds key's calls back for Slack's Retry-After (30 s without one)
+// from now, forgetting holds that have lapsed, and returns the wait.
+func (l *relayLimits) block(key string, header http.Header, now time.Time) time.Duration {
+	wait := 30 * time.Second
+	if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
+		wait = time.Duration(seconds) * time.Second
 	}
-	code, _, answer, err := s.sendSlack(ctx, "conversations.info", true, token, map[string]any{"channel": channel})
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for k, until := range l.blocked {
+		if !until.After(now) {
+			delete(l.blocked, k)
+		}
+	}
+	l.blocked[key] = now.Add(wait)
+	return wait
+}
+
+// askRelayShared asks Slack's conversations.info, with the install's token,
+// whether its channel is shared with another organisation, or invited to
+// be, and records the answer (sawShared). Slack's 429 holds the install's
+// conversations.info back and returns the wait; an answer that says
+// neither is an error.
+func (s *Service) askRelayShared(ctx context.Context, installID, token, channel string, now time.Time) (bool, time.Duration, error) {
+	code, header, answer, err := s.sendSlack(ctx, "conversations.info", true, token, map[string]any{"channel": channel})
 	switch {
 	case err != nil:
-		return false, err
+		return false, 0, err
+	case code == http.StatusTooManyRequests:
+		return false, s.relay.block(installID+" conversations.info", header, now), nil
 	case code != http.StatusOK:
-		return false, fmt.Errorf("Slack answered HTTP %d", code)
+		return false, 0, fmt.Errorf("Slack answered HTTP %d", code)
 	}
 	var out struct {
 		OK      bool   `json:"ok"`
@@ -579,21 +630,45 @@ func (s *Service) relayExtShared(ctx context.Context, installID, token, channel 
 	}
 	switch err := json.Unmarshal(answer, &out); {
 	case err != nil:
-		return false, fmt.Errorf("Slack's answer wasn't conversations.info's: %w", err)
+		return false, 0, fmt.Errorf("Slack's answer wasn't conversations.info's: %w", err)
 	case !out.OK:
-		return false, fmt.Errorf("Slack answered %s", truncateUTF8(out.Error, 64))
+		return false, 0, fmt.Errorf("Slack answered %s", truncateUTF8(out.Error, 64))
 	case out.Channel.ID != channel:
-		return false, errors.New("Slack answered for another channel")
+		return false, 0, errors.New("Slack answered for another channel")
 	}
 	shared := out.Channel.ExtShared || out.Channel.PendingExtShared
-	l.sawShared(installID, channel, shared, now)
-	return shared, nil
+	s.relay.sawShared(installID, channel, shared, now, s.deps.Cfg.Foundry.Slack.Feed.Enabled)
+	return shared, 0, nil
+}
+
+// relayChannelShared takes Slack's channel_shared of team's channel: for a
+// relayed install, its channel is shared from now on this replica, and
+// forgotten in the store, so no replica lets a call name it (its word that
+// the channel isn't shared may stand for relayUnsharedFor). It runs before
+// the event is dropped as a shared channel's.
+func (s *Service) relayChannelShared(ctx context.Context, team, enterprise, channel string) error {
+	install, _, err := s.slackFeed.install(ctx, s.deps.DB, team, enterprise, false)
+	if err != nil || install == nil {
+		return err
+	}
+	if _, relayed := install.Destination.(model.SlackServesRelay); !relayed {
+		return nil
+	}
+	s.relay.init(s.deps.Cfg.Foundry.Slack.Relay.CallsPerMinute, s.deps.Cfg.Foundry.Slack.APIShare)
+	s.relay.sawShared(install.ID, channel, true, time.Now(), false)
+	if err := s.deps.DB.ForgetFoundryRelayChannel(ctx, install.ID, channel); err != nil {
+		log.From(ctx).Error("forget a relayed install's channel shared since failed", "install_id", install.ID, "err", err)
+		return status.Error(codes.Unavailable, "Foundry couldn't record the channel's sharing just now")
+	}
+	return nil
 }
 
 // sawShared records what Slack said at now of whether the install's channel
-// is shared with another organisation. Past relayCapacity channels it
-// forgets those whose word has lapsed, and, still full, all of them.
-func (l *relayLimits) sawShared(installID, channel string, shared bool, now time.Time) {
+// is shared with another organisation: standing relaySharedFor, or
+// relayUnsharedFor for a channel it said isn't while channel_shared reaches
+// Helix (subscribed). Past relayCapacity channels it forgets those whose
+// word has lapsed, and, still full, all of them.
+func (l *relayLimits) sawShared(installID, channel string, shared bool, now time.Time, subscribed bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if len(l.shared) >= relayCapacity {
@@ -602,7 +677,11 @@ func (l *relayLimits) sawShared(installID, channel string, shared bool, now time
 			clear(l.shared)
 		}
 	}
-	l.shared[installID+" "+channel] = relayShared{shared: shared, until: now.Add(relaySharedFor)}
+	stands := relaySharedFor
+	if !shared && subscribed {
+		stands = relayUnsharedFor
+	}
+	l.shared[installID+" "+channel] = relayShared{shared: shared, until: now.Add(stands)}
 }
 
 // sendSlack calls method with token: args as a form (each a string, or a
