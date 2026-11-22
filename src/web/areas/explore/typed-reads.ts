@@ -599,11 +599,27 @@ export type TypedRecordsRead =
 
 const INTEGER = /^[+-]?\d+$/;
 
+// schema's is_iso_date: YYYY, YYYY-MM or YYYY-MM-DD with a real month and a
+// real day for that month.
+const ISO_DATE = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
+const isIsoDate = (s: string) => {
+  const m = ISO_DATE.exec(s);
+  if (!m) return false;
+  const [year, month, day] = [Number(m[1]), Number(m[2] ?? 1), m[3]];
+  if (month < 1 || month > 12) return false;
+  if (day === undefined) return true;
+  const last = new Date(0);
+  last.setUTCFullYear(year, month, 0);
+  return Number(day) >= 1 && Number(day) <= last.getUTCDate();
+};
+
 /**
  * A view's search as a query's start: a text search of the type's names
  * (a type with names props, or known by its name), else a test of its
- * first key prop (contains for text, equals for a number); "none" when the
- * text can't match anything of the type.
+ * first key prop as the engine takes it (query/typed.rs `condition`: a text
+ * test only of text): contains for a string, and equals for a number, a
+ * boolean or an ISO date; "none" when the text can't match anything of the
+ * type, or isn't a value of the key's type.
  */
 function searchStart(
   t: TypeNaming,
@@ -623,6 +639,15 @@ function searchStart(
   if (type === "float")
     return Number.isFinite(n)
       ? { where: [{ prop: key, op: "=", value: n }] }
+      : "none";
+  const lower = q.toLowerCase();
+  if (type === "boolean")
+    return lower === "true" || lower === "false"
+      ? { where: [{ prop: key, op: "=", value: lower === "true" }] }
+      : "none";
+  if (type === "date")
+    return isIsoDate(q)
+      ? { where: [{ prop: key, op: "=", value: q }] }
       : "none";
   return { where: [{ prop: key, op: "contains", value: q }] };
 }

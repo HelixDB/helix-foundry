@@ -38,7 +38,7 @@ import {
   readsOf,
   sweepViolations,
 } from "../../mock/graph/rules";
-import { MockGraph } from "../../mock/graph/store";
+import { HelixDateTime, MockGraph } from "../../mock/graph/store";
 
 // The reads of a load through source grants: each page's typed reads,
 // planned from the load's version, fit the engine's ReadItem schema, and
@@ -594,6 +594,96 @@ describe("Records through grants", () => {
     expect(typedRecordsRead(float, view({ search: "x" }), naming)).toEqual({
       kind: "none",
     });
+  });
+
+  it("tests a date or boolean key by equality, and only a string key by its text", () => {
+    const keyed = (type: string) => ({
+      name: "Day",
+      props: [{ name: "on", type }],
+      key: ["on"],
+      names: [],
+    });
+    const where = (type: string, search: string) => {
+      const r = typedRecordsRead(keyed(type), view({ search }), naming);
+      return r.kind === "read" && "query" in r.plan.reads[0]!
+        ? r.plan.reads[0].query.start.where
+        : r.kind;
+    };
+    for (const day of ["2026", "2026-02", "2024-02-29", "2026-12-31"])
+      expect(where("date", day)).toEqual([{ prop: "on", op: "=", value: day }]);
+    for (const bad of [
+      "2026-02-30",
+      "2025-02-29",
+      "2026-13",
+      "2026-00",
+      "2026-01-00",
+      "Feb",
+      "26-02",
+    ])
+      expect(where("date", bad), bad).toBe("none");
+    expect(where("boolean", " TRUE ")).toEqual([
+      { prop: "on", op: "=", value: true },
+    ]);
+    expect(where("boolean", "false")).toEqual([
+      { prop: "on", op: "=", value: false },
+    ]);
+    expect(where("boolean", "yes")).toBe("none");
+    expect(where("string", "2026-02")).toEqual([
+      { prop: "on", op: "contains", value: "2026-02" },
+    ]);
+  });
+
+  it("is refused by the mock engine, as by the engine, as a text test of what isn't text", () => {
+    const ontology = `version = "draft"
+[types.Reading]
+description = "A reading, keyed by when it was taken."
+props = { taken_at = "datetime", on = "date", ok = "boolean" }
+key = ["taken_at"]
+`;
+    const g = new MockGraph().view("load_1");
+    g.addNode("Reading", {
+      entity_key: "t2026-02-01T09:00:00Z",
+      taken_at: new HelixDateTime(Date.UTC(2026, 1, 1, 9)),
+      on: "2026-02-01",
+      ok: true,
+      name: "2026-02-01T09:00:00Z",
+    });
+    const model = evaluate(g, compile(ontology));
+    const ask = (where: unknown[]) =>
+      answer(model, {
+        query: {
+          start: { type: "Reading", where },
+          return: { count: {} },
+        },
+      } as unknown as Parameters<typeof answer>[1]);
+    for (const [prop, op] of [
+      ["taken_at", "contains"],
+      ["taken_at", "starts_with"],
+      ["on", "starts_with"],
+      ["ok", "contains"],
+    ])
+      expect(ask([{ prop, op, value: "2026" }]), `${prop} ${op}`).toEqual({
+        error: {
+          code: "invalid",
+          message: `\`${prop}\` is not text`,
+          pointer: "/start/where/0/op",
+        },
+      });
+    expect(ask([{ prop: "ok", op: "<", value: true }])).toMatchObject({
+      error: { pointer: "/start/where/0/op" },
+    });
+    for (const where of [
+      [{ prop: "ok", op: "=", value: true }],
+      [{ prop: "on", op: "=", value: "2026-02-01" }],
+      [{ prop: "name", op: "contains", value: "2026" }],
+      [{ prop: "ok", op: "not_null" }],
+    ])
+      expect(ask(where), JSON.stringify(where)).toEqual({
+        ok: expect.objectContaining({
+          kind: "query",
+          result: { kind: "count", count: 1 },
+        }),
+      });
   });
 
   const answered = (rows: unknown[], total: number) => [
