@@ -277,6 +277,32 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
     </ol>
   ),
+  attio: () => (
+    <ol>
+      <li>
+        In Attio, open <strong>Workspace settings → Developers</strong> and
+        click <strong>New access token</strong>. Only a workspace admin can (
+        <External href="https://attio.com/help/apps/other-apps/generating-an-api-key">
+          Attio’s guide
+        </External>
+        ).
+      </li>
+      <li>
+        Name it “Helix Foundry” and give it <strong>Read</strong> access to{" "}
+        <strong>Records</strong>, <strong>Object configuration</strong>,{" "}
+        <strong>List entries</strong>, <strong>List configuration</strong>,{" "}
+        <strong>Notes</strong>, <strong>Tasks</strong> and{" "}
+        <strong>User management</strong>. Tables whose scope the token lacks
+        aren’t read.
+      </li>
+      <li>
+        Copy the token (64 characters) and paste it below. Foundry only reads:
+        every object’s records, your lists and their entries, notes, tasks and
+        workspace members, and keeps each note as a document in Notes. Attio
+        tokens don’t expire; delete it in Attio to revoke Foundry’s access.
+      </li>
+    </ol>
+  ),
   granola: () => (
     <ol>
       <li>

@@ -102,7 +102,7 @@ import {
 
 // Kinds whose credential is one API key: its field's label and placeholder.
 const keyFields: Record<
-  "stripe" | "workos" | "linear" | "calcom" | "granola",
+  "stripe" | "workos" | "linear" | "calcom" | "granola" | "attio",
   [label: string, placeholder: string]
 > = {
   stripe: ["Restricted API key", "rk_live_…"],
@@ -110,6 +110,7 @@ const keyFields: Record<
   linear: ["Personal API key", "lin_api_…"],
   calcom: ["API key", "cal_live_…"],
   granola: ["API key", "grn_…"],
+  attio: ["Access token", "64 characters"],
 };
 
 type Field = { key: string; label: string; placeholder?: string };
@@ -479,7 +480,8 @@ export function ConnectionForm({
           form.kind === "workos" ||
           form.kind === "linear" ||
           form.kind === "calcom" ||
-          form.kind === "granola") &&
+          form.kind === "granola" ||
+          form.kind === "attio") &&
           !noKey && (
             <label className="span2">
               {keyFields[form.kind][0]}
