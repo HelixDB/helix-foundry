@@ -982,6 +982,89 @@ func TestSlackDoorGate(t *testing.T) {
 	}
 }
 
+// The relay is off by default. On, each bound holds at its edge and refuses
+// past it, for the API and the Slack worker of a hosted deployment only:
+// a standalone install's relay settings are its own (cmd/foundry).
+func TestSlackRelayValidate(t *testing.T) {
+	if Defaults().Foundry.Slack.Relay.Enabled {
+		t.Fatal("the relay is on by default")
+	}
+	if MaxSlackRelayClaimWait != 20*time.Second || MinSlackRelayCallBytes != 16<<10 || MaxSlackRelayCallBytes != 1<<20 {
+		t.Fatalf("bounds = %s, %d, %d", MaxSlackRelayClaimWait, MinSlackRelayCallBytes, MaxSlackRelayCallBytes)
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackRelayConfig)
+		want   string // empty when valid
+	}{
+		"the defaults":           {func(*SlackRelayConfig) {}, ""},
+		"no wait":                {func(r *SlackRelayConfig) { r.ClaimWait = 0 }, "relay.claim_wait is 0s; it must be above 0 and at most 20s"},
+		"a wait past the call":   {func(r *SlackRelayConfig) { r.ClaimWait = 20*time.Second + 1 }, "relay.claim_wait is 20.000000001s"},
+		"no poll":                {func(r *SlackRelayConfig) { r.ClaimPoll = 0 }, "relay.claim_poll is 0s"},
+		"a poll past the wait":   {func(r *SlackRelayConfig) { r.ClaimPoll = r.ClaimWait + 1 }, "at most claim_wait (20s)"},
+		"a poll of the wait":     {func(r *SlackRelayConfig) { r.ClaimPoll = r.ClaimWait }, ""},
+		"no delivery":            {func(r *SlackRelayConfig) { r.DeliveryTTL = 0 }, "relay delivery_ttl and calls_per_minute must be positive"},
+		"no calls":               {func(r *SlackRelayConfig) { r.CallsPerMinute = 0 }, "calls_per_minute must be positive"},
+		"a body short of a post": {func(r *SlackRelayConfig) { r.MaxCallBytes = 16<<10 - 1 }, "relay.max_call_bytes is 16383; it must be from 16384 to 1048576"},
+		"the least body":         {func(r *SlackRelayConfig) { r.MaxCallBytes = 16 << 10 }, ""},
+		"the most body":          {func(r *SlackRelayConfig) { r.MaxCallBytes = 1 << 20 }, ""},
+		"a body past the door's": {func(r *SlackRelayConfig) { r.MaxCallBytes = 1<<20 + 1 }, "relay.max_call_bytes is 1048577"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := slackOn()
+			c.Foundry.Sync.DataBucket = "foundry-data"
+			c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "k1", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+			c.Foundry.Slack.Relay.Enabled = true
+			tc.mutate(&c.Foundry.Slack.Relay)
+			for _, roles := range []Roles{{API: true}, {SlackWorker: true}} {
+				if err := c.Validate(roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+					t.Fatalf("%+v: Validate = %v, want %q", roles, err, tc.want)
+				}
+			}
+			for _, other := range []Roles{{}, {Events: true}, {SyncWorker: true}} {
+				if err := c.Validate(other); err != nil {
+					t.Fatalf("checked without its role (%+v): %v", other, err)
+				}
+			}
+			off := c
+			off.Foundry.Slack.Relay.Enabled = false
+			if err := off.Validate(Roles{API: true, SlackWorker: true}); err != nil {
+				t.Fatalf("checked while off: %v", err)
+			}
+		})
+	}
+}
+
+// The relay's calls have a gate of their own at the door, and a bound on
+// the claims waiting: the reviewed defaults, checked where the door runs.
+func TestRelayGate(t *testing.T) {
+	d := Defaults().Foundry.Events.Endpoint
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 10, AddressBurstRequests: 20, AddressMaxInFlight: 4, RequestsPerSecond: 200, BurstRequests: 400,
+		MaxInFlight: 64, MaxBytesInFlight: 16 << 20,
+	}); d.Relay != want || d.RelayMaxWaiting != 512 {
+		t.Fatalf("relay defaults = %+v, %d", d.Relay, d.RelayMaxWaiting)
+	}
+	door := Roles{Events: true}
+	for name, tc := range map[string]struct {
+		mutate func(*EventsEndpointConfig)
+		want   string
+	}{
+		"no waiting claim":      {func(e *EventsEndpointConfig) { e.RelayMaxWaiting = 0 }, "foundry.events.endpoint.relay_max_waiting must be positive"},
+		"one waiting claim":     {func(e *EventsEndpointConfig) { e.RelayMaxWaiting = 1 }, ""},
+		"no place":              {func(e *EventsEndpointConfig) { e.Relay.MaxInFlight = 0 }, "foundry.events.endpoint.relay.max_in_flight must be positive"},
+		"bytes short of a call": {func(e *EventsEndpointConfig) { e.Relay.MaxBytesInFlight = 1<<20 - 1 }, "relay.max_bytes_in_flight must be at least"},
+		"an address as the pod": {func(e *EventsEndpointConfig) { e.Relay.AddressMaxInFlight = 64 }, "relay.address_max_in_flight is 64"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Defaults()
+			tc.mutate(&c.Foundry.Events.Endpoint)
+			if err := c.Validate(door); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // Channel messages and replies in threads have gates of their own, apart
 // from the bot's: the reviewed defaults, checked by name where the door runs
 // whether or not the app is on, for event bodies only, after Slack's gate.
@@ -1071,7 +1154,10 @@ func TestSlackFeedDefaults(t *testing.T) {
 	}); s.Backfill != want {
 		t.Fatalf("backfill = %+v", s.Backfill)
 	}
-	if want := (SlackRelayConfig{FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000}); s.Relay != want {
+	if want := (SlackRelayConfig{
+		ClaimWait: 20 * time.Second, ClaimPoll: 2 * time.Second, DeliveryTTL: 10 * time.Minute, CallsPerMinute: 60, MaxCallBytes: 64 << 10,
+		FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000,
+	}); s.Relay != want {
 		t.Fatalf("relay = %+v", s.Relay)
 	}
 	// Both on, the defaults pass every role.

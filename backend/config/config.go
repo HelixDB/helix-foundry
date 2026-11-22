@@ -826,7 +826,7 @@ func (a AssistantConfig) validate() error {
 // Off unless enabled: the door answers Slack's routes not found, the API
 // refuses its methods and the worker idles. Who reads what: the API and the
 // worker need the app's identity and secrets (hosted; Validate), the worker
-// its own settings, and the door only Enabled.
+// its own settings, and the door only Enabled and Relay.Enabled.
 type SlackConfig struct {
 	Enabled bool `koanf:"enabled"`
 	// InstallAllowlist is the Foundry workspaces that may add the app, until
@@ -991,10 +991,28 @@ type SlackBackfillConfig struct {
 	PollInterval time.Duration `koanf:"poll_interval"`
 }
 
-// SlackRelayConfig bounds the channel messages hosted holds for a relayed
-// install (a standalone one reaching Slack through Helix) until it claims
-// them.
+// SlackRelayConfig is hosted's relay (foundry.slack.relay): standalone
+// installs linked to a Helix workspace, whose Slack requests hosted holds
+// until they claim them, and whose calls to Slack it makes for them, as
+// their installs (relayed installs). Off unless Enabled: the door answers
+// its routes not found and the API refuses its methods.
 type SlackRelayConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// ClaimWait is the longest a claim waits for something to arrive: at
+	// most MaxSlackRelayClaimWait, within the door's call. ClaimPoll is how
+	// often it looks meanwhile, a plain indexed read: at most ClaimWait.
+	ClaimWait time.Duration `koanf:"claim_wait"`
+	ClaimPoll time.Duration `koanf:"claim_poll"`
+	// DeliveryTTL is how long a bot's request (a mention, a message, a
+	// click) waits for its install before it expires unanswered.
+	DeliveryTTL time.Duration `koanf:"delivery_ttl"`
+	// CallsPerMinute caps one link's calls to Slack on one API replica, an
+	// abuse cap beside Slack's own limits; MaxCallBytes caps one call's
+	// body: from MinSlackRelayCallBytes to MaxSlackRelayCallBytes.
+	CallsPerMinute int   `koanf:"calls_per_minute"`
+	MaxCallBytes   int64 `koanf:"max_call_bytes"`
+	// What follows bounds the channel messages hosted holds for a relayed
+	// install until it claims them.
 	// FeedTTL is how long a row waits to be claimed before it is deleted
 	// and recorded as a gap.
 	FeedTTL time.Duration `koanf:"feed_ttl"`
@@ -1006,6 +1024,18 @@ type SlackRelayConfig struct {
 	// recorded as a gap instead.
 	FeedMaxRows int `koanf:"feed_max_rows"`
 }
+
+// MaxSlackRelayClaimWait bounds foundry.slack.relay.claim_wait: a claim is
+// one unary call, which the door and the load balancers in front hold open.
+const MaxSlackRelayClaimWait = 20 * time.Second
+
+// The bounds of foundry.slack.relay.max_call_bytes: a message the bot posts
+// (50 blocks of 3,000 characters, with its JSON) fits the least; the most is
+// what the door reads of a call.
+const (
+	MinSlackRelayCallBytes = 16 << 10
+	MaxSlackRelayCallBytes = 1 << 20
+)
 
 // MaxSlackAppHistoryDays bounds the history the app reads for a feed:
 // Slack's free plans keep 90 days, and data from them mustn't stay
@@ -1108,6 +1138,21 @@ func (s SlackConfig) validate(roles Roles, local bool, agent AssistantConfig) er
 			case slices.Contains(s.InstallAllowlist[:i], id):
 				return fmt.Errorf("foundry.slack.install_allowlist lists %q twice", id)
 			}
+		}
+	}
+	// The relay is hosted's: the API claims and calls for linked installs,
+	// the Slack worker tells their conversations when they are offline.
+	if (roles.API || roles.SlackWorker) && !local && s.Relay.Enabled {
+		switch r := s.Relay; {
+		case r.ClaimWait <= 0 || r.ClaimWait > MaxSlackRelayClaimWait:
+			return fmt.Errorf("foundry.slack.relay.claim_wait is %s; it must be above 0 and at most %s", r.ClaimWait, MaxSlackRelayClaimWait)
+		case r.ClaimPoll <= 0 || r.ClaimPoll > r.ClaimWait:
+			return fmt.Errorf("foundry.slack.relay.claim_poll is %s; it must be above 0 and at most claim_wait (%s)", r.ClaimPoll, r.ClaimWait)
+		case r.DeliveryTTL <= 0 || r.CallsPerMinute < 1:
+			return fmt.Errorf("foundry.slack.relay delivery_ttl and calls_per_minute must be positive")
+		case r.MaxCallBytes < MinSlackRelayCallBytes || r.MaxCallBytes > MaxSlackRelayCallBytes:
+			return fmt.Errorf("foundry.slack.relay.max_call_bytes is %d; it must be from %d to %d", r.MaxCallBytes, MinSlackRelayCallBytes,
+				MaxSlackRelayCallBytes)
 		}
 	}
 	// Bot mode is hosted only: the API bounds its turns, the agent worker
@@ -1561,6 +1606,13 @@ type EventsEndpointConfig struct {
 	// SlackEventsBodyBytes.
 	SlackFeed  DoorGateConfig `koanf:"slack_feed"`
 	SlackReply DoorGateConfig `koanf:"slack_reply"`
+	// Relay is the gate of the Slack relay's calls from linked installs
+	// (foundry.slack.relay), apart from Slack's and the sends', its bodies
+	// capped at MaxSlackRelayCallBytes. A claim, which waits up to
+	// claim_wait, holds one of RelayMaxWaiting places instead, and a link
+	// has one claim waiting per pod.
+	Relay           DoorGateConfig `koanf:"relay"`
+	RelayMaxWaiting int            `koanf:"relay_max_waiting"`
 }
 
 // DoorGateConfig is one gate of the foundry-events door: what a pod admits
@@ -1657,7 +1709,13 @@ func (d EventsEndpointConfig) Validate(sendBytes int) error {
 	if err := d.SlackFeed.validate("foundry.events.endpoint.slack_feed", SlackEventsBodyBytes); err != nil {
 		return err
 	}
-	return d.SlackReply.validate("foundry.events.endpoint.slack_reply", SlackEventsBodyBytes)
+	if err := d.SlackReply.validate("foundry.events.endpoint.slack_reply", SlackEventsBodyBytes); err != nil {
+		return err
+	}
+	if d.RelayMaxWaiting < 1 {
+		return fmt.Errorf("foundry.events.endpoint.relay_max_waiting must be positive")
+	}
+	return d.Relay.validate("foundry.events.endpoint.relay", MaxSlackRelayCallBytes)
 }
 
 // EventsConfig drives event sources (connector kind events), which
@@ -2440,6 +2498,18 @@ func Defaults() Config {
 				MaxInFlight:              8,
 				MaxBytesInFlight:         8 * SlackEventsBodyBytes,
 			},
+			// Linked installs call from their owners' machines, each a few
+			// calls a minute: 64 held, 16 of the largest bodies each.
+			Relay: DoorGateConfig{
+				AddressRequestsPerSecond: 10,
+				AddressBurstRequests:     20,
+				AddressMaxInFlight:       4,
+				RequestsPerSecond:        200,
+				BurstRequests:            400,
+				MaxInFlight:              64,
+				MaxBytesInFlight:         16 * MaxSlackRelayCallBytes,
+			},
+			RelayMaxWaiting: 512,
 		},
 		MaxSourcesPerWorkspace:     20,
 		MaxTokensPerSource:         10,
@@ -2656,8 +2726,11 @@ func Defaults() Config {
 			RetryBackoff:     time.Minute,
 			PollInterval:     5 * time.Second,
 		},
-		Relay: SlackRelayConfig{FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000},
-		Bot:   SlackBotConfig{PerHour: 120, PerUserPerHour: 20, ProposalTTL: 24 * time.Hour},
+		Relay: SlackRelayConfig{
+			ClaimWait: 20 * time.Second, ClaimPoll: 2 * time.Second, DeliveryTTL: 10 * time.Minute, CallsPerMinute: 60, MaxCallBytes: 64 << 10,
+			FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000,
+		},
+		Bot: SlackBotConfig{PerHour: 120, PerUserPerHour: 20, ProposalTTL: 24 * time.Hour},
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,
