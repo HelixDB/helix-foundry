@@ -323,6 +323,9 @@ type StoredThread = {
   // the workspace's whole view, which no restricted member reads
   // (model.FoundryAgentThread.Granted).
   granted: FoundryAccessTarget[] | null;
+  // The channels its sources shared with them as its turns ran, which must
+  // all still be (model.FoundryAgentThreadGrants.Items).
+  grantedItems: { connectorId: string; item: string }[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -615,9 +618,15 @@ const isPerson = (
   x: ReturnType<typeof person>,
 ): x is Exclude<ReturnType<typeof person>, MockReply> => "userId" in x;
 
-/** Whether a grantee may read thread `t`: one it made, all of whose grants it holds. */
+/**
+ * Whether a grantee may read thread `t`: one it made, all of whose grants it
+ * holds, and every channel of whose its sources still share with it.
+ */
 const granteeReads = (t: StoredThread, grantee?: MockGrantee) =>
-  !grantee || (!!t.granted && grantee.holdsAll(t.granted));
+  !grantee ||
+  (!!t.granted &&
+    grantee.holdsAll(t.granted) &&
+    grantee.seesItems(t.grantedItems));
 
 /** The person's thread, unless deleted or not the grantee's to read. */
 function threadOf(
@@ -3779,6 +3788,7 @@ export function queueAutomationTurn(p: {
       title: [...p.title].slice(0, TITLE_CHARS).join(""),
       runtime: "api",
       granted: null,
+      grantedItems: [],
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null,
@@ -4885,6 +4895,7 @@ export const agentRoutes: MockRoute[] = [
           runtime,
           // A restricted member's holds what their grants give now.
           granted: p.grantee ? [...p.grantee.targets] : null,
+          grantedItems: p.grantee ? p.grantee.items() : [],
           createdAt: now(),
           updatedAt: now(),
           deletedAt: null,
@@ -4928,6 +4939,12 @@ export const agentRoutes: MockRoute[] = [
         const had = new Set(thread.granted.map((t) => JSON.stringify(t)));
         thread.granted.push(
           ...p.grantee.targets.filter((t) => !had.has(JSON.stringify(t))),
+        );
+        const hadItems = new Set(
+          thread.grantedItems.map((i) => JSON.stringify(i)),
+        );
+        thread.grantedItems.push(
+          ...p.grantee.items().filter((i) => !hadItems.has(JSON.stringify(i))),
         );
       }
       const turn = queueTurn(

@@ -63,7 +63,6 @@ import {
 import {
   addsSources,
   grantKey,
-  grantNote,
   grantsOf,
   heldGrants,
   leftOutBy,
@@ -79,6 +78,7 @@ import {
   restrictedHoldingNothing,
   setOwners,
   sourcePermissions,
+  SLACK_GRANT_NOTE,
   sourceState,
   sourceTree,
   syncedFrom,
@@ -391,7 +391,7 @@ function GrantsDialog({
                           <small>
                             {" · "}
                             {follows.has(c.id)
-                              ? grantNote(c.kind)
+                              ? SLACK_GRANT_NOTE
                               : "all of it, now and later"}
                           </small>
                         </span>
@@ -1524,7 +1524,7 @@ function SourcesPanel({ data }: { data: AccessData }) {
   return (
     <Panel
       title="Source permissions"
-      subtitle="Connections that follow their source’s own permissions: someone restricted reads only what the source shares with their email, and its tables only once that is all of it. Everyone else reads all of it."
+      subtitle="Connections that follow their source’s own permissions: someone restricted reads only what the source shares with their email, and none of its tables. Everyone else reads all of it."
       padded={false}
     >
       {sources.isPending || data.members.isPending ? (
@@ -1548,7 +1548,14 @@ function SourcesPanel({ data }: { data: AccessData }) {
         >
           {sources.data.map((a) => {
             const name = data.names.connection(a.connectorId || ""),
-              row = sourcePermissions(a, data.people, nameOf, formatRelative);
+              row = sourcePermissions(
+                a,
+                (userId) => {
+                  const member = data.people.find((m) => m.user?.id === userId);
+                  return member ? nameOf(member) : "Unknown user";
+                },
+                formatRelative,
+              );
             return (
               <Row
                 key={a.connectorId}

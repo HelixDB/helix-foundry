@@ -1425,15 +1425,15 @@ test("a grantee given Slack reads only the channels she's in, and Source permiss
     )
     .toBe("CONNECTOR_SYNC_STATUS_SUCCEEDED");
 
-  // Its sync read who each channel is shared with: Slack knows all three of
-  // Acme's members by email.
+  // Its sync read who each channel is shared with: Slack knows Eve, Acme's
+  // one restricted member, by her email.
   await page.goto("/settings/access?tab=sources");
   const row = page
     .getByRole("list", { name: "Source permissions" })
     .getByRole("listitem", { name: "Acme Slack" });
   await expect(row).toContainText("Follows Slack channel membership");
   await expect(row).toContainText("5 public channels, 1 private");
-  await expect(row).toContainText("3 of 3 members matched");
+  await expect(row).toContainText("1 of 1 restricted person matched");
   await expect(
     row.getByRole("link", { name: "Open Acme Slack" }),
   ).toHaveAttribute("href", `/data/connections/${connector.id}`);

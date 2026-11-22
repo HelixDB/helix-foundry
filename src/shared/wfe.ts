@@ -5631,14 +5631,12 @@ export type GetMyFoundryAccessResponse = {
   ontologyIds?: string[];
   partialOntologyIds?: string[];
   workflows?: boolean;
+  /** A grantee's: the channels its sources share with it now, sorted. */
+  sourceItems?: FoundrySourceItem[];
 };
 
-/**
- * v1FoundrySourcePerson: one of a source's people, by email (trimmed and
- * lowercased, as members are matched by it); a `guest` reads only the items
- * that list them.
- */
-export type FoundrySourcePerson = { email?: string; guest?: boolean };
+/** v1FoundrySourceItem: one item of a connection's source (a Slack channel). */
+export type FoundrySourceItem = { connectorId?: string; itemKey?: string };
 
 /** v1FoundrySourceAudienceProblem: why the latest read failed, and when. */
 export type FoundrySourceAudienceProblem = { message?: string; at?: string };
@@ -5646,12 +5644,16 @@ export type FoundrySourceAudienceProblem = { message?: string; at?: string };
 /**
  * v1FoundrySourceAudience: who one connection's source shares its items
  * with (a Slack connection's channels), as its last sync read it. A grantee
- * reads only the items shared with their verified email, and its tables only
- * when that is every item. `stale`: never read, or last read more than 7 days
- * ago, so its documents and tables go to full readers only. `problem`: why the
- * latest read failed, while none has worked since. `everyoneItems` are shared
- * with everyone but guests (public channels), `membersItems` only with the
- * people they list (private channels).
+ * reads only the items shared with their verified email, and none of its
+ * tables. `stale`: never read, or last read more than 7 days ago (a day, once
+ * a read since failed), so its documents go to full readers only. `problem`:
+ * why the latest read failed, while none has worked since. `everyoneItems`
+ * are shared with everyone the source has an account for but guests (public
+ * channels), `membersItems` only with the people they list (private
+ * channels). `grantees` counts the people it narrows (restricted members and
+ * the members of teams with grants); `unmatchedUserIds` are those it has no
+ * account for by their email (they read none of its items) and
+ * `guestUserIds` those it knows as guests.
  */
 export type FoundrySourceAudience = {
   connectorId?: string;
@@ -5661,7 +5663,9 @@ export type FoundrySourceAudience = {
   problem?: FoundrySourceAudienceProblem;
   everyoneItems?: number;
   membersItems?: number;
-  people?: FoundrySourcePerson[];
+  grantees?: number;
+  unmatchedUserIds?: string[];
+  guestUserIds?: string[];
 };
 
 /**

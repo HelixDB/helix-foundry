@@ -601,25 +601,40 @@ function holdsAll(
 // backend/access/sharing.go, backend/sourceaccess): a Slack connector's
 // syncs read who each channel is shared with (./data.ts
 // connectorAudiences), and a reader, matched by their verified email,
-// reads of it only the channels shared with them: a public one unless the
-// source knows them as a guest, a private one when it lists them. A key or
-// a team is no one in any source, and reads public channels only. Its
-// Conversations documents are read per channel; its tables and sets are
-// covered only while the reader reads every channel; and a connector whose
-// channels were never read, or were read over 7 days ago, reads as
-// unknown: only full readers (anyone not a grantee) read any of it.
+// reads of it only the channels shared with them: a public one while Slack
+// has an account for them by that email that isn't a guest's, a private one
+// when it lists them. A member Slack has no account for reads none of its
+// channels; a key or a team is no one in any source, and reads public
+// channels only. Its Conversations documents are read per channel, so a
+// load holding any is always read in part, its tables by full readers only,
+// and a connector whose channels were never read, or were read over 7 days
+// ago (a day, once a read since failed), reads as unknown: only full
+// readers (anyone not a grantee) read any of it.
 
 /** How old a read of a source's audiences may be and still count (access.MaxAudienceAge). */
 const MAX_AUDIENCE_AGE_MS = 7 * 86_400_000;
+/** And once a read since failed (access.MaxFailingAudienceAge). */
+const MAX_FAILING_AUDIENCE_AGE_MS = 86_400_000;
+
+/** Whether a connector's last read of its audiences still counts (access.AudiencesFresh). */
+function audiencesFresh(a: ReturnType<typeof connectorAudiences>) {
+  if (!a?.readAt) return false;
+  const read = Date.parse(a.readAt),
+    failing = !!a.problem && Date.parse(a.problem.at) > read;
+  return (
+    Date.now() - read <=
+    (failing ? MAX_FAILING_AUDIENCE_AGE_MS : MAX_AUDIENCE_AGE_MS)
+  );
+}
 
 /**
  * What one reader reads of one audienced connector (access.SourceReach):
- * its items are unknown, or the items the source shares with the reader,
- * and whether that is every item.
+ * its items are unknown, or the items the source shares with the reader.
  */
-type Reach =
-  | { known: false }
-  | { known: true; items: ReadonlySet<string>; all: boolean };
+type Reach = { known: false } | { known: true; items: ReadonlySet<string> };
+
+/** An item of an audienced source the reader read (access.ItemRef). */
+type Item = { connectorId: string; item: string };
 
 /**
  * A principal's grants as it reads them (access.Grants with its Sharing):
@@ -632,6 +647,12 @@ type Reader = {
   sharing: ReadonlyMap<string, Reach>;
 };
 
+/** A user's verified email in the form sources match it by; "" for none. */
+const userEmail = (userId: string) => {
+  const user = db.users.get(userId);
+  return user && !user.emailUnverified ? user.email.trim().toLowerCase() : "";
+};
+
 /**
  * `targets` as `principal` reads them in the workspace (sourceaccess.Of): a
  * user as their verified email, trimmed and lowercased; a key or a team as
@@ -642,40 +663,33 @@ function readerOf(
   principal: Principal,
   targets: readonly FoundryAccessTarget[],
 ): Reader {
-  const user =
-      principal.kind === "KIND_USER" ? db.users.get(principal.id) : undefined,
-    email =
-      user && !user.emailUnverified ? user.email.trim().toLowerCase() : "";
+  const person = principal.kind === "KIND_USER",
+    email = person ? userEmail(principal.id) : "";
   const sharing = new Map<string, Reach>();
   // Slack is the one kind whose source reports its permissions.
   for (const c of workspaceConnectors(workspaceId)) {
     if (c.kind !== "slack") continue;
     const a = connectorAudiences(c.id);
-    if (!a?.readAt || Date.now() - Date.parse(a.readAt) > MAX_AUDIENCE_AGE_MS) {
+    if (!audiencesFresh(a)) {
       sharing.set(c.id, { known: false });
       continue;
     }
-    const guest = !!a.people?.some((p) => p.email === email && p.guest),
+    const account = email
+        ? a?.people?.find((p) => p.email === email)
+        : undefined,
+      public_ = person ? !!account && !account.guest : true,
       items = new Set(
-        (a.items || [])
+        (a?.items || [])
           .filter((i) =>
-            i.members === "everyone" ? !guest : i.members.includes(email),
+            i.members === "everyone"
+              ? public_
+              : !!email && i.members.includes(email),
           )
           .map((i) => i.key),
       );
-    sharing.set(c.id, {
-      known: true,
-      items,
-      all: items.size >= (a.items || []).length,
-    });
+    sharing.set(c.id, { known: true, items });
   }
   return { targets, sharing };
-}
-
-/** Whether the reader reads every item of a connector (Sharing.whole). */
-function whole(r: Reader, connectorId: string) {
-  const reach = r.sharing.get(connectorId);
-  return !reach || (reach.known && reach.all);
 }
 
 /** Whether the reader reads any item of a connector (Sharing.some). */
@@ -684,9 +698,13 @@ function some(r: Reader, connectorId: string) {
   return !reach || (reach.known && reach.items.size > 0);
 }
 
-/** Whether the reader's grants cover every document in `set` (Grants.CoversSet). */
+/**
+ * Whether the reader's grants cover every document in `set`
+ * (Grants.CoversSet): never a set of an audienced connector, whose
+ * documents may be of channels the last read didn't list.
+ */
 const coversSet = (r: Reader, set: { setId: string; connectorId: string }) =>
-  givesSet(r.targets, set) && whole(r, set.connectorId);
+  givesSet(r.targets, set) && !r.sharing.has(set.connectorId);
 
 /** Whether they give some documents of `set` (Grants.ReachesSet). */
 const reachesSet = (r: Reader, set: { setId: string; connectorId: string }) =>
@@ -694,11 +712,27 @@ const reachesSet = (r: Reader, set: { setId: string; connectorId: string }) =>
 
 /**
  * Whether the reader's grants cover a table (Grants.CoversTable): its rows
- * aren't told apart by item, so an audienced connector's only while the
- * reader reads every item.
+ * aren't told apart by item, so never an audienced connector's.
  */
 const coversTable = (r: Reader, x: { connectorId: string; table: string }) =>
-  givesTable(r.targets, x) && whole(r, x.connectorId);
+  givesTable(r.targets, x) && !r.sharing.has(x.connectorId);
+
+/** The channel of an audienced connector's document (Sharing.item), if any. */
+function itemOf(r: Reader, documentId: string): Item | undefined {
+  const set = documentSet(documentId);
+  if (!r.sharing.has(set.connectorId)) return undefined;
+  const source = documentSource(documentId),
+    [channel, day] = source?.externalId.split(":") || [];
+  return source?.stream === "conversations" && channel && day
+    ? { connectorId: set.connectorId, item: channel }
+    : undefined;
+}
+
+/** Whether the source of `i`'s connector shares it with the reader now. */
+function sees(r: Reader, i: Item) {
+  const reach = r.sharing.get(i.connectorId);
+  return !!reach?.known && reach.items.has(i.item);
+}
 
 /**
  * Whether the reader reads a document (Grants.Reads): its set is given, and
@@ -710,18 +744,22 @@ const coversTable = (r: Reader, x: { connectorId: string; table: string }) =>
 function readsDocument(r: Reader, documentId: string) {
   const set = documentSet(documentId);
   if (!givesSet(r.targets, set)) return false;
-  const reach = r.sharing.get(set.connectorId);
-  if (!reach) return true;
-  if (!reach.known) return false;
-  const source = documentSource(documentId),
-    [channel, day] = source?.externalId.split(":") || [];
-  return (
-    source?.stream === "conversations" &&
-    !!channel &&
-    !!day &&
-    reach.items.has(channel)
-  );
+  if (!r.sharing.has(set.connectorId)) return true;
+  const i = itemOf(r, documentId);
+  return !!i && sees(r, i);
 }
+
+/** The items every audienced source shares with the reader, sorted (Grants.VisibleItems). */
+const visibleItems = (r: Reader): Item[] =>
+  r.targets.length
+    ? [...r.sharing]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .flatMap(([connectorId, reach]) =>
+          reach.known
+            ? [...reach.items].sort().map((item) => ({ connectorId, item }))
+            : [],
+        )
+    : [];
 
 /** Whether the reader's grants cover all a load holds (Grants.Covers). */
 function covers(r: Reader, inputs: Inputs) {
@@ -752,8 +790,8 @@ function reaches(r: Reader, inputs: Inputs) {
 
 /**
  * Whether a reader that read `seen`, part of a load, may still read what it
- * said (Grants.Keeps): as covers, but a set counts while it reaches it, since
- * `seen` names sets, not the documents read of them.
+ * said (Grants.Keeps): as covers, but a set counts while it reaches it, and
+ * every channel its documents were of must still be shared with them.
  */
 function keeps(r: Reader, seen: MockSeen) {
   return (
@@ -761,7 +799,8 @@ function keeps(r: Reader, seen: MockSeen) {
     seen.sets.every((s) => reachesSet(r, s)) &&
     seen.tables.every((t) => coversTable(r, t)) &&
     (!seen.enrichment || r.targets.some((t) => t.kind === "KIND_ENRICHMENT")) &&
-    !seen.uncoverable
+    !seen.uncoverable &&
+    seen.items.every((i) => sees(r, i))
   );
 }
 
@@ -1116,6 +1155,8 @@ export function guarded(route: MockRoute): MockRoute {
         principal: principalKey({ kind: "KIND_USER", id: m.userId }),
         targets,
         holdsAll: (wanted) => holdsAll(targets, wanted),
+        items: () => visibleItems(reader),
+        seesItems: (items) => items.every((i) => sees(reader, i)),
         covered: heldLoads(m.workspaceId, reader),
         reads: (documentId) => readsDocument(reader, documentId),
         holds: (documentId, ontologyId) =>
@@ -1127,13 +1168,30 @@ export function guarded(route: MockRoute): MockRoute {
           ),
         visibility: (ontologyId) => visibilityOf(ontologyId, reader),
         seen: (ontologyId) => {
-          const l = currentInputs(m.workspaceId).get(ontologyId)!.inputs;
+          const current = currentInputs(m.workspaceId).get(ontologyId)!,
+            l = current.inputs,
+            read = loadDocumentIds(current.loadId).filter((d) =>
+              readsDocument(reader, d),
+            ),
+            items = new Map(
+              read.flatMap((d) => {
+                const i = itemOf(reader, d);
+                return i
+                  ? [[`${i.connectorId}\u001f${i.item}`, i] as const]
+                  : [];
+              }),
+            );
           return {
             tables: l.tables.filter((t) => coversTable(reader, t)),
             sets: l.sets.filter((s) => reachesSet(reader, s)),
             enrichment:
               l.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT"),
             uncoverable: false,
+            items: [...items.values()].sort(
+              (a, b) =>
+                a.connectorId.localeCompare(b.connectorId) ||
+                a.item.localeCompare(b.item),
+            ),
           };
         },
         stillSees: (seen) => keeps(reader, seen),
@@ -1624,10 +1682,12 @@ export const accessRoutes: MockRoute[] = [
       const m = membership(req.params.workspaceId!, req.principal.user.id);
       if (isReply(m)) return m;
       const targets = userTargets(m.workspaceId, m.userId),
-        loads = heldLoads(
+        reader = readerOf(
           m.workspaceId,
-          readerOf(m.workspaceId, { kind: "KIND_USER", id: m.userId }, targets),
-        );
+          { kind: "KIND_USER", id: m.userId },
+          targets,
+        ),
+        loads = heldLoads(m.workspaceId, reader);
       return ok({
         grantee: !!req.grantee,
         hasGrants: targets.length > 0,
@@ -1637,39 +1697,73 @@ export const accessRoutes: MockRoute[] = [
           .filter(([, l]) => l.partial)
           .map(([o]) => o)
           .sort(),
+        // What Founder records a restricted member's thread read under;
+        // left out when none, as the WFE's JSON leaves an empty list out.
+        ...(req.grantee &&
+          visibleItems(reader).length > 0 && {
+            sourceItems: visibleItems(reader).map((i) => ({
+              connectorId: i.connectorId,
+              itemKey: i.item,
+            })),
+          }),
       } satisfies GetMyFoundryAccessResponse);
     },
   },
   {
     // The connections whose sources' own permissions narrow grants (owners
     // and admins; a grantee is refused, as RULES names it not): each live
-    // Slack connector, oldest first, with its last read's people and
-    // channel counts, stale while never read or read over 7 days ago.
+    // Slack connector, oldest first, with its last read's channel counts,
+    // stale while never read or no longer fresh, and whom of the people it
+    // narrows (restricted members, and the members of teams with grants) it
+    // has no account for or knows as a guest. Slack's directory stays here.
     method: "GET",
     path: `${A}/sources`,
     handle: (req) => {
       const m = manager(req);
       if (isReply(m)) return m;
+      const ws = m.workspaceId,
+        granted = new Set(
+          grantsOf(ws)
+            .filter((g) => g.principal.kind === "KIND_TEAM")
+            .map((g) => g.principal.id),
+        ),
+        narrowed = [
+          ...new Set([
+            ...[...state.restricted].flatMap((k) => {
+              const [w, userId] = k.split("\u001f");
+              return w === ws ? [userId!] : [];
+            }),
+            ...state.teams
+              .filter((t) => t.workspaceId === ws && granted.has(t.id))
+              .flatMap((t) => t.memberUserIds),
+          ]),
+        ].sort();
       return ok({
-        sources: workspaceConnectors(m.workspaceId)
+        sources: workspaceConnectors(ws)
           .filter((c) => c.kind === "slack")
           .map((c) => {
             const a = connectorAudiences(c.id),
-              items = a?.items || [];
+              items = a?.items || [],
+              account = (userId: string) => {
+                const email = userEmail(userId);
+                return email
+                  ? a?.people?.find((p) => p.email === email)
+                  : undefined;
+              };
             return {
               connectorId: c.id,
               kind: c.kind,
               readAt: a?.readAt,
-              stale:
-                !a?.readAt ||
-                Date.now() - Date.parse(a.readAt) > MAX_AUDIENCE_AGE_MS,
+              stale: !audiencesFresh(a),
               // Why the newest read failed: a read that works clears it.
               problem: a?.problem,
               everyoneItems: items.filter((i) => i.members === "everyone")
                 .length,
               membersItems: items.filter((i) => i.members !== "everyone")
                 .length,
-              people: a?.people || [],
+              grantees: narrowed.length,
+              unmatchedUserIds: narrowed.filter((u) => !account(u)),
+              guestUserIds: narrowed.filter((u) => account(u)?.guest),
             };
           }),
       } satisfies ListFoundrySourceAudiencesResponse);

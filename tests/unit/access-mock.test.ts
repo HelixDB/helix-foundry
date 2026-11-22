@@ -1446,7 +1446,7 @@ describe("a source's own permissions", () => {
       config: { slack: { botToken: "xoxb-1-team1234", historyDays: 3 } },
     });
     const id = created.body.connector.id as string;
-    // Never read: stale, with no people.
+    // Never read: stale, and Eve, restricted, matched to no one.
     expect((await call("GET", SOURCES)).body.sources).toEqual([
       expect.objectContaining({
         connectorId: id,
@@ -1454,7 +1454,9 @@ describe("a source's own permissions", () => {
         stale: true,
         everyoneItems: 0,
         membersItems: 0,
-        people: [],
+        grantees: 1,
+        unmatchedUserIds: ["usr_eve"],
+        guestUserIds: [],
       }),
     ]);
     await call("POST", `${F}/connectors/${id}:sync`, {});
@@ -1462,7 +1464,7 @@ describe("a source's own permissions", () => {
     const [read] = (await call("GET", SOURCES)).body
       .sources as wfe.FoundrySourceAudience[];
     // Every public channel, #random too, and the private one the app is in;
-    // the people with an email, by it in one form, the guest marked.
+    // Eve matched by her email, and Slack's own people never sent.
     expect(read).toEqual({
       connectorId: id,
       kind: "slack",
@@ -1470,14 +1472,9 @@ describe("a source's own permissions", () => {
       stale: false,
       everyoneItems: 5,
       membersItems: 1,
-      people: [
-        { email: "ada@example.com", guest: false },
-        { email: "alan@example.com", guest: false },
-        { email: "eve@example.com", guest: false },
-        { email: "grace.hopper@partner.example", guest: true },
-        { email: "hedy@example.com", guest: false },
-        { email: "margaret@example.com", guest: false },
-      ],
+      grantees: 1,
+      unmatchedUserIds: [],
+      guestUserIds: [],
     });
     // Members and grantees aren't told.
     expect((await call("GET", SOURCES, undefined, "usr_alan")).status).toBe(
@@ -1507,7 +1504,7 @@ describe("a source's own permissions", () => {
           "add the users:read.email scope to the app and reinstall it, so Foundry can follow who each channel is shared with",
         at: expect.any(String),
       },
-      people: [],
+      unmatchedUserIds: ["usr_eve"],
     });
     expect((await call("GET", SOURCES)).body.sources[0].readAt).toBeUndefined();
   });
@@ -1542,7 +1539,7 @@ describe("a source's own permissions", () => {
     expect(new Set(await byIds(ids))).toEqual(new Set(public_));
   });
 
-  it("gives a grantee part of a load of Slack's, and its tables only with every channel", async () => {
+  it("gives a grantee part of a load of Slack's, never its tables, and keeps her answer with its channels", async () => {
     Object.assign(config, { loadStepMs: 50, ontologyStepMs: 100 });
     const id = await slack();
     const { set, docs } = await conversations(id);
@@ -1587,6 +1584,28 @@ describe("a source's own permissions", () => {
       .body as wfe.GetMyFoundryAccessResponse;
     expect(me.ontologyIds).toContain("ont_acme_contracts");
     expect(me.partialOntologyIds).toContain("ont_acme_contracts");
+    // Founder records the channels shared with her as its turns run.
+    const shared = me.sourceItems!.map((i) => i.itemKey);
+    expect(shared).toEqual([...shared].sort());
+    expect(shared).not.toContain(LEADERSHIP);
+    expect(shared).toEqual(
+      expect.arrayContaining(
+        [...new Set(docs.map(channelOf))].filter((c) => c !== LEADERSHIP),
+      ),
+    );
+    expect(me.sourceItems!.every((i) => i.connectorId === id)).toBe(true);
+    expect(
+      ((await call("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
+        .sourceItems,
+    ).toBeUndefined();
+    // Her answer is kept with the channels it read.
+    const asked = (
+      await eve("POST", `${O}/questions`, {
+        question: "What did #general say?",
+        clientToken: "slack-q",
+      })
+    ).body.question as wfe.FoundryQuestion;
+    expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(200);
     const listed = (await eve("GET", `${O}/documents`)).body
       .documents as wfe.FoundryDocument[];
     expect(listed.length).toBe(
@@ -1625,7 +1644,13 @@ describe("a source's own permissions", () => {
       general,
       { kind: "KIND_CONNECTOR", connectorId: id },
     ]);
-    later(8 * 86_400_000);
+    // Two days on the read still counts; past seven, the channels are unknown.
+    later(2 * 86_400_000);
+    expect(
+      ((await eve("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
+        .ontologyIds,
+    ).toContain("ont_acme_contracts");
+    later(6 * 86_400_000);
     expect(
       ((await eve("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
         .ontologyIds || [],

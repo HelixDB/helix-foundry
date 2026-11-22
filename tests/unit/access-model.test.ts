@@ -4,9 +4,10 @@ import {
   keyParam,
   addsSources,
   audienceRead,
+  listNames,
   covered,
   grantKey,
-  grantNote,
+  SLACK_GRANT_NOTE,
   grantOf,
   granteeRedirect,
   grantsOf,
@@ -26,7 +27,6 @@ import {
   restrictable,
   restrictedHoldingNothing,
   setOwners,
-  sourceMatch,
   sourcePermissions,
   sourceState,
   sourceTree,
@@ -737,24 +737,12 @@ describe("restricted mode", () => {
 });
 
 describe("source permissions", () => {
-  const person = (id: string, email?: string, displayName?: string) =>
-    ({
-      workspaceId: "ws",
-      role: "WORKSPACE_ROLE_MEMBER",
-      user: { id, email, displayName },
-    }) satisfies wfe.WorkspaceMember;
-  const ada = person("ada", "ada@example.com", "Ada Lovelace"),
-    eve = person("eve", " Eve@Example.com ", "Eve Adler"),
-    grace = person("grace", "grace@partner.example", "Grace Hopper"),
-    nobody = person("nobody"),
-    bob = person("bob", "bob@elsewhere.example");
-  const people: wfe.FoundrySourcePerson[] = [
-    { email: "ada@example.com", guest: false },
-    { email: "eve@example.com" },
-    { email: "GRACE@partner.example", guest: true },
-  ];
-  const name = (m: wfe.WorkspaceMember) =>
-    m.user?.displayName || m.user?.email || "Unknown user";
+  const names: Record<string, string> = {
+    ada: "Ada Lovelace",
+    grace: "Grace Hopper",
+    bob: "bob@elsewhere.example",
+  };
+  const name = (userId: string) => names[userId] || "Unknown user";
   const relative = (at: string) => `at ${at}`;
   const slack: wfe.FoundrySourceAudience = {
     connectorId: "c",
@@ -763,7 +751,7 @@ describe("source permissions", () => {
     stale: false,
     everyoneItems: 5,
     membersItems: 1,
-    people,
+    grantees: 2,
   };
 
   it("tells a read that worked from a stale one and none", () => {
@@ -780,118 +768,108 @@ describe("source permissions", () => {
     expect(audienceRead({})).toEqual({ kind: "never" });
   });
 
-  it("matches members by email in one form, guests among them, and leaves out those without one", () => {
-    expect(sourceMatch(people, [ada, eve, grace, nobody, bob])).toEqual({
-      matched: [ada, eve, grace],
-      guests: [grace],
-      unmatched: [nobody, bob],
-    });
-    expect(sourceMatch([], [ada])).toEqual({
-      matched: [],
-      guests: [],
-      unmatched: [ada],
-    });
-    // A person without an email matches no member without one.
-    expect(sourceMatch([{}], [nobody]).matched).toEqual([]);
-  });
-
-  it("says what a Slack connection follows, when it was read, and whom it matches", () => {
-    expect(sourcePermissions(slack, [ada, eve], name, relative)).toEqual({
+  it("says what a Slack connection follows, when it was read, and whom of the people it narrows it matches", () => {
+    expect(sourcePermissions(slack, name, relative)).toEqual({
       follows: "Follows Slack channel membership",
-      line: "Read at 2026-11-20T10:00:00Z · 5 public channels, 1 private · 2 of 2 members matched",
+      line: "Read at 2026-11-20T10:00:00Z · 5 public channels, 1 private · 2 of 2 restricted people matched",
       notes: [],
-    });
-    expect(
-      sourcePermissions(
-        { ...slack, everyoneItems: 1, membersItems: 2 },
-        [ada, grace, bob, nobody],
-        name,
-        relative,
-      ),
-    ).toEqual({
-      follows: "Follows Slack channel membership",
-      line: "Read at 2026-11-20T10:00:00Z · 1 public channel, 2 private · 2 of 4 members matched",
-      notes: [
-        "Not in Slack by their email: bob@elsewhere.example, Unknown user. Restricted, they read only its public channels.",
-        "A guest in Slack: Grace Hopper. Restricted, they read only the private channels that list them.",
-      ],
     });
     expect(
       sourcePermissions(
         {
           ...slack,
-          people: [...people, { email: "bob@elsewhere.example", guest: true }],
+          everyoneItems: 1,
+          membersItems: 2,
+          grantees: 4,
+          unmatchedUserIds: ["bob", "nobody"],
+          guestUserIds: ["grace"],
         },
-        [grace, bob],
+        name,
+        relative,
+      ),
+    ).toEqual({
+      follows: "Follows Slack channel membership",
+      line: "Read at 2026-11-20T10:00:00Z · 1 public channel, 2 private · 2 of 4 restricted people matched",
+      notes: [
+        "Not in Slack by their email: bob@elsewhere.example, Unknown user. Restricted, they read none of its channels.",
+        "A guest in Slack: Grace Hopper. Restricted, they read only the private channels that list them.",
+      ],
+    });
+    expect(
+      sourcePermissions(
+        { ...slack, guestUserIds: ["grace", "ada"] },
         name,
         relative,
       ).notes,
     ).toEqual([
-      "Guests in Slack: Grace Hopper, bob@elsewhere.example. Restricted, they read only the private channels that list them.",
+      "Guests in Slack: Grace Hopper, Ada Lovelace. Restricted, they read only the private channels that list them.",
     ]);
+    expect(
+      sourcePermissions({ ...slack, grantees: 1 }, name, relative).line,
+    ).toContain("1 of 1 restricted person matched");
   });
 
-  it("reads counts and people the WFE leaves out as none", () => {
+  it("lists five names, then counts the rest", () => {
+    expect(listNames([])).toBe("");
+    expect(listNames(["Ada", "Eve"])).toBe("Ada, Eve");
+    expect(listNames(["A", "B", "C", "D", "E"])).toBe("A, B, C, D, E");
+    expect(listNames(["A", "B", "C", "D", "E", "F", "G"])).toBe(
+      "A, B, C, D, E and 2 more",
+    );
+    const many = Array.from({ length: 10_000 }, (_, i) => `u${i}`);
+    expect(
+      sourcePermissions(
+        { ...slack, grantees: many.length, unmatchedUserIds: many },
+        (id) => id,
+        relative,
+      ).notes[0],
+    ).toBe(
+      "Not in Slack by their email: u0, u1, u2, u3, u4 and 9,995 more. Restricted, they read none of its channels.",
+    );
+  });
+
+  it("reads counts the WFE leaves out as none", () => {
     expect(
       sourcePermissions(
         { kind: "slack", readAt: "2026-11-20T10:00:00Z" },
-        [],
         name,
         relative,
       ).line,
     ).toBe(
-      "Read at 2026-11-20T10:00:00Z · 0 public channels, 0 private · 0 of 0 members matched",
+      "Read at 2026-11-20T10:00:00Z · 0 public channels, 0 private · 0 of 0 restricted people matched",
     );
   });
 
   it("says when a read is stale or never worked, and why the last one failed", () => {
     expect(
-      sourcePermissions({ ...slack, stale: true }, [ada], name, relative).line,
+      sourcePermissions({ ...slack, stale: true }, name, relative).line,
     ).toBe(
-      "Last read at 2026-11-20T10:00:00Z, over 7 days ago: only owners, admins and members who aren’t restricted read it until a sync reads them again · 5 public channels, 1 private · 1 of 1 member matched",
+      "Last read at 2026-11-20T10:00:00Z, too long ago: only owners, admins and members who aren’t restricted read it until a sync reads them again · 5 public channels, 1 private · 2 of 2 restricted people matched",
     );
     const never = sourcePermissions(
       {
         connectorId: "c",
         kind: "slack",
         stale: true,
+        grantees: 1,
+        unmatchedUserIds: ["ada"],
         problem: {
           message: "add the users:read.email scope to the app and reinstall it",
           at: "2026-11-21T10:00:00Z",
         },
       },
-      [ada],
       name,
       relative,
     );
     expect(never.line).toBe(
-      "Not read yet: only owners, admins and members who aren’t restricted read it until a sync reads them again · 0 of 1 member matched",
+      "Not read yet: only owners, admins and members who aren’t restricted read it until a sync reads them again · 0 of 1 restricted person matched",
     );
     expect(never.notes).toEqual([
-      "Not in Slack by their email: Ada Lovelace. Restricted, they read only its public channels.",
+      "Not in Slack by their email: Ada Lovelace. Restricted, they read none of its channels.",
       "The last read of who it shares what with failed: add the users:read.email scope to the app and reinstall it.",
     ]);
-  });
-
-  it("words a kind it doesn't know by what its source shares", () => {
-    const other = sourcePermissions(
-      { ...slack, kind: "drive", people: [] },
-      [ada],
-      name,
-      relative,
-    );
-    expect(other).toEqual({
-      follows: "Follows its source’s permissions",
-      line: "Read at 2026-11-20T10:00:00Z · 6 items, 1 private · 0 of 1 member matched",
-      notes: [
-        "Not in its source by their email: Ada Lovelace. Restricted, they read only what it shares with everyone.",
-      ],
-    });
-    expect(grantNote("slack")).toBe(
+    expect(SLACK_GRANT_NOTE).toBe(
       "only the channels each person is in, now and later",
-    );
-    expect(grantNote()).toBe(
-      "only what its source shares with each person, now and later",
     );
   });
 });

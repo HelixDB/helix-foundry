@@ -8,13 +8,12 @@ import type {
   FoundryPrincipal,
   FoundryPrincipalKind,
   FoundrySourceAudience,
-  FoundrySourcePerson,
   FoundryTeam,
   ListFoundryAccessResponse,
   ResourceScope,
   WorkspaceMember,
 } from "../../../shared/wfe";
-import { plural } from "../../kit/util";
+import { formatNumber, plural } from "../../kit/util";
 
 // Source grants as Settings › Access and restricted mode read them, pure:
 // what a grant gives (Grant, from and to the WFE's targets), the workspace's
@@ -730,16 +729,17 @@ export const readsPart = (
 
 // ---------------------------------------------------------------- source permissions
 //
-// A connection whose source reports its own permissions (Slack: who each
-// channel is shared with) gives someone restricted only what the source
-// shares with their email, and its tables only once that is all of it
-// (plans/SOURCE_ACLS.md). Its syncs read those permissions; a read over 7
-// days old, or none, leaves it to people who aren't restricted.
+// A Slack connection follows Slack's own permissions: someone restricted
+// reads only the channels Slack shares with their email, and none of its
+// tables (plans/SOURCE_ACLS.md). Its syncs read those permissions; a read
+// over 7 days old (a day, once a read since failed), or none, leaves it to
+// people who aren't restricted. The backend matches the people it narrows
+// to Slack's, so Slack's own directory never reaches the page.
 
 /**
  * When a connection's source permissions were last read: never (no read
- * has worked), too long ago (`stale`: over 7 days), or recently enough to
- * narrow its grants.
+ * has worked), too long ago (`stale`), or recently enough to narrow its
+ * grants.
  */
 export type AudienceRead =
   | { kind: "never" }
@@ -760,110 +760,68 @@ export const audienceRead = (a: FoundrySourceAudience): AudienceRead =>
       : { kind: "fresh", at: a.readAt };
 
 /**
- * The workspace's members as a source's people match them, by email
- * (trimmed and lowercased, as the backend matches them): those it knows,
- * those of them it knows as guests, and those it doesn't (no email, or one
- * it doesn't hold), in the order given.
+ * What a grant of a Slack connection gives, said beside it in the grants
+ * editor in place of "all of it".
  */
-export type SourceMatch = {
-  matched: WorkspaceMember[];
-  guests: WorkspaceMember[];
-  unmatched: WorkspaceMember[];
-};
+export const SLACK_GRANT_NOTE =
+  "only the channels each person is in, now and later";
+
+/** How many names a note lists before it counts the rest. */
+const NAMES_LISTED = 5;
 
 /**
- * How a source's people match the members.
+ * Names, the first NAMES_LISTED of them, then how many more.
  *
- *     sourceMatch([{ email: "ada@example.com" }], [ada, eve]) // { matched: [ada], guests: [], unmatched: [eve] }
+ *     listNames(["Ada", "Eve"]) // "Ada, Eve"
+ *     listNames(["A", "B", "C", "D", "E", "F", "G"]) // "A, B, C, D, E and 2 more"
  */
-export function sourceMatch(
-  people: readonly FoundrySourcePerson[],
-  members: readonly WorkspaceMember[],
-): SourceMatch {
-  const guest = new Map(
-    people.map((p) => [(p.email || "").trim().toLowerCase(), !!p.guest]),
-  );
-  const emailOf = (m: WorkspaceMember) =>
-    (m.user?.email || "").trim().toLowerCase();
-  const matched = members.filter((m) => !!emailOf(m) && guest.has(emailOf(m)));
-  return {
-    matched,
-    guests: matched.filter((m) => guest.get(emailOf(m))),
-    unmatched: members.filter((m) => !matched.includes(m)),
-  };
-}
-
-/** A source kind's words: what it shares, with everyone and with the people it lists. */
-const sourceWords = (kind = "") =>
-  kind === "slack"
-    ? {
-        follows: "Follows Slack channel membership",
-        grant: "only the channels each person is in, now and later",
-        source: "Slack",
-        everyone: "its public channels",
-        listed: "the private channels that list them",
-        items: (everyone: number, listed: number) =>
-          `${plural(everyone, "public channel")}, ${plural(listed, "private", "private")}`,
-      }
-    : {
-        follows: "Follows its source’s permissions",
-        grant: "only what its source shares with each person, now and later",
-        source: "its source",
-        everyone: "what it shares with everyone",
-        listed: "what lists them",
-        items: (everyone: number, listed: number) =>
-          `${plural(everyone + listed, "item")}, ${plural(listed, "private", "private")}`,
-      };
+export const listNames = (names: readonly string[]) =>
+  names.length > NAMES_LISTED
+    ? `${names.slice(0, NAMES_LISTED).join(", ")} and ${formatNumber(names.length - NAMES_LISTED)} more`
+    : names.join(", ");
 
 /**
- * What a grant of a connection that follows its source's permissions gives,
- * said beside it in the grants editor in place of "all of it".
+ * One Slack connection's row on Source permissions, in words: what it
+ * follows (its tag), a line of when its permissions were read (`relative`
+ * words a time), what they share and how many of the people it narrows
+ * Slack has an account for, then notes: who it hasn't (named by `name`,
+ * from their user id), its guests, and why the last read failed.
  *
- *     grantNote("slack") // "only the channels each person is in, now and later"
- */
-export const grantNote = (kind?: string) => sourceWords(kind).grant;
-
-/**
- * One connection's row on Source permissions, in words: what it follows (its
- * tag), a line of when its permissions were read (`relative` words a time),
- * what they share and how many members its people match, then notes: who
- * isn't matched, its guests, and why the last read failed.
- *
- *     sourcePermissions({ kind: "slack", readAt, everyoneItems: 5, membersItems: 1, people }, members, nameOf, formatRelative)
- *     // { follows: "Follows Slack channel membership", line: "Read 2h ago · 5 public channels, 1 private · 3 of 3 members matched", notes: [] }
+ *     sourcePermissions({ readAt, everyoneItems: 5, membersItems: 1, grantees: 3 }, name, formatRelative)
+ *     // { follows: "Follows Slack channel membership", line: "Read 2h ago · 5 public channels, 1 private · 3 of 3 restricted people matched", notes: [] }
  */
 export function sourcePermissions(
   a: FoundrySourceAudience,
-  members: readonly WorkspaceMember[],
-  name: (m: WorkspaceMember) => string,
+  name: (userId: string) => string,
   relative: (at: string) => string,
 ) {
-  const words = sourceWords(a.kind),
-    read = audienceRead(a),
-    match = sourceMatch(a.people || [], members);
+  const read = audienceRead(a),
+    grantees = a.grantees || 0,
+    unmatched = a.unmatchedUserIds || [],
+    guests = a.guestUserIds || [];
   const unread =
     "only owners, admins and members who aren’t restricted read it until a sync reads them again";
   const readText =
     read.kind === "never"
       ? `Not read yet: ${unread}`
       : read.kind === "stale"
-        ? `Last read ${relative(read.at)}, over 7 days ago: ${unread}`
+        ? `Last read ${relative(read.at)}, too long ago: ${unread}`
         : `Read ${relative(read.at)}`;
   return {
-    follows: words.follows,
+    follows: "Follows Slack channel membership",
     line: [
       readText,
       read.kind !== "never" &&
-        words.items(a.everyoneItems || 0, a.membersItems || 0),
-      `${match.matched.length} of ${plural(members.length, "member")} matched`,
+        `${plural(a.everyoneItems || 0, "public channel")}, ${plural(a.membersItems || 0, "private", "private")}`,
+      `${grantees - unmatched.length} of ${plural(grantees, "restricted person", "restricted people")} matched`,
     ]
       .filter(Boolean)
       .join(" · "),
     notes: [
-      match.unmatched.length > 0 &&
-        `Not in ${words.source} by their email: ${match.unmatched.map(name).join(", ")}. Restricted, they read only ${words.everyone}.`,
-      match.guests.length > 0 &&
-        `${match.guests.length > 1 ? "Guests" : "A guest"} in ${words.source}: ${match.guests.map(name).join(", ")}. Restricted, they read only ${words.listed}.`,
+      unmatched.length > 0 &&
+        `Not in Slack by their email: ${listNames(unmatched.map(name))}. Restricted, they read none of its channels.`,
+      guests.length > 0 &&
+        `${guests.length > 1 ? "Guests" : "A guest"} in Slack: ${listNames(guests.map(name))}. Restricted, they read only the private channels that list them.`,
       a.problem?.message &&
         `The last read of who it shares what with failed: ${a.problem.message}.`,
     ].filter((n): n is string => !!n),
