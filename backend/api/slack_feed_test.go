@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +61,13 @@ func (s *slackStore) ListFoundrySlackThreadMappings(_ context.Context, installID
 		}
 	}
 	return out, nil
+}
+
+func (s *slackStore) IsFoundrySlackThreadPerson(_ context.Context, threadID, slackUserID string) (bool, error) {
+	if s.feed.peopleErr != nil {
+		return false, s.feed.peopleErr
+	}
+	return slices.Contains(s.feed.people[threadID], slackUserID), nil
 }
 
 func (s *slackStore) MarkFoundrySlackThreadOthers(_ context.Context, installID, channelID, threadTS string, at time.Time) error {
@@ -367,13 +375,47 @@ func TestFollowSlackReply(t *testing.T) {
 			assert.Equal(t, c.others, len(f.db.feed.others) == 1, "%v", f.db.feed.others)
 		})
 	}
-	t.Run("a shared bot's threads are L2's", func(t *testing.T) {
+	// Bot mode: the thread's one mapping, and the people who spoke to the
+	// bot in it.
+	for name, c := range map[string]struct {
+		mappings []*model.SlackThread
+		people   []string
+		taken    bool
+		others   bool
+	}{
+		"one of its people, the bot posting last": {[]*model.SlackThread{mapping("", ago(time.Hour), ago(2*time.Hour))}, []string{"U0GRACE01", slackAda}, true,
+			false},
+		"someone who never spoke to the bot": {[]*model.SlackThread{mapping("", ago(time.Hour), nil)}, []string{"U0GRACE01"}, false, true},
+		"someone else spoke after":           {[]*model.SlackThread{mapping("", ago(2*time.Hour), ago(time.Hour))}, []string{slackAda}, false, false},
+		"a day ago":                          {[]*model.SlackThread{mapping("", ago(25*time.Hour), nil)}, []string{slackAda}, false, false},
+		"only a person's mapping":            {[]*model.SlackThread{mapping(slackAda, ago(time.Hour), nil)}, nil, false, true},
+	} {
+		t.Run("bot mode: "+name, func(t *testing.T) {
+			f, i := feedFixture(t)
+			i.Mode = model.SlackSharedBot{CredentialID: "cred-1"}
+			f.cfg.Foundry.Slack.Follow.Window = 24 * time.Hour
+			f.db.feed.mappings = c.mappings
+			f.db.feed.people = map[string][]string{"th-": c.people}
+			reply(t, f, nil)
+			assert.Equal(t, c.others, len(f.db.feed.others) == 1, "%v", f.db.feed.others)
+			if !c.taken {
+				assert.Empty(t, f.db.intake)
+				return
+			}
+			require.Len(t, f.db.intake, 1)
+			assert.Equal(t, model.SlackConversation("inst-1", "C0GEN0001", "1795000000.000100", ""), f.db.intake[0].Conversation,
+				"the thread's one conversation")
+			assert.Equal(t, slackAda, f.db.intake[0].SlackUserID)
+		})
+	}
+	t.Run("bot mode: the thread's people unread is retried", func(t *testing.T) {
 		f, i := feedFixture(t)
 		i.Mode = model.SlackSharedBot{CredentialID: "cred-1"}
 		f.db.feed.mappings = []*model.SlackThread{mapping("", ago(time.Hour), nil)}
-		reply(t, f, nil)
+		f.db.feed.peopleErr = errors.New("down")
+		_, err := f.s.ReceiveSlackRequest(door(), signed(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, fixture(t, "events/channel_reply.json")))
+		assert.Equal(t, codes.Unavailable, status.Code(err))
 		assert.Empty(t, f.db.intake)
-		assert.Empty(t, f.db.feed.others)
 	})
 	t.Run("with the feed off", func(t *testing.T) {
 		f, _ := feedFixture(t)

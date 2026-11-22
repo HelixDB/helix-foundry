@@ -289,28 +289,48 @@ func slackTSTime(ts string) time.Time {
 
 // followSlackReply applies the bot's rule for replies that don't mention
 // it to m, a channel message of install's team: in a thread the bot posted
-// in for its person (a mapping of per_person mode), a message from anyone
-// but the bot and the thread's people records that someone else spoke
-// (others_at); a reply from a mapping's person is taken, as a message of
-// their conversation, while the bot posted there last apart from them and
-// within foundry.slack.follow.window. Bot mode's threads are L2's.
+// in (a mapping: per_person, one per person; bot mode, the thread's one),
+// a message from anyone but the bot and the thread's people (per_person,
+// its mappings' people; bot mode, those who spoke to the bot there,
+// foundry_slack_thread_people) records that someone else spoke
+// (others_at); a reply from one of the thread's people is taken, as a
+// message of their conversation (bot mode, the thread's), while the bot
+// posted there last apart from them and within foundry.slack.follow.window.
 func (s *Service) followSlackReply(ctx context.Context, eventID string, install *model.SlackInstall, m slack.ChannelMessage) error {
 	msg := m.Message
 	if msg.ThreadTS == "" || msg.ThreadTS == msg.TS || msg.User == install.BotUserID || (install.BotID != "" && msg.BotID == install.BotID) {
-		return nil
-	}
-	if _, perPerson := install.Mode.(model.SlackPerPerson); !perPerson {
 		return nil
 	}
 	mappings, err := s.deps.DB.ListFoundrySlackThreadMappings(ctx, install.ID, m.At.ChannelID, msg.ThreadTS)
 	if err != nil || len(mappings) == 0 {
 		return err
 	}
+	// person is whose conversation the reply joins: '' for the bot's.
+	person := msg.User
 	var mine *model.SlackThread
-	for _, t := range mappings {
-		if t.SlackUserID == msg.User {
-			mine = t
+	switch install.Mode.(type) {
+	case model.SlackPerPerson:
+		for _, t := range mappings {
+			if t.SlackUserID == msg.User {
+				mine = t
+			}
 		}
+	case model.SlackSharedBot:
+		person = ""
+		for _, t := range mappings {
+			if t.SlackUserID != "" {
+				continue
+			}
+			spoke, err := s.deps.DB.IsFoundrySlackThreadPerson(ctx, t.ID, msg.User)
+			if err != nil {
+				return err
+			}
+			if spoke {
+				mine = t
+			}
+		}
+	default:
+		return nil
 	}
 	if mine == nil {
 		return s.deps.DB.MarkFoundrySlackThreadOthers(ctx, install.ID, m.At.ChannelID, msg.ThreadTS, m.EventTime)
@@ -325,7 +345,7 @@ func (s *Service) followSlackReply(ctx context.Context, eventID string, install 
 		return err
 	}
 	in := &model.SlackIntake{ID: id.New(), InstallID: install.ID, DedupeKey: model.SlackEventDedupe(eventID), Kind: model.SlackIntakeEvent,
-		Conversation: model.SlackConversation(install.ID, m.At.ChannelID, msg.ThreadTS, msg.User), SlackUserID: msg.User, Payload: payload}
+		Conversation: model.SlackConversation(install.ID, m.At.ChannelID, msg.ThreadTS, person), SlackUserID: msg.User, Payload: payload}
 	switch err := s.deps.DB.QueueFoundrySlackIntake(ctx, in); {
 	case errors.Is(err, foundrystore.ErrConflict):
 		return nil

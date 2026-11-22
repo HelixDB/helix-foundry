@@ -46,6 +46,9 @@ type slackFeedFake struct {
 	mappings  []*model.SlackThread
 	mapErr    error
 	others    []string
+	// people is who spoke to the bot in a bot-mode thread, by mapping.
+	people    map[string][]string
+	peopleErr error
 	bots      map[string]model.SlackInstallBotUpdate
 }
 
