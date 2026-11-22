@@ -277,6 +277,7 @@ type ReadStore interface {
 	DueFoundrySlackBackfill(ctx context.Context, method model.SlackSlotMethod, limit int) ([]model.SlackBackfillWork, error)
 	FoundrySlackBackfillProgress(ctx context.Context, feedID string) (model.SlackBackfillProgress, error)
 	ListFoundrySlackOrphans(ctx context.Context, retention time.Duration, limit int) ([]*model.SlackFeed, error)
+	ListFoundrySlackFeeds(ctx context.Context, after string, limit int) ([]*model.SlackFeed, error)
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
@@ -592,6 +593,9 @@ type Store interface {
 	FailFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, message string, maxAttempts int) (model.SlackBackfillStatus, error)
 	EndFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, status model.SlackBackfillStatus, message string) error
 	SpendFoundrySlackGap(ctx context.Context, feedID string, max int) (bool, error)
+	// The foundry-slack-worker's closes and flips (foundry_slack_feed_sweep.go)
+	CloseFoundrySlackDays(ctx context.Context, feedID string, before time.Time, spacing time.Duration) (int, error)
+	FlipSlackAppConnector(ctx context.Context, workspaceID, connectorID string, staged, flipped json.RawMessage, sealed []byte, keyID string) error
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error

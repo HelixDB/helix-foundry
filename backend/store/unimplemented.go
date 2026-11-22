@@ -2049,3 +2049,18 @@ func (u Unimplemented) SpendFoundrySlackGap(context.Context, string, int) (bool,
 	u.unimplemented("SpendFoundrySlackGap")
 	return false, nil
 }
+
+func (u Unimplemented) ListFoundrySlackFeeds(context.Context, string, int) ([]*model.SlackFeed, error) {
+	u.unimplemented("ListFoundrySlackFeeds")
+	return nil, nil
+}
+
+func (u Unimplemented) CloseFoundrySlackDays(context.Context, string, time.Time, time.Duration) (int, error) {
+	u.unimplemented("CloseFoundrySlackDays")
+	return 0, nil
+}
+
+func (u Unimplemented) FlipSlackAppConnector(context.Context, string, string, json.RawMessage, json.RawMessage, []byte, string) error {
+	u.unimplemented("FlipSlackAppConnector")
+	return nil
+}
