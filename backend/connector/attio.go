@@ -54,9 +54,13 @@ const (
 	attioPreviews    = 20
 )
 
-// maxAttioPages bounds one list: past it, a table would be published
-// partly read. Tests lower it.
-var maxAttioPages = 10_000
+// maxAttioRows bounds the rows read of one list, whatever its page size:
+// past it, a table would be published partly read. Tests lower it.
+var maxAttioRows = 5_000_000
+
+// attioOverlap is the items each next page of a list repeats of the page
+// before (pages).
+const attioOverlap = 5
 
 // attioNotesInterval spaces one read's notes pages: Attio limits listing
 // notes to 10 requests a second. Tests set it to 0.
@@ -207,10 +211,13 @@ func (k *attioKind) Streams(Source) []Stream { return []Stream{attioNotesStream}
 // Discover proves the token with Attio's introspection, which also names
 // its scopes, then lists the objects and lists those scopes may read, and
 // each one's attributes. A table whose reads need a scope the token lacks
-// is unavailable, naming the scopes. A test also reads a few records or
-// entries of each of the first object and list tables: one Attio refuses
-// (403) though the token holds its scopes is unavailable with Attio's
-// reason. A sync's reads use what its Discover listed (remember).
+// is unavailable, naming the scopes. Each object's and list's table is
+// asked for one row (a test's first attioPreviews tables for a few, its
+// preview), and so are members, notes and tasks when Attio named no scopes:
+// a table Attio refuses the token (attioDenied) is unavailable with Attio's
+// reason, so a sync, which reads every table it lists, never reads one Attio
+// refuses. Any other failure of those reads fails the discovery. A sync's
+// reads use what its Discover listed (remember).
 func (k *attioKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	c := k.client(src.Secret)
 	l, err := c.listing(ctx)
@@ -225,33 +232,96 @@ func (k *attioKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		}
 		d.Tables = append(d.Tables, t)
 	}
+	// probe is why a table the scopes allow is unavailable: read's refusal
+	// by Attio, when the scopes can't say (they are unknown) or always.
+	probe := func(why string, always bool, read func() error) (string, error) {
+		if why != "" || !always && l.scopes != nil {
+			return why, nil
+		}
+		err := read()
+		if denied := (*attioDenied)(nil); errors.As(err, &denied) {
+			return denied.message, nil
+		}
+		return "", err
+	}
 	fixed := func(name string, columns []Column, key []string) Table {
 		return Table{Name: name, Columns: slices.Clone(columns), PrimaryKey: key, Dense: true}
 	}
-	add(fixed("workspace_members", attioMemberColumns, []string{"workspace_member_id"}), l.scopes.lacks(attioMembersScope))
-	objectsWhy := l.scopes.lacks(attioObjectsScope)
+	membersWhy, err := probe(l.scopes.lacks(attioMembersScope), false, func() error {
+		_, err := c.data(ctx, "/v2/workspace_members")
+		return err
+	})
+	if err != nil {
+		return Discovery{}, err
+	}
+	add(fixed("workspace_members", attioMemberColumns, []string{"workspace_member_id"}), membersWhy)
+	objectsWhy := cmp.Or(l.scopes.lacks(attioObjectsScope), l.objectsDenied)
 	if objectsWhy != "" {
 		objectsWhy += ", so no object's records can be read either"
 	}
 	add(fixed("objects", attioObjectColumns, []string{"object_id"}), objectsWhy)
-	listsWhy := l.scopes.lacks(attioListsScope)
+	shown := 0
+	source := func(s attioSource, why string) error {
+		rows := 1
+		if !src.ForSync && shown < attioPreviews {
+			rows = attioPreviewRows
+		}
+		var items []json.RawMessage
+		why, err := probe(cmp.Or(why, s.denied), true, func() (err error) {
+			items, err = c.page(ctx, s.path(), true, rows, 0, nil, nil)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		if why == "" && rows > 1 {
+			shown++
+			for _, raw := range items[:min(len(items), rows)] {
+				values, _, err := s.row(raw)
+				if err != nil {
+					return err
+				}
+				row, _ := json.Marshal(values) // values decoded from JSON always encode
+				s.table.Preview = append(s.table.Preview, row)
+			}
+		}
+		add(s.table, why)
+		return nil
+	}
+	for _, s := range l.sources {
+		if !s.list {
+			if err := source(s, l.scopes.lacks(attioRecordsScope, attioObjectsScope)); err != nil {
+				return Discovery{}, err
+			}
+		}
+	}
+	listsWhy := cmp.Or(l.scopes.lacks(attioListsScope), l.listsDenied)
 	if listsWhy != "" {
 		listsWhy += ", so no list's entries can be read either"
 	}
-	var lists []attioSource
+	add(fixed("lists", attioListColumns, []string{"list_id"}), listsWhy)
 	for _, s := range l.sources {
 		if s.list {
-			lists = append(lists, s)
-			continue
+			if err := source(s, l.scopes.lacks(attioEntriesScope, attioListsScope)); err != nil {
+				return Discovery{}, err
+			}
 		}
-		add(s.table, l.scopes.lacks(attioRecordsScope, attioObjectsScope))
 	}
-	add(fixed("lists", attioListColumns, []string{"list_id"}), listsWhy)
-	for _, s := range lists {
-		add(s.table, l.scopes.lacks(attioEntriesScope, attioListsScope))
+	notesWhy, err := probe(l.scopes.lacks(attioNoteScopes...), false, func() error {
+		_, err := c.page(ctx, "/v2/notes", false, 1, 0, nil, nil)
+		return err
+	})
+	if err != nil {
+		return Discovery{}, err
 	}
-	add(fixed("notes", attioNoteColumns, []string{"note_id"}), l.scopes.lacks(attioNoteScopes...))
-	tasksWhy := l.scopes.lacks(attioTaskScopes...)
+	add(fixed("notes", attioNoteColumns, []string{"note_id"}), notesWhy)
+	tasksWhy, err := probe(l.scopes.lacks(attioTaskScopes...), false, func() error {
+		_, err := c.page(ctx, "/v2/tasks", false, 1, 0, nil, nil)
+		return err
+	})
+	if err != nil {
+		return Discovery{}, err
+	}
 	tasks := fixed("tasks", attioTaskColumns, []string{"task_id"})
 	assignees := fixed("task_assignees", attioAssigneeColumns, []string{"task_id", "assignee_type", "assignee_id"})
 	records := fixed("task_records", attioTaskRecordColumns, []string{"task_id", "target_object", "target_record_id"})
@@ -264,52 +334,10 @@ func (k *attioKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		return Discovery{}, refused(nil, "this Attio token has none of the read scopes Helix reads with; give it read access "+
 			"to records, lists, notes, tasks or members in Attio, then test again")
 	}
-	if !src.ForSync {
-		if d, err = c.previews(ctx, l, d); err != nil {
-			return Discovery{}, err
-		}
-	}
 	if src.ForSync && src.ConnectorID != "" {
 		k.remember(src.ConnectorID, c.token, l)
 	}
 	return d, nil
-}
-
-// previews reads a few rows of each of the first attioPreviews object and
-// list tables d holds, one query each. A query Attio refuses for the
-// token's access (attioDenied) makes the table unavailable with Attio's
-// reason; any other failure fails the test.
-func (c *attioClient) previews(ctx context.Context, l attioListing, d Discovery) (Discovery, error) {
-	shown := 0
-	out := d
-	out.Tables = nil
-	for _, t := range d.Tables {
-		s, ok := l.source(t.Name)
-		if !ok || shown == attioPreviews {
-			out.Tables = append(out.Tables, t)
-			continue
-		}
-		shown++
-		items, err := c.page(ctx, s.path(), true, attioPreviewRows, 0, nil)
-		var denied *attioDenied
-		switch {
-		case errors.As(err, &denied):
-			out.Unavailable = append(out.Unavailable, Unavailable{Name: t.Name, Reason: denied.message})
-			continue
-		case err != nil:
-			return Discovery{}, err
-		}
-		for _, raw := range items[:min(len(items), attioPreviewRows)] {
-			values, _, err := s.row(raw)
-			if err != nil {
-				return Discovery{}, err
-			}
-			row, _ := json.Marshal(values) // values decoded from JSON always encode
-			t.Preview = append(t.Preview, row)
-		}
-		out.Tables = append(out.Tables, t)
-	}
-	return out, nil
 }
 
 // Sync and SyncDocuments read one table through SyncPass. The syncer
@@ -363,7 +391,7 @@ func (k *attioKind) SyncPass(ctx context.Context, src Source, tables []Table, ro
 		case "lists":
 			err = writeAll(w, l.lists)
 		case "notes":
-			err = c.notes(ctx, l, w, docs)
+			err = c.notes(ctx, w, docs)
 		case "tasks":
 			taskWriters[0] = w
 		case "task_assignees":
@@ -511,17 +539,29 @@ func (c *attioClient) data(ctx context.Context, path string) ([]json.RawMessage,
 	return resp.Data, nil
 }
 
-// page reads one page of a paged list: a POST of a query with its limit and
-// offset (query), else a GET with them and extra in the URL.
-func (c *attioClient) page(ctx context.Context, path string, query bool, limit, offset int, extra url.Values) ([]json.RawMessage, error) {
+// attioSort is one of a query's sorts: an attribute's slug and asc or desc.
+type attioSort struct {
+	Attribute string `json:"attribute"`
+	Direction string `json:"direction"`
+}
+
+// page reads one page of a paged list: a POST of a query with its limit,
+// offset and sorts (query), else a GET with them and params in the URL.
+func (c *attioClient) page(ctx context.Context, path string, query bool, limit, offset int, params url.Values,
+	sorts []attioSort) ([]json.RawMessage, error) {
 	var status int
 	var raw []byte
 	var err error
 	if query {
-		status, raw, err = c.do(ctx, http.MethodPost, path, nil, map[string]int{"limit": limit, "offset": offset})
+		body := struct {
+			Limit  int         `json:"limit"`
+			Offset int         `json:"offset"`
+			Sorts  []attioSort `json:"sorts,omitempty"`
+		}{limit, offset, sorts}
+		status, raw, err = c.do(ctx, http.MethodPost, path, nil, body)
 	} else {
 		q := url.Values{}
-		maps.Copy(q, extra)
+		maps.Copy(q, params)
 		q.Set("limit", fmt.Sprint(limit))
 		q.Set("offset", fmt.Sprint(offset))
 		status, raw, err = c.do(ctx, http.MethodGet, path, q, nil)
@@ -541,19 +581,34 @@ func (c *attioClient) page(ctx context.Context, path string, query bool, limit, 
 	return resp.Data, nil
 }
 
-// pages passes every item of a paged list to each, page by page by offset
-// until a page shorter than limit: Attio's lists give no total or next
-// marker. A list past maxAttioPages fails the read rather than publishing
-// part of a table. The pages are offsets into a list that may change while
-// it is read, so a row that moves between pages may be missed or read
-// twice until the next sync; the readers write a row read twice once.
-func (c *attioClient) pages(ctx context.Context, path string, query bool, limit int, extra url.Values, what string,
-	each func(json.RawMessage) error) error {
-	for n, offset := 0, 0; ; n++ {
-		if n == maxAttioPages {
-			return invalid("Attio holds more %s than Helix reads in one sync (%d pages of %d)", what, maxAttioPages, limit)
+// attioList is a paged list: its path, whether it is read by a POST of a
+// query (else a GET), the page size it asks for, the URL's other params or
+// the query's sorts, and what it holds, as an error names it. untilEmpty
+// is a list whose page size Attio doesn't document (attributes), which may
+// give fewer than asked: it ends at an empty page, not a short one.
+type attioList struct {
+	path       string
+	query      bool
+	limit      int
+	params     url.Values
+	sorts      []attioSort
+	what       string
+	untilEmpty bool
+}
+
+// pages passes every item of a paged list to each, page by page by offset:
+// Attio's lists give no total or next marker. A list ends at its first page
+// shorter than its limit, and each next page repeats the last attioOverlap
+// items of the one before, so a row deleted from a page already read, which
+// moves the rest up, skips none; a row read twice is written once by each
+// reader. An untilEmpty list repeats none and ends at an empty page. A list
+// past maxAttioRows fails the read rather than publishing part of a table.
+func (c *attioClient) pages(ctx context.Context, l attioList, each func(json.RawMessage) error) error {
+	for offset := 0; ; {
+		if offset >= maxAttioRows {
+			return invalid("Attio holds more %s than Helix reads in one sync (%d)", l.what, maxAttioRows)
 		}
-		items, err := c.page(ctx, path, query, limit, offset, extra)
+		items, err := c.page(ctx, l.path, l.query, l.limit, offset, l.params, l.sorts)
 		if err != nil {
 			return err
 		}
@@ -562,10 +617,14 @@ func (c *attioClient) pages(ctx context.Context, path string, query bool, limit 
 				return err
 			}
 		}
-		if len(items) < limit {
+		switch {
+		case l.untilEmpty && len(items) == 0, !l.untilEmpty && len(items) < l.limit:
 			return nil
+		case l.untilEmpty:
+			offset += len(items)
+		default:
+			offset += len(items) - attioOverlap
 		}
-		offset += len(items)
 	}
 }
 
@@ -593,16 +652,17 @@ func (s attioScopes) lacks(scopes ...string) string {
 	return "the token lacks the " + strings.Join(missing[:len(missing)-1], ", ") + " and " + missing[len(missing)-1] + " scopes"
 }
 
-// attioListing is what one listing of a workspace found: its slug, the
-// token's scopes, the objects and lists table rows, the tables of the
-// objects and lists the scopes may list, and each object's slug by id.
+// attioListing is what one listing of a workspace found: the token's
+// scopes, the objects and lists table rows, the tables of the objects and
+// lists the scopes may list, each object's slug by id, and Attio's reason
+// when it refused the token the objects or the lists.
 type attioListing struct {
-	workspace string
-	scopes    attioScopes
-	objects   []map[string]any
-	lists     []map[string]any
-	sources   []attioSource
-	slugs     map[string]string
+	scopes                     attioScopes
+	objects                    []map[string]any
+	lists                      []map[string]any
+	sources                    []attioSource
+	slugs                      map[string]string
+	objectsDenied, listsDenied string
 }
 
 func (l attioListing) source(table string) (attioSource, bool) {
@@ -615,12 +675,17 @@ func (l attioListing) source(table string) (attioSource, bool) {
 
 // attioSource is an object or a list and its table: one row per record or
 // entry, with a column per attribute. Only a source whose rows the token's
-// scopes may read has its attributes' columns.
+// scopes may read has its attributes' columns; denied is Attio's reason when
+// it refused the token those. sorted is a source with a created_at
+// attribute, whose rows are read oldest first, so rows created while it is
+// read come last.
 type attioSource struct {
 	id      string
 	list    bool
 	table   Table
 	columns []attioColumn
+	denied  string
+	sorted  bool
 }
 
 func (s attioSource) path() string {
@@ -639,14 +704,20 @@ type attioColumn struct {
 	siblings         []struct{ name, field string }
 }
 
+// attioTime is an Attio timestamp, or the zero time for none.
+func attioTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
+}
+
 // listing reads the token's introspection, then the objects and lists its
 // scopes may list, and the attributes of each whose rows they may read.
-// A token Attio doesn't know is answered as inactive, not refused.
+// A token Attio doesn't know is answered as inactive, not refused. Objects
+// and lists Attio refuses the token (attioDenied) are recorded as such.
 func (c *attioClient) listing(ctx context.Context) (attioListing, error) {
 	var self struct {
-		Active        bool    `json:"active"`
-		Scope         *string `json:"scope"`
-		WorkspaceSlug string  `json:"workspace_slug"`
+		Active bool    `json:"active"`
+		Scope  *string `json:"scope"`
 	}
 	if err := c.get(ctx, "/v2/self", nil, &self); err != nil {
 		return attioListing{}, err
@@ -654,19 +725,27 @@ func (c *attioClient) listing(ctx context.Context) (attioListing, error) {
 	if !self.Active {
 		return attioListing{}, attioRejected()
 	}
-	l := attioListing{workspace: self.WorkspaceSlug, slugs: map[string]string{}}
+	l := attioListing{slugs: map[string]string{}}
 	if self.Scope != nil {
 		l.scopes = attioScopes{}
 		for _, scope := range strings.Fields(*self.Scope) {
 			l.scopes[scope] = true
 		}
 	}
-	taken := map[string]bool{}
-	for _, name := range attioFixed {
-		taken[name] = true
+	// list reads a whole list, recording Attio's refusal of it in denied.
+	list := func(path string, denied *string) ([]json.RawMessage, error) {
+		items, err := c.data(ctx, path)
+		if refusal := (*attioDenied)(nil); errors.As(err, &refusal) {
+			*denied = refusal.message
+			return nil, nil
+		}
+		return items, err
 	}
+	// Each source's table name, and whether it is exactly its slug's.
+	var names []string
+	var exact []bool
 	if l.scopes.lacks(attioObjectsScope) == "" {
-		items, err := c.data(ctx, "/v2/objects")
+		items, err := list("/v2/objects", &l.objectsDenied)
 		if err != nil {
 			return attioListing{}, err
 		}
@@ -685,23 +764,20 @@ func (c *attioClient) listing(ctx context.Context) (attioListing, error) {
 			}
 			l.objects = append(l.objects, map[string]any{"object_id": o.ID.ObjectID, "api_slug": o.APISlug,
 				"singular_noun": o.SingularNoun, "plural_noun": o.PluralNoun, "created_at": o.CreatedAt})
+			// Attio lets an object have no slug: its table is named by its
+			// plural noun, and its records are read by its id either way.
 			slug, _ := o.APISlug.(string)
-			if slug == "" {
-				continue // Attio lets an object have no slug; no table can be named for it
+			plural, _ := o.PluralNoun.(string)
+			if slug != "" {
+				l.slugs[o.ID.ObjectID] = slug
 			}
-			l.slugs[o.ID.ObjectID] = slug
-			s := attioSource{id: o.ID.ObjectID}
-			s.table.Name = attioNumbered(taken, cmp.Or(attioSnake(slug), "object"))
-			if l.scopes.lacks(attioRecordsScope) == "" {
-				if s, err = c.columns(ctx, s); err != nil {
-					return attioListing{}, err
-				}
-			}
-			l.sources = append(l.sources, s)
+			l.sources = append(l.sources, attioSource{id: o.ID.ObjectID})
+			names = append(names, cmp.Or(attioSnake(slug), attioSnake(plural), "object"))
+			exact = append(exact, slug != "" && attioSnake(slug) == slug)
 		}
 	}
 	if l.scopes.lacks(attioListsScope) == "" {
-		items, err := c.data(ctx, "/v2/lists")
+		items, err := list("/v2/lists", &l.listsDenied)
 		if err != nil {
 			return attioListing{}, err
 		}
@@ -728,87 +804,163 @@ func (c *attioClient) listing(ctx context.Context) (attioListing, error) {
 			}
 			l.lists = append(l.lists, map[string]any{"list_id": li.ID.ListID, "api_slug": li.APISlug, "name": li.Name,
 				"parent_object": parent, "created_at": li.CreatedAt})
+			// Attio gives every list a slug; one without has no table.
 			slug, _ := li.APISlug.(string)
+			name, _ := li.Name.(string)
 			if slug == "" {
 				continue
 			}
-			s := attioSource{id: li.ID.ListID, list: true}
-			s.table.Name = attioNumbered(taken, "list_"+cmp.Or(attioSnake(slug), "list"))
-			if l.scopes.lacks(attioEntriesScope) == "" {
-				if s, err = c.columns(ctx, s); err != nil {
-					return attioListing{}, err
-				}
-			}
-			l.sources = append(l.sources, s)
+			l.sources = append(l.sources, attioSource{id: li.ID.ListID, list: true})
+			names = append(names, "list_"+cmp.Or(attioSnake(slug), attioSnake(name), "list"))
+			exact = append(exact, attioSnake(slug) == slug)
+		}
+	}
+	// A source whose slug is in snake case, as Attio formats slugs, holds
+	// its slug's name, objects before lists: slugs are unique, so only a
+	// fixed table's name, or an object's whose slug starts "list_", can be
+	// taken. Any other takes its name with its id's suffix (notionSuffixed),
+	// however many others would take it, so no table moves as others come
+	// and go: one named from a slug Helix changes, from its plural noun or
+	// from nothing always has it.
+	taken := map[string]bool{}
+	for _, name := range attioFixed {
+		taken[name] = true
+	}
+	for i := range l.sources {
+		if exact[i] && !taken[names[i]] {
+			taken[names[i]] = true
+			l.sources[i].table.Name = names[i]
+		}
+	}
+	for i, s := range l.sources {
+		if s.table.Name == "" {
+			l.sources[i].table.Name = notionSuffixed(taken, names[i], s.id)
+		}
+	}
+	for i, s := range l.sources {
+		scope := attioRecordsScope
+		if s.list {
+			scope = attioEntriesScope
+		}
+		if l.scopes.lacks(scope) != "" {
+			continue
+		}
+		var err error
+		if l.sources[i], err = c.columns(ctx, s); err != nil {
+			return attioListing{}, err
 		}
 	}
 	return l, nil
 }
 
+// attioAttribute is one of an object's or list's attributes as Attio lists
+// them.
+type attioAttribute struct {
+	ID struct {
+		AttributeID string `json:"attribute_id"`
+	} `json:"id"`
+	APISlug       string `json:"api_slug"`
+	Type          string `json:"type"`
+	IsMultiselect bool   `json:"is_multiselect"`
+	IsArchived    bool   `json:"is_archived"`
+	CreatedAt     string `json:"created_at"`
+}
+
 // columns gives s its table's columns: its fixed ones, then one per
 // attribute Attio lists for it that isn't archived, in Attio's order, each
 // named from the attribute's slug (attioSnake) and its siblings from that
-// name. A name a column already holds takes a number (attioNumbered).
+// name. A name goes to the oldest attribute that would take it, then by
+// id; any other, or one a fixed column holds, takes it with its id's suffix
+// (notionSuffixed). Attio archives attributes and never deletes them, and
+// an archived one keeps its names, so no column moves as others come, go
+// or return. created_at is no column of its own: the fixed created_at holds
+// the record's or entry's creation. A listing Attio refuses the token
+// (attioDenied) leaves s denied, without its columns.
 func (c *attioClient) columns(ctx context.Context, s attioSource) (attioSource, error) {
 	target, key, fixed := "objects", "record_id", attioRecordColumns
 	if s.list {
 		target, key, fixed = "lists", "entry_id", attioEntryColumns
 	}
 	s.table = Table{Name: s.table.Name, Columns: slices.Clone(fixed), PrimaryKey: []string{key}, Dense: true}
+	path := "/v2/" + target + "/" + url.PathEscape(s.id) + "/attributes"
+	var attributes []attioAttribute
+	listed := map[string]bool{}
+	err := c.pages(ctx, attioList{path: path, limit: attioAttributePage, params: url.Values{"show_archived": {"true"}},
+		what: "attributes of " + s.table.Name, untilEmpty: true}, func(raw json.RawMessage) error {
+		var a attioAttribute
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return fmt.Errorf("decode attio %s: %w", path, err)
+		}
+		switch {
+		case a.APISlug == "" || listed[a.APISlug]:
+		case a.APISlug == "created_at":
+			s.sorted = s.sorted || !a.IsArchived
+		default:
+			listed[a.APISlug] = true
+			attributes = append(attributes, a)
+		}
+		return nil
+	})
+	if denied := (*attioDenied)(nil); errors.As(err, &denied) {
+		s.denied = denied.message
+		return s, nil
+	}
+	if err != nil {
+		return s, err
+	}
 	taken := map[string]bool{}
 	for _, col := range fixed {
 		taken[col.Name] = true
 	}
-	path := "/v2/" + target + "/" + url.PathEscape(s.id) + "/attributes"
-	err := c.pages(ctx, path, false, attioAttributePage, url.Values{"show_archived": {"false"}}, "attributes", func(raw json.RawMessage) error {
-		var a struct {
-			APISlug       string `json:"api_slug"`
-			Type          string `json:"type"`
-			IsMultiselect bool   `json:"is_multiselect"`
-			IsArchived    bool   `json:"is_archived"`
+	claim := func(name, id string) string {
+		if taken[name] {
+			return notionSuffixed(taken, name, id)
 		}
-		if err := json.Unmarshal(raw, &a); err != nil {
-			return fmt.Errorf("decode attio %s: %w", path, err)
+		taken[name] = true
+		return name
+	}
+	id := func(a attioAttribute) string { return cmp.Or(a.ID.AttributeID, a.APISlug) }
+	byAge := make([]int, len(attributes))
+	for i := range byAge {
+		byAge[i] = i
+	}
+	slices.SortFunc(byAge, func(i, j int) int {
+		a, b := attributes[i], attributes[j]
+		return cmp.Or(attioTime(a.CreatedAt).Compare(attioTime(b.CreatedAt)), strings.Compare(id(a), id(b)))
+	})
+	cols := make([]attioColumn, len(attributes))
+	for _, i := range byAge {
+		a := attributes[i]
+		col := attioColumn{slug: a.APISlug, kind: a.Type, multi: a.IsMultiselect, name: claim(cmp.Or(attioSnake(a.APISlug), "attribute"), id(a))}
+		if _, known := attioTypes[a.Type]; known && !col.multi {
+			for _, sib := range attioSiblings[a.Type] {
+				col.siblings = append(col.siblings, struct{ name, field string }{claim(col.name+sib.suffix, id(a)), sib.field})
+			}
 		}
-		if a.IsArchived || a.APISlug == "" {
-			return nil
+		cols[i] = col
+	}
+	for i, a := range attributes {
+		if a.IsArchived {
+			continue
 		}
-		col := attioColumn{slug: a.APISlug, kind: a.Type, multi: a.IsMultiselect,
-			name: attioNumbered(taken, cmp.Or(attioSnake(a.APISlug), "attribute"))}
-		typ, known := attioTypes[a.Type]
+		col := cols[i]
+		typ := attioTypes[a.Type]
 		if col.multi {
 			typ = "array"
 		}
 		s.table.Columns = append(s.table.Columns, Column{Name: col.name, Type: typ, Nullable: !col.multi})
-		if !col.multi && known {
-			for _, sib := range attioSiblings[a.Type] {
-				name := attioNumbered(taken, col.name+sib.suffix)
-				col.siblings = append(col.siblings, struct{ name, field string }{name, sib.field})
-				s.table.Columns = append(s.table.Columns, Column{Name: name, Type: "string", Nullable: true})
-			}
+		for _, sib := range col.siblings {
+			s.table.Columns = append(s.table.Columns, Column{Name: sib.name, Type: "string", Nullable: true})
 		}
 		s.columns = append(s.columns, col)
-		return nil
-	})
-	return s, err
+	}
+	return s, nil
 }
 
 // attioSnake names a table or column from an Attio slug: snake case
 // (snakeCase), then only ASCII letters, digits and single underscores
 // (notionSlug); "" for a slug with none of those.
 func attioSnake(slug string) string { return notionSlug(snakeCase(slug)) }
-
-// attioNumbered is name, or when taken holds it, name with the first
-// number from 2 up that makes it free; taken then holds it. Objects, lists
-// and attributes are numbered in Attio's order.
-func attioNumbered(taken map[string]bool, name string) string {
-	got := name
-	for n := 2; taken[got]; n++ {
-		got = fmt.Sprintf("%s_%d", name, n)
-	}
-	taken[got] = true
-	return got
-}
 
 // attioRecord is a record or a list entry as a query returns it.
 type attioRecord struct {
@@ -924,14 +1076,19 @@ func attioValue(kind string, v map[string]any) any {
 	return v
 }
 
-// records writes every record or entry of s, each once.
+// records writes every record or entry of s, each once, oldest first when
+// s is sorted.
 func (c *attioClient) records(ctx context.Context, s attioSource, w RowWriter) error {
 	seen := map[string]bool{}
 	what := "records of " + s.table.Name
 	if s.list {
 		what = "entries of " + s.table.Name
 	}
-	return c.pages(ctx, s.path(), true, attioRecordPage, nil, what, func(raw json.RawMessage) error {
+	var sorts []attioSort
+	if s.sorted {
+		sorts = []attioSort{{Attribute: "created_at", Direction: "asc"}}
+	}
+	return c.pages(ctx, attioList{path: s.path(), query: true, limit: attioRecordPage, sorts: sorts, what: what}, func(raw json.RawMessage) error {
 		row, id, err := s.row(raw)
 		if err != nil || seen[id] {
 			return err
@@ -978,7 +1135,8 @@ func (c *attioClient) members(ctx context.Context, w RowWriter) error {
 // assignee without an id has no row: its key would be null.
 func (c *attioClient) tasks(ctx context.Context, l attioListing, w [3]RowWriter) error {
 	seen := map[string]bool{}
-	return c.pages(ctx, "/v2/tasks", false, attioTaskPage, url.Values{"sort": {"created_at:asc"}}, "tasks", func(raw json.RawMessage) error {
+	tasks := attioList{path: "/v2/tasks", limit: attioTaskPage, params: url.Values{"sort": {"created_at:asc"}}, what: "tasks"}
+	return c.pages(ctx, tasks, func(raw json.RawMessage) error {
 		var t struct {
 			ID            map[string]any `json:"id"`
 			Content       any            `json:"content_plaintext"`
@@ -1047,21 +1205,20 @@ func (c *attioClient) tasks(ctx context.Context, l attioListing, w [3]RowWriter)
 }
 
 // attioNote is a listed note: its row, what orders the read and versions
-// its document, and, while it is a candidate for one, its body.
+// its document, the record it is on, and its body.
 type attioNote struct {
-	id, title, url, body string
-	created              time.Time
-	version              string
-	row                  map[string]any
-	// empty is a note whose body is blank, which has no document;
-	// candidate one of the newest config.MaxDocumentsPerStream others, the
-	// most a full read keeps, whose body is held until it is offered.
-	empty, candidate bool
+	id, title, body              string
+	parentObject, parentRecordID string
+	created                      time.Time
+	version                      string
+	row                          map[string]any
+	// empty is a note whose body is blank, which has no document.
+	empty bool
 }
 
 // attioNoteOf reads a listed note. One without its id or creation time
 // fails the read: they key its row and order its document.
-func attioNoteOf(raw json.RawMessage, workspace string) (*attioNote, error) {
+func attioNoteOf(raw json.RawMessage) (*attioNote, error) {
 	var item struct {
 		ID              map[string]any `json:"id"`
 		ParentObject    any            `json:"parent_object"`
@@ -1089,11 +1246,8 @@ func attioNoteOf(raw json.RawMessage, workspace string) (*attioNote, error) {
 	}
 	sum := sha256.Sum256([]byte(item.Title + "\x00" + item.ContentMarkdown))
 	n.version = "1|" + hex.EncodeToString(sum[:])[:32]
-	parentObject, _ := item.ParentObject.(string)
-	parentRecord, _ := item.ParentRecordID.(string)
-	if workspace != "" && parentObject != "" && parentRecord != "" {
-		n.url = "https://app.attio.com/" + url.PathEscape(workspace) + "/" + url.PathEscape(parentObject) + "/" + url.PathEscape(parentRecord)
-	}
+	n.parentObject, _ = item.ParentObject.(string)
+	n.parentRecordID, _ = item.ParentRecordID.(string)
 	n.row = map[string]any{"note_id": n.id, "parent_object": item.ParentObject, "parent_record_id": item.ParentRecordID,
 		"title": orNull(item.Title), "meeting_id": item.MeetingID, "created_by_type": item.CreatedBy.Type,
 		"created_by_id": item.CreatedBy.ID, "created_at": item.CreatedAt}
@@ -1120,44 +1274,40 @@ func (h *attioNoteHeap) Pop() any {
 	return n
 }
 
-// notes lists every note, each once, then writes their rows and offers
-// their documents newest first (attioNoteOrder). Attio returns each note's
-// body with it and documents no order, so the read lists them all before
-// offering any; it holds the bodies of the newest
-// config.MaxDocumentsPerStream notes with one, the most a full read keeps,
-// and no others.
-func (c *attioClient) notes(ctx context.Context, l attioListing, w RowWriter, docs DocumentWriter) error {
-	var all []*attioNote
-	var candidates attioNoteHeap
+// notes lists every note, writing each one's row as it is listed, then
+// offers their documents newest first (attioNoteOrder). Attio returns each
+// note's body with it and documents no order, so the read holds what it
+// offers until the list ends: the newest config.MaxDocumentsPerStream notes
+// with a body or a document the stream holds, the most a full read keeps,
+// and of every other note only its id, which reads a note listed twice once.
+func (c *attioClient) notes(ctx context.Context, w RowWriter, docs DocumentWriter) error {
+	var offers attioNoteHeap
 	seen := map[string]bool{}
-	err := c.pages(ctx, "/v2/notes", false, attioNotePage, nil, "notes", func(raw json.RawMessage) error {
-		n, err := attioNoteOf(raw, l.workspace)
+	err := c.pages(ctx, attioList{path: "/v2/notes", limit: attioNotePage, what: "notes"}, func(raw json.RawMessage) error {
+		n, err := attioNoteOf(raw)
 		if err != nil || seen[n.id] {
 			return err
 		}
 		seen[n.id] = true
-		all = append(all, n)
-		if n.empty {
-			n.body = ""
+		if err := w.Write(n.row); err != nil {
+			return err
+		}
+		n.row = nil
+		if _, held := docs.Held(attioNotesStream.Name, n.id); n.empty && !held {
 			return nil
 		}
-		n.candidate = true
-		heap.Push(&candidates, n)
-		if len(candidates) > config.MaxDocumentsPerStream {
-			last := heap.Pop(&candidates).(*attioNote)
-			last.candidate, last.body = false, ""
+		heap.Push(&offers, n)
+		if len(offers) > config.MaxDocumentsPerStream {
+			heap.Pop(&offers)
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	slices.SortFunc(all, attioNoteOrder)
-	for _, n := range all {
-		if err := w.Write(n.row); err != nil {
-			return err
-		}
-		if err := n.offer(ctx, docs); err != nil {
+	urls := map[string]string{}
+	for _, n := range slices.SortedFunc(slices.Values(offers), attioNoteOrder) {
+		if err := c.offer(ctx, n, docs, urls); err != nil {
 			return err
 		}
 	}
@@ -1165,29 +1315,70 @@ func (c *attioClient) notes(ctx context.Context, l attioListing, w RowWriter, do
 }
 
 // offer offers n's document to docs and Puts it when docs wants it. A note
-// whose body is blank has none: it takes back the one the stream holds,
-// and is otherwise not offered, so it takes no place under the cap.
-func (n *attioNote) offer(ctx context.Context, docs DocumentWriter) error {
+// whose body is blank has none: it takes back the one the stream holds.
+func (c *attioClient) offer(ctx context.Context, n *attioNote, docs DocumentWriter, urls map[string]string) error {
 	stream := attioNotesStream.Name
 	switch {
+	case !docs.Want(stream, n.id, n.version):
+		return nil
 	case n.empty:
-		if _, held := docs.Held(stream, n.id); held && docs.Want(stream, n.id, n.version) {
-			return docs.Drop(stream, n.id)
-		}
-		return nil
-	case !n.candidate || !docs.Want(stream, n.id, n.version):
-		return nil
+		return docs.Drop(stream, n.id)
 	}
-	return docs.Put(ctx, stream, n.document())
+	link, err := c.recordURL(ctx, n.parentObject, n.parentRecordID, urls)
+	if err != nil {
+		return err
+	}
+	return docs.Put(ctx, stream, n.document(link))
 }
 
-// document is a note's document: its title as a heading, "Untitled note"
-// for none, then its Markdown body as Attio gives it. Its time is its
-// creation's: Attio keeps no edit time.
-func (n *attioNote) document() Document {
+// recordURL is the page in Attio of the record of object a note is on.
+// Attio's paths to records name the object as no field of a note does
+// (app.attio.com/<workspace>/person/<id> for People), so one record of the
+// object is read for its web_url, whose path less the record's id is
+// object's, kept in urls. "" for a note on no record, or when the object
+// has no record whose web_url ends in its id, or Attio refuses its records
+// (403) or has no such object (404); any other failure fails the read.
+func (c *attioClient) recordURL(ctx context.Context, object, record string, urls map[string]string) (string, error) {
+	if object == "" || record == "" {
+		return "", nil
+	}
+	prefix, known := urls[object]
+	if !known {
+		path := "/v2/objects/" + url.PathEscape(object) + "/records/query"
+		status, raw, err := c.do(ctx, http.MethodPost, path, nil, map[string]int{"limit": 1})
+		switch {
+		case err != nil:
+			return "", err
+		case status == http.StatusForbidden || status == http.StatusNotFound:
+		case status >= 300:
+			return "", attioRefusal(status, raw, path)
+		default:
+			var resp struct {
+				Data []attioRecord `json:"data"`
+			}
+			if json.Unmarshal(raw, &resp) == nil && len(resp.Data) > 0 {
+				id, _ := resp.Data[0].ID["record_id"].(string)
+				web, _ := resp.Data[0].WebURL.(string)
+				if p, ok := strings.CutSuffix(web, "/"+id); ok && id != "" && strings.HasPrefix(p, "https://") {
+					prefix = p
+				}
+			}
+		}
+		urls[object] = prefix
+	}
+	if prefix == "" {
+		return "", nil
+	}
+	return prefix + "/" + url.PathEscape(record), nil
+}
+
+// document is a note's document, linking link: its title as a heading,
+// "Untitled note" for none, then its Markdown body as Attio gives it. Its
+// time is its creation's: Attio keeps no edit time.
+func (n *attioNote) document(link string) Document {
 	title := strings.Join(strings.Fields(n.title), " ")
 	heading := cmp.Or(title, "Untitled note")
-	return Document{ExternalID: n.id, Version: n.version, At: n.created, Title: heading, URL: n.url,
+	return Document{ExternalID: n.id, Version: n.version, At: n.created, Title: heading, URL: link,
 		Text: []byte("# " + heading + "\n\n" + n.body)}
 }
 

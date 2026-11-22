@@ -18,12 +18,14 @@ import (
 
 // attioWorkspace is an Attio workspace a test edits between syncs: its
 // people by record id, and its notes by id. It counts every request by
-// method and path.
+// method and path. A workspace with deals has a Deals object whose records
+// Attio refuses the token.
 type attioWorkspace struct {
 	mu     sync.Mutex
 	people map[string]string
 	notes  map[string]attioFakeNote
 	asked  map[string]int
+	deals  bool
 }
 
 type attioFakeNote struct{ title, content, created string }
@@ -36,11 +38,11 @@ func (a *attioWorkspace) serve(t *testing.T) string {
 	paged := func(r *http.Request, items []string) string {
 		var limit, offset int
 		if r.Method == http.MethodPost {
-			var body map[string]int
+			var body struct{ Limit, Offset int }
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("%s body: %v", r.URL.Path, err)
 			}
-			limit, offset = body["limit"], body["offset"]
+			limit, offset = body.Limit, body.Offset
 		} else {
 			limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 			offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
@@ -63,11 +65,20 @@ func (a *attioWorkspace) serve(t *testing.T) string {
 			body = `{"active":true,"scope":"user_management:read object_configuration:read record_permission:read list_configuration:read ` +
 				`list_entry:read note:read task:read","workspace_slug":"acme"}`
 		case "/v2/objects":
-			body = data([]string{`{"id":{"object_id":"obj_people"},"api_slug":"people","singular_noun":"Person","plural_noun":"People",` +
-				`"created_at":"2024-01-01T00:00:00.000000000Z"}`})
+			objects := []string{`{"id":{"object_id":"obj_people"},"api_slug":"people","singular_noun":"Person","plural_noun":"People",` +
+				`"created_at":"2024-01-01T00:00:00.000000000Z"}`}
+			if a.deals {
+				objects = append(objects, `{"id":{"object_id":"obj_deals"},"api_slug":"deals","created_at":"2024-01-01T00:00:00.000000000Z"}`)
+			}
+			body = data(objects)
+		case "/v2/objects/obj_deals/attributes":
+			body = paged(r, []string{attribute("name", "text")})
+		case "/v2/objects/obj_deals/records/query":
+			w.WriteHeader(http.StatusForbidden)
+			body = `{"status_code":403,"type":"auth_error","code":"unauthorized","message":"Missing permission to read Deals."}`
 		case "/v2/objects/obj_people/attributes":
 			body = paged(r, []string{attribute("name", "personal-name")})
-		case "/v2/objects/obj_people/records/query":
+		case "/v2/objects/obj_people/records/query", "/v2/objects/people/records/query":
 			var records []string
 			for _, id := range slices.Sorted(maps.Keys(a.people)) {
 				first, last, _ := strings.Cut(a.people[id], " ")
@@ -145,13 +156,20 @@ func TestAttioSyncs(t *testing.T) {
 	if res.Mode != model.ConnectorSyncFull || !slices.Equal(slices.Sorted(maps.Keys(f.store.tables)), attioTableNames) {
 		t.Fatalf("mode = %s, tables = %v", res.Mode, slices.Sorted(maps.Keys(f.store.tables)))
 	}
+	// Discovery asks People for a row, and the read reads it; the notes'
+	// links read one person.
 	if took := ws.took(); took["GET /v2/self"] != 1 || took["GET /v2/notes"] != 1 || took["GET /v2/tasks"] != 1 ||
-		took["POST /v2/objects/obj_people/records/query"] != 1 {
+		took["POST /v2/objects/obj_people/records/query"] != 2 || took["POST /v2/objects/people/records/query"] != 1 {
 		t.Fatalf("requests = %v", took)
 	}
 	notes := f.held(t, "notes")
 	if len(notes) != 3 || notes["not_1"] != "# Kickoff\n\nAgenda" || notes["not_2"] != "# Renewal\n\n## Terms\n\nTwo years." {
 		t.Fatalf("notes = %q", notes)
+	}
+	for _, d := range f.store.live(f.store.setOf("notes").ID) {
+		if d.Source.URL == nil || *d.Source.URL != "https://app.attio.com/acme/person/rec_ada" {
+			t.Fatalf("%s links %v", d.Source.ExternalID, d.Source.URL)
+		}
 	}
 	if set := f.store.setOf("notes"); set == nil || set.Name != "Notes" || set.Owner.ConnectorID != "conn-1" {
 		t.Fatalf("notes set = %+v", set)
@@ -204,5 +222,28 @@ func TestAttioSyncs(t *testing.T) {
 	}
 	if rows := f.snapshotRows(t, "notes"); len(rows) != 2 {
 		t.Fatalf("notes rows = %v", rows)
+	}
+}
+
+// TestAttioSyncsAroundADeniedObject syncs a workspace whose token Attio
+// refuses one object's records: its discovery leaves that table out, as the
+// connection's test does, and every other table publishes.
+func TestAttioSyncsAroundADeniedObject(t *testing.T) {
+	ws := &attioWorkspace{asked: map[string]int{}, deals: true, people: map[string]string{"rec_ada": "Ada Lovelace"},
+		notes: map[string]attioFakeNote{"not_1": {"Kickoff", "Agenda", "2026-10-01T09:00:00.000000000Z"}}}
+	f := newFixture(t, "http://unused", "attio", `{}`, plan{code: "free"})
+	endpoints := connector.DefaultEndpoints()
+	endpoints.Attio = ws.serve(t)
+	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
+
+	res := f.run(t, "sync-1")
+	if res.Mode != model.ConnectorSyncFull || !slices.Equal(slices.Sorted(maps.Keys(f.store.tables)), attioTableNames) {
+		t.Fatalf("mode = %s, tables = %v", res.Mode, slices.Sorted(maps.Keys(f.store.tables)))
+	}
+	if rows := f.snapshotRows(t, "people"); len(rows) != 1 || len(f.held(t, "notes")) != 1 {
+		t.Fatalf("people = %v, notes = %v", rows, f.held(t, "notes"))
+	}
+	if took := ws.took(); took["POST /v2/objects/obj_deals/records/query"] != 1 {
+		t.Fatalf("requests = %v", took)
 	}
 }

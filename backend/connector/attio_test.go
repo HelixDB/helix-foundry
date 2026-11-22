@@ -1,13 +1,16 @@
 package connector
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -80,11 +83,8 @@ func attioPaged(t *testing.T, items []string) func(*http.Request) (int, string) 
 	return func(r *http.Request) (int, string) {
 		var limit, offset int
 		if r.Method == http.MethodPost {
-			var body map[string]int
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Errorf("%s body: %v", r.URL.Path, err)
-			}
-			limit, offset = body["limit"], body["offset"]
+			body := attioQueryOf(t, r)
+			limit, offset = body.Limit, body.Offset
 		} else {
 			limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 			offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
@@ -94,6 +94,28 @@ func attioPaged(t *testing.T, items []string) func(*http.Request) (int, string) 
 		}
 		return http.StatusOK, attioData(items[min(offset, len(items)):min(offset+limit, len(items))]...)
 	}
+}
+
+// attioQuery is a records or entries query's body.
+type attioQuery struct {
+	Limit  int         `json:"limit"`
+	Offset int         `json:"offset"`
+	Sorts  []attioSort `json:"sorts"`
+}
+
+func attioQueryOf(t *testing.T, r *http.Request) attioQuery {
+	var body attioQuery
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		t.Errorf("%s body: %v", r.URL.Path, err)
+	}
+	return body
+}
+
+// attioSuffixed is name with id's suffix, as notionSuffixed gives it.
+func attioSuffixed(name, id string) string {
+	return name + "__" + fmt.Sprintf("%x", sha256.Sum256([]byte(id)))[:8]
 }
 
 // attioNullable is s as JSON, null when empty.
@@ -110,15 +132,25 @@ func attioSelfJSON(scope string) string {
 }
 
 func attioObjectJSON(id, slug string) string {
+	return attioObjectAt(id, slug, "2024-01-01T00:00:00.000000000Z")
+}
+
+// attioObjectAt is an object created at created, its plural noun Things.
+func attioObjectAt(id, slug, created string) string {
 	return fmt.Sprintf(`{"id":{"workspace_id":"ws_1","object_id":%q},"api_slug":%s,"singular_noun":"Thing","plural_noun":"Things",
-		"created_at":"2024-01-01T00:00:00.000000000Z"}`, id, attioNullable(slug))
+		"created_at":%q}`, id, attioNullable(slug), created)
 }
 
 func attioAttributeJSON(slug, kind string, multi, archived bool) string {
+	return attioAttributeAt(slug, kind, multi, archived, "2024-01-01T00:00:00.000000000Z")
+}
+
+// attioAttributeAt is an attribute created at created, its id "a_" and its slug.
+func attioAttributeAt(slug, kind string, multi, archived bool, created string) string {
 	return fmt.Sprintf(`{"id":{"workspace_id":"ws_1","object_id":"o","attribute_id":"a_%s"},"title":%q,"description":null,
 		"api_slug":%q,"type":%q,"is_system_attribute":false,"is_writable":true,"is_required":false,"is_unique":false,
 		"is_multiselect":%t,"is_default_value_enabled":false,"is_archived":%t,"default_value":null,"relationship":null,
-		"created_at":"2024-01-01T00:00:00.000000000Z","config":{}}`, slug, slug, slug, kind, multi, archived)
+		"created_at":%q,"config":{}}`, slug, slug, slug, kind, multi, archived, created)
 }
 
 func attioListJSON(id, slug string, parents ...string) string {
@@ -164,9 +196,10 @@ var (
 		"company":[`+attioValueJSON("record-reference", `"target_object":"companies","target_record_id":"rec_acme"`)+`],
 		"created_at":[`+attioValueJSON("timestamp", `"value":"2024-02-01T09:00:00.000000000Z"`)+`]}`)
 	attioGrace = attioRecordJSON("rec_grace", `{"name":[],"email_addresses":[]}`)
-	attioAcme  = attioRecordJSON("rec_acme", `{"name":[`+attioValueJSON("text", `"value":"Acme"`)+`],
+	attioAcme  = strings.Replace(attioRecordJSON("rec_acme", `{"name":[`+attioValueJSON("text", `"value":"Acme"`)+`],
 		"domains":[`+attioValueJSON("domain", `"domain":"acme.com","root_domain":"acme.com"`)+`],
-		"stage":[`+attioValueJSON("status", `"status":{"id":{"status_id":"s1"},"title":"Customer","is_archived":false}`)+`]}`)
+		"stage":[`+attioValueJSON("status", `"status":{"id":{"status_id":"s1"},"title":"Customer","is_archived":false}`)+`]}`),
+		"/acme/person/", "/acme/company/", 1)
 	attioEntry = `{"id":{"workspace_id":"ws_1","list_id":"lst_sales","entry_id":"ent_1"},"parent_record_id":"rec_acme",
 		"parent_object":"companies","created_at":"2024-03-01T00:00:00.000000000Z","entry_values":{
 		"stage":[` + attioValueJSON("status", `"status":{"title":"Won"}`) + `],
@@ -195,9 +228,10 @@ var (
 )
 
 // attioWorkspace is a workspace whose token holds scope: People (with an
-// archived attribute and one whose column a fixed one holds), Companies and
-// an object without a slug; a Sales pipeline list of companies; two
-// members; notes; and tasks. extra adds routes or replaces them.
+// archived attribute and created_at, which a fixed column holds), Companies
+// and an object without a slug, whose table is named by its plural noun; a
+// Sales pipeline list of companies and a list without a slug, which has
+// none; two members; notes; and tasks. extra adds routes or replaces them.
 func attioWorkspace(t *testing.T, scope string, extra attioRoutes) attioRoutes {
 	routes := attioRoutes{
 		"/v2/self": func(*http.Request) (int, string) { return http.StatusOK, attioSelfJSON(scope) },
@@ -210,6 +244,11 @@ func attioWorkspace(t *testing.T, scope string, extra attioRoutes) attioRoutes {
 			attioAttributeJSON("domains", "domain", true, false), attioAttributeJSON("stage", "status", false, false)}),
 		"/v2/objects/obj_people/records/query":    attioPaged(t, []string{attioAda, attioGrace}),
 		"/v2/objects/obj_companies/records/query": attioPaged(t, []string{attioAcme}),
+		"/v2/objects/obj_noslug/attributes":       attioPaged(t, nil),
+		"/v2/objects/obj_noslug/records/query":    attioPaged(t, nil),
+		// A note's link reads one record of its object, named by slug.
+		"/v2/objects/people/records/query":    attioPaged(t, []string{attioAda}),
+		"/v2/objects/companies/records/query": attioPaged(t, []string{attioAcme}),
 		"/v2/lists": func(*http.Request) (int, string) {
 			return http.StatusOK, attioData(attioListJSON("lst_sales", "sales_pipeline", "companies"), attioListJSON("lst_both", "", "people", "companies"))
 		},
@@ -296,8 +335,15 @@ func TestAttioPrepare(t *testing.T) {
 
 func TestAttioDiscover(t *testing.T) {
 	ctx := context.Background()
-	everyTable := []string{"workspace_members", "objects", "people", "companies", "lists", "list_sales_pipeline",
+	// The object without a slug is named by its plural noun and its id.
+	things := attioSuffixed("things", "obj_noslug")
+	everyTable := []string{"workspace_members", "objects", "people", "companies", things, "lists", "list_sales_pipeline",
 		"notes", "tasks", "task_assignees", "task_records"}
+	const denied = `{"status_code":403,"type":"auth_error","code":"unauthorized","message":"Missing permission to read People."}`
+	const billing = `{"status_code":403,"type":"invalid_request_error","code":"billing_error","message":"Upgrade to read lists."}`
+	refuse := func(body string) func(*http.Request) (int, string) {
+		return func(*http.Request) (int, string) { return http.StatusForbidden, body }
+	}
 
 	t.Run("lists every table the token's scopes read, with a preview of each object and list", func(t *testing.T) {
 		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
@@ -309,7 +355,7 @@ func TestAttioDiscover(t *testing.T) {
 			t.Fatalf("tables = %v, unavailable = %v", tableNames(d), d.Unavailable)
 		}
 		keys := map[string][]string{"workspace_members": {"workspace_member_id"}, "objects": {"object_id"}, "people": {"record_id"},
-			"companies": {"record_id"}, "lists": {"list_id"}, "list_sales_pipeline": {"entry_id"}, "notes": {"note_id"},
+			"companies": {"record_id"}, things: {"record_id"}, "lists": {"list_id"}, "list_sales_pipeline": {"entry_id"}, "notes": {"note_id"},
 			"tasks": {"task_id"}, "task_assignees": {"task_id", "assignee_type", "assignee_id"},
 			"task_records": {"task_id", "target_object", "target_record_id"}}
 		for name, key := range keys {
@@ -329,10 +375,10 @@ func TestAttioDiscover(t *testing.T) {
 			}
 		}
 		// The archived attribute has no column, a single value's fields
-		// have siblings, and created_at, which a fixed column holds, is numbered.
+		// have siblings, and created_at is the fixed column's alone.
 		people := findTable(t, d, "people")
 		want := []string{"record_id", "created_at", "web_url", "name", "name_first_name", "name_last_name", "email_addresses",
-			"company", "company_object", "created_at_2"}
+			"company", "company_object"}
 		if !slices.Equal(columnNames(people), want) {
 			t.Fatalf("people columns = %v", columnNames(people))
 		}
@@ -353,34 +399,58 @@ func TestAttioDiscover(t *testing.T) {
 		if len(people.Preview) != 2 || !strings.Contains(string(people.Preview[0]), `"name":"Ada Lovelace"`) {
 			t.Fatalf("people preview = %s", people.Preview)
 		}
-		// One request a list, attributes and preview; no list of the
-		// object without a slug, or of the list without one.
+		// One request a list and preview, and attributes, archived ones
+		// too, until an empty page; none of the list without a slug.
 		took := hits.took()
 		for path, n := range took {
-			if n != 1 {
+			want := 1
+			if strings.HasSuffix(path, "/attributes") && path != "GET /v2/objects/obj_noslug/attributes" {
+				want = 2
+			}
+			if n != want {
 				t.Errorf("%s asked %d times", path, n)
 			}
 		}
-		for _, path := range []string{"GET /v2/self", "GET /v2/objects", "GET /v2/objects/obj_people/attributes",
-			"POST /v2/objects/obj_people/records/query", "GET /v2/lists/lst_sales/attributes", "POST /v2/lists/lst_sales/entries/query"} {
+		for _, path := range []string{"GET /v2/self", "GET /v2/objects", "POST /v2/objects/obj_people/records/query",
+			"POST /v2/lists/lst_sales/entries/query"} {
 			if took[path] != 1 {
 				t.Errorf("%s asked %d times", path, took[path])
 			}
 		}
-		if len(took) != 9 {
+		if len(took) != 11 {
 			t.Fatalf("requests = %v", took)
 		}
 	})
 
-	t.Run("a sync lists what it reads without previews", func(t *testing.T) {
-		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
+	t.Run("a sync asks each object and list for one row, without previews", func(t *testing.T) {
+		var mu sync.Mutex
+		asked := map[string]attioQuery{}
+		record := func(path string, items []string) func(*http.Request) (int, string) {
+			return func(r *http.Request) (int, string) {
+				q := attioQueryOf(t, r)
+				mu.Lock()
+				asked[path] = q
+				mu.Unlock()
+				return http.StatusOK, attioData(items[min(q.Offset, len(items)):min(q.Offset+q.Limit, len(items))]...)
+			}
+		}
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+			"/v2/objects/obj_people/records/query":    record("people", []string{attioAda, attioGrace}),
+			"/v2/objects/obj_companies/records/query": record("companies", []string{attioAcme}),
+			"/v2/lists/lst_sales/entries/query":       record("list_sales_pipeline", []string{attioEntry}),
+		}))
 		d, err := k.Discover(ctx, attioTestSource(true))
 		if err != nil || !slices.Equal(tableNames(d), everyTable) {
 			t.Fatalf("Discover = %v, %v", tableNames(d), err)
 		}
-		for path := range hits.took() {
-			if strings.HasSuffix(path, "/query") {
-				t.Fatalf("a sync's discovery asked %s", path)
+		for _, table := range d.Tables {
+			if len(table.Preview) != 0 {
+				t.Fatalf("%s preview = %s", table.Name, table.Preview)
+			}
+		}
+		for _, name := range []string{"people", "companies", "list_sales_pipeline"} {
+			if q := asked[name]; q.Limit != 1 || q.Offset != 0 || q.Sorts != nil {
+				t.Fatalf("%s asked %+v", name, q)
 			}
 		}
 	})
@@ -399,6 +469,7 @@ func TestAttioDiscover(t *testing.T) {
 		{"without records, whose attributes are not read", strings.ReplaceAll(attioAllScopes, "record_permission:read-write", ""), []string{
 			"people: the token lacks the record_permission:read scope",
 			"companies: the token lacks the record_permission:read scope",
+			things + ": the token lacks the record_permission:read scope",
 			"notes: the token lacks the record_permission:read scope",
 			"tasks: the token lacks the record_permission:read scope",
 			"task_assignees: the token lacks the record_permission:read scope",
@@ -455,13 +526,41 @@ func TestAttioDiscover(t *testing.T) {
 		})
 	}
 
-	t.Run("reads every table when Attio names no scopes", func(t *testing.T) {
-		k, _ := attioAt(t, attioWorkspace(t, "", attioRoutes{
+	t.Run("reads every table when Attio names no scopes, asking members, notes and tasks for one", func(t *testing.T) {
+		k, hits := attioAt(t, attioWorkspace(t, "", attioRoutes{
 			"/v2/self": func(*http.Request) (int, string) { return http.StatusOK, `{"active":true,"workspace_slug":"acme"}` },
 		}))
 		d, err := k.Discover(ctx, attioTestSource(true))
 		if err != nil || !slices.Equal(tableNames(d), everyTable) || len(d.Unavailable) != 0 {
 			t.Fatalf("Discover = %v, %v, %v", tableNames(d), d.Unavailable, err)
+		}
+		if took := hits.took(); took["GET /v2/workspace_members"] != 1 || took["GET /v2/notes"] != 1 || took["GET /v2/tasks"] != 1 {
+			t.Fatalf("requests = %v", took)
+		}
+	})
+
+	t.Run("when Attio names no scopes, a table it refuses is unavailable with its reason", func(t *testing.T) {
+		for _, forSync := range []bool{false, true} {
+			k, _ := attioAt(t, attioWorkspace(t, "", attioRoutes{
+				"/v2/self":                       func(*http.Request) (int, string) { return http.StatusOK, `{"active":true}` },
+				"/v2/workspace_members":          refuse(denied),
+				"/v2/objects":                    refuse(billing),
+				"/v2/lists/lst_sales/attributes": refuse(denied),
+				"/v2/notes":                      refuse(denied),
+			}))
+			d, err := k.Discover(ctx, attioTestSource(forSync))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []Unavailable{
+				{Name: "workspace_members", Reason: "Missing permission to read People."},
+				{Name: "objects", Reason: "Upgrade to read lists., so no object's records can be read either"},
+				{Name: "list_sales_pipeline", Reason: "Missing permission to read People."},
+				{Name: "notes", Reason: "Missing permission to read People."},
+			}
+			if !slices.Equal(d.Unavailable, want) || !slices.Equal(tableNames(d), []string{"lists", "tasks", "task_assignees", "task_records"}) {
+				t.Fatalf("for sync %v: tables = %v, unavailable = %v", forSync, tableNames(d), d.Unavailable)
+			}
 		}
 	})
 
@@ -491,50 +590,137 @@ func TestAttioDiscover(t *testing.T) {
 		})
 	}
 
-	t.Run("makes a table Attio refuses the token unavailable with Attio's reason", func(t *testing.T) {
-		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
-			"/v2/objects/obj_people/records/query": func(*http.Request) (int, string) {
-				return http.StatusForbidden, `{"status_code":403,"type":"auth_error","code":"unauthorized","message":"Missing permission to read People."}`
-			},
-			"/v2/lists/lst_sales/entries/query": func(*http.Request) (int, string) {
-				return http.StatusForbidden, `{"status_code":403,"type":"invalid_request_error","code":"billing_error","message":"Upgrade to read lists."}`
-			},
-		}))
-		d, err := k.Discover(ctx, attioTestSource(false))
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := []Unavailable{{Name: "people", Reason: "Missing permission to read People."}, {Name: "list_sales_pipeline", Reason: "Upgrade to read lists."}}
-		if !slices.Equal(d.Unavailable, want) || slices.Contains(tableNames(d), "people") || !slices.Contains(tableNames(d), "companies") {
-			t.Fatalf("tables = %v, unavailable = %v", tableNames(d), d.Unavailable)
+	// A test and a sync agree: the sync never lists a table the test
+	// showed unavailable, so it never reads one Attio refuses.
+	t.Run("makes a table Attio refuses the token unavailable with Attio's reason, in a test and a sync", func(t *testing.T) {
+		for _, forSync := range []bool{false, true} {
+			k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+				"/v2/objects/obj_people/records/query": refuse(denied),
+				"/v2/lists/lst_sales/entries/query":    refuse(billing),
+			}))
+			d, err := k.Discover(ctx, attioTestSource(forSync))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []Unavailable{{Name: "people", Reason: "Missing permission to read People."}, {Name: "list_sales_pipeline", Reason: "Upgrade to read lists."}}
+			if !slices.Equal(d.Unavailable, want) || slices.Contains(tableNames(d), "people") || !slices.Contains(tableNames(d), "companies") {
+				t.Fatalf("for sync %v: tables = %v, unavailable = %v", forSync, tableNames(d), d.Unavailable)
+			}
 		}
 	})
 
-	t.Run("refuses any other failure of a preview, so a sync retries it", func(t *testing.T) {
-		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
-			"/v2/lists/lst_sales/entries/query": func(*http.Request) (int, string) {
-				return http.StatusNotFound, `{"status_code":404,"type":"invalid_request_error","code":"not_found","message":"List not found."}`
-			},
-			"/v2/objects/obj_companies/records/query": func(*http.Request) (int, string) {
-				return http.StatusForbidden, `{"status_code":403,"type":"invalid_request_error","code":"validation_type","message":"No."}`
-			},
-		}))
-		_, err := k.Discover(ctx, attioTestSource(false))
-		notionRefusal(t, err, "Attio returned HTTP 403 for /v2/objects/obj_companies/records/query: No.")
+	t.Run("makes an object whose attributes Attio refuses unavailable", func(t *testing.T) {
+		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{"/v2/objects/obj_companies/attributes": refuse(denied)}))
+		d, err := k.Discover(ctx, attioTestSource(true))
+		if err != nil || !slices.Equal(d.Unavailable, []Unavailable{{Name: "companies", Reason: "Missing permission to read People."}}) {
+			t.Fatalf("Discover = %v, %v", d.Unavailable, err)
+		}
+		if took := hits.took(); took["POST /v2/objects/obj_companies/records/query"] != 0 {
+			t.Fatalf("requests = %v", took)
+		}
 	})
 
-	t.Run("retries a rate limit until the date Attio names", func(t *testing.T) {
-		calls := 0
-		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
-			"/v2/self": func(*http.Request) (int, string) {
-				if calls++; calls == 1 {
-					return http.StatusTooManyRequests, `{"status_code":429,"type":"rate_limit_error","code":"rate_limit_exceeded","message":"Slow down"}`
+	t.Run("asks every object, past the previews, and shows a preview of the first", func(t *testing.T) {
+		objects := make([]string, attioPreviews+2)
+		var mu sync.Mutex
+		limits := map[string]int{}
+		routes := attioRoutes{}
+		for i := range objects {
+			id := fmt.Sprintf("o%02d", i)
+			objects[i] = attioObjectAt(id, fmt.Sprintf("thing_%02d", i), fmt.Sprintf("2024-01-01T00:00:%02d.000000000Z", i))
+			routes["/v2/objects/"+id+"/attributes"] = attioPaged(t, nil)
+			routes["/v2/objects/"+id+"/records/query"] = func(r *http.Request) (int, string) {
+				q := attioQueryOf(t, r)
+				mu.Lock()
+				limits[id] = q.Limit
+				mu.Unlock()
+				if i == len(objects)-1 {
+					return http.StatusForbidden, denied
 				}
-				return http.StatusOK, attioSelfJSON(attioAllScopes)
-			},
+				return http.StatusOK, attioData(attioAda)
+			}
+		}
+		routes["/v2/objects"] = func(*http.Request) (int, string) { return http.StatusOK, attioData(objects...) }
+		routes["/v2/lists"] = func(*http.Request) (int, string) { return http.StatusOK, attioData() }
+		for _, forSync := range []bool{false, true} {
+			k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, routes))
+			d, err := k.Discover(ctx, attioTestSource(forSync))
+			last := fmt.Sprintf("thing_%02d", len(objects)-1)
+			if err != nil || !slices.Equal(d.Unavailable, []Unavailable{{Name: last, Reason: "Missing permission to read People."}}) {
+				t.Fatalf("Discover = %v, %v", d.Unavailable, err)
+			}
+			for i := range len(objects) - 1 {
+				previewed := !forSync && i < attioPreviews
+				want := 1
+				if previewed {
+					want = attioPreviewRows
+				}
+				if table := findTable(t, d, fmt.Sprintf("thing_%02d", i)); (len(table.Preview) == 1) != previewed || limits[fmt.Sprintf("o%02d", i)] != want {
+					t.Fatalf("for sync %v: %s preview = %s, limit %d", forSync, table.Name, table.Preview, limits[fmt.Sprintf("o%02d", i)])
+				}
+			}
+		}
+	})
+
+	t.Run("refuses any other failure of a table's probe, so a sync retries it", func(t *testing.T) {
+		for _, c := range []struct {
+			path, body, err string
+			status          int
+		}{
+			{"/v2/objects/obj_companies/records/query", `{"status_code":403,"type":"invalid_request_error","code":"validation_type","message":"No."}`,
+				"Attio returned HTTP 403 for /v2/objects/obj_companies/records/query: No.", http.StatusForbidden},
+			{"/v2/lists/lst_sales/entries/query", `{"status_code":404,"type":"invalid_request_error","code":"not_found","message":"List not found."}`,
+				"Attio returned HTTP 404 for /v2/lists/lst_sales/entries/query: List not found.", http.StatusNotFound},
+			{"/v2/objects/obj_people/attributes", `{"message":"Down."}`, "Attio returned HTTP 503 for /v2/objects/obj_people/attributes: Down.",
+				http.StatusServiceUnavailable},
+		} {
+			for _, forSync := range []bool{false, true} {
+				k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+					c.path: func(*http.Request) (int, string) { return c.status, c.body },
+				}))
+				_, err := k.Discover(ctx, attioTestSource(forSync))
+				notionRefusal(t, err, c.err)
+			}
+		}
+		// Unknown scopes: a members, notes or tasks probe that fails.
+		for _, path := range []string{"/v2/workspace_members", "/v2/notes", "/v2/tasks"} {
+			k, _ := attioAt(t, attioWorkspace(t, "", attioRoutes{
+				"/v2/self": func(*http.Request) (int, string) { return http.StatusOK, `{"active":true}` },
+				path:       func(*http.Request) (int, string) { return http.StatusNotFound, `{"message":"Gone."}` },
+			}))
+			_, err := k.Discover(ctx, attioTestSource(true))
+			notionRefusal(t, err, "Attio returned HTTP 404 for "+path+": Gone.")
+		}
+	})
+
+	// Attio's Retry-After is an HTTP date, which reaches retryBackoff.
+	t.Run("retries a rate limit until the date Attio names", func(t *testing.T) {
+		var calls int
+		var asked []string
+		at := time.Now().Add(2 * time.Second).UTC().Format(http.TimeFormat)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if calls++; calls == 1 {
+				w.Header().Set("Retry-After", at)
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"status_code":429,"type":"rate_limit_error","code":"rate_limit_exceeded","message":"Slow down"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"active":true,"workspace_name":"Acme","workspace_id":"ws_1"}`))
 		}))
-		if d, err := k.Discover(ctx, attioTestSource(true)); err != nil || calls != 2 || !slices.Equal(tableNames(d), everyTable) {
-			t.Fatalf("Discover = %v, %v after %d calls", tableNames(d), err, calls)
+		t.Cleanup(server.Close)
+		saved := retryBackoff
+		retryBackoff = func(attempt int, retryAfter string) time.Duration {
+			asked = append(asked, retryAfter)
+			if wait := saved(attempt, retryAfter); wait < time.Second || wait > 2*time.Second {
+				t.Errorf("retryBackoff(%d, %q) = %v", attempt, retryAfter, wait)
+			}
+			return 0
+		}
+		t.Cleanup(func() { retryBackoff = saved })
+		k := kindOf(t, NewCatalog(Endpoints{Attio: server.URL}, Guard{}, S3Options{}, EventsOptions{}), "attio").(*attioKind)
+		name, id, err := k.Identity(ctx, attioTestSource(true))
+		if err != nil || name != "Acme" || id != "ws_1" || calls != 2 || !slices.Equal(asked, []string{at}) {
+			t.Fatalf("Identity = %q, %q, %v after %d calls, Retry-After %q", name, id, err, calls, asked)
 		}
 	})
 
@@ -578,57 +764,103 @@ func TestAttioDiscover(t *testing.T) {
 	})
 }
 
-// Objects and lists name their tables from their slugs, in Attio's order:
-// one without a slug has none, and a name a fixed table, an earlier object
-// or a list holds takes the first free number. Attributes name columns
-// likewise.
+// Objects and lists name their tables from their slugs: one whose slug is
+// in snake case holds it, objects first; any other, or one a fixed table
+// holds, takes its id's suffix, so none moves as others come and go.
+// Attributes name columns by age, archived ones holding theirs.
 func TestAttioNaming(t *testing.T) {
-	k, _ := attioAt(t, attioRoutes{
-		"/v2/self": func(*http.Request) (int, string) { return http.StatusOK, attioSelfJSON(attioAllScopes) },
-		"/v2/objects": func(*http.Request) (int, string) {
-			return http.StatusOK, attioData(attioObjectJSON("o1", "deals"), attioObjectJSON("o2", "Deals"), attioObjectJSON("o3", "notes"),
-				attioObjectJSON("o4", ""), attioObjectJSON("o5", "Big Deals!"), attioObjectJSON("o6", "list_pipeline"), attioObjectJSON("o7", "---"),
-				attioObjectJSON("o8", "dealStage"))
-		},
-		"/v2/objects/o1/attributes": attioPaged(t, []string{attioAttributeJSON("name", "personal-name", false, false),
-			attioAttributeJSON("name_first_name", "text", false, false), attioAttributeJSON("Name", "text", false, false),
-			attioAttributeJSON("value", "currency", true, false), attioAttributeJSON("vibe", "sentiment", false, false),
-			attioAttributeJSON("vibes", "sentiment", true, false), attioAttributeJSON("touch", "interaction", false, false),
-			attioAttributeJSON("where", "location", false, false), attioAttributeJSON("", "text", false, false)}),
-		"/v2/objects/o2/attributes": attioPaged(t, nil),
-		"/v2/objects/o3/attributes": attioPaged(t, nil),
-		"/v2/objects/o5/attributes": attioPaged(t, nil),
-		"/v2/objects/o6/attributes": attioPaged(t, nil),
-		"/v2/objects/o7/attributes": attioPaged(t, nil),
-		"/v2/objects/o8/attributes": attioPaged(t, nil),
-		"/v2/lists": func(*http.Request) (int, string) {
-			return http.StatusOK, attioData(attioListJSON("l1", "pipeline", "deals"), attioListJSON("l2", "Pipeline", "deals"))
-		},
-		"/v2/lists/l1/attributes": attioPaged(t, nil),
-		"/v2/lists/l2/attributes": attioPaged(t, nil),
-	})
-	d, err := k.Discover(context.Background(), attioTestSource(true))
-	if err != nil {
-		t.Fatal(err)
+	at := func(n int) string { return fmt.Sprintf("2024-01-01T00:00:%02d.000000000Z", n) }
+	attributes := func(archived string) []string {
+		return []string{
+			attioAttributeAt("where", "location", false, false, at(8)),
+			attioAttributeAt("name_first_name", "text", false, false, at(2)),
+			attioAttributeAt("name", "personal-name", false, archived == "name", at(1)),
+			attioAttributeAt("Name", "text", false, false, at(3)),
+			attioAttributeAt("value", "currency", true, false, at(4)),
+			attioAttributeAt("vibe", "sentiment", false, false, at(5)),
+			attioAttributeAt("vibes", "sentiment", true, false, at(6)),
+			attioAttributeAt("touch", "interaction", false, false, at(7)),
+			attioAttributeAt("touch_type", "text", false, true, at(0)),
+			attioAttributeAt("record_id", "text", false, false, at(9)),
+			attioAttributeAt("created_at", "timestamp", false, false, at(10)),
+			attioAttributeAt("", "text", false, false, at(11)),
+		}
 	}
-	want := []string{"workspace_members", "objects", "deals", "deals_2", "notes_2", "big_deals", "list_pipeline", "object", "deal_stage",
-		"lists", "list_pipeline_2", "list_pipeline_3", "notes", "tasks", "task_assignees", "task_records"}
+	discover := func(objects []string, archived string) Discovery {
+		t.Helper()
+		routes := attioRoutes{
+			"/v2/self":    func(*http.Request) (int, string) { return http.StatusOK, attioSelfJSON(attioAllScopes) },
+			"/v2/objects": func(*http.Request) (int, string) { return http.StatusOK, attioData(objects...) },
+			"/v2/lists": func(*http.Request) (int, string) {
+				return http.StatusOK, attioData(attioListJSON("l1", "pipeline", "deals"), attioListJSON("l2", "Pipeline", "deals"))
+			},
+		}
+		for _, id := range []string{"o1", "o2", "o3", "o4", "o5", "o6", "o7", "o8"} {
+			routes["/v2/objects/"+id+"/attributes"] = attioPaged(t, nil)
+			routes["/v2/objects/"+id+"/records/query"] = attioPaged(t, nil)
+		}
+		routes["/v2/objects/o1/attributes"] = func(r *http.Request) (int, string) {
+			if r.URL.Query().Get("show_archived") != "true" {
+				t.Errorf("attributes asked %s", r.URL.RawQuery)
+			}
+			return attioPaged(t, attributes(archived))(r)
+		}
+		for _, id := range []string{"l1", "l2"} {
+			routes["/v2/lists/"+id+"/attributes"] = attioPaged(t, nil)
+			routes["/v2/lists/"+id+"/entries/query"] = attioPaged(t, nil)
+		}
+		k, _ := attioAt(t, routes)
+		d, err := k.Discover(context.Background(), attioTestSource(true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	objects := []string{attioObjectJSON("o1", "deals"), attioObjectJSON("o2", "Deals"), attioObjectJSON("o3", "notes"),
+		attioObjectJSON("o4", ""), attioObjectJSON("o5", "Big Deals!"), attioObjectJSON("o6", "list_pipeline"), attioObjectJSON("o7", "---"),
+		attioObjectJSON("o8", "dealStage")}
+	d := discover(objects, "")
+	want := []string{"workspace_members", "objects", "deals", attioSuffixed("deals", "o2"), attioSuffixed("notes", "o3"),
+		attioSuffixed("things", "o4"), attioSuffixed("big_deals", "o5"), "list_pipeline", attioSuffixed("things", "o7"),
+		attioSuffixed("deal_stage", "o8"), "lists", attioSuffixed("list_pipeline", "l1"), attioSuffixed("list_pipeline", "l2"),
+		"notes", "tasks", "task_assignees", "task_records"}
 	if !slices.Equal(tableNames(d), want) {
 		t.Fatalf("tables = %v", tableNames(d))
 	}
-	deals := findTable(t, d, "deals")
+	// In Attio's order, named by age: the archived touch_type holds its
+	// name, and a fixed column's, a sibling's or an older attribute's name
+	// takes the suffix; created_at is the fixed column's.
 	columns := []Column{
 		{Name: "record_id", Type: "string"}, {Name: "created_at", Type: "string", Nullable: true}, {Name: "web_url", Type: "string", Nullable: true},
-		{Name: "name", Type: "string", Nullable: true}, {Name: "name_first_name", Type: "string", Nullable: true},
-		{Name: "name_last_name", Type: "string", Nullable: true}, {Name: "name_first_name_2", Type: "string", Nullable: true},
-		{Name: "name_2", Type: "string", Nullable: true}, {Name: "value", Type: "array"},
-		{Name: "vibe", Nullable: true}, {Name: "vibes", Type: "array"},
-		{Name: "touch", Type: "string", Nullable: true}, {Name: "touch_type", Type: "string", Nullable: true},
 		{Name: "where", Type: "object", Nullable: true},
+		{Name: attioSuffixed("name_first_name", "a_name_first_name"), Type: "string", Nullable: true},
+		{Name: "name", Type: "string", Nullable: true}, {Name: "name_first_name", Type: "string", Nullable: true},
+		{Name: "name_last_name", Type: "string", Nullable: true},
+		{Name: attioSuffixed("name", "a_Name"), Type: "string", Nullable: true},
+		{Name: "value", Type: "array"}, {Name: "vibe", Nullable: true}, {Name: "vibes", Type: "array"},
+		{Name: "touch", Type: "string", Nullable: true}, {Name: attioSuffixed("touch_type", "a_touch"), Type: "string", Nullable: true},
+		{Name: attioSuffixed("record_id", "a_record_id"), Type: "string", Nullable: true},
 	}
-	if !slices.Equal(deals.Columns, columns) {
+	if deals := findTable(t, d, "deals"); !slices.Equal(deals.Columns, columns) {
 		t.Fatalf("deals columns = %+v", deals.Columns)
 	}
+
+	t.Run("no table or column moves when the one holding its name goes", func(t *testing.T) {
+		// Deals goes, and Deals' name stays its own; name is archived, and
+		// Name and name_first_name keep theirs.
+		d := discover(objects[1:], "name")
+		if !slices.Equal(tableNames(d), slices.Concat(want[:2], want[3:])) {
+			t.Fatalf("tables = %v", tableNames(d))
+		}
+		objects := slices.Concat([]string{attioObjectJSON("o1", "deals")}, objects[1:])
+		deals := findTable(t, discover(objects, "name"), "deals")
+		kept := slices.DeleteFunc(slices.Clone(columns), func(c Column) bool {
+			return c.Name == "name" || c.Name == "name_first_name" || c.Name == "name_last_name"
+		})
+		if !slices.Equal(deals.Columns, kept) {
+			t.Fatalf("deals columns = %+v", deals.Columns)
+		}
+	})
 }
 
 // attioColumnOf is the column of an attribute of type kind, named v, as
@@ -710,21 +942,36 @@ func TestAttioSync(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("writes each object's records and each list's entries with every column", func(t *testing.T) {
-		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
+		var sorts []attioSort
+		paged := attioPaged(t, []string{attioAda, attioGrace})
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+			"/v2/objects/obj_people/records/query": func(r *http.Request) (int, string) {
+				body, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(body, &struct {
+					Sorts *[]attioSort `json:"sorts"`
+				}{&sorts})
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				return paged(r)
+			},
+		}))
 		people := &rowSink{}
 		written, err := k.Sync(ctx, attioTestSource(false), Table{Name: "people"}, people)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(columnNames(written), []string{"record_id", "created_at", "web_url", "name", "name_first_name", "name_last_name",
-			"email_addresses", "company", "company_object", "created_at_2"}) || !written.Dense || !slices.Equal(written.PrimaryKey, []string{"record_id"}) {
+			"email_addresses", "company", "company_object"}) || !written.Dense || !slices.Equal(written.PrimaryKey, []string{"record_id"}) {
 			t.Fatalf("written = %+v", written)
 		}
+		// People has created_at, so its records are read oldest first.
+		if !slices.Equal(sorts, []attioSort{{Attribute: "created_at", Direction: "asc"}}) {
+			t.Fatalf("sorts = %v", sorts)
+		}
 		want := []string{
-			`{"company":"rec_acme","company_object":"companies","created_at":"2024-02-01T09:00:00.000000000Z","created_at_2":"2024-02-01T09:00:00.000000000Z",` +
+			`{"company":"rec_acme","company_object":"companies","created_at":"2024-02-01T09:00:00.000000000Z",` +
 				`"email_addresses":["ada@acme.com","ada@example.com"],"name":"Ada Lovelace","name_first_name":"Ada","name_last_name":"Lovelace",` +
 				`"record_id":"rec_ada","web_url":"https://app.attio.com/acme/person/rec_ada"}`,
-			`{"company":null,"company_object":null,"created_at":"2024-02-01T09:00:00.000000000Z","created_at_2":null,"email_addresses":[],` +
+			`{"company":null,"company_object":null,"created_at":"2024-02-01T09:00:00.000000000Z","email_addresses":[],` +
 				`"name":null,"name_first_name":null,"name_last_name":null,"record_id":"rec_grace","web_url":"https://app.attio.com/acme/person/rec_grace"}`,
 		}
 		if got := attioRows(people.rows); !slices.Equal(got, want) {
@@ -811,29 +1058,28 @@ func TestAttioSync(t *testing.T) {
 		}
 	})
 
+	// Each next page repeats the last rows of the one before.
 	t.Run("pages through every record by offset, writing each once", func(t *testing.T) {
 		var records []string
 		for i := range 1100 {
 			records = append(records, attioRecordJSON(fmt.Sprintf("rec_%04d", i), `{}`))
 		}
-		// A record that moved between pages is listed again on the next.
-		records[500] = records[499]
 		var offsets []int
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
 			"/v2/objects/obj_companies/records/query": func(r *http.Request) (int, string) {
-				var body map[string]int
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 2 || body["limit"] != 500 {
-					t.Errorf("query = %v, %v", body, err)
+				q := attioQueryOf(t, r)
+				if q.Limit != 500 || q.Sorts != nil {
+					t.Errorf("query = %+v", q)
 				}
-				offsets = append(offsets, body["offset"])
-				return http.StatusOK, attioData(records[min(body["offset"], len(records)):min(body["offset"]+500, len(records))]...)
+				offsets = append(offsets, q.Offset)
+				return http.StatusOK, attioData(records[min(q.Offset, len(records)):min(q.Offset+500, len(records))]...)
 			},
 		}))
 		sink := &rowSink{}
 		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "companies"}, sink); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(offsets, []int{0, 500, 1000}) || len(sink.rows) != 1099 {
+		if !slices.Equal(offsets, []int{0, 500 - attioOverlap, 1000 - 2*attioOverlap}) || len(sink.rows) != 1100 {
 			t.Fatalf("offsets = %v, rows = %d", offsets, len(sink.rows))
 		}
 		if sink.rows[0]["name"] != nil || sink.rows[0]["record_id"] != "rec_0000" || len(sink.rows[0]) != 6 {
@@ -841,17 +1087,79 @@ func TestAttioSync(t *testing.T) {
 		}
 	})
 
-	t.Run("fails a list past the page cap rather than publish part of it", func(t *testing.T) {
-		saved := maxAttioPages
-		maxAttioPages = 2
-		t.Cleanup(func() { maxAttioPages = saved })
+	// Rows deleted from a page already read move the rest up: the overlap
+	// reads the rows they would skip.
+	t.Run("skips no record when records already read are deleted mid-read", func(t *testing.T) {
+		var records []string
+		for i := range 1100 {
+			records = append(records, attioRecordJSON(fmt.Sprintf("rec_%04d", i), `{}`))
+		}
+		deleted := map[string]bool{}
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+			"/v2/objects/obj_companies/records/query": func(r *http.Request) (int, string) {
+				q := attioQueryOf(t, r)
+				page := records[min(q.Offset, len(records)):min(q.Offset+q.Limit, len(records))]
+				if q.Offset == 0 {
+					// After the first page, attioOverlap of its records go.
+					page = slices.Clone(page)
+					for _, i := range []int{3, 17, 40, 250, 499}[:attioOverlap] {
+						deleted[fmt.Sprintf("rec_%04d", i)] = true
+					}
+					records = slices.DeleteFunc(records, func(raw string) bool {
+						var r attioRecord
+						_ = json.Unmarshal([]byte(raw), &r)
+						return deleted[r.ID["record_id"].(string)]
+					})
+				}
+				return http.StatusOK, attioData(page...)
+			},
+		}))
+		sink := &rowSink{}
+		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "companies"}, sink); err != nil {
+			t.Fatal(err)
+		}
+		written := map[string]bool{}
+		for _, row := range sink.rows {
+			written[row["record_id"].(string)] = true
+		}
+		for i := range 1100 {
+			if id := fmt.Sprintf("rec_%04d", i); !written[id] && !deleted[id] {
+				t.Fatalf("%s was skipped; %d rows", id, len(sink.rows))
+			}
+		}
+	})
+
+	t.Run("fails a list past the row cap rather than publish part of it", func(t *testing.T) {
+		saved := maxAttioRows
+		maxAttioRows = 100
+		t.Cleanup(func() { maxAttioRows = saved })
 		var notes []string
 		for i := range 150 {
 			notes = append(notes, attioNoteJSON(fmt.Sprintf("not_%03d", i), "N", "body", "2024-03-01T10:00:00Z", "people", "rec_ada"))
 		}
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{"/v2/notes": attioPaged(t, notes)}))
 		_, err := k.Sync(ctx, attioTestSource(false), Table{Name: "notes"}, &rowSink{})
-		notionInvalid(t, err, "Attio holds more notes than Helix reads in one sync (2 pages of 50)")
+		notionInvalid(t, err, "Attio holds more notes than Helix reads in one sync (100)")
+	})
+
+	t.Run("reads every attribute until an empty page, though Attio gives fewer than asked", func(t *testing.T) {
+		var attributes []string
+		for i := range 120 {
+			attributes = append(attributes, attioAttributeJSON(fmt.Sprintf("field_%03d", i), "text", false, false))
+		}
+		var offsets []int
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+			"/v2/objects/obj_companies/attributes": func(r *http.Request) (int, string) {
+				offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+				offsets = append(offsets, offset)
+				// Attio's cap is 50, under the 100 asked.
+				return http.StatusOK, attioData(attributes[min(offset, len(attributes)):min(offset+50, len(attributes))]...)
+			},
+		}))
+		written, err := k.Sync(ctx, attioTestSource(false), Table{Name: "companies"}, &rowSink{})
+		if err != nil || len(written.Columns) != 3+120 || written.Columns[3+119].Name != "field_119" || !slices.Equal(offsets, []int{0, 50, 100, 120}) {
+			t.Fatalf("columns = %d, offsets = %v, %v", len(written.Columns), offsets, err)
+		}
 	})
 
 	t.Run("refuses a table whose object or list Attio no longer has", func(t *testing.T) {
@@ -859,6 +1167,40 @@ func TestAttioSync(t *testing.T) {
 		for _, name := range []string{"deals", "list_renewals"} {
 			_, err := k.Sync(ctx, attioTestSource(false), Table{Name: name}, &rowSink{})
 			notionRefusal(t, err, "the Attio object or list of table "+name+" no longer exists in Attio, or was renamed; test the connection again")
+		}
+	})
+
+	t.Run("fails on members Attio doesn't answer as it documents", func(t *testing.T) {
+		for _, c := range []struct{ body, err string }{
+			{`{}`, "attio /v2/workspace_members: the response has no data"},
+			{`{"data":["x"]}`, "decode attio /v2/workspace_members"},
+			{`{"data":[{"id":{}}]}`, "attio /v2/workspace_members: a member has no id"},
+		} {
+			k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+				"/v2/workspace_members": func(*http.Request) (int, string) { return http.StatusOK, c.body },
+			}))
+			if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "workspace_members"}, &rowSink{}); err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Fatalf("%s: Sync = %v", c.body, err)
+			}
+		}
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
+		failing := errors.New("disk full")
+		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "workspace_members"}, refusingSink{failing}); !errors.Is(err, failing) {
+			t.Fatalf("Sync = %v", err)
+		}
+	})
+
+	t.Run("refuses members Attio refuses the token at sync time", func(t *testing.T) {
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
+			"/v2/workspace_members": func(*http.Request) (int, string) {
+				return http.StatusForbidden, `{"status_code":403,"type":"auth_error","code":"unauthorized","message":"No members."}`
+			},
+		}))
+		_, err := k.Sync(ctx, attioTestSource(false), Table{Name: "workspace_members"}, &rowSink{})
+		notionRefusal(t, err, "this Attio token may not read /v2/workspace_members: No members.")
+		var denied *attioDenied
+		if !errors.As(err, &denied) || denied.Error() != "attio denied the read: No members." {
+			t.Fatalf("error = %v", err)
 		}
 	})
 
@@ -908,6 +1250,18 @@ func TestAttioSync(t *testing.T) {
 	})
 }
 
+// attioOnly is a DocumentWriter that records each offer and Put, and wants
+// only the document of id, as one that holds every other at its version.
+type attioOnly struct {
+	*granolaDocs
+	id string
+}
+
+func (d *attioOnly) Want(stream, id, version string) bool {
+	d.granolaDocs.Want(stream, id, version)
+	return id == d.id
+}
+
 // attioVersion is a note's document's version, as the kind writes it.
 func attioVersion(title, content string) string {
 	return fmt.Sprintf("1|%x", sha256.Sum256([]byte(title+"\x00"+content)))[:34]
@@ -916,8 +1270,8 @@ func attioVersion(title, content string) string {
 func TestAttioDocuments(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("offers each note's document newest first, and writes every note's row", func(t *testing.T) {
-		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
+	t.Run("offers each note's document newest first, and writes every note's row as listed", func(t *testing.T) {
+		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
 		docs := &granolaDocs{want: map[string]bool{"notes": true}}
 		sink := &rowSink{}
 		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, sink, docs); err != nil {
@@ -927,7 +1281,7 @@ func TestAttioDocuments(t *testing.T) {
 		for _, row := range sink.rows {
 			ids = append(ids, row["note_id"].(string))
 		}
-		if !slices.Equal(ids, []string{"not_new", "not_tie_a", "not_tie_b", "not_empty", "not_old", "not_untitled"}) {
+		if !slices.Equal(ids, []string{"not_old", "not_new", "not_tie_b", "not_empty", "not_tie_a", "not_untitled"}) {
 			t.Fatalf("rows = %v", ids)
 		}
 		// A blank note the stream doesn't hold isn't offered.
@@ -937,7 +1291,7 @@ func TestAttioDocuments(t *testing.T) {
 		}
 		renewal := docs.puts[0].doc
 		want := Document{ExternalID: "not_new", Version: attioVersion("  Renewal   call ", "## Terms\n\nTwo years."),
-			At: time.Date(2024, 5, 1, 10, 0, 0, 123456789, time.UTC), Title: "Renewal call", URL: "https://app.attio.com/acme/companies/rec_acme",
+			At: time.Date(2024, 5, 1, 10, 0, 0, 123456789, time.UTC), Title: "Renewal call", URL: "https://app.attio.com/acme/company/rec_acme",
 			Text: []byte("# Renewal call\n\n## Terms\n\nTwo years.")}
 		if renewal.ExternalID != want.ExternalID || renewal.Version != want.Version || !renewal.At.Equal(want.At) ||
 			renewal.Title != want.Title || renewal.URL != want.URL || string(renewal.Text) != string(want.Text) {
@@ -946,12 +1300,21 @@ func TestAttioDocuments(t *testing.T) {
 		if docs.offers[0] != "notes not_new "+want.Version {
 			t.Fatalf("offer = %q", docs.offers[0])
 		}
+		// A note on a person links the person's page, at the path its
+		// web_url gives People.
+		if old := docs.puts[3].doc; old.URL != "https://app.attio.com/acme/person/rec_ada" {
+			t.Fatalf("old = %+v", old)
+		}
 		untitled := docs.puts[4].doc
 		if untitled.Title != "Untitled note" || string(untitled.Text) != "# Untitled note\n\nJust text" || untitled.URL != "" {
 			t.Fatalf("untitled = %+v, text %q", untitled, untitled.Text)
 		}
+		// One record of each object a note is on is read for its links.
+		if took := hits.took(); took["POST /v2/objects/people/records/query"] != 1 || took["POST /v2/objects/companies/records/query"] != 1 {
+			t.Fatalf("requests = %v", took)
+		}
 		got := attioRows(sink.rows)
-		if got[0] != `{"created_at":"2024-05-01T10:00:00.123456789Z","created_by_id":"wm_ada","created_by_type":"workspace-member",`+
+		if got[1] != `{"created_at":"2024-05-01T10:00:00.123456789Z","created_by_id":"wm_ada","created_by_type":"workspace-member",`+
 			`"meeting_id":null,"note_id":"not_new","parent_object":"companies","parent_record_id":"rec_acme","title":"  Renewal   call "}` ||
 			!strings.Contains(got[5], `"title":null`) || !strings.Contains(got[5], `"parent_object":null`) {
 			t.Fatalf("rows = %s", got)
@@ -970,10 +1333,18 @@ func TestAttioDocuments(t *testing.T) {
 	})
 
 	t.Run("puts nothing a writer doesn't want, and nothing in a plain sync", func(t *testing.T) {
-		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
-		only := &onlyDocs{id: "not_old"}
+		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
+		only := &attioOnly{granolaDocs: &granolaDocs{}, id: "not_old"}
 		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, &rowSink{}, only); err != nil {
 			t.Fatal(err)
+		}
+		// Every note with a body is offered; only the one wanted is Put,
+		// and only its object is read for a link.
+		if len(only.offers) != 5 || !slices.Equal(only.putNames(), []string{"notes not_old"}) {
+			t.Fatalf("offers = %q, puts = %v", only.offers, only.putNames())
+		}
+		if took := hits.took(); took["POST /v2/objects/companies/records/query"] != 0 || took["POST /v2/objects/people/records/query"] != 1 {
+			t.Fatalf("requests = %v", took)
 		}
 		sink := &rowSink{}
 		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "notes"}, sink); err != nil || len(sink.rows) != 6 {
@@ -997,7 +1368,7 @@ func TestAttioDocuments(t *testing.T) {
 		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, sink, docs); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(asked, []string{"limit=50&offset=0", "limit=50&offset=50", "limit=50&offset=100"}) || len(sink.rows) != 120 || len(docs.puts) != 120 {
+		if !slices.Equal(asked, []string{"limit=50&offset=0", "limit=50&offset=45", "limit=50&offset=90"}) || len(sink.rows) != 120 || len(docs.puts) != 120 {
 			t.Fatalf("asked %v, rows = %d, puts = %d", asked, len(sink.rows), len(docs.puts))
 		}
 	})
@@ -1024,7 +1395,7 @@ func TestAttioDocuments(t *testing.T) {
 
 	t.Run("a note's version is its title's and body's", func(t *testing.T) {
 		versionOf := func(title, content, created, parent string) string {
-			n, err := attioNoteOf(json.RawMessage(attioNoteJSON("not_1", title, content, created, parent, "rec_1")), "acme")
+			n, err := attioNoteOf(json.RawMessage(attioNoteJSON("not_1", title, content, created, parent, "rec_1")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1050,16 +1421,52 @@ func TestAttioDocuments(t *testing.T) {
 			attioNoteJSON("", "T", "b", "2024-03-01T10:00:00Z", "people", "rec_1"),
 			attioNoteJSON("not_1", "T", "b", "yesterday", "people", "rec_1"),
 		} {
-			if _, err := attioNoteOf(json.RawMessage(raw), "acme"); err == nil {
+			if _, err := attioNoteOf(json.RawMessage(raw)); err == nil {
 				t.Fatalf("read %s", raw)
 			}
 		}
 	})
 
-	t.Run("a note has no link without the workspace's slug", func(t *testing.T) {
-		n, err := attioNoteOf(json.RawMessage(attioNoteJSON("not_1", "T", "b", "2024-03-01T10:00:00Z", "people", "rec_1")), "")
-		if err != nil || n.document().URL != "" {
-			t.Fatalf("note = %+v, %v", n, err)
+	t.Run("links a note's record by its object's web_url, else not at all", func(t *testing.T) {
+		const people = "/v2/objects/people/records/query"
+		for _, c := range []struct {
+			name, object, record string
+			status               int
+			body, want, err      string
+		}{
+			{"a person", "people", "rec_1", http.StatusOK, attioData(attioAda), "https://app.attio.com/acme/person/rec_1", ""},
+			{"an object by id", "obj_people", "rec 1", http.StatusOK, attioData(attioAda), "https://app.attio.com/acme/person/rec%201", ""},
+			{"no record", "", "rec_1", http.StatusOK, "", "", ""},
+			{"no object", "people", "", http.StatusOK, "", "", ""},
+			{"an object without records", "people", "rec_1", http.StatusOK, attioData(), "", ""},
+			{"a web_url not ending in the record's id", "people", "rec_1", http.StatusOK,
+				attioData(strings.Replace(attioAda, "/acme/person/rec_ada", "/acme/person/other", 1)), "", ""},
+			{"a web_url that isn't https", "people", "rec_1", http.StatusOK,
+				attioData(strings.Replace(attioAda, "https://app.attio.com", "javascript:alert(1)//x", 1)), "", ""},
+			{"records refused", "people", "rec_1", http.StatusForbidden, `{"type":"auth_error","message":"No."}`, "", ""},
+			{"an object Attio doesn't have", "people", "rec_1", http.StatusNotFound, `{"message":"Not found."}`, "", ""},
+			{"an outage", "people", "rec_1", http.StatusBadGateway, `{"message":"Down."}`, "", "Attio returned HTTP 502 for " + people + ": Down."},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				answer := func(*http.Request) (int, string) { return c.status, c.body }
+				k, hits := attioAt(t, attioRoutes{people: answer, "/v2/objects/obj_people/records/query": answer})
+				urls := map[string]string{}
+				client := k.client(attioTestToken)
+				for range 2 {
+					got, err := client.recordURL(context.Background(), c.object, c.record, urls)
+					if c.err != "" {
+						notionRefusal(t, err, c.err)
+						return
+					}
+					if err != nil || got != c.want {
+						t.Fatalf("recordURL = %q, %v", got, err)
+					}
+				}
+				// Each object is read once.
+				if took := hits.took(); len(took) > 1 || len(took) == 1 && took["POST "+strings.Replace(people, "people", c.object, 1)] != 1 {
+					t.Fatalf("requests = %v", took)
+				}
+			})
 		}
 	})
 }
