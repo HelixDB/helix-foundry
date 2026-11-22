@@ -749,6 +749,27 @@ describe("visual plans", () => {
     expect(
       chartOf(visualPlan(mixed, signed)).points.map((p) => p.value),
     ).toEqual([3, 4, 2, 1]);
+    // Helix's rendering of a DateTime, as a helix_query's output holds it.
+    const helix = output({
+      kind: "group_count",
+      groups: [
+        { value: { untrusted: "2026-01-02T01:00:00.250Z" }, count: 5 },
+        { value: { untrusted: "2026-01-02T01:00:00.000Z" }, count: 6 },
+      ],
+      total_groups: 2,
+    });
+    expect(chartOf(visualPlan(helix, signed)).points).toEqual([
+      {
+        label: "2026-01-02T01:00:00.000Z",
+        value: 6,
+        at: Date.UTC(2026, 0, 2, 1),
+      },
+      {
+        label: "2026-01-02T01:00:00.250Z",
+        value: 5,
+        at: Date.UTC(2026, 0, 2, 1, 0, 0, 250),
+      },
+    ]);
     // As bars when asked, in the output's order.
     expect(
       chartOf(visualPlan(byDay, signed, { kind: "bar" })).points.map(
