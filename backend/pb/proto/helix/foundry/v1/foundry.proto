@@ -813,6 +813,17 @@ service FoundryService {
   rpc GetMyFoundryAccess(GetMyFoundryAccessRequest) returns (GetMyFoundryAccessResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/access/me"};
   }
+  // The connections whose sources' own permissions narrow what grants give
+  // (a Slack connection follows its channels' membership): a grantee reads of
+  // one only the items its source shares with the grantee's verified email,
+  // and its tables only when that is every item. For each: when Foundry last
+  // read who its source shares each item with, why the latest read failed,
+  // how many items it shares with everyone and how many with the people they
+  // list, and the source's people, which the site matches against the
+  // workspace's members.
+  rpc ListFoundrySourceAudiences(ListFoundrySourceAudiencesRequest) returns (ListFoundrySourceAudiencesResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/access/sources"};
+  }
   // Restricts a member to what grants give, or lifts it. A restricted
   // member is a grantee on every Foundry call while their role is member:
   // they see only the ontologies their grants cover, and change nothing.
@@ -1965,6 +1976,56 @@ message GetMyFoundryAccessResponse {
   // a caller that isn't a grantee; for a grantee, while its Workflows
   // permission is on.
   bool workflows = 5;
+}
+
+// ListFoundrySourceAudiencesRequest reads the workspace's connections that
+// follow their sources' permissions.
+message ListFoundrySourceAudiencesRequest {
+  string workspace_id = 1;
+}
+message ListFoundrySourceAudiencesResponse {
+  // Each live connection whose kind follows its source's permissions, oldest
+  // first, whether or not they were ever read.
+  repeated FoundrySourceAudience sources = 1;
+}
+
+// FoundrySourceAudience is who one connection's source shares its items with,
+// as Foundry last read it at the end of a sync.
+message FoundrySourceAudience {
+  string connector_id = 1;
+  // The connector's kind ("slack").
+  string kind = 2;
+  // When the source's permissions were last read; unset while no read has
+  // worked.
+  google.protobuf.Timestamp read_at = 3;
+  // The items are unknown: never read, or last read more than 7 days ago. Its
+  // documents and tables then go to full readers only.
+  bool stale = 4;
+  // Why the latest read failed, when no read has worked since; unset
+  // otherwise.
+  FoundrySourceAudienceProblem problem = 5;
+  // The items shared with everyone the source doesn't mark as a guest (public
+  // channels), and those shared only with the people they list (private
+  // channels).
+  int32 everyone_items = 6;
+  int32 members_items = 7;
+  // The source's people, by email, sorted.
+  repeated FoundrySourcePerson people = 8;
+}
+
+// FoundrySourceAudienceProblem is why a read of a source's permissions
+// failed, worded for the customer, and when.
+message FoundrySourceAudienceProblem {
+  string message = 1;
+  google.protobuf.Timestamp at = 2;
+}
+
+// FoundrySourcePerson is one of a source's people: their email, trimmed and
+// lowercased as members are matched by it, and whether the source knows them
+// as a guest, who reads only the items that list them.
+message FoundrySourcePerson {
+  string email = 1;
+  bool guest = 2;
 }
 
 // SetFoundryMemberRestrictedRequest restricts user_id, or lifts it.

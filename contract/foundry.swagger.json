@@ -320,6 +320,37 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/access/sources": {
+      "get": {
+        "summary": "The connections whose sources' own permissions narrow what grants give\n(a Slack connection follows its channels' membership): a grantee reads of\none only the items its source shares with the grantee's verified email,\nand its tables only when that is every item. For each: when Foundry last\nread who its source shares each item with, why the latest read failed,\nhow many items it shares with everyone and how many with the people they\nlist, and the source's people, which the site matches against the\nworkspace's members.",
+        "operationId": "FoundryService_ListFoundrySourceAudiences",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundrySourceAudiencesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/access/teams": {
       "post": {
         "summary": "Teams of the workspace's members, which hold grants for them.",
@@ -11629,6 +11660,74 @@
       },
       "description": "One value documents state for a prop_conflict's property."
     },
+    "v1FoundrySourceAudience": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "The connector's kind (\"slack\")."
+        },
+        "readAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the source's permissions were last read; unset while no read has\nworked."
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "The items are unknown: never read, or last read more than 7 days ago. Its\ndocuments and tables then go to full readers only."
+        },
+        "problem": {
+          "$ref": "#/definitions/v1FoundrySourceAudienceProblem",
+          "description": "Why the latest read failed, when no read has worked since; unset\notherwise."
+        },
+        "everyoneItems": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The items shared with everyone the source doesn't mark as a guest (public\nchannels), and those shared only with the people they list (private\nchannels)."
+        },
+        "membersItems": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "people": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySourcePerson"
+          },
+          "description": "The source's people, by email, sorted."
+        }
+      },
+      "description": "FoundrySourceAudience is who one connection's source shares its items with,\nas Foundry last read it at the end of a sync."
+    },
+    "v1FoundrySourceAudienceProblem": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundrySourceAudienceProblem is why a read of a source's permissions\nfailed, worded for the customer, and when."
+    },
+    "v1FoundrySourcePerson": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "guest": {
+          "type": "boolean"
+        }
+      },
+      "description": "FoundrySourcePerson is one of a source's people: their email, trimmed and\nlowercased as members are matched by it, and whether the source knows them\nas a guest, who reads only the items that list them."
+    },
     "v1FoundrySyncRules": {
       "type": "object",
       "properties": {
@@ -12948,6 +13047,19 @@
         "nextPageToken": {
           "type": "string",
           "description": "Set while more reviews follow, up to the 10,000th."
+        }
+      }
+    },
+    "v1ListFoundrySourceAudiencesResponse": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySourceAudience"
+          },
+          "description": "Each live connection whose kind follows its source's permissions, oldest\nfirst, whether or not they were ever read."
         }
       }
     },

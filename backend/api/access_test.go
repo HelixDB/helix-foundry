@@ -50,6 +50,18 @@ type accessStore struct {
 	teams      []foundrymodel.FoundryTeam
 	// workflowsOff are the principals whose Workflows permission is off.
 	workflowsOff []access.Principal
+	// sharing is what sources share with each reader, by email, and
+	// audiences the sources' permissions as owners see them.
+	sharing   map[string][]foundrymodel.FoundrySourceSharing
+	audiences []foundrymodel.FoundrySourceAudience
+}
+
+func (s *accessStore) SourceSharingFor(_ context.Context, _, email string) ([]foundrymodel.FoundrySourceSharing, error) {
+	return s.sharing[email], nil
+}
+
+func (s *accessStore) ListSourceAudiences(context.Context, string) ([]foundrymodel.FoundrySourceAudience, error) {
+	return s.audiences, nil
 }
 
 func (s *accessStore) ListFoundryAccessWorkflowsOff(_ context.Context, _ string, principals []access.Principal) ([]access.Principal, error) {

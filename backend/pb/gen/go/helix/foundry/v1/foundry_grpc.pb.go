@@ -165,6 +165,7 @@ const (
 	FoundryService_SetFoundryAccessGrants_FullMethodName                = "/helix.foundry.v1.FoundryService/SetFoundryAccessGrants"
 	FoundryService_PreviewFoundryAccessChange_FullMethodName            = "/helix.foundry.v1.FoundryService/PreviewFoundryAccessChange"
 	FoundryService_GetMyFoundryAccess_FullMethodName                    = "/helix.foundry.v1.FoundryService/GetMyFoundryAccess"
+	FoundryService_ListFoundrySourceAudiences_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundrySourceAudiences"
 	FoundryService_SetFoundryMemberRestricted_FullMethodName            = "/helix.foundry.v1.FoundryService/SetFoundryMemberRestricted"
 	FoundryService_CreateFoundryTeam_FullMethodName                     = "/helix.foundry.v1.FoundryService/CreateFoundryTeam"
 	FoundryService_UpdateFoundryTeam_FullMethodName                     = "/helix.foundry.v1.FoundryService/UpdateFoundryTeam"
@@ -455,6 +456,15 @@ type FoundryServiceClient interface {
 	// What the caller reads through grants: whether it came as a grantee, and
 	// the ontologies its grants cover.
 	GetMyFoundryAccess(ctx context.Context, in *GetMyFoundryAccessRequest, opts ...grpc.CallOption) (*GetMyFoundryAccessResponse, error)
+	// The connections whose sources' own permissions narrow what grants give
+	// (a Slack connection follows its channels' membership): a grantee reads of
+	// one only the items its source shares with the grantee's verified email,
+	// and its tables only when that is every item. For each: when Foundry last
+	// read who its source shares each item with, why the latest read failed,
+	// how many items it shares with everyone and how many with the people they
+	// list, and the source's people, which the site matches against the
+	// workspace's members.
+	ListFoundrySourceAudiences(ctx context.Context, in *ListFoundrySourceAudiencesRequest, opts ...grpc.CallOption) (*ListFoundrySourceAudiencesResponse, error)
 	// Restricts a member to what grants give, or lifts it. A restricted
 	// member is a grantee on every Foundry call while their role is member:
 	// they see only the ontologies their grants cover, and change nothing.
@@ -1931,6 +1941,16 @@ func (c *foundryServiceClient) GetMyFoundryAccess(ctx context.Context, in *GetMy
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundrySourceAudiences(ctx context.Context, in *ListFoundrySourceAudiencesRequest, opts ...grpc.CallOption) (*ListFoundrySourceAudiencesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundrySourceAudiencesResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundrySourceAudiences_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) SetFoundryMemberRestricted(ctx context.Context, in *SetFoundryMemberRestrictedRequest, opts ...grpc.CallOption) (*SetFoundryMemberRestrictedResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SetFoundryMemberRestrictedResponse)
@@ -2255,6 +2275,15 @@ type FoundryServiceServer interface {
 	// What the caller reads through grants: whether it came as a grantee, and
 	// the ontologies its grants cover.
 	GetMyFoundryAccess(context.Context, *GetMyFoundryAccessRequest) (*GetMyFoundryAccessResponse, error)
+	// The connections whose sources' own permissions narrow what grants give
+	// (a Slack connection follows its channels' membership): a grantee reads of
+	// one only the items its source shares with the grantee's verified email,
+	// and its tables only when that is every item. For each: when Foundry last
+	// read who its source shares each item with, why the latest read failed,
+	// how many items it shares with everyone and how many with the people they
+	// list, and the source's people, which the site matches against the
+	// workspace's members.
+	ListFoundrySourceAudiences(context.Context, *ListFoundrySourceAudiencesRequest) (*ListFoundrySourceAudiencesResponse, error)
 	// Restricts a member to what grants give, or lifts it. A restricted
 	// member is a grantee on every Foundry call while their role is member:
 	// they see only the ontologies their grants cover, and change nothing.
@@ -2714,6 +2743,9 @@ func (UnimplementedFoundryServiceServer) PreviewFoundryAccessChange(context.Cont
 }
 func (UnimplementedFoundryServiceServer) GetMyFoundryAccess(context.Context, *GetMyFoundryAccessRequest) (*GetMyFoundryAccessResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMyFoundryAccess not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundrySourceAudiences(context.Context, *ListFoundrySourceAudiencesRequest) (*ListFoundrySourceAudiencesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundrySourceAudiences not implemented")
 }
 func (UnimplementedFoundryServiceServer) SetFoundryMemberRestricted(context.Context, *SetFoundryMemberRestrictedRequest) (*SetFoundryMemberRestrictedResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetFoundryMemberRestricted not implemented")
@@ -5357,6 +5389,24 @@ func _FoundryService_GetMyFoundryAccess_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundrySourceAudiences_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundrySourceAudiencesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundrySourceAudiences(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundrySourceAudiences_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundrySourceAudiences(ctx, req.(*ListFoundrySourceAudiencesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_SetFoundryMemberRestricted_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetFoundryMemberRestrictedRequest)
 	if err := dec(in); err != nil {
@@ -6015,6 +6065,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMyFoundryAccess",
 			Handler:    _FoundryService_GetMyFoundryAccess_Handler,
+		},
+		{
+			MethodName: "ListFoundrySourceAudiences",
+			Handler:    _FoundryService_ListFoundrySourceAudiences_Handler,
 		},
 		{
 			MethodName: "SetFoundryMemberRestricted",

@@ -53,6 +53,7 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_SetFoundryAccessGrants_FullMethodName:     Deny,
 	foundryv1.FoundryService_PreviewFoundryAccessChange_FullMethodName: Deny,
 	foundryv1.FoundryService_GetMyFoundryAccess_FullMethodName:         Workspace,
+	foundryv1.FoundryService_ListFoundrySourceAudiences_FullMethodName: Deny,
 	foundryv1.FoundryService_SetFoundryMemberRestricted_FullMethodName: Deny,
 	foundryv1.FoundryService_CreateFoundryTeam_FullMethodName:          Deny,
 	foundryv1.FoundryService_UpdateFoundryTeam_FullMethodName:          Deny,
