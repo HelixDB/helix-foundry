@@ -208,7 +208,8 @@ func TestSlackFold(t *testing.T) {
 		a := newSlackAppTest(t, newSlackWorkspace().routes())
 		joinedAt := time.Date(2026, 10, 28, 8, 0, 0, 0, time.UTC)
 		a.feed.append(model.SlackRowJoined, model.SlackFeedFromEvent, "C1", joinedAt, fmt.Sprintf(`{"user_id":"UF","joined_at":%q}`, joinedAt.Format(time.RFC3339)))
-		// Joined before the window: covered from then, read from a moment before.
+		// Joined before the window: what came of it before now was skipped, so
+		// the whole window is read.
 		long := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 		a.feed.append(model.SlackRowJoined, model.SlackFeedFromEvent, "C2", long, fmt.Sprintf(`{"joined_at":%q}`, long.Format(time.RFC3339)))
 		event(a, model.SlackRowMessage, msg(at("09:00:00"), "before leaving"))
@@ -220,8 +221,10 @@ func TestSlackFold(t *testing.T) {
 		event(a, model.SlackRowMessage, msg(at("10:00:00"), "after coming back"))
 		a.feed.append(model.SlackRowChannel, model.SlackFeedFromEvent, "C1", slackDayOf("2026-10-28"), `{"name":"renamed"}`)
 		a.fold(t)
-		if len(a.feed.joins) != 3 || !a.feed.joins[0].CoveredFrom.Equal(joinedAt) || !a.feed.joins[0].Oldest.Equal(slackDayOf("2026-10-27")) ||
-			!a.feed.joins[1].Oldest.Before(long) || !slices.Equal(a.feed.purges, []string{"C1"}) {
+		// Each is covered from now, its window read up to now.
+		if len(a.feed.joins) != 3 || !a.feed.joins[0].CoveredFrom.Equal(slackTestNow) || !a.feed.joins[0].Oldest.Equal(slackDayOf("2026-10-27")) ||
+			!a.feed.joins[1].Oldest.Equal(slackDayOf("2026-10-27")) || !a.feed.joins[2].CoveredFrom.Equal(slackTestNow) ||
+			!slices.Equal(a.feed.purges, []string{"C1"}) {
 			t.Fatalf("joins %+v, purges %v", a.feed.joins, a.feed.purges)
 		}
 		want(t, mirror(t, a), at("10:00:00")+" top after coming back")

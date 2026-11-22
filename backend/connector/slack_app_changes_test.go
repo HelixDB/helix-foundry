@@ -827,6 +827,24 @@ func TestSlackFoldWindowAndCoverage(t *testing.T) {
 				len(a.feed.days), a.feed.replaced)
 		}
 	})
+	// Slack doesn't order events: a message posted after the bot joined may
+	// come before its joined row, and is skipped, in that fold or an earlier
+	// one. The joined window reads it back, reading up to the fold that
+	// covers the channel.
+	t.Run("reads back a message that came before its channel's joined row", func(t *testing.T) {
+		a := newSlackAppFeed(t)
+		joinedAt, posted := slackTestNow.Add(-time.Hour), slackTestNow.Add(-30*time.Minute)
+		a.event(model.SlackRowMessage, "C8", fmt.Sprintf(`{"user":"U1","text":"Early","ts":%q}`, slackTS(posted.Format(time.RFC3339))))
+		a.fold(t)
+		slackNow = func() time.Time { return slackTestNow.Add(5 * time.Minute) }
+		a.feed.append(model.SlackRowJoined, model.SlackFeedFromEvent, "C8", model.SlackDay(joinedAt),
+			fmt.Sprintf(`{"user_id":"UF","joined_at":%q}`, joinedAt.Format(time.RFC3339)))
+		a.fold(t)
+		if len(a.feed.joins) != 1 || a.feed.joins[0].ChannelID != "C8" || !a.feed.joins[0].Oldest.Before(posted) ||
+			!posted.Before(a.feed.joins[0].CoveredFrom) {
+			t.Fatalf("joins %+v: the joined window doesn't read the message posted at %s", a.feed.joins, posted)
+		}
+	})
 	// A purge that commits while a fold runs takes the channel's days for
 	// good: the fold's commit writes none of them.
 	t.Run("a channel purged while the fold runs stays purged", func(t *testing.T) {

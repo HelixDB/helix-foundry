@@ -246,7 +246,8 @@ func slackWindow(historyDays int) time.Time {
 // their text.
 //
 // A row of a channel the feed doesn't cover is skipped: the channel's
-// joined backfill reads it back once covered.
+// joined backfill, which reads up to the fold that covers it, reads it back
+// once covered, also when Slack sent it before the bot's join.
 //
 // Rows apply in seq order (the payloads: see SlackSpan):
 //   - message, changed: placed as Slack places them, a message in no thread
@@ -263,8 +264,9 @@ func slackWindow(historyDays int) time.Time {
 //   - span: what the page lacks of its span is gone.
 //   - complete: the day is complete, or lossy; gap: partial again. Either is
 //     ignored for a day the mirror doesn't hold.
-//   - joined: the channel is covered from then, with a joined backfill of
-//     the window before; left: the channel is purged.
+//   - joined: the channel is covered from now, with a joined backfill of
+//     the window up to now (the rows of it before the joined row were
+//     skipped); left: the channel is purged.
 //   - channel: nothing here; a change read lists the channels again.
 func (o SlackFeedOptions) Fold(ctx context.Context, connectorID string, historyDays int, app SlackApp) (*model.SlackFeed, error) {
 	if o.Feed == nil || o.Objects == nil {
@@ -514,12 +516,20 @@ func (f *slackFolding) apply(ctx context.Context, row model.SlackFeedRow) (bool,
 		if json.Unmarshal(row.Payload, &joined) != nil || joined.JoinedAt.IsZero() {
 			return false, nil
 		}
+		// Slack doesn't order events, so a message posted after the join
+		// may have come before its joined row, and been skipped, in this
+		// fold or an earlier one: it came before now, so the joined window
+		// reads up to now, as a change read's cover does.
+		covered := joined.JoinedAt.UTC()
+		if now := slackNow().UTC(); now.After(covered) {
+			covered = now
+		}
 		oldest := f.window
-		if !oldest.Before(joined.JoinedAt) {
-			oldest = joined.JoinedAt.Add(-time.Microsecond)
+		if !oldest.Before(covered) {
+			oldest = covered.Add(-time.Microsecond)
 		}
 		_, err := f.o.Feed.JoinFoundrySlackChannels(ctx, f.feed.ID, []model.SlackChannelJoin{{ChannelID: row.ChannelID,
-			CoveredFrom: joined.JoinedAt.UTC(), Oldest: oldest}})
+			CoveredFrom: covered, Oldest: oldest}})
 		f.covered[row.ChannelID] = err == nil
 		return true, err
 	case model.SlackRowLeft:
