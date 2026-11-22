@@ -450,9 +450,14 @@ func (r *runner) unread(ctx context.Context, job *model.FoundryGraphJob, err err
 // rather than claim key, so its first rebuild differs there whatever the
 // applies did. A rebuild that differs only in them is counted as held, not
 // drifted: it is no drift in what the graph holds.
+//
+// A rebuild of a load an earlier engine wrote (model.FoundryRebuildToken,
+// store.QueueFoundryRebuild) is not compared: what differs there is how the
+// engines write the graph (text against Helix's typed DateTime, say), not
+// what the applies did, and comparing each would read both loads whole.
 func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion string) {
-	if job.RefreshesLoadID == nil {
+	if job.RefreshesLoadID == nil || (job.ClientToken != nil && strings.HasPrefix(*job.ClientToken, model.FoundryRebuildToken)) {
 		return
 	}
 	logger := log.From(ctx).With("job", job.ID, "ontology", job.OntologyID)

@@ -123,6 +123,103 @@ func TestFoundryRebuild(t *testing.T) {
 		assert.NotNil(t, f.ontologyNow(t).RefreshDueAt)
 	})
 
+	// An apply writes in place into the load the rebuild replaces: it gives
+	// way, queued or running, as it does to a person's load, and the
+	// refresh it was is owed again, to run once the rebuild ends.
+	t.Run("cancels a live apply and owes its refresh again", func(t *testing.T) {
+		for _, running := range []bool{false, true} {
+			t.Run(fmt.Sprintf("running=%t", running), func(t *testing.T) {
+				ctx := context.Background()
+				tag := fmt.Sprintf("RBP%t", running)[:5]
+				f, connectorID, current := refreshFixture(t, tag)
+				earlier(t, current)
+				require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
+				queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob(tag))
+				require.NoError(t, err)
+				require.True(t, queued)
+				require.Nil(t, f.ontologyNow(t).RefreshDueAt, "the apply took the owed refresh")
+				if running {
+					f.claimed(t, "w2", id26("AJ-"+tag))
+				}
+
+				done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(tag))
+				require.NoError(t, err)
+				assert.Equal(t, store.FoundryRebuildQueued, done)
+				apply, err := f.db.GetFoundryGraphJob(ctx, f.ontology.ID, id26("AJ-"+tag))
+				require.NoError(t, err)
+				assert.Equal(t, model.FoundryGraphJobCancelled, apply.Status)
+				assert.Contains(t, *apply.Error, "rebuild")
+				live := f.liveJob(t)
+				require.NotNil(t, live)
+				assert.Equal(t, id26("RB-"+tag), live.ID)
+				require.NotNil(t, live.ClientToken)
+				assert.Equal(t, model.FoundryRebuildToken+live.ID, *live.ClientToken)
+				assert.Equal(t, model.FoundryLoadReady, f.loadStatus(t, current), "the applied load serves until the rebuild replaces it")
+				assert.NotNil(t, f.ontologyNow(t).RefreshDueAt, "the refresh is owed again")
+				// The owed refresh waits for the rebuild.
+				queued, err = f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob(tag+"b"))
+				require.NoError(t, err)
+				assert.False(t, queued)
+				assert.Equal(t, id26("RB-"+tag), f.liveJob(t).ID)
+			})
+		}
+	})
+
+	// A delete only frees space: it gives way to the rebuild as to any load.
+	t.Run("lets a rebuild preempt a delete", func(t *testing.T) {
+		ctx := context.Background()
+		f, _, first := refreshFixture(t, "RBD")
+		version := mustLoad(t, f, first).VersionID
+		second := loadJob(f.ontology, "RBD2")
+		second.VersionID = version
+		require.NoError(t, f.db.CreateFoundryLoad(ctx, second))
+		f.loaded(t, "w2")
+		earlier(t, second.LoadID)
+		require.NoError(t, f.db.DeleteFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, first, id26("FN-D-RBD")))
+
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("d1"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildQueued, done)
+		del, err := f.db.GetFoundryGraphJob(ctx, f.ontology.ID, id26("FN-D-RBD"))
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryGraphJobCancelled, del.Status)
+		assert.Equal(t, id26("RB-d1"), f.liveJob(t).ID)
+	})
+
+	// Each rebuild loads every table again: one that keeps ending without
+	// replacing the load is queued MaxFoundryRebuilds times, then given up
+	// on. One a person's load cancelled doesn't count.
+	t.Run("gives up on a load its rebuilds keep failing to replace", func(t *testing.T) {
+		ctx := context.Background()
+		f, _, current := refreshFixture(t, "RBF")
+		earlier(t, current)
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("c0"))
+		require.NoError(t, err)
+		require.Equal(t, store.FoundryRebuildQueued, done)
+		f.load(t, "U-RBF")
+		cancelled, err := f.db.GetFoundryGraphJob(ctx, f.ontology.ID, id26("RB-c0"))
+		require.NoError(t, err)
+		require.Equal(t, model.FoundryGraphJobCancelled, cancelled.Status)
+		f.finish(t, "w2", "u", model.FoundryGraphJobFailed)
+		require.Equal(t, current, *f.ontologyNow(t).CurrentLoadID, "the person's load failed")
+		require.Nil(t, f.liveJob(t))
+
+		for i := range store.MaxFoundryRebuilds {
+			done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(fmt.Sprint("f", i)))
+			require.NoError(t, err)
+			require.Equal(t, store.FoundryRebuildQueued, done, "attempt %d", i)
+			f.finish(t, "w2", fmt.Sprint("f", i), model.FoundryGraphJobFailed)
+		}
+		done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("last"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildGaveUp, done)
+		assert.Nil(t, f.liveJob(t))
+		got, err := store.RebuildFoundryLoads(ctx, f.db, cutover)
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuilds{GaveUp: []string{f.ontology.ID}}, got)
+		assert.Equal(t, current, *f.ontologyNow(t).CurrentLoadID)
+	})
+
 	// A refresh an earlier engine started writes that engine's load: it is
 	// no rebuild, and holds one back until it ends.
 	t.Run("takes an earlier engine's live refresh for no rebuild", func(t *testing.T) {
@@ -285,6 +382,7 @@ func TestRebuildFoundryLoadsPages(t *testing.T) {
 		"o007": func() (store.FoundryRebuild, error) { return store.FoundryRebuildUnderWay, nil },
 		"o005": func() (store.FoundryRebuild, error) { return 0, store.ErrNotFound },
 		"o006": func() (store.FoundryRebuild, error) { return 0, errors.New("boom") },
+		"o008": func() (store.FoundryRebuild, error) { return store.FoundryRebuildGaveUp, nil },
 	}}
 	for i := range 101 {
 		s.ids = append(s.ids, fmt.Sprintf("o%03d", i))
@@ -294,7 +392,8 @@ func TestRebuildFoundryLoadsPages(t *testing.T) {
 	assert.Equal(t, s.ids, s.asked, "every ontology once, past the first page")
 	assert.Equal(t, []string{"o003"}, got.Busy)
 	assert.Equal(t, []string{"o007"}, got.UnderWay)
-	assert.Len(t, got.Queued, 101-5)
+	assert.Equal(t, []string{"o008"}, got.GaveUp)
+	assert.Len(t, got.Queued, 101-6)
 	assert.Equal(t, "o100", got.Queued[len(got.Queued)-1])
 
 	// A page that can't be read stops the run, with what it did so far.
