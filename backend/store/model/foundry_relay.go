@@ -332,10 +332,12 @@ type RelayFeedAppended struct {
 }
 
 // RelayFeedOn is whether a local workspace's Slack data connector reads
-// its relayed install, as a claim says.
+// its relayed install (On), and whether its install takes unmentioned
+// follow-ups (Follow), as a claim says.
 type RelayFeedOn struct {
 	LocalWorkspaceID string
 	On               bool
+	Follow           bool
 }
 
 // RelayBudget bounds one claim: at most Deliveries deliveries, then at most

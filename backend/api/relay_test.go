@@ -303,7 +303,7 @@ func (r *relayStore) AppendFoundryRelayFeed(_ context.Context, installID string,
 	if limits.TTL != 24*time.Hour || limits.MaxRows != 100_000 {
 		return model.RelayFeedAppended{}, errors.New("the relay feed's limits are relay.feed_ttl and feed_max_rows")
 	}
-	if _, err := r.live(func(i *model.SlackInstall) bool { return i.ID == installID && i.FeedOn }); err != nil {
+	if _, err := r.live(func(i *model.SlackInstall) bool { return i.ID == installID && (i.FeedOn || i.FollowOn) }); err != nil {
 		return model.RelayFeedAppended{Outcome: model.SlackAppendUnbound}, nil
 	}
 	r.relayFeed = append(r.relayFeed, a)
@@ -507,7 +507,7 @@ func TestClaimFoundryRelayDeliveries(t *testing.T) {
 	start := time.Now()
 	out, err := claim(door(), func(q *foundryv1.ClaimFoundryRelayDeliveriesRequest) {
 		q.Acks = []string{"d-0"}
-		q.Feeds = []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: relayLWS, On: true}}
+		q.Feeds = []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: relayLWS, On: true, Follow: true}}
 	})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), 50*time.Millisecond)
@@ -543,10 +543,10 @@ func TestClaimFoundryRelayDeliveries(t *testing.T) {
 	}}
 	out, err = claim(door(), func(q *foundryv1.ClaimFoundryRelayDeliveriesRequest) {
 		q.Max = 3
-		q.Feeds = []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: relayLWS, On: true}}
+		q.Feeds = []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: relayLWS, On: true, Follow: true}}
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []model.RelayFeedOn{{LocalWorkspaceID: relayLWS, On: true}}, r.feeds)
+	assert.Equal(t, []model.RelayFeedOn{{LocalWorkspaceID: relayLWS, On: true}}, r.feeds, "follow-ups only while hosted's are on")
 	assert.Equal(t, []model.RelayBudget{{Deliveries: 3, FeedRows: 500, FeedBytes: 4 << 20}, {Deliveries: 3, FeedRows: 500, FeedBytes: 4 << 20}}, r.budgets)
 	require.Len(t, out.GetDeliveries(), 1)
 	assert.Equal(t, &foundryv1.FoundryRelayDelivery{Id: "d-1", InstallId: install.ID, LocalWorkspaceId: relayLWS, Kind: "event", DedupeKey: "e:Ev1",
@@ -558,6 +558,14 @@ func TestClaimFoundryRelayDeliveries(t *testing.T) {
 	require.Len(t, out.GetFeedGaps(), 1)
 	assert.Equal(t, day.Add(time.Minute), out.GetFeedGaps()[0].GetTo().AsTime())
 	assert.True(t, out.GetHostedFeed())
+	f.cfg.Foundry.Slack.Follow.Enabled = true
+	r.feeds = nil
+	_, err = claim(door(), func(q *foundryv1.ClaimFoundryRelayDeliveriesRequest) {
+		q.WaitMs = 0
+		q.Feeds = []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: relayLWS, Follow: true}}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []model.RelayFeedOn{{LocalWorkspaceID: relayLWS, Follow: true}}, r.feeds, "follow-ups with no data connector")
 
 	// A claim whose caller goes answers what it has.
 	gone, cancel := context.WithCancel(door())

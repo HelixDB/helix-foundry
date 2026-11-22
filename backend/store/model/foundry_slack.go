@@ -73,8 +73,11 @@ type SlackInstall struct {
 	// stored. InstallFoundrySlack takes nil as SlackServesWorkspace.
 	Destination SlackDestination
 	// FeedOn says a relayed install's local Slack data connector reads it:
-	// hosted holds its channel messages for its local install.
+	// hosted holds its channel messages for its local install. FollowOn
+	// says its local install takes unmentioned follow-ups: hosted holds
+	// its thread replies, with or without a data connector.
 	FeedOn    bool
+	FollowOn  bool
 	CreatedAt time.Time
 	// UpdatedAt is the last install or reinstall.
 	UpdatedAt time.Time

@@ -31,7 +31,7 @@ import (
 
 const foundrySlackInstallColumns = `id, workspace_id, team_id, enterprise_id, team_name, app_id, bot_user_id, scopes, installed_by_user_id,
        installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at, bot_id, installer_admin, events_limited_at, bot_credential_id,
-       relay_link_id, relay_workspace_id, feed_on`
+       relay_link_id, relay_workspace_id, feed_on, follow_on`
 
 const foundrySlackThreadColumns = `s.id, s.install_id, s.channel_id, s.thread_ts, s.slack_user_id, s.agent_thread_id, s.created_at, s.last_at,
        s.bot_at, s.others_at`
@@ -1226,7 +1226,7 @@ func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 	var bot, relayLink, localWorkspace sql.NullString
 	if err := scanner.Scan(&i.ID, &i.WorkspaceID, &i.TeamID, &i.EnterpriseID, &i.TeamName, &i.AppID, &i.BotUserID, &scopes, &i.InstalledByUserID,
 		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled, &i.BotID, &i.InstallerAdmin, &limited, &bot,
-		&relayLink, &localWorkspace, &i.FeedOn); err != nil {
+		&relayLink, &localWorkspace, &i.FeedOn, &i.FollowOn); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}

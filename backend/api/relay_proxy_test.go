@@ -625,12 +625,35 @@ func TestRelayedInstallFeed(t *testing.T) {
 	}
 	f.cfg.Foundry.Slack.Follow.Enabled = true
 	receive("channel_message.json")
-	assert.Empty(t, r.relayFeed, "a channel message only while hosted's feed is on")
 	receive("channel_reply.json")
-	require.Len(t, r.relayFeed, 1, "a reply while its follow-ups are")
+	assert.Empty(t, r.relayFeed, "nothing while hosted's feed is off and the local install takes no follow-ups")
+
+	// A local install that takes follow-ups gets the thread replies, with
+	// or without a data connector, while hosted's follow-ups are on.
+	// The feed's intake keeps an install it read for a while: read it again.
+	install.FeedOn, install.FollowOn = false, true
+	f.s.slackFeed.mu.Lock()
+	f.s.slackFeed.installs = nil
+	f.s.slackFeed.mu.Unlock()
+	receive("channel_message.json")
+	assert.Empty(t, r.relayFeed, "a channel message only for a data connector")
+	receive("channel_reply.json")
+	require.Len(t, r.relayFeed, 1, "a reply for its follow-ups, no data connector reading it")
 	assert.Len(t, r.relayFeed[0].Rows, 1)
 	assert.Empty(t, r.intake, "Helix follows no relayed thread")
+	receive("app_rate_limited.json")
+	assert.Len(t, r.relayFeed, 1, "gaps are a data connector's")
+	f.cfg.Foundry.Slack.Follow.Enabled = false
+	receive("channel_reply.json")
+	f.cfg.Foundry.Slack.Feed.Enabled = true
+	receive("channel_reply.json")
+	assert.Len(t, r.relayFeed, 1, "only while hosted's follow-ups are on")
+	f.cfg.Foundry.Slack.Follow.Enabled, f.cfg.Foundry.Slack.Feed.Enabled = true, false
 
+	install.FeedOn, install.FollowOn = true, false
+	f.s.slackFeed.mu.Lock()
+	f.s.slackFeed.installs = nil
+	f.s.slackFeed.mu.Unlock()
 	f.cfg.Foundry.Slack.Feed.Enabled = true
 	receive("channel_message.json")
 	require.Len(t, r.relayFeed, 2)

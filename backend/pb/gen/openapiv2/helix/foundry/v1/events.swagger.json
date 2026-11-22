@@ -280,9 +280,12 @@
         },
         "on": {
           "type": "boolean"
+        },
+        "follow": {
+          "type": "boolean"
         }
       },
-      "description": "FoundryRelayFeedOn says whether a local workspace's Slack data connector\nreads its relayed install."
+      "description": "FoundryRelayFeedOn says whether a local workspace's Slack data connector\nreads its relayed install (on), and whether its install takes unmentioned\nfollow-ups (follow): hosted then holds the install's thread replies for\nit, with or without a data connector."
     },
     "v1FoundryRelayFeedRow": {
       "type": "object",

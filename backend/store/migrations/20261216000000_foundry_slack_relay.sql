@@ -142,12 +142,14 @@ CREATE TABLE foundry_slack_access_requests (
 -- A relayed install serves its link's local workspace: one live install
 -- per destination, (hosted workspace, local workspace), where a hosted one's
 -- local workspace is ''. feed_on: its local install's Slack data connector
--- reads it (hosted keeps its channel messages); relay_feed_rows: how many
--- message rows it holds in foundry_relay_feed.
+-- reads it (hosted keeps its channel messages); follow_on: its local
+-- install takes unmentioned follow-ups (hosted keeps its thread replies);
+-- relay_feed_rows: how many message rows it holds in foundry_relay_feed.
 ALTER TABLE foundry_slack_installs
   ADD COLUMN relay_link_id CHAR(26) NULL AFTER workspace_id,
   ADD COLUMN relay_workspace_id CHAR(26) NULL AFTER relay_link_id,
   ADD COLUMN feed_on BOOL NOT NULL DEFAULT FALSE,
+  ADD COLUMN follow_on BOOL NOT NULL DEFAULT FALSE,
   ADD COLUMN relay_feed_rows BIGINT NOT NULL DEFAULT 0,
   DROP INDEX foundry_slack_installs_workspace_uq,
   DROP COLUMN live_workspace,
@@ -180,6 +182,7 @@ ALTER TABLE foundry_slack_installs
   ADD COLUMN live_workspace CHAR(26) AS (IF(revoked_at IS NULL, workspace_id, NULL)) STORED,
   ADD UNIQUE KEY foundry_slack_installs_workspace_uq (live_workspace),
   DROP COLUMN relay_feed_rows,
+  DROP COLUMN follow_on,
   DROP COLUMN feed_on,
   DROP COLUMN relay_workspace_id,
   DROP COLUMN relay_link_id;

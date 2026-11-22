@@ -196,30 +196,37 @@ FROM foundry_slack_installs WHERE relay_link_id=? AND relay_workspace_id=? AND r
 
 // SetFoundryRelayFeeds records, for each of the link's live installs a feed
 // names (others are left as they are), whether its local Slack data
-// connector reads it. An install whose feed goes off drops what it held.
-// The caller turns one on only while hosted's own flags allow it.
+// connector reads it and whether its local install takes unmentioned
+// follow-ups. An install whose feed goes off drops the gaps it held, and,
+// with its follow-ups off too, everything. The caller turns either on only
+// while hosted's own flags allow it.
 func (s *mysqlDB) SetFoundryRelayFeeds(ctx context.Context, linkID string, feeds []model.RelayFeedOn) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		for _, f := range feeds {
 			var installID string
-			var on bool
-			err := tx.db.QueryRowContext(ctx, `SELECT id, feed_on FROM foundry_slack_installs
-WHERE relay_link_id=? AND relay_workspace_id=? AND revoked_at IS NULL FOR UPDATE`, linkID, f.LocalWorkspaceID).Scan(&installID, &on)
-			if errors.Is(err, sql.ErrNoRows) || err == nil && on == f.On {
+			var on, follow bool
+			err := tx.db.QueryRowContext(ctx, `SELECT id, feed_on, follow_on FROM foundry_slack_installs
+WHERE relay_link_id=? AND relay_workspace_id=? AND revoked_at IS NULL FOR UPDATE`, linkID, f.LocalWorkspaceID).Scan(&installID, &on, &follow)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && on == f.On && follow == f.Follow {
 				continue
 			}
 			if err != nil {
 				return err
 			}
-			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_slack_installs SET feed_on=?, relay_feed_rows=IF(?, relay_feed_rows, 0) WHERE id=?`,
-				f.On, f.On, installID); err != nil {
+			reads := f.On || f.Follow
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_slack_installs SET feed_on=?, follow_on=?, relay_feed_rows=IF(?, relay_feed_rows, 0)
+WHERE id=?`, f.On, f.Follow, reads, installID); err != nil {
 				return err
 			}
-			if !f.On {
-				if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_relay_feed WHERE install_id=?`, installID); err != nil {
-					return err
-				}
+			switch {
+			case !reads:
+				_, err = tx.db.ExecContext(ctx, `DELETE FROM foundry_relay_feed WHERE install_id=?`, installID)
+			case !f.On:
+				_, err = tx.db.ExecContext(ctx, `DELETE FROM foundry_relay_feed WHERE install_id=? AND kind='gap'`, installID)
+			}
+			if err != nil {
+				return err
 			}
 		}
 		return nil
@@ -520,7 +527,7 @@ func (s *mysqlDB) takeFoundryRelayDeliveries(ctx context.Context, pick string, a
 // AppendFoundryRelayFeed holds what a Slack request gives the live relayed
 // install installID's feed for limits.TTL, in one transaction holding the
 // install's lock. Unbound when the install isn't a live relayed one with its
-// feed on. Rows past limits.MaxRows held become a gap of the minute each
+// feed or follow-ups on; gaps are held only while its feed is. Rows past limits.MaxRows held become a gap of the minute each
 // message was posted (model.SlackFeedRow.Minute, else a.At's) in its channel
 // (full); a row held already is dropped (duplicate when every one was, and
 // no gap was new). a.Rows come from requests the API verified, so each
@@ -562,14 +569,19 @@ func (s *mysqlDB) AppendFoundryRelayFeed(ctx context.Context, installID string, 
 		if err := tx.seeFoundryRelay(ctx, "foundry_relay_channels", "channel_id", installID, channels); err != nil {
 			return err
 		}
-		gaps, err := tx.knownFoundryRelayGaps(ctx, installID, a.Gaps, a.At)
-		if err != nil {
-			return err
+		// Gaps are a data connector's, held only while one reads it.
+		var gaps []model.SlackFeedGap
+		if in.feedOn {
+			if gaps, err = tx.knownFoundryRelayGaps(ctx, installID, a.Gaps, a.At); err != nil {
+				return err
+			}
 		}
 		if len(a.Rows) > 0 && in.rows+int64(len(a.Rows)) > limits.MaxRows {
 			out.Outcome = model.SlackAppendFull
 			for _, r := range a.Rows {
-				gaps = append(gaps, model.SlackMinuteGap(r.ChannelID, r.Minute(a.At)))
+				if in.feedOn {
+					gaps = append(gaps, model.SlackMinuteGap(r.ChannelID, r.Minute(a.At)))
+				}
 			}
 		} else if len(a.Rows) > 0 {
 			var usage model.RelayUsage
@@ -625,19 +637,21 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND)`, id.New(
 	return out, err
 }
 
-// foundryRelayFeedInstall is a live relayed install with its feed on, as its
-// locked row says.
+// foundryRelayFeedInstall is a live relayed install with its feed or its
+// follow-ups on, as its locked row says: feedOn when its feed is.
 type foundryRelayFeedInstall struct {
 	linkID, localWorkspaceID string
 	rows                     int64
+	feedOn                   bool
 }
 
 // lockFoundryRelayFeedInstall locks the install's row: ErrNotFound unless it
-// is a live relayed install with its feed on.
+// is a live relayed install with its feed or its follow-ups on.
 func (s *mysqlDB) lockFoundryRelayFeedInstall(ctx context.Context, installID string) (foundryRelayFeedInstall, error) {
 	var in foundryRelayFeedInstall
-	err := s.db.QueryRowContext(ctx, `SELECT relay_link_id, relay_workspace_id, relay_feed_rows FROM foundry_slack_installs
-WHERE id=? AND revoked_at IS NULL AND relay_link_id IS NOT NULL AND feed_on FOR UPDATE`, installID).Scan(&in.linkID, &in.localWorkspaceID, &in.rows)
+	err := s.db.QueryRowContext(ctx, `SELECT relay_link_id, relay_workspace_id, relay_feed_rows, feed_on FROM foundry_slack_installs
+WHERE id=? AND revoked_at IS NULL AND relay_link_id IS NOT NULL AND (feed_on OR follow_on) FOR UPDATE`, installID).
+		Scan(&in.linkID, &in.localWorkspaceID, &in.rows, &in.feedOn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return in, ErrNotFound
 	}

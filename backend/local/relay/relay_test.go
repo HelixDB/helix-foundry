@@ -752,6 +752,28 @@ func TestTheRelayFollowsRepliesItsBotFollows(t *testing.T) {
 	assert.Empty(t, f.db.intake, "Ada replied a minute after the bot")
 }
 
+// Helix is told, for each of the link's installs, whether its data
+// connector reads it and whether it takes follow-ups: follow-ups alone,
+// with no Slack data connection, still have Helix relay its thread replies.
+func TestTheRelayAsksForTheRepliesItFollows(t *testing.T) {
+	f := newFixture(t)
+	f.r.installs = map[string]string{"inst-1": ws}
+	feeds, err := f.r.feeds(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: ws}}, feeds, "neither")
+
+	f.r.o.Slack.Follow.Enabled = true
+	feeds, err = f.r.feeds(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: ws, Follow: true}}, feeds, "follow-ups with no data connection")
+
+	f.r.o.Slack.Feed.Enabled = true
+	f.db.feeds = []*model.SlackFeed{{ID: "feed-1", InstallID: "inst-1"}}
+	feeds, err = f.r.feeds(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []*foundryv1.FoundryRelayFeedOn{{LocalWorkspaceId: ws, On: true, Follow: true}}, feeds)
+}
+
 // validFeedKey is a feed row's dedupe key: its event's.
 func validFeedKey(t *testing.T) string {
 	t.Helper()

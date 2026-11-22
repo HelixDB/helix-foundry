@@ -634,6 +634,51 @@ func TestFoundryRelayFeed(t *testing.T) {
 	assert.False(t, waiting)
 }
 
+// A relayed install whose local install takes follow-ups, with no data
+// connector reading it, holds the rows hosted relays it (its thread
+// replies), but no gap: gaps are a data connector's. Its feed going off
+// while its follow-ups stay on drops the gaps alone; both off, everything.
+func TestFoundryRelayFollowOnly(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "rfollow")
+	link := f.linked(t, 1, f.workspaceID)
+	i := f.relayed(t, 5, link, "local-1", "TR1")
+	at := time.Now().UTC()
+	reply := model.RelayFeedAppend{Rows: []model.SlackFeedRow{relayFeedRow("Ev1", "C1")}, At: at}
+	gap := model.RelayFeedAppend{Gaps: []model.SlackFeedGap{model.SlackMinuteGap("", at)}, At: at}
+
+	require.NoError(t, f.db.SetFoundryRelayFeeds(ctx, link.ID, []model.RelayFeedOn{{LocalWorkspaceID: "local-1", Follow: true}}))
+	listed, err := f.db.ListFoundryRelayInstalls(ctx, link.ID)
+	require.NoError(t, err)
+	assert.True(t, listed[0].FollowOn)
+	assert.False(t, listed[0].FeedOn)
+	out, err := f.db.AppendFoundryRelayFeed(ctx, i.ID, reply, relayLimits)
+	require.NoError(t, err)
+	assert.Equal(t, model.RelayFeedAppended{Outcome: model.SlackAppended, Rows: 1}, out, "held for its follow-ups")
+	out, err = f.db.AppendFoundryRelayFeed(ctx, i.ID, gap, relayLimits)
+	require.NoError(t, err)
+	assert.Equal(t, model.SlackAppendDuplicate, out.Outcome, "no gap without a data connector")
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=0 FROM foundry_relay_feed WHERE kind='gap'`))
+	full, err := f.db.AppendFoundryRelayFeed(ctx, i.ID, model.RelayFeedAppend{Rows: []model.SlackFeedRow{relayFeedRow("Ev2", "C1")}, At: at},
+		model.RelayFeedLimits{TTL: time.Hour, MaxRows: 1})
+	require.NoError(t, err)
+	assert.Equal(t, model.SlackAppendFull, full.Outcome)
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=0 FROM foundry_relay_feed WHERE kind='gap'`), "nor past the cap")
+
+	require.NoError(t, f.db.SetFoundryRelayFeeds(ctx, link.ID, []model.RelayFeedOn{{LocalWorkspaceID: "local-1", On: true, Follow: true}}))
+	out, err = f.db.AppendFoundryRelayFeed(ctx, i.ID, gap, relayLimits)
+	require.NoError(t, err)
+	assert.Equal(t, 1, out.Rows, "a data connector's gap")
+	require.NoError(t, f.db.SetFoundryRelayFeeds(ctx, link.ID, []model.RelayFeedOn{{LocalWorkspaceID: "local-1", Follow: true}}))
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=0 FROM foundry_relay_feed WHERE kind='gap'`), "the gaps go with the data connector")
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=1 FROM foundry_relay_feed WHERE kind='message'`), "the reply stays for the follow-ups")
+	require.NoError(t, f.db.SetFoundryRelayFeeds(ctx, link.ID, []model.RelayFeedOn{{LocalWorkspaceID: "local-1"}}))
+	assert.True(t, dbTrue(t, `SELECT COUNT(*)=0 FROM foundry_relay_feed`))
+	out, err = f.db.AppendFoundryRelayFeed(ctx, i.ID, reply, relayLimits)
+	require.NoError(t, err)
+	assert.Equal(t, model.SlackAppendUnbound, out.Outcome, "neither reads it")
+}
+
 // The door holds gaps from requests no one verified: a relayed install
 // keeps only those of channels it reads, of days a window keeps, and past
 // its cap they widen one gap of every channel instead of growing.

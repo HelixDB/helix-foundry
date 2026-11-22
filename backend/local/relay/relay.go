@@ -630,8 +630,10 @@ func (r *Relay) claim(ctx context.Context, l linked, acks []string) ([]string, e
 }
 
 // feeds is, for each local workspace of the link's installs, whether its
-// Slack data connector reads its install: only with the install's own
-// foundry.slack.feed on, and a live feed reading it.
+// Slack data connector reads its install (only with the install's own
+// foundry.slack.feed on, and a live feed reading it), and whether it takes
+// unmentioned follow-ups (its own foundry.slack.follow), which Helix then
+// relays the thread replies of, data connector or not.
 func (r *Relay) feeds(ctx context.Context) ([]*foundryv1.FoundryRelayFeedOn, error) {
 	r.mu.Lock()
 	installs := make(map[string]string, len(r.installs))
@@ -660,7 +662,7 @@ func (r *Relay) feeds(ctx context.Context) ([]*foundryv1.FoundryRelayFeedOn, err
 	}
 	out := make([]*foundryv1.FoundryRelayFeedOn, 0, len(installs))
 	for id, ws := range installs {
-		out = append(out, &foundryv1.FoundryRelayFeedOn{LocalWorkspaceId: ws, On: read[id]})
+		out = append(out, &foundryv1.FoundryRelayFeedOn{LocalWorkspaceId: ws, On: read[id], Follow: r.o.Slack.Follow.Enabled})
 	}
 	slices.SortFunc(out, func(a, b *foundryv1.FoundryRelayFeedOn) int {
 		return strings.Compare(a.GetLocalWorkspaceId(), b.GetLocalWorkspaceId())

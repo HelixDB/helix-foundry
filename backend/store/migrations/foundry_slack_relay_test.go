@@ -48,7 +48,7 @@ VALUES ('turn-before', 'ws1', 'th-before', 'user-ada', 'api', 'message', 'hi', '
 	}
 	var ok bool
 	if err := db.QueryRow(`SELECT
-  (SELECT relay_link_id IS NULL AND relay_workspace_id IS NULL AND NOT feed_on AND relay_feed_rows=0 AND live_destination='ws1/'
+  (SELECT relay_link_id IS NULL AND relay_workspace_id IS NULL AND NOT feed_on AND NOT follow_on AND relay_feed_rows=0 AND live_destination='ws1/'
      FROM foundry_slack_installs WHERE id='i1')
   AND (SELECT access='full' FROM foundry_slack_links WHERE install_id='i1')
   AND (SELECT NOT read_only FROM foundry_agent_turns WHERE id='turn-before')`).Scan(&ok); err != nil || !ok {
@@ -127,7 +127,7 @@ VALUES ('f2', 'l1', 'i3', 'local1', 'e:Ev2', 'C1', '2026-11-20', 'message', '{}'
 		}
 	}
 	for _, column := range []string{"foundry_slack_installs.relay_link_id", "foundry_slack_installs.relay_workspace_id", "foundry_slack_installs.feed_on",
-		"foundry_slack_installs.relay_feed_rows", "foundry_slack_installs.live_destination", "foundry_slack_install_states.relay_link_id",
+		"foundry_slack_installs.follow_on", "foundry_slack_installs.relay_feed_rows", "foundry_slack_installs.live_destination", "foundry_slack_install_states.relay_link_id",
 		"foundry_slack_install_states.relay_workspace_id", "foundry_slack_install_states.return_to", "foundry_slack_links.access",
 		"foundry_agent_turns.read_only"} {
 		var n int

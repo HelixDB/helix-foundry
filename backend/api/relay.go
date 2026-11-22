@@ -230,7 +230,8 @@ func (s *Service) RevokeFoundryRelayToken(ctx context.Context, req *foundryv1.Re
 // ClaimFoundryRelayDeliveries is a linked install's claim (design §10.3):
 // it records the link's contact, acks what the install took, records which
 // of its workspaces' data connectors read their installs (only while
-// hosted's feed or follow-ups are on), then waits up to wait_ms, within
+// hosted's feed or follow-ups are on) and which take follow-ups (only
+// while hosted's follow-ups are), then waits up to wait_ms, within
 // foundry.slack.relay.claim_wait, looking every claim_poll with a plain
 // read and leasing only once something waits: the bot's requests first,
 // then channel messages within relay.feed_batch and feed_batch_bytes
@@ -265,7 +266,8 @@ func (s *Service) ClaimFoundryRelayDeliveries(ctx context.Context, req *foundryv
 			relayClaims.WithLabelValues("refused").Inc()
 			return nil, status.Error(codes.InvalidArgument, "feeds name local workspaces by id")
 		}
-		feeds = append(feeds, model.RelayFeedOn{LocalWorkspaceID: f.GetLocalWorkspaceId(), On: f.GetOn() && cfg.ReadsHistory()})
+		feeds = append(feeds, model.RelayFeedOn{LocalWorkspaceID: f.GetLocalWorkspaceId(), On: f.GetOn() && cfg.ReadsHistory(),
+			Follow: f.GetFollow() && cfg.Follow.Enabled})
 	}
 	if err := s.deps.DB.SeeFoundryRelayLink(ctx, link.ID, truncateUTF8(req.GetClientAddress(), maxRelayAddress)); err != nil {
 		log.From(ctx).Warn("record a relay link's contact failed", "link_id", link.ID, "err", err)

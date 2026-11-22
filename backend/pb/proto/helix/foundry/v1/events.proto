@@ -125,10 +125,13 @@ message RedeemFoundryRelayCodeResponse {
 }
 
 // FoundryRelayFeedOn says whether a local workspace's Slack data connector
-// reads its relayed install.
+// reads its relayed install (on), and whether its install takes unmentioned
+// follow-ups (follow): hosted then holds the install's thread replies for
+// it, with or without a data connector.
 message FoundryRelayFeedOn {
   string local_workspace_id = 1;
   bool on = 2;
+  bool follow = 3;
 }
 
 message ClaimFoundryRelayDeliveriesRequest {
@@ -141,8 +144,10 @@ message ClaimFoundryRelayDeliveriesRequest {
   int32 wait_ms = 3;
   // The most deliveries to lease: 1 to 10; 0 is 10.
   int32 max = 4;
-  // Whether each local workspace's Slack data connector reads its install;
-  // hosted turns one on only while its own foundry.slack.feed or follow is.
+  // Whether each local workspace's Slack data connector reads its install,
+  // and whether it takes unmentioned follow-ups; hosted turns the first on
+  // only while its own foundry.slack.feed or follow is, the second only
+  // while its foundry.slack.follow is.
   // Workspaces left out keep what they had.
   repeated FoundryRelayFeedOn feeds = 5;
   // The install's address, as the door's load balancer saw it: kept as the

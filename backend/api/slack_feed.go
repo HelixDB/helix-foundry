@@ -383,14 +383,16 @@ func FollowSlackReply(ctx context.Context, db SlackFollowStore, window time.Dura
 
 // receiveRelayFeed holds a channel event of a relayed install's team for its
 // local install, which owns the data connector and the bot's follow-ups:
-// only while hosted's relay is on and the install's feed is, a channel
-// message only while hosted's foundry.slack.feed is, but a reply in a
-// thread while its follow-ups are too, past relay.feed_max_rows held a gap
-// instead. Slack's app_rate_limited is a gap of every channel's minute.
+// only while hosted's relay is on, any channel event while the install's
+// feed and hosted's foundry.slack.feed are, and a reply in a thread while
+// its follow-ups and hosted's foundry.slack.follow are too, data connector
+// or not; past relay.feed_max_rows held a gap instead. Slack's
+// app_rate_limited is a gap of every channel's minute, the feed's alone.
 func (s *Service) receiveRelayFeed(ctx context.Context, eventID string, e slack.FeedEvent, install *model.SlackInstall) (
 	*foundryv1.ReceiveSlackRequestResponse, string, error) {
 	cfg := s.deps.Cfg.Foundry.Slack
-	if !cfg.Relay.Enabled || !install.FeedOn {
+	feedReads, followReads := install.FeedOn && cfg.Feed.Enabled, install.FollowOn && cfg.Follow.Enabled
+	if !cfg.Relay.Enabled || !feedReads && !followReads {
 		slackFeedTaken.WithLabelValues(string(model.SlackAppendUnbound)).Inc()
 		return slackOK(), "feed", nil
 	}
@@ -404,7 +406,7 @@ func (s *Service) receiveRelayFeed(ctx context.Context, eventID string, e slack.
 		}
 		log.From(ctx).Warn("slack dropped a relayed team's events past its hourly limit", "install_id", install.ID, "minute", e.Minute)
 		slackFeedTaken.WithLabelValues("rate_limited").Inc()
-		if !cfg.Feed.Enabled {
+		if !feedReads {
 			return slackOK(), "feed", nil
 		}
 		feed = model.RelayFeedAppend{Gaps: []model.SlackFeedGap{model.SlackMinuteGap("", e.Minute)}, At: time.Now()}
@@ -414,7 +416,7 @@ func (s *Service) receiveRelayFeed(ctx context.Context, eventID string, e slack.
 		}
 		m, message := e.(slack.ChannelMessage)
 		reply := message && m.Message.ThreadTS != "" && m.Message.ThreadTS != m.Message.TS
-		if !cfg.Feed.Enabled && !reply {
+		if !feedReads && !(followReads && reply) {
 			slackFeedTaken.WithLabelValues("dropped_unread").Inc()
 			return slackOK(), "feed", nil
 		}
