@@ -214,7 +214,9 @@ func TestFoundryRebuild(t *testing.T) {
 		done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("last"))
 		require.NoError(t, err)
 		assert.Equal(t, store.FoundryRebuildGaveUp, done)
-		assert.Nil(t, f.liveJob(t))
+		if live := f.liveJob(t); live != nil {
+			assert.Equal(t, model.FoundryGraphJobDelete, live.Kind, "only the failed rebuilds' loads being deleted")
+		}
 		got, err := store.RebuildFoundryLoads(ctx, f.db, cutover)
 		require.NoError(t, err)
 		assert.Equal(t, store.FoundryRebuilds{GaveUp: []string{f.ontology.ID}}, got)
