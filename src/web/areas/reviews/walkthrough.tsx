@@ -321,15 +321,16 @@ export function useWalk() {
     /**
      * Takes the queue's new walk order (its cards to decide; every card of
      * the queue, with Founder's advice): on another load, says which choices
-     * were still sending; on the same load, cards gone from the queue keep
-     * their places.
+     * were still sending; on the same load, cards gone from the queue, or
+     * now covered by a link, keep their places.
      */
     rebase: (
       loadId: string,
-      { decide: order, cards: inQueue, advice }: WalkOrder,
+      { decide: order, cards: inQueue, advice, covered }: WalkOrder,
     ) => {
       const w = now.current,
-        moved = w.loadId !== "" && w.loadId !== loadId;
+        moved = w.loadId !== "" && w.loadId !== loadId,
+        cover = new Set(covered);
       if (moved) {
         setChanged(
           [...w.outcomes].flatMap(([k, x]) =>
@@ -344,8 +345,11 @@ export function useWalk() {
         type: "rebase",
         loadId,
         order,
+        // Cards a link now covers have left the walk too, here or elsewhere.
         gone: new Set(
-          w.loadId === loadId ? w.order.filter((k) => !inQueue.has(k)) : [],
+          w.loadId === loadId
+            ? w.order.filter((k) => !inQueue.has(k) || cover.has(k))
+            : [],
         ),
       });
     },

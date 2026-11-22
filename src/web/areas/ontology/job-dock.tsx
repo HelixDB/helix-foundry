@@ -117,7 +117,8 @@ function Card({
         <Link
           className="on-job-card-link"
           to={ending ? ending.go : jobPath(job)}
-          onClick={ending ? stop : undefined}
+          // Following it opens another page, which the keys then reach.
+          onClick={ending ? () => unwatchJob(ws, job.kind, job.id) : undefined}
         >
           {ending ? ending.label : "View progress"}
         </Link>

@@ -28,6 +28,7 @@ import {
   labels,
   saveLabel,
 } from "../review-decisions";
+import { config, onReset } from "../state";
 import { tenantGraph } from "./databases";
 import {
   advanceLoads,
@@ -64,6 +65,38 @@ import { isRecord } from "../../src/shared/json";
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
+/** A score inside each band the review queue reads (src/web/areas/reviews/queue.ts BANDS). */
+const BAND_SCORE = {
+  "0.9": 0.93,
+  "0.8": 0.85,
+  "0.7": 0.75,
+  "0.6": 0.65,
+  low: 0.4,
+};
+const READS_DIFFERENTLY =
+  "this claim reads differently now; reload the review and decide on what it says";
+
+// Test knobs, through POST /__mock/config:
+// - `seedReviewLabels` ({band, right, wrong}): every ontology with a current
+//   load also lists that many random labels of earlier held claims scored in
+//   that band, each at a place of its own and the caller's own (so none is
+//   drawn for their re-check), as a team's spot checks would have measured
+//   it: enough, right, to let the walkthrough batch the band's claims.
+// - `settleRefusals` n: the next n settles are refused as a claim that reads
+//   differently now is (FAILED_PRECONDITION), saving nothing.
+type Knobs = {
+  seedReviewLabels?: {
+    band: keyof typeof BAND_SCORE;
+    right: number;
+    wrong: number;
+  };
+  settleRefusals?: number;
+};
+const knobs = config as typeof config & Knobs;
+onReset(() => {
+  delete knobs.seedReviewLabels;
+  delete knobs.settleRefusals;
+});
 
 /**
  * A FoundryPropValue in the JSON form the WFE writes one: exactly one arm,
@@ -199,6 +232,10 @@ export const reviewRoutes: MockRoute[] = [
           `drawn must be ranked or random, not "${String(drawn)}"`,
         );
       const draw = drawn || undefined;
+      if (knobs.settleRefusals) {
+        knobs.settleRefusals -= 1;
+        return fail("FAILED_PRECONDITION", READS_DIFFERENTLY);
+      }
       const load = currentLoadId(s.o.id);
       if (!load)
         return fail(
@@ -253,10 +290,7 @@ export const reviewRoutes: MockRoute[] = [
           .update(`${link}\u001f${stored}`)
           .digest("hex");
         if (read !== statementHash)
-          return fail(
-            "FAILED_PRECONDITION",
-            "this claim reads differently now; reload the review and decide on what it says",
-          );
+          return fail("FAILED_PRECONDITION", READS_DIFFERENTLY);
         // The claim's decisions: at its place, under its key or of what was
         // read there under another (a rebuild moves keys), as the engine
         // binds a release from contract 4.14.0 and the backend keeps them.
@@ -749,7 +783,26 @@ export const reviewRoutes: MockRoute[] = [
       const token = req.query.get("pageToken") || "";
       if (token.length > 26)
         return fail("INVALID_ARGUMENT", "invalid page_token");
-      const after = (labels.get(s.o.id) || [])
+      const load = currentLoadId(s.o.id),
+        seed = knobs.seedReviewLabels;
+      const seeded: FoundryReviewLabel[] =
+        load && seed
+          ? Array.from({ length: seed.right + seed.wrong }, (_, i) => ({
+              id: `label_seed${String(i).padStart(4, "0")}`,
+              drawn: "random",
+              docId: "doc_seed_labels",
+              claimSection: 0,
+              claimStart: i * 16,
+              claimEnd: i * 16 + 8,
+              link: "signed_with",
+              confidence: BAND_SCORE[seed.band],
+              verdict: i < seed.right ? "right" : "wrong",
+              loadId: load,
+              decidedByUserId: req.principal.user.id,
+              decidedAt: "2026-10-01T09:00:00.000Z",
+            }))
+          : [];
+      const after = [...seeded, ...(labels.get(s.o.id) || [])]
         .filter((l) => l.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const page = after.slice(0, PAGE);

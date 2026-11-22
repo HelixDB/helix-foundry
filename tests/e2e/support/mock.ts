@@ -73,6 +73,15 @@ export const mock = {
     documentLinked?: "adjudicated" | "legal_form" | "part_name" | "own_name";
     // Sentences stating a relationship no link covers are "unmatched" reviews.
     documentUnmatched?: boolean;
+    // Random labels of earlier held claims in a score band, the reader's own
+    // (mock/routes/reviews.ts): `right` of `right + wrong`.
+    seedReviewLabels?: {
+      band: "0.9" | "0.8" | "0.7" | "0.6" | "low";
+      right: number;
+      wrong: number;
+    };
+    // The next n settles are refused: the claim reads differently now.
+    settleRefusals?: number;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"
@@ -752,4 +761,21 @@ export async function uploadInData(
     await expect(uploadCard(page, f.name)).toContainText(
       /Uploaded|Already uploaded/,
     );
+}
+
+/**
+ * Uploads `n` contracts into General, each naming `name` (a company the
+ * Stripe rows don't hold): each is a review of the name in its document,
+ * which a link in one of them settles in all.
+ */
+export async function uploadNaming(page: Page, name: string, n: number) {
+  await uploadInData(
+    page,
+    Array.from({ length: n }, (_, i) =>
+      file(
+        `naming-${i + 1}.md`,
+        `# Order form ${i + 1}\n\n${name} signed order form ${i + 1}.\n`,
+      ),
+    ),
+  );
 }

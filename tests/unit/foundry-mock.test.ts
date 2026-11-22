@@ -4182,6 +4182,59 @@ describe("review decisions", () => {
     ).toEqual([404, "review not found in the current load"]);
   });
 
+  it("seeds random labels of a band, and refuses the next settles, for the walkthrough's tests", async () => {
+    const labels = async () =>
+      (await call("GET", `${O}/review-labels`)).body.labels as {
+        id: string;
+        confidence: number;
+        verdict: string;
+        claimStart: number;
+        decidedByUserId: string;
+      }[];
+    Object.assign(config, {
+      seedReviewLabels: { band: "0.7", right: 3, wrong: 1 },
+    });
+    // No current load: nothing is seeded.
+    expect(await labels()).toEqual([]);
+    await uploaded(
+      "variant.md",
+      Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+    );
+    const g = await loaded("first");
+    const seeded = await labels();
+    expect(seeded.map((l) => [l.confidence, l.verdict])).toEqual([
+      [0.75, "right"],
+      [0.75, "right"],
+      [0.75, "right"],
+      [0.75, "wrong"],
+    ]);
+    // Each at a place of its own, the caller's own.
+    expect(new Set(seeded.map((l) => l.claimStart)).size).toBe(4);
+    expect(seeded.every((l) => l.decidedByUserId === "usr_ada")).toBe(true);
+
+    const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+    const statementHash = createHash("sha256")
+      .update(`signed_with\u001f${String(rv.props.statement)}`)
+      .digest("hex");
+    const settle = () =>
+      call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { release: { statementHash } },
+      });
+    Object.assign(config, { settleRefusals: 1 });
+    expect(refusal(await settle())).toEqual([
+      400,
+      "this claim reads differently now; reload the review and decide on what it says",
+    ]);
+    expect((await call("GET", `${O}/review-decisions`)).body.decisions).toEqual(
+      [],
+    );
+    // The next is saved.
+    expect((await settle()).status).toBe(200);
+    expect(
+      (await call("GET", `${O}/review-decisions`)).body.decisions,
+    ).toHaveLength(1);
+  });
+
   it("saves a rejection of a held claim, and tells no load", async () => {
     await uploaded(
       "variant.md",
