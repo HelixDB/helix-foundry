@@ -788,8 +788,12 @@ func (s *Service) DismissFoundryAgentAction(ctx context.Context, req *foundryv1.
 }
 
 func agentThreadToProto(t *foundrymodel.FoundryAgentThread) *foundryv1.FoundryAgentThread {
-	return &foundryv1.FoundryAgentThread{Id: t.ID, Title: t.Title, Runtime: string(t.Runtime), CreatedAt: timestamppb.New(t.CreatedAt),
+	out := &foundryv1.FoundryAgentThread{Id: t.ID, Title: t.Title, Runtime: string(t.Runtime), CreatedAt: timestamppb.New(t.CreatedAt),
 		UpdatedAt: timestamppb.New(t.UpdatedAt)}
+	if t.Surface == foundrymodel.FoundryAgentSurfaceSlack {
+		out.Surface = foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK
+	}
+	return out
 }
 
 func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentTurn {

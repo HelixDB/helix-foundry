@@ -1132,7 +1132,18 @@ func TestFoundryAgentTurnSurface(t *testing.T) {
 		got, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, f.turnID(n))
 		require.NoError(t, err)
 		assert.Equal(t, want, got.Surface)
+		thread, err := f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(n))
+		require.NoError(t, err)
+		assert.Equal(t, want, thread.Surface, "a thread is where its first turn was asked")
 	}
+	threads, _, err := f.db.ListFoundryAgentThreads(ctx, f.workspaceID, agentUser, nil, "", 10)
+	require.NoError(t, err)
+	listed := map[string]model.FoundryAgentSurface{}
+	for _, th := range threads {
+		listed[th.ID] = th.Surface
+	}
+	assert.Equal(t, map[string]model.FoundryAgentSurface{f.threadID(1): model.FoundryAgentSurfaceSlack, f.threadID(2): model.FoundryAgentSurfaceSite},
+		listed)
 
 	// An action prepared in Slack, run from the site: its continuation is
 	// read in Slack.
@@ -1157,4 +1168,6 @@ func TestFoundryAgentTurnSurface(t *testing.T) {
 	dbExec(t, `UPDATE foundry_agent_turns SET surface='email' WHERE id=?`, f.turnID(2))
 	_, err = f.db.GetFoundryAgentTurn(ctx, f.workspaceID, f.turnID(2))
 	assert.ErrorContains(t, err, "unknown foundry agent surface")
+	_, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(2))
+	assert.ErrorContains(t, err, "unknown foundry agent surface", "nor its thread's")
 }

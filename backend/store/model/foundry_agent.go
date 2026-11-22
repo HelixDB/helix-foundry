@@ -68,7 +68,10 @@ type FoundryAgentThread struct {
 	// restricted member held when its turns ran, which they must all still
 	// hold to read it, so narrowing their grants takes away what Founder read
 	// under them, as it takes away an Analyst's answer.
-	Granted   *FoundryAgentThreadGrants
+	Granted *FoundryAgentThreadGrants
+	// Surface is where it was started: its first turn's surface, read by
+	// GetFoundryAgentThread and ListFoundryAgentThreads only.
+	Surface   FoundryAgentSurface
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

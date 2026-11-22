@@ -27,6 +27,11 @@ const foundryAgentThreadScans = 10
 
 const foundryAgentThreadColumns = `id, workspace_id, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at`
 
+// foundryAgentThreadSurface is a thread's first turn's surface, after its
+// columns where it is read (never under a lock: it would lock the turn).
+const foundryAgentThreadSurface = `, COALESCE((SELECT u.surface FROM foundry_agent_turns u WHERE u.thread_id=foundry_agent_threads.id
+  ORDER BY u.created_at, u.id LIMIT 1), 'site')`
+
 const foundryAgentTurnColumns = `id, workspace_id, thread_id, user_id, runtime, kind, surface, input, automation_run_id, automation_node_id, page_context,
        asked, answers, status, error, client_token,
        lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
@@ -297,7 +302,7 @@ func (s *mysqlDB) liveFoundryAgentTurn(ctx context.Context, threadID string) (bo
 }
 
 func (s *mysqlDB) GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error) {
-	return scanFoundryAgentThread(s.db.QueryRowContext(ctx, "SELECT "+foundryAgentThreadColumns+`
+	return scanFoundryAgentThreadSurface(s.db.QueryRowContext(ctx, "SELECT "+foundryAgentThreadColumns+foundryAgentThreadSurface+`
 FROM foundry_agent_threads WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, id, workspaceID))
 }
 
@@ -325,12 +330,12 @@ func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID, user
 			conds = append(conds, "(updated_at < ? OR (updated_at = ? AND id < ?))")
 			args = append(args, cursor.CreatedAt, cursor.CreatedAt, cursor.ID)
 		}
-		rows, err := s.db.QueryContext(ctx, "SELECT "+foundryAgentThreadColumns+" FROM foundry_agent_threads"+whereClause(conds)+
-			fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT %d", limit+1), args...)
+		rows, err := s.db.QueryContext(ctx, "SELECT "+foundryAgentThreadColumns+foundryAgentThreadSurface+" FROM foundry_agent_threads"+
+			whereClause(conds)+fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT %d", limit+1), args...)
 		if err != nil {
 			return nil, "", err
 		}
-		read, err := scanAll(rows, scanFoundryAgentThread)
+		read, err := scanAll(rows, scanFoundryAgentThreadSurface)
 		if err != nil {
 			return nil, "", err
 		}
@@ -1116,12 +1121,27 @@ WHERE id=?`, string(display), confirmationID, sealed, keyID, expiresAt.UTC(), id
 	return out, err
 }
 
-func scanFoundryAgentThread(scanner rowScanner) (*model.FoundryAgentThread, error) {
+// scanFoundryAgentThreadSurface scans a thread read with
+// foundryAgentThreadSurface.
+func scanFoundryAgentThreadSurface(scanner rowScanner) (*model.FoundryAgentThread, error) {
+	var surface string
+	t, err := scanFoundryAgentThread(scanner, &surface)
+	if err != nil {
+		return nil, err
+	}
+	if t.Surface, err = model.ParseFoundryAgentSurface(surface); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func scanFoundryAgentThread(scanner rowScanner, extra ...any) (*model.FoundryAgentThread, error) {
 	var t model.FoundryAgentThread
 	var runtime string
 	var kind string
 	var session, granted sql.NullString
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.UserID, &kind, &t.Title, &runtime, &session, &granted, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	if err := scanner.Scan(append([]any{&t.ID, &t.WorkspaceID, &t.UserID, &kind, &t.Title, &runtime, &session, &granted, &t.CreatedAt,
+		&t.UpdatedAt}, extra...)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
