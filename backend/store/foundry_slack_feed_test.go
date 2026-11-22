@@ -58,6 +58,13 @@ func feedRow(channel, event string, day time.Time) model.SlackFeedRow {
 		Source: model.SlackFeedFromEvent, Payload: json.RawMessage(`{"ts":"1.2","text":"hi"}`)}
 }
 
+// postedRow is a message row of channel's event posted at at, its payload's ts.
+func postedRow(channel, event string, at time.Time) model.SlackFeedRow {
+	r := feedRow(channel, event, at)
+	r.Payload = json.RawMessage(fmt.Sprintf(`{"ts":"%d.000100","text":"hi"}`, at.Unix()))
+	return r
+}
+
 var feedLimits = model.SlackFeedLimits{Spacing: 2 * time.Minute, MaxRows: 1000}
 
 func dbCount(t *testing.T, query string, args ...any) int {
@@ -354,8 +361,12 @@ func TestFoundrySlackFeedAppend(t *testing.T) {
 
 	t.Run("full", func(t *testing.T) {
 		at := day.Add(90 * time.Minute)
+		// C2's message was posted hours before it was appended (a relay held
+		// it): its gap is of the minute it was posted. C1's second is of a
+		// message older than any window, which needs none; C9 isn't covered.
+		late := postedRow("C2", "Ev6", at.Add(-3*time.Hour+5*time.Second))
 		got, err := f.db.AppendFoundrySlackFeed(ctx, install.ID, model.SlackFeedBatch{
-			Rows: []model.SlackFeedRow{feedRow("C1", "Ev4", day), feedRow("C1", "Ev5", day), feedRow("C2", "Ev6", day), feedRow("C9", "Ev7", day)},
+			Rows: []model.SlackFeedRow{postedRow("C1", "Ev4", at.Add(5*time.Second)), feedRow("C1", "Ev5", day), late, feedRow("C9", "Ev7", day)},
 			At:   at.Add(17 * time.Second)}, model.SlackFeedLimits{Spacing: time.Minute, MaxRows: 5})
 		require.NoError(t, err)
 		assert.Equal(t, model.SlackFeedAppended{Outcome: model.SlackAppendFull, FeedID: feed.ID, Rows: 2}, got,
@@ -363,10 +374,13 @@ func TestFoundrySlackFeedAppend(t *testing.T) {
 		rows, err := f.db.FoundrySlackFeedAfter(ctx, feed.ID, 5, model.SlackFeedBudget{Rows: 10, Bytes: 1 << 20})
 		require.NoError(t, err)
 		require.Len(t, rows, 2)
-		for i, ch := range []string{"C1", "C2"} {
+		for i, w := range []struct {
+			channel string
+			minute  time.Time
+		}{{"C1", at}, {"C2", at.Add(-3 * time.Hour)}} {
 			assert.Equal(t, model.SlackRowGap, rows[i].Kind)
-			assert.Equal(t, ch, rows[i].ChannelID)
-			assert.JSONEq(t, fmt.Sprintf(`{"from":%q,"to":%q}`, at.Format(time.RFC3339Nano), at.Add(time.Minute).Format(time.RFC3339Nano)),
+			assert.Equal(t, w.channel, rows[i].ChannelID)
+			assert.JSONEq(t, fmt.Sprintf(`{"from":%q,"to":%q}`, w.minute.Format(time.RFC3339Nano), w.minute.Add(time.Minute).Format(time.RFC3339Nano)),
 				string(rows[i].Payload))
 		}
 		var w struct{ oldest, latest time.Time }
@@ -402,6 +416,110 @@ func TestFoundrySlackFeedAppend(t *testing.T) {
 			assert.Error(t, err)
 		}
 	})
+}
+
+// A connector a permanent failure paused stays paused while events arrive:
+// no sync is queued to fail again. A reinstall, or its owner's edit, lifts it.
+func TestFoundrySlackFeedAppendPaused(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "paused")
+	install := f.feedInstall(t, 1, f.workspaceID, "T1", "")
+	c, _ := f.bound(t, 1, install, "C1")
+	dbExec(t, `UPDATE connectors SET next_sync_at=NULL, schedule_paused='Slack refused the scopes' WHERE id=?`, c.ID)
+	day := model.SlackDay(time.Now())
+	got, err := f.db.AppendFoundrySlackFeed(ctx, install.ID, model.SlackFeedBatch{Rows: []model.SlackFeedRow{feedRow("C1", "Ev1", day)}, At: day}, feedLimits)
+	require.NoError(t, err)
+	assert.Equal(t, model.SlackAppended, got.Outcome)
+	_, err = f.db.AppendFoundrySlackFeedGaps(ctx, install.ID, []model.SlackFeedGap{model.SlackMinuteGap("C1", time.Now())}, time.Minute)
+	require.NoError(t, err)
+	_, err = f.db.CloseFoundrySlackDays(ctx, mustFeed(t, f.db, c.ID).ID, day, time.Minute)
+	require.NoError(t, err)
+	stored, err := f.db.GetConnector(ctx, f.workspaceID, c.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stored.NextSyncAt, "a paused connector isn't due")
+}
+
+// An append makes its connector's sync due only after its feed's
+// transaction, so a connector's delete or edit, which locks the connector
+// and then the feed, never deadlocks with it.
+func TestFoundrySlackFeedAppendLockOrder(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "lockorder")
+	install := f.feedInstall(t, 1, f.workspaceID, "T1", "")
+	c, feed := f.bound(t, 1, install, "C1")
+	day := model.SlackDay(time.Now())
+
+	tx, err := testDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	var locked string
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT id FROM connectors WHERE id=? FOR UPDATE`, c.ID).Scan(&locked))
+	appended := make(chan error, 1)
+	go func() {
+		_, err := f.db.AppendFoundrySlackFeed(ctx, install.ID, model.SlackFeedBatch{Rows: []model.SlackFeedRow{feedRow("C1", "Ev1", day)}, At: day},
+			feedLimits)
+		appended <- err
+	}()
+	time.Sleep(500 * time.Millisecond) // the append reaches the connector's lock
+	require.NoError(t, tx.QueryRowContext(ctx, `SELECT id FROM foundry_slack_feeds WHERE id=? FOR UPDATE`, feed.ID).Scan(&locked),
+		"the connector's holder takes the feed")
+	require.NoError(t, tx.Commit())
+	require.NoError(t, <-appended)
+	stored, err := f.db.GetConnector(ctx, f.workspaceID, c.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, stored.NextSyncAt, "and the append makes its sync due after")
+}
+
+// mustFeed is the connector's live feed.
+func mustFeed(t *testing.T, db store.Store, connectorID string) *model.SlackFeed {
+	t.Helper()
+	feed, err := db.GetFoundrySlackFeed(context.Background(), connectorID)
+	require.NoError(t, err)
+	return feed
+}
+
+// Keeping more days of history reads the days added back: a bound window
+// per covered channel, which a staged switch's flip waits for. Fewer adds
+// none.
+func TestSlackAppConnectorHistoryGrows(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "grows")
+	install := f.feedInstall(t, 1, f.workspaceID, "T1", "")
+	c := f.appConnector(f.workspaceID, 1)
+	c.Config = json.RawMessage(`{"credential":"helix_app","history_days":30}`)
+	bind := bindTo(install, "C1", "C2")
+	bind.HistoryDays = 30
+	require.NoError(t, f.db.CreateSlackAppConnector(ctx, c, bind))
+	feed := mustFeed(t, f.db, c.ID)
+	windows := func() []string {
+		rows, err := testDB.Query(`SELECT channel_id, reason, ROUND(TIMESTAMPDIFF(SECOND, oldest, NOW(6)) / 86400), ROUND(TIMESTAMPDIFF(SECOND, latest, NOW(6)) / 86400)
+FROM foundry_slack_backfill WHERE feed_id=? ORDER BY place, channel_id`, feed.ID)
+		require.NoError(t, err)
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var channel, reason string
+			var oldest, latest int
+			require.NoError(t, rows.Scan(&channel, &reason, &oldest, &latest))
+			out = append(out, fmt.Sprintf("%s %s %d-%d", channel, reason, oldest, latest))
+		}
+		return out
+	}
+	require.Equal(t, []string{"C1 bound 30-0", "C2 bound 30-0"}, windows())
+
+	update := func(days int) {
+		t.Helper()
+		b := bindTo(install)
+		b.HistoryDays = days
+		require.NoError(t, f.db.UpdateSlackAppConnector(ctx, f.workspaceID, c.ID,
+			model.ConnectorUpdate{Config: json.RawMessage(fmt.Sprintf(`{"credential":"helix_app","history_days":%d}`, days)), SecretCiphertext: []byte{}},
+			model.SlackAppBindNow{Bind: b}))
+	}
+	update(90)
+	assert.Equal(t, []string{"C1 bound 30-0", "C2 bound 30-0", "C1 bound 90-30", "C2 bound 90-30"}, windows())
+	assert.Equal(t, feed.ID, mustFeed(t, f.db, c.ID).ID, "the same feed")
+	update(60)
+	assert.Len(t, windows(), 4, "fewer days read nothing back")
 }
 
 // Rows are numbered in the order their appends commit, under the feed's

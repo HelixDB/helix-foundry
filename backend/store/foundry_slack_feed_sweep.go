@@ -44,15 +44,15 @@ ORDER BY f.id LIMIT ?`, after, limit)
 // closes while a live gap window overlaps it or a thread of it is queued.
 // A row is keyed by the day's index row (updated_seq), so a day closed
 // again after a gap is a new row, and one closed twice before a fold is
-// kept once. Rows are appended past the buffer's cap. A pushed connector
-// with no sync due is due spacing from now, whether a day closed or not:
-// yesterday's documents are offered once it closes. It returns how many
-// rows it appended.
+// kept once. Rows are appended past the buffer's cap. Once it commits, a
+// pushed connector with no sync due is due spacing from now, whether a day
+// closed or not: yesterday's documents are offered once it closes, and days
+// leave the window. It returns how many rows it appended.
 func (s *mysqlDB) CloseFoundrySlackDays(ctx context.Context, feedID string, before time.Time, spacing time.Duration) (int, error) {
 	if spacing <= 0 || !before.Equal(model.SlackDay(before)) {
 		return 0, fmt.Errorf("a Slack feed's days close before a UTC midnight, with a spacing")
 	}
-	kept := 0
+	kept, connectorID := 0, ""
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		kept = 0
@@ -60,6 +60,7 @@ func (s *mysqlDB) CloseFoundrySlackDays(ctx context.Context, feedID string, befo
 		if err != nil {
 			return err
 		}
+		connectorID = feed.ConnectorID
 		overlaps := `b.feed_id=d.feed_id AND b.channel_id=d.channel_id AND b.oldest < d.day + INTERVAL 1 DAY AND b.latest > d.day`
 		rows, err := tx.db.QueryContext(ctx, `SELECT d.channel_id, d.day, d.updated_seq,
   c.covered_from <= d.day OR EXISTS (SELECT 1 FROM foundry_slack_backfill b WHERE b.feed_id=d.feed_id AND b.channel_id=d.channel_id
@@ -101,12 +102,13 @@ ORDER BY d.channel_id, d.day`, feedID, before.Format(time.DateOnly))
 				DedupeKey: model.SlackBackfillDedupe(c.channel, day.Format(time.DateOnly), strconv.FormatInt(c.seq, 10), model.SlackRowComplete),
 				Payload:   payload})
 		}
-		if kept, err = tx.appendFoundrySlackRows(ctx, feed, closing); err != nil {
-			return err
-		}
-		return tx.dueFoundrySlackSync(ctx, feed.ConnectorID, spacing)
+		kept, err = tx.appendFoundrySlackRows(ctx, feed, closing)
+		return err
 	})
-	return kept, err
+	if err != nil {
+		return kept, err
+	}
+	return kept, s.dueFoundrySlackSync(ctx, connectorID, spacing)
 }
 
 // FlipSlackAppConnector ends a staged switch of a live Slack connector of

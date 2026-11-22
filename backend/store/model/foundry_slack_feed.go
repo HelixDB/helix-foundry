@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,6 +121,42 @@ func (r SlackFeedRow) Validate() error {
 	}
 	_, err := ParseSlackFeedSource(string(r.Source))
 	return err
+}
+
+// Minute is the minute the row's message was posted, which a gap in its
+// place re-reads: its payload's ts (a deleted message's deleted_ts, the
+// latest reply a replied row names), never after fallback; fallback, to
+// the minute, for a row naming no message (a channel's lifecycle, a page's
+// span, a day's close).
+func (r SlackFeedRow) Minute(fallback time.Time) time.Time {
+	var p struct {
+		TS          string `json:"ts"`
+		DeletedTS   string `json:"deleted_ts"`
+		LatestReply string `json:"latest_reply"`
+	}
+	_ = json.Unmarshal(r.Payload, &p) // Validate: JSON
+	ts := p.TS
+	switch {
+	case r.Kind == SlackRowDeleted && p.DeletedTS != "":
+		ts = p.DeletedTS
+	case r.Kind == SlackRowReplied && p.LatestReply != "":
+		ts = p.LatestReply
+	case r.Kind != SlackRowMessage && r.Kind != SlackRowChanged && r.Kind != SlackRowDeleted && r.Kind != SlackRowReplied:
+		ts = ""
+	}
+	minute := fallback.UTC().Truncate(time.Minute)
+	if !ValidSlackTS(ts) {
+		return minute
+	}
+	secs, _, _ := strings.Cut(ts, ".")
+	n, err := strconv.ParseInt(secs, 10, 64)
+	if err != nil {
+		return minute
+	}
+	if at := time.Unix(n, 0).UTC().Truncate(time.Minute); at.Before(minute) {
+		return at
+	}
+	return minute
 }
 
 // SlackDay is the UTC day t falls on, at midnight: the day a row lands on.

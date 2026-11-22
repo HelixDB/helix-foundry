@@ -23,7 +23,10 @@ import (
 //
 // Locks are taken in one order: the workspace, the connector, the install,
 // the feed, then the feed's other rows. An append takes the feed alone, and
-// reads its install in a subquery (Vitess cannot parse FOR UPDATE OF).
+// reads its install in a subquery (Vitess cannot parse FOR UPDATE OF); the
+// connector's next sync is made due after it commits (dueFoundrySlackSync),
+// never under the feed's lock, which a connector's delete or edit takes
+// after the connector's.
 
 const foundrySlackFeedColumns = `id, connector_id, workspace_id, team_id, enterprise_id, install_id, last_seq, folded_seq, notice_version, bound_by,
        bound_at, deleting_at`
@@ -86,8 +89,10 @@ func (s *mysqlDB) CreateSlackAppConnector(ctx context.Context, c *model.Connecto
 // in one transaction holding the workspace's lock, then the connector's:
 //   - model.SlackAppBindNow: pushed, its change cursor nulled (the next sync
 //     reads in full from the mirror). A feed it has on the same install
-//     stays (a staged switch's flip); one on another is unbound and a new one
-//     bound as bindFoundrySlackFeed says;
+//     stays (a staged switch's flip), and keeping more days of history than
+//     its settings did reads the days added back (extendFoundrySlackFeed);
+//     one on another install is unbound and a new one bound as
+//     bindFoundrySlackFeed says;
 //   - model.SlackAppBindStaged: bound the same way, but not pushed and its
 //     cursor kept: it syncs by its token until the flip. A connector read
 //     through the app already is not staged (an error);
@@ -120,8 +125,10 @@ func (s *mysqlDB) UpdateSlackAppConnector(ctx context.Context, workspaceID, id s
 		}
 		var kind string
 		var wasPushed bool
-		err := tx.db.QueryRowContext(ctx, `SELECT kind, pushed FROM connectors WHERE id=? AND workspace_id=? AND deleted_at IS NULL FOR UPDATE`,
-			id, workspaceID).Scan(&kind, &wasPushed)
+		var historyDays int
+		err := tx.db.QueryRowContext(ctx, `SELECT kind, pushed, COALESCE(CAST(JSON_EXTRACT(config, '$.history_days') AS SIGNED), ?)
+FROM connectors WHERE id=? AND workspace_id=? AND deleted_at IS NULL FOR UPDATE`, model.SlackAppHistoryDaysMax, id, workspaceID).
+			Scan(&kind, &wasPushed, &historyDays)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return ErrNotFound
@@ -143,8 +150,13 @@ FROM foundry_slack_feeds WHERE live_connector=? FOR UPDATE`, id))
 			}
 			feed = nil
 		}
-		if bind != nil && feed == nil {
+		switch {
+		case bind != nil && feed == nil:
 			if err := tx.bindFoundrySlackFeed(ctx, workspaceID, id, *bind); err != nil {
+				return err
+			}
+		case bind != nil && bind.HistoryDays > historyDays:
+			if err := tx.extendFoundrySlackFeed(ctx, feed.ID, historyDays, bind.HistoryDays); err != nil {
 				return err
 			}
 		}
@@ -238,6 +250,41 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, feedID, connectorID, workspaceID, install.T
 			return err
 		}
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_slack_backfill (feed_id, channel_id, oldest, place, latest, reason) VALUES `+
+			placeholderRows(len(chunk), 6), windows...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extendFoundrySlackFeed has a feed whose lock the caller holds, kept from
+// held to days of history, read the days added: a bound window per channel
+// it covers of [now - days, now - held), after its other bound windows, so
+// the mirror holds them before a staged switch flips (which waits for bound
+// windows) and their days close read whole.
+func (s *mysqlDB) extendFoundrySlackFeed(ctx context.Context, feedID string, held, days int) error {
+	var now time.Time
+	var place int
+	if err := s.db.QueryRowContext(ctx, `SELECT NOW(6), COALESCE((SELECT MAX(place) + 1 FROM foundry_slack_backfill WHERE feed_id=?), 0)`, feedID).
+		Scan(&now, &place); err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT channel_id FROM foundry_slack_feed_channels WHERE feed_id=? ORDER BY channel_id`, feedID)
+	if err != nil {
+		return err
+	}
+	channels, err := scanStrings(rows)
+	if err != nil {
+		return err
+	}
+	oldest, latest := now.Add(-time.Duration(days)*24*time.Hour), now.Add(-time.Duration(held)*24*time.Hour)
+	for start := 0; start < len(channels); start += foundrySlackRowsPerInsert {
+		chunk := channels[start:min(start+foundrySlackRowsPerInsert, len(channels))]
+		windows := make([]any, 0, 6*len(chunk))
+		for i, c := range chunk {
+			windows = append(windows, feedID, c, oldest, place+start+i, latest, model.SlackBackfillBound)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_slack_backfill (feed_id, channel_id, oldest, place, latest, reason) VALUES `+
 			placeholderRows(len(chunk), 6), windows...); err != nil {
 			return err
 		}
@@ -351,13 +398,15 @@ FROM foundry_slack_feeds f WHERE f.live_install=? FOR UPDATE`, installID), &live
 //   - no live feed reads the install, or the install is revoked:
 //     model.SlackAppendUnbound, and nothing is kept;
 //   - the batch would leave more than limits.MaxRows unfolded: a gap of the
-//     minute batch.At for each row's channel is recorded in its place
-//     (model.SlackAppendFull), past the cap;
+//     minute each row's message was posted (model.SlackFeedRow.Minute, else
+//     batch.At's) in its channel is recorded in its place, but for a message
+//     older than any window keeps (model.SlackAppendFull), past the cap;
 //   - else the rows are kept, but for those kept already
 //     (model.SlackAppended, or model.SlackAppendDuplicate when none is new).
 //
-// When it keeps a row, a pushed connector with no sync due is due
-// limits.Spacing from now.
+// Once it commits, bound, a pushed connector with no sync due (and no pause)
+// is due limits.Spacing from now: a duplicate too, so an append whose answer
+// was lost and that Slack sends again still schedules its sync.
 func (s *mysqlDB) AppendFoundrySlackFeed(ctx context.Context, installID string, batch model.SlackFeedBatch, limits model.SlackFeedLimits) (
 	model.SlackFeedAppended, error) {
 	switch {
@@ -372,8 +421,10 @@ func (s *mysqlDB) AppendFoundrySlackFeed(ctx context.Context, installID string, 
 		}
 	}
 	var out model.SlackFeedAppended
+	var connectorID string
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		connectorID = ""
 		feed, live, err := tx.lockFoundrySlackFeedByInstall(ctx, installID)
 		switch {
 		case errors.Is(err, ErrNotFound) || err == nil && !live:
@@ -383,10 +434,15 @@ func (s *mysqlDB) AppendFoundrySlackFeed(ctx context.Context, installID string, 
 			return err
 		}
 		out = model.SlackFeedAppended{FeedID: feed.ID, Outcome: model.SlackAppended}
+		connectorID = feed.ConnectorID
 		if feed.LastSeq+int64(len(batch.Rows))-feed.FoldedSeq > limits.MaxRows {
 			var gaps []model.SlackFeedGap
 			for _, r := range batch.Rows {
-				if gap := model.SlackMinuteGap(r.ChannelID, batch.At); !slices.Contains(gaps, gap) {
+				minute := r.Minute(batch.At)
+				if minute.Before(batch.At.AddDate(0, 0, -model.SlackAppHistoryDaysMax-1)) {
+					continue // an edit of a message past any window: no day to read back
+				}
+				if gap := model.SlackMinuteGap(r.ChannelID, minute); !slices.Contains(gaps, gap) {
 					gaps = append(gaps, gap)
 				}
 			}
@@ -398,19 +454,20 @@ func (s *mysqlDB) AppendFoundrySlackFeed(ctx context.Context, installID string, 
 				out.Outcome = model.SlackAppendDuplicate
 			}
 		}
-		if err != nil || out.Rows == 0 {
-			return err
-		}
-		return tx.dueFoundrySlackSync(ctx, feed.ConnectorID, limits.Spacing)
+		return err
 	})
-	return out, err
+	if err != nil || connectorID == "" {
+		return out, err
+	}
+	return out, s.dueFoundrySlackSync(ctx, connectorID, limits.Spacing)
 }
 
 // AppendFoundrySlackFeedGaps records gaps in the live feed reading
 // installID (a gap naming no channel is one of every channel it covers): a
 // gap row each, and a gap window each, merged with the channel's queued
-// ones it meets. Unbound when no live feed reads a live install. A pushed
-// connector with no sync due is due spacing from now.
+// ones it meets. Unbound when no live feed reads a live install. Once it
+// commits a new gap, a pushed connector with no sync due is due spacing from
+// now.
 func (s *mysqlDB) AppendFoundrySlackFeedGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, spacing time.Duration) (
 	model.SlackFeedAppended, error) {
 	if spacing <= 0 || len(gaps) == 0 {
@@ -422,12 +479,16 @@ func (s *mysqlDB) AppendFoundrySlackFeedGaps(ctx context.Context, installID stri
 		}
 	}
 	var out model.SlackFeedAppended
+	var connectorID string
 	err := s.WithTx(ctx, func(txDB Store) error {
 		var err error
-		out, err = txDB.(*mysqlDB).appendFoundrySlackGaps(ctx, installID, gaps, spacing)
+		out, connectorID, err = txDB.(*mysqlDB).appendFoundrySlackGaps(ctx, installID, gaps)
 		return err
 	})
-	return out, err
+	if err != nil || connectorID == "" {
+		return out, err
+	}
+	return out, s.dueFoundrySlackSync(ctx, connectorID, spacing)
 }
 
 // RecordFoundrySlackEventsLimited records Slack's app_rate_limited for the
@@ -442,6 +503,7 @@ func (s *mysqlDB) RecordFoundrySlackEventsLimited(ctx context.Context, installID
 	}
 	gap := model.SlackMinuteGap("", minute)
 	var out model.SlackFeedAppended
+	var connectorID string
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_slack_installs
@@ -449,29 +511,35 @@ SET events_limited_at=GREATEST(COALESCE(events_limited_at, ?), ?) WHERE id=? AND
 			return err
 		}
 		var err error
-		out, err = tx.appendFoundrySlackGaps(ctx, installID, []model.SlackFeedGap{gap}, spacing)
+		out, connectorID, err = tx.appendFoundrySlackGaps(ctx, installID, []model.SlackFeedGap{gap})
 		return err
 	})
-	return out, err
+	if err != nil || connectorID == "" {
+		return out, err
+	}
+	return out, s.dueFoundrySlackSync(ctx, connectorID, spacing)
 }
 
-func (s *mysqlDB) appendFoundrySlackGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, spacing time.Duration) (
-	model.SlackFeedAppended, error) {
+// appendFoundrySlackGaps records gaps in the live feed reading installID,
+// and returns the feed's connector when a gap was new: its sync is the
+// caller's to make due once the transaction commits.
+func (s *mysqlDB) appendFoundrySlackGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap) (
+	model.SlackFeedAppended, string, error) {
 	feed, live, err := s.lockFoundrySlackFeedByInstall(ctx, installID)
 	switch {
 	case errors.Is(err, ErrNotFound) || err == nil && !live:
-		return model.SlackFeedAppended{Outcome: model.SlackAppendUnbound}, nil
+		return model.SlackFeedAppended{Outcome: model.SlackAppendUnbound}, "", nil
 	case err != nil:
-		return model.SlackFeedAppended{}, err
+		return model.SlackFeedAppended{}, "", err
 	}
 	out := model.SlackFeedAppended{Outcome: model.SlackAppended, FeedID: feed.ID}
 	if out.Rows, err = s.recordFoundrySlackGaps(ctx, feed, gaps); err != nil || out.Rows == 0 {
 		if out.Rows == 0 {
 			out.Outcome = model.SlackAppendDuplicate
 		}
-		return out, err
+		return out, "", err
 	}
-	return out, s.dueFoundrySlackSync(ctx, feed.ConnectorID, spacing)
+	return out, feed.ConnectorID, nil
 }
 
 // recordFoundrySlackGaps records gaps in feed, whose lock the caller holds:
@@ -580,10 +648,13 @@ func (s *mysqlDB) appendFoundrySlackRows(ctx context.Context, feed *model.SlackF
 }
 
 // dueFoundrySlackSync has a live pushed connector with no sync due sync
-// spacing from now, as a send to an event source does.
+// spacing from now, as a send to an event source does. One a permanent
+// failure paused stays paused: its owner's change (a reinstall's repoint,
+// an edit) lifts the pause and schedules it. It runs on its own, after the
+// feed's transaction: never under the feed's lock.
 func (s *mysqlDB) dueFoundrySlackSync(ctx context.Context, connectorID string, spacing time.Duration) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE connectors SET next_sync_at=NOW(6) + INTERVAL ? MICROSECOND
-WHERE id=? AND next_sync_at IS NULL AND pushed AND deleted_at IS NULL`, spacing.Microseconds(), connectorID)
+WHERE id=? AND next_sync_at IS NULL AND schedule_paused IS NULL AND pushed AND deleted_at IS NULL`, spacing.Microseconds(), connectorID)
 	return err
 }
 
@@ -1061,8 +1132,8 @@ FROM foundry_slack_backfill_threads WHERE feed_id=? AND status='queued' ORDER BY
 //     status Status.
 //
 // Either way the page's rows are appended past the buffer's cap (a fold
-// follows at once), and a pushed connector with no sync due is due spacing
-// from now when one is new.
+// follows at once), and, once it commits, a pushed connector with no sync
+// due is due spacing from now when one is new.
 func (s *mysqlDB) AdvanceFoundrySlackBackfill(ctx context.Context, step model.SlackBackfillStep, spacing time.Duration) error {
 	if spacing <= 0 {
 		return fmt.Errorf("a Slack backfill step has a spacing")
@@ -1126,8 +1197,10 @@ WHERE feed_id=? AND channel_id=? AND thread_ts=? AND status='queued' AND page_cu
 			return err
 		}
 	}
-	return s.WithTx(ctx, func(txDB Store) error {
+	var connectorID string
+	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		connectorID = ""
 		feed, err := tx.lockLiveFoundrySlackFeed(ctx, feedID)
 		if err != nil {
 			return err
@@ -1138,11 +1211,15 @@ WHERE feed_id=? AND channel_id=? AND thread_ts=? AND status='queued' AND page_cu
 			return err
 		}
 		kept, err := tx.appendFoundrySlackRows(ctx, feed, rows)
-		if err != nil || kept == 0 {
-			return err
+		if kept > 0 {
+			connectorID = feed.ConnectorID
 		}
-		return tx.dueFoundrySlackSync(ctx, feed.ConnectorID, spacing)
+		return err
 	})
+	if err != nil || connectorID == "" {
+		return err
+	}
+	return s.dueFoundrySlackSync(ctx, connectorID, spacing)
 }
 
 // QueueFoundrySlackThreads queues threads for the backfill to read the

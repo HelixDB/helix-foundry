@@ -25,6 +25,37 @@ func ExampleSlackBackfillDedupe() {
 	// Output: b: 66 false true
 }
 
+func ExampleSlackFeedRow_Minute() {
+	appended := time.Date(2026, 11, 20, 18, 0, 0, 0, time.UTC) // a relay held the row for hours
+	posted := SlackFeedRow{Kind: SlackRowMessage, Payload: json.RawMessage(`{"ts":"1795183473.000100","text":"hi"}`)}
+	fmt.Println(posted.Minute(appended).Format(time.RFC3339))
+	// Output: 2026-11-20T14:04:00Z
+}
+
+func TestSlackFeedRowMinute(t *testing.T) {
+	at := time.Date(2026, 11, 20, 18, 0, 30, 0, time.UTC)
+	for _, c := range []struct {
+		kind    SlackFeedRowKind
+		payload string
+		want    string
+	}{
+		{SlackRowMessage, `{"ts":"1795183473.000100"}`, "14:04"},
+		{SlackRowChanged, `{"ts":"1795183473.000100","edited":{"ts":"1795184000.000100"}}`, "14:04"},
+		{SlackRowDeleted, `{"deleted_ts":"1795183473.000100","ts":"1795186800.000100"}`, "14:04"},
+		{SlackRowReplied, `{"ts":"1795176000.000100","latest_reply":"1795183473.000100"}`, "14:04"},
+		{SlackRowReplied, `{"ts":"1795183473.000100"}`, "14:04"},
+		{SlackRowMessage, `{"ts":"1999999999.000100"}`, "18:00"}, // never after the append
+		{SlackRowMessage, `{"ts":"soon"}`, "18:00"},
+		{SlackRowMessage, `{}`, "18:00"},
+		{SlackRowJoined, `{"ts":"1795183473.000100"}`, "18:00"},
+		{SlackRowSpan, `{"from":"1795183473.000100"}`, "18:00"},
+	} {
+		if got := (SlackFeedRow{Kind: c.kind, Payload: json.RawMessage(c.payload)}).Minute(at).Format("15:04"); got != c.want {
+			t.Errorf("%s %s: minute %s, want %s", c.kind, c.payload, got, c.want)
+		}
+	}
+}
+
 func ExampleSlackDay() {
 	fmt.Println(SlackDay(time.Date(2026, 11, 20, 23, 30, 0, 0, time.FixedZone("PST", -8*3600))).Format(time.RFC3339))
 	// Output: 2026-11-21T00:00:00Z
