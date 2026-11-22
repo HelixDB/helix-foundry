@@ -14,6 +14,14 @@
 //
 // writes the install's secrets that dir lacks, once (secrets.go), and exits.
 // The image's entrypoint passes --config first; the subcommand ignores it.
+//
+//	foundry --config /etc/foundry/foundry.yaml rebuild-loads --current-created-before=2026-11-22T00:00:00Z
+//
+// queues a full reload of every live ontology's current load created before
+// that time (store.RebuildFoundryLoads), says which a live job held back, and
+// exits (rebuild.go). It reads the database the configuration names, which
+// it doesn't migrate. Run it again once those jobs end; it never queues a
+// reload twice.
 package main
 
 import (
@@ -31,14 +39,26 @@ func main() {
 		os.Exit(2)
 	}
 	if args := flags.Args(); len(args) > 0 {
-		if args[0] != "init-secrets" {
+		switch args[0] {
+		case "init-secrets":
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("command", "init-secrets")
+			if err := runInitSecrets(args[1:], os.Getenv, logger); err != nil {
+				fmt.Fprintln(os.Stderr, "init-secrets:", err)
+				os.Exit(1)
+			}
+		case "rebuild-loads":
+			cfg, err := load(*path)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "config:", err)
+				os.Exit(1)
+			}
+			if err := runRebuildLoads(context.Background(), cfg.DB.DSN, args[1:], os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, "rebuild-loads:", err)
+				os.Exit(1)
+			}
+		default:
 			fmt.Fprintf(os.Stderr, "foundry: unknown command %q\n", args[0])
 			os.Exit(2)
-		}
-		logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("command", "init-secrets")
-		if err := runInitSecrets(args[1:], os.Getenv, logger); err != nil {
-			fmt.Fprintln(os.Stderr, "init-secrets:", err)
-			os.Exit(1)
 		}
 		return
 	}

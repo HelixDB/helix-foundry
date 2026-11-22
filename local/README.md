@@ -144,7 +144,7 @@ Every volume goes back under its own name before the stack first starts, so on a
 - The site opens on your workspaces, with their connections, documents and ontologies. Sync a connection: it syncs only if the restored connector key opens its credential.
 - A document opens, and the Explorer shows what each ontology loaded.
 
-**Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before must not run on it again. Restore a backup only onto the images it lists, then upgrade again if you need to.
+**Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before must not run on it again. Restore a backup only onto the images it lists, then upgrade again if you need to. A release whose engine writes the graph differently reloads each ontology's current load at its first start, in the background, at no model cost (each document's saved reading is replayed); until a reload ends, its ontology reads the load it replaces. If a filter misses after one, load the ontology again.
 
 ## Usage analytics
 

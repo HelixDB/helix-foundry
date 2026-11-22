@@ -442,6 +442,8 @@ type Store interface {
 	PutFoundryDataLayout(ctx context.Context, l *model.FoundryDataLayout, expectedRevision int64) error
 	CreateFoundryLoad(ctx context.Context, job *model.FoundryGraphJob) error
 	QueueFoundryRefresh(ctx context.Context, workspaceID, ontologyID string, job *model.FoundryGraphJob) (bool, error)
+	QueueFoundryRebuild(ctx context.Context, workspaceID, ontologyID string, before time.Time, job *model.FoundryGraphJob) (FoundryRebuild, error)
+	ListFoundryRebuilds(ctx context.Context, before time.Time, afterID string, limit int) ([]*model.FoundryOntology, error)
 	QueueFoundryReread(ctx context.Context, workspaceID, ontologyID string, classes []string, job *model.FoundryGraphJob,
 		budget model.FoundryGraphBudget, now time.Time) (bool, error)
 	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID, syncID string, tables []string, refreshEvery time.Duration) error

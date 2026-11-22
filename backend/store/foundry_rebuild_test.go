@@ -1,0 +1,304 @@
+package store_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/helixdb/helix-foundry/backend/store"
+	"github.com/helixdb/helix-foundry/backend/store/model"
+)
+
+// cutover is the rebuilds' cutover in these tests: loads created before it
+// are an earlier engine's.
+var cutover = time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// earlier dates a load before cutover, as an earlier release wrote it.
+func earlier(t *testing.T, loadID string) {
+	t.Helper()
+	_, err := testDB.ExecContext(context.Background(), `UPDATE foundry_loads SET created_at='2020-06-01 00:00:00' WHERE id=?`, loadID)
+	require.NoError(t, err)
+}
+
+func rebuildJob(tag string) *model.FoundryGraphJob {
+	return &model.FoundryGraphJob{ID: id26("RB-" + tag)}
+}
+
+func TestFoundryRebuild(t *testing.T) {
+	// The gates of a refresh don't apply: with refresh off and none due, the
+	// current load is loaded again in full, as a refresh replaces it.
+	t.Run("queues a full refresh load of an earlier current load, refresh off included", func(t *testing.T) {
+		ctx := context.Background()
+		f, _, current := refreshFixture(t, "RB1")
+		require.NoError(t, f.db.SetFoundryOntologyAutoRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, false))
+		earlier(t, current)
+		require.Nil(t, f.ontologyNow(t).RefreshDueAt)
+
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("1"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildQueued, done)
+		live := f.liveJob(t)
+		require.NotNil(t, live)
+		assert.Equal(t, id26("RB-1"), live.ID)
+		assert.Equal(t, model.FoundryGraphJobLoad, live.Kind, "a full load, not an apply")
+		assert.Equal(t, model.FoundryGraphJobProvisioning, live.Phase)
+		assert.Equal(t, live.ID, live.LoadID, "it writes a load of its own")
+		assert.Nil(t, live.RequestedByUserID, "no person started it")
+		rebuild, err := f.db.GetFoundryLoad(ctx, f.ontology.ID, live.LoadID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryLoadByRefresh, rebuild.Origin)
+		require.NotNil(t, rebuild.RefreshesLoadID)
+		assert.Equal(t, current, *rebuild.RefreshesLoadID)
+		old, err := f.db.GetFoundryLoad(ctx, f.ontology.ID, current)
+		require.NoError(t, err)
+		assert.Equal(t, old.VersionID, rebuild.VersionID, "the current load's version")
+		o := f.ontologyNow(t)
+		assert.False(t, o.AutoRefresh, "refresh stays off")
+		assert.Nil(t, o.RefreshDueAt)
+		assert.Equal(t, current, *o.CurrentLoadID, "the old load serves until the rebuild holds everything")
+
+		// Once it is written, it is current, and nothing more is owed.
+		f.loaded(t, "w2")
+		assert.Equal(t, id26("RB-1"), *f.ontologyNow(t).CurrentLoadID)
+		done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("2"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildNotOwed, done)
+		assert.Nil(t, f.liveJob(t))
+	})
+
+	// A second run while the first rebuild is queued or running adds none.
+	t.Run("is idempotent while its rebuild is live", func(t *testing.T) {
+		ctx := context.Background()
+		f, _, current := refreshFixture(t, "RB2")
+		earlier(t, current)
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("a"))
+		require.NoError(t, err)
+		require.Equal(t, store.FoundryRebuildQueued, done)
+		for _, tag := range []string{"b", "c"} {
+			done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(tag))
+			require.NoError(t, err)
+			assert.Equal(t, store.FoundryRebuildUnderWay, done)
+		}
+		f.claimed(t, "w2", id26("RB-a"))
+		done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("d"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildUnderWay, done, "running, it is still the rebuild")
+		assert.Equal(t, id26("RB-a"), f.liveJob(t).ID)
+		_, err = f.db.GetFoundryLoad(ctx, f.ontology.ID, id26("RB-b"))
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
+	// A rebuild that fails leaves the old load current and still owed.
+	t.Run("is owed again after a rebuild that failed", func(t *testing.T) {
+		ctx := context.Background()
+		f, _, current := refreshFixture(t, "RB3")
+		earlier(t, current)
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("f1"))
+		require.NoError(t, err)
+		require.Equal(t, store.FoundryRebuildQueued, done)
+		f.finish(t, "w2", "failed", model.FoundryGraphJobFailed)
+		assert.Equal(t, current, *f.ontologyNow(t).CurrentLoadID)
+		done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("f2"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildQueued, done)
+		assert.Equal(t, id26("RB-f2"), f.liveJob(t).ID)
+	})
+
+	// Someone else's job goes first; an owed refresh stays owed.
+	t.Run("waits for another live job, and leaves an owed refresh owed", func(t *testing.T) {
+		ctx := context.Background()
+		f, connectorID, current := refreshFixture(t, "RB4")
+		earlier(t, current)
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
+		userLoad := f.load(t, "U-RB4")
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("w1"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildBusy, done)
+		assert.Equal(t, userLoad, f.liveJob(t).LoadID, "the user's load is untouched")
+		assert.NotNil(t, f.ontologyNow(t).RefreshDueAt)
+	})
+
+	// A refresh an earlier engine started writes that engine's load: it is
+	// no rebuild, and holds one back until it ends.
+	t.Run("takes an earlier engine's live refresh for no rebuild", func(t *testing.T) {
+		ctx := context.Background()
+		f, connectorID, current := refreshFixture(t, "RB8")
+		earlier(t, current)
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, "", []string{"customers"}, time.Millisecond))
+		queued, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("RB8"))
+		require.NoError(t, err)
+		require.True(t, queued)
+		earlier(t, id26("RJ-RB8"))
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("e1"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildBusy, done)
+		// One this engine started is the rebuild, whoever queued it.
+		_, err = testDB.ExecContext(ctx, `UPDATE foundry_loads SET created_at=NOW(6) WHERE id=?`, id26("RJ-RB8"))
+		require.NoError(t, err)
+		done, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("e2"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildUnderWay, done)
+	})
+
+	t.Run("owes nothing without a current load, or for one written since the cutover", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "RB5")
+		done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("n1"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildNotOwed, done)
+
+		g, _, _ := refreshFixture(t, "RB6")
+		done, err = g.db.QueueFoundryRebuild(ctx, g.ontology.WorkspaceID, g.ontology.ID, cutover, rebuildJob("n2"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildNotOwed, done)
+		assert.Nil(t, g.liveJob(t))
+		// The cutover is exclusive: a load created at it is this engine's.
+		var created time.Time
+		require.NoError(t, testDB.QueryRowContext(ctx, `SELECT created_at FROM foundry_loads WHERE id=?`, *g.ontologyNow(t).CurrentLoadID).Scan(&created))
+		done, err = g.db.QueueFoundryRebuild(ctx, g.ontology.WorkspaceID, g.ontology.ID, created, rebuildJob("n3"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildNotOwed, done)
+		done, err = g.db.QueueFoundryRebuild(ctx, g.ontology.WorkspaceID, g.ontology.ID, created.Add(time.Microsecond), rebuildJob("n4"))
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuildQueued, done)
+	})
+
+	t.Run("refuses an ontology that isn't live", func(t *testing.T) {
+		ctx := context.Background()
+		f, _, current := refreshFixture(t, "RB7")
+		earlier(t, current)
+		_, err := testDB.ExecContext(ctx, `UPDATE foundry_ontologies SET deleted_at=NOW(6) WHERE id=?`, f.ontology.ID)
+		require.NoError(t, err)
+		_, err = f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob("x"))
+		assert.ErrorIs(t, err, store.ErrNotFound)
+		listed, err := f.db.ListFoundryRebuilds(ctx, cutover, "", 10)
+		require.NoError(t, err)
+		assert.Empty(t, listed, "a deleted ontology is never listed")
+	})
+
+	// The ontologies owed a rebuild, by id, a page at a time; the run
+	// queues each it can and says which a live job held back.
+	t.Run("lists and rebuilds every ontology owed one", func(t *testing.T) {
+		ctx := context.Background()
+		a, _, aLoad := refreshFixture(t, "RBA")
+		b := foundryFixture{db: a.db, ontology: sampleOntology(t, a.db, a.ontology.WorkspaceID, "RBB")}
+		b.version(t, "RBB")
+		require.NoError(t, b.db.CreateFoundryLoad(ctx, loadJob(b.ontology, "RBB")))
+		b.loaded(t, "wb")
+		earlier(t, aLoad)
+		earlier(t, id26("FJ-RBB"))
+		c := foundryFixture{db: a.db, ontology: sampleOntology(t, a.db, a.ontology.WorkspaceID, "RBC")}
+		c.load(t, "RBC")
+		c.loaded(t, "wc")
+		// b has a live job of its own.
+		b.load(t, "RBB2")
+
+		var listed []string
+		for after := ""; ; {
+			page, err := a.db.ListFoundryRebuilds(ctx, cutover, after, 1)
+			require.NoError(t, err)
+			if len(page) == 0 {
+				break
+			}
+			listed = append(listed, page[0].ID)
+			after = page[0].ID
+		}
+		assert.Equal(t, []string{a.ontology.ID, b.ontology.ID}, listed, "c's load is this engine's")
+
+		got, err := store.RebuildFoundryLoads(ctx, a.db, cutover)
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuilds{Queued: []string{a.ontology.ID}, Busy: []string{b.ontology.ID}}, got)
+		assert.Equal(t, model.FoundryLoadByRefresh, mustLoad(t, a, a.liveJob(t).LoadID).Origin)
+		assert.Nil(t, c.liveJob(t))
+
+		// Run again once b's job ends: b only, a's rebuild being live.
+		b.finish(t, "wb2", "b2", model.FoundryGraphJobFailed)
+		got, err = store.RebuildFoundryLoads(ctx, a.db, cutover)
+		require.NoError(t, err)
+		assert.Equal(t, store.FoundryRebuilds{Queued: []string{b.ontology.ID}, UnderWay: []string{a.ontology.ID}}, got)
+	})
+}
+
+func mustLoad(t *testing.T, f foundryFixture, id string) *model.FoundryLoad {
+	t.Helper()
+	l, err := f.db.GetFoundryLoad(context.Background(), f.ontology.ID, id)
+	require.NoError(t, err)
+	return l
+}
+
+// rebuildStore is a Store whose rebuild list and queue are canned: pages of
+// ontologies by id, and an outcome for each.
+type rebuildStore struct {
+	store.Unimplemented
+	ids     []string
+	outcome map[string]func() (store.FoundryRebuild, error)
+	listErr error
+	asked   []string
+}
+
+func (s *rebuildStore) ListFoundryRebuilds(_ context.Context, before time.Time, afterID string, limit int) ([]*model.FoundryOntology, error) {
+	if !before.Equal(cutover) {
+		return nil, fmt.Errorf("before %v", before)
+	}
+	if s.listErr != nil && afterID != "" {
+		return nil, s.listErr
+	}
+	var page []*model.FoundryOntology
+	for _, id := range s.ids {
+		if id > afterID && len(page) < limit {
+			page = append(page, &model.FoundryOntology{ID: id, WorkspaceID: "ws"})
+		}
+	}
+	return page, nil
+}
+
+func (s *rebuildStore) QueueFoundryRebuild(_ context.Context, workspaceID, ontologyID string, before time.Time,
+	job *model.FoundryGraphJob) (store.FoundryRebuild, error) {
+	if workspaceID != "ws" || !before.Equal(cutover) || len(job.ID) != 26 {
+		return 0, fmt.Errorf("asked %s %s %v %q", workspaceID, ontologyID, before, job.ID)
+	}
+	s.asked = append(s.asked, ontologyID)
+	if f, ok := s.outcome[ontologyID]; ok {
+		return f()
+	}
+	return store.FoundryRebuildQueued, nil
+}
+
+// RebuildFoundryLoads pages past a full page, goes on past an ontology it
+// can't queue, and says what it did.
+func TestRebuildFoundryLoadsPages(t *testing.T) {
+	ctx := context.Background()
+	s := &rebuildStore{outcome: map[string]func() (store.FoundryRebuild, error){
+		"o003": func() (store.FoundryRebuild, error) { return store.FoundryRebuildBusy, nil },
+		"o004": func() (store.FoundryRebuild, error) { return store.FoundryRebuildNotOwed, nil },
+		"o007": func() (store.FoundryRebuild, error) { return store.FoundryRebuildUnderWay, nil },
+		"o005": func() (store.FoundryRebuild, error) { return 0, store.ErrNotFound },
+		"o006": func() (store.FoundryRebuild, error) { return 0, errors.New("boom") },
+	}}
+	for i := range 101 {
+		s.ids = append(s.ids, fmt.Sprintf("o%03d", i))
+	}
+	got, err := store.RebuildFoundryLoads(ctx, s, cutover)
+	require.ErrorContains(t, err, "rebuild ontology o006: boom")
+	assert.Equal(t, s.ids, s.asked, "every ontology once, past the first page")
+	assert.Equal(t, []string{"o003"}, got.Busy)
+	assert.Equal(t, []string{"o007"}, got.UnderWay)
+	assert.Len(t, got.Queued, 101-5)
+	assert.Equal(t, "o100", got.Queued[len(got.Queued)-1])
+
+	// A page that can't be read stops the run, with what it did so far.
+	s = &rebuildStore{ids: s.ids, listErr: errors.New("gone")}
+	got, err = store.RebuildFoundryLoads(ctx, s, cutover)
+	require.ErrorContains(t, err, "list ontologies to rebuild: gone")
+	assert.Len(t, got.Queued, 100)
+
+	// Nothing owed: nothing done.
+	got, err = store.RebuildFoundryLoads(ctx, &rebuildStore{}, cutover)
+	require.NoError(t, err)
+	assert.Equal(t, store.FoundryRebuilds{}, got)
+}
