@@ -462,7 +462,8 @@ ORDER BY expires_at, id LIMIT ? FOR UPDATE SKIP LOCKED`, []any{grace.Microsecond
 }
 
 // NoticeFoundryRelayOffline takes up to limit queued deliveries of live
-// links last seen more than offline ago (or never), not yet noticed, in
+// links last seen more than offline ago (or never), not yet noticed nor
+// expired (an expired one is told it wasn't delivered instead), in
 // conversations not noticed within every; marks them noticed; and returns
 // one per conversation (each click its own), for the worker to tell each
 // its install is offline. A notice is given at most once.
@@ -473,7 +474,7 @@ func (s *mysqlDB) NoticeFoundryRelayOffline(ctx context.Context, offline, every 
 	// The link and the conversation's notices are read in subqueries, so the
 	// locking read locks the deliveries alone.
 	return s.takeFoundryRelayDeliveries(ctx, `SELECT `+foundryRelayDeliveryColumns+` FROM foundry_relay_deliveries d
-WHERE d.status='queued' AND d.noticed_at IS NULL
+WHERE d.status='queued' AND d.noticed_at IS NULL AND d.expires_at > NOW(6)
   AND d.link_id IN (SELECT l.id FROM foundry_relay_links l WHERE l.revoked_at IS NULL
     AND (l.last_seen_at IS NULL OR l.last_seen_at < NOW(6) - INTERVAL ? MICROSECOND))
   AND (d.conversation='' OR NOT EXISTS (SELECT 1 FROM foundry_relay_deliveries o
@@ -519,11 +520,16 @@ func (s *mysqlDB) takeFoundryRelayDeliveries(ctx context.Context, pick string, a
 // AppendFoundryRelayFeed holds what a Slack request gives the live relayed
 // install installID's feed for limits.TTL, in one transaction holding the
 // install's lock. Unbound when the install isn't a live relayed one with its
-// feed on. Rows past limits.MaxRows held become a gap of a.At's minute in
-// each of their channels (full); a row held already is dropped (duplicate
-// when every one was, and no gap was new). Gaps are always held, each
-// merged with its channel's newest unclaimed gap it meets or touches. The
-// link's day counts the rows and their bytes.
+// feed on. Rows past limits.MaxRows held become a gap of the minute each
+// message was posted (model.SlackFeedRow.Minute, else a.At's) in its channel
+// (full); a row held already is dropped (duplicate when every one was, and
+// no gap was new). a.Gaps naming a channel are held only for a channel the
+// install's calls may name (foundry_relay_channels, within
+// model.RelayChannelSeen): the door holds gaps from requests no one
+// verified. Gaps are held merged with their channel's newest unclaimed gap
+// they meet or touch; past model.RelayFeedMaxGaps gaps held, one widens the
+// newest unclaimed gap of every channel instead. The link's day counts the
+// rows and their bytes.
 func (s *mysqlDB) AppendFoundryRelayFeed(ctx context.Context, installID string, a model.RelayFeedAppend, limits model.RelayFeedLimits) (
 	model.RelayFeedAppended, error) {
 	if err := a.Validate(); err != nil {
@@ -544,11 +550,14 @@ func (s *mysqlDB) AppendFoundryRelayFeed(ctx context.Context, installID string, 
 			return err
 		}
 		out.Outcome = model.SlackAppended
-		gaps := a.Gaps
+		gaps, err := tx.knownFoundryRelayGaps(ctx, installID, a.Gaps, a.At)
+		if err != nil {
+			return err
+		}
 		if len(a.Rows) > 0 && in.rows+int64(len(a.Rows)) > limits.MaxRows {
 			out.Outcome = model.SlackAppendFull
 			for _, r := range a.Rows {
-				gaps = append(gaps, model.SlackMinuteGap(r.ChannelID, a.At))
+				gaps = append(gaps, model.SlackMinuteGap(r.ChannelID, r.Minute(a.At)))
 			}
 		} else if len(a.Rows) > 0 {
 			var usage model.RelayUsage
@@ -578,13 +587,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND)`, id.New(
 			}
 			out.Rows = int(usage.FeedRows)
 		}
+		var held int
+		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_relay_feed WHERE install_id=? AND kind='gap'`, installID).
+			Scan(&held); err != nil {
+			return err
+		}
 		for _, g := range gaps {
-			added, err := tx.addFoundryRelayGap(ctx, in, installID, g, limits.TTL)
+			widen := held >= model.RelayFeedMaxGaps
+			if widen {
+				g.ChannelID = ""
+			}
+			added, err := tx.addFoundryRelayGap(ctx, in, installID, g, limits.TTL, widen)
 			if err != nil {
 				return err
 			}
 			if added {
-				out.Rows++
+				out.Rows, held = out.Rows+1, held+1
 			}
 		}
 		if out.Outcome == model.SlackAppended && out.Rows == 0 {
@@ -614,11 +632,51 @@ WHERE id=? AND revoked_at IS NULL AND relay_link_id IS NOT NULL AND feed_on FOR 
 	return in, err
 }
 
+// knownFoundryRelayGaps are the gaps of gaps the install may be told of:
+// those of every channel, and those of a channel its proxied calls may name,
+// each cut to the days any window keeps before at (none left: dropped).
+func (s *mysqlDB) knownFoundryRelayGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, at time.Time) (
+	[]model.SlackFeedGap, error) {
+	oldest := model.SlackDay(at).AddDate(0, 0, -model.SlackAppHistoryDaysMax-1)
+	var named []string
+	for _, g := range gaps {
+		if g.ChannelID != "" {
+			named = append(named, g.ChannelID)
+		}
+	}
+	known := map[string]bool{"": true}
+	if len(named) > 0 {
+		rows, err := s.db.QueryContext(ctx, `SELECT channel_id FROM foundry_relay_channels
+WHERE install_id=? AND last_at > NOW(6) - INTERVAL ? MICROSECOND AND channel_id IN (`+idPlaceholders(len(named))+`)`,
+			append([]any{installID, model.RelayChannelSeen.Microseconds()}, toAnySlice(named)...)...)
+		if err != nil {
+			return nil, err
+		}
+		channels, err := scanStrings(rows)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range channels {
+			known[c] = true
+		}
+	}
+	var out []model.SlackFeedGap
+	for _, g := range gaps {
+		if !known[g.ChannelID] || !g.To.After(oldest) {
+			continue
+		}
+		g.From = maxTime(g.From, oldest)
+		out = append(out, g)
+	}
+	return out, nil
+}
+
 // addFoundryRelayGap holds gap for the install, whose lock the caller holds:
-// merged into its channel's newest unclaimed gap when they meet or touch,
-// else a gap of its own, held for ttl. It reports whether anything changed.
+// merged into its channel's newest unclaimed gap when they meet or touch, or
+// whatever their spans when widen, else a gap of its own, held for ttl. It
+// reports whether anything changed.
 func (s *mysqlDB) addFoundryRelayGap(ctx context.Context, in foundryRelayFeedInstall, installID string, gap model.SlackFeedGap,
-	ttl time.Duration) (bool, error) {
+	ttl time.Duration, widen bool) (bool, error) {
 	var heldID, heldPayload string
 	err := s.db.QueryRowContext(ctx, `SELECT id, payload FROM foundry_relay_feed
 WHERE install_id=? AND kind='gap' AND channel_id=? AND lease_until IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`, installID, gap.ChannelID).
@@ -632,7 +690,7 @@ WHERE install_id=? AND kind='gap' AND channel_id=? AND lease_until IS NULL ORDER
 		if err != nil {
 			return false, err
 		}
-		if !gap.From.After(held.To) && !gap.To.Before(held.From) {
+		if widen || !gap.From.After(held.To) && !gap.To.Before(held.From) {
 			merged := model.SlackFeedGap{ChannelID: gap.ChannelID, From: minTime(held.From, gap.From), To: maxTime(held.To, gap.To)}
 			if merged == held {
 				return false, nil
@@ -732,7 +790,7 @@ WHERE kind IN (`+foundryRelayMessageKinds+`) AND expires_at < NOW(6) LIMIT ?`, l
 				return err
 			}
 			for _, ch := range channels {
-				if _, err := tx.addFoundryRelayGap(ctx, in, installID, spans[ch], ttl); err != nil {
+				if _, err := tx.addFoundryRelayGap(ctx, in, installID, spans[ch], ttl, false); err != nil {
 					return err
 				}
 			}

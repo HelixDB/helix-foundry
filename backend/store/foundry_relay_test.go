@@ -192,21 +192,34 @@ func TestFoundryRelayInstalls(t *testing.T) {
 	assert.Equal(t, model.SlackTeamTaken, slackRefusal(t, err), "the team serves another local workspace")
 	_, _, err = f.db.InstallFoundrySlack(ctx, f.install(4, f.workspaceID, "T4"), sealAs("x"))
 	assert.Equal(t, model.SlackInstalled, slackRefusal(t, err), "the workspace's own holds T2")
-	relinked := f.linked(t, 2, f.workspaceID)
-	again, reinstalled, err := relay(5, relinked, "local-1", "T1")
+	same, reinstalled, err := relay(5, link, "local-1", "T1")
 	require.NoError(t, err)
-	assert.True(t, reinstalled, "the same team for the same local workspace")
-	assert.Equal(t, relayed.ID, again.ID)
+	assert.True(t, reinstalled, "the same team for the same local workspace, through the same link")
+	assert.Equal(t, relayed.ID, same.ID)
+	// Through another link (the old one's revoke at Helix may have failed),
+	// the install is new: the old one is gone here, and the new link's local
+	// install mirrors one it never revoked.
+	relinked := f.linked(t, 2, f.workspaceID)
+	again, reinstalled, err := relay(6, relinked, "local-1", "T1")
+	require.NoError(t, err)
+	assert.False(t, reinstalled, "a new install through the newer link")
+	assert.NotEqual(t, relayed.ID, again.ID)
 	assert.Equal(t, model.SlackServesRelay{LinkID: relinked.ID, LocalWorkspaceID: "local-1"}, again.Destination, "through the newer link")
+	assert.True(t, dbTrue(t, `SELECT revoked_at IS NOT NULL AND uninstalled_at IS NOT NULL FROM foundry_slack_installs WHERE id=?`, relayed.ID),
+		"the old install is revoked, with no apps.uninstall to send: Slack keeps the app for the new one")
+	assert.Zero(t, dbCount(t, `SELECT COUNT(*) FROM foundry_slack_install_tokens WHERE install_id=?`, relayed.ID))
+	oldLink, err := f.db.ListFoundryRelayInstalls(ctx, link.ID)
+	require.NoError(t, err)
+	assert.Len(t, oldLink, 1, "the old link keeps only its other install")
 
 	// A link must be the workspace's and live.
 	other := id26("SWS-rinst-other")
 	createWorkspace(t, other)
 	foreign := f.linked(t, 3, other)
-	_, _, err = relay(6, foreign, "local-9", "T9")
+	_, _, err = relay(7, foreign, "local-9", "T9")
 	assert.ErrorIs(t, err, store.ErrNotFound, "another workspace's link")
 	require.NoError(t, f.db.RevokeFoundryRelayLink(ctx, other, foreign.ID))
-	in := f.install(6, other, "T9")
+	in := f.install(7, other, "T9")
 	in.Destination = model.SlackServesRelay{LinkID: foreign.ID, LocalWorkspaceID: "local-9"}
 	_, _, err = f.db.InstallFoundrySlack(ctx, in, sealAs("x"))
 	assert.ErrorIs(t, err, store.ErrNotFound, "a revoked link")
@@ -218,10 +231,10 @@ func TestFoundryRelayInstalls(t *testing.T) {
 	listed, err := f.db.ListFoundryRelayInstalls(ctx, relinked.ID)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
-	assert.Equal(t, relayed.ID, listed[0].ID)
+	assert.Equal(t, again.ID, listed[0].ID)
 	found, err := f.db.GetFoundryRelayInstall(ctx, relinked.ID, "local-1")
 	require.NoError(t, err)
-	assert.Equal(t, relayed.ID, found.ID)
+	assert.Equal(t, again.ID, found.ID)
 	_, err = f.db.GetFoundryRelayInstall(ctx, link.ID, "local-1")
 	assert.ErrorIs(t, err, store.ErrNotFound, "the install moved to the newer link")
 
@@ -426,6 +439,18 @@ func TestFoundryRelayOfflineNotice(t *testing.T) {
 	require.Len(t, told, 1)
 	assert.Equal(t, f.delivery(9, i.ID, conv).ID, told[0].ID)
 
+	// One that expired before it was told is told it wasn't delivered, never
+	// that it waits.
+	require.NoError(t, f.db.QueueFoundryRelayDelivery(ctx, f.delivery(10, i.ID, ""), time.Hour, model.RelaySeen{}))
+	dbExec(t, `UPDATE foundry_relay_deliveries SET expires_at=NOW(6) - INTERVAL 1 SECOND WHERE id=?`, f.delivery(10, i.ID, "").ID)
+	told, err = f.db.NoticeFoundryRelayOffline(ctx, 90*time.Second, 10*time.Minute, 10)
+	require.NoError(t, err)
+	assert.Empty(t, told)
+	expired, err := f.db.ExpireFoundryRelayDeliveries(ctx, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	assert.Nil(t, expired[0].NoticedAt, "never told it waits")
+
 	// A never-seen link is offline; a revoked one is told nothing.
 	l2 := f.linked(t, 2, f.workspaceID)
 	i2 := f.relayed(t, 2, l2, "local-2", "T2")
@@ -498,6 +523,7 @@ func TestFoundryRelayFeed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.SlackAppendUnbound, out.Outcome, "the workspace's own install keeps its own feed")
 
+	require.NoError(t, f.db.RecordFoundryRelayChannels(ctx, i.ID, []string{"C1", "C9"}))
 	out, err = f.db.AppendFoundryRelayFeed(ctx, i.ID, rows("Ev1", "Ev2"), relayLimits)
 	require.NoError(t, err)
 	assert.Equal(t, model.RelayFeedAppended{Outcome: model.SlackAppended, Rows: 2}, out)
@@ -605,6 +631,53 @@ func TestFoundryRelayFeed(t *testing.T) {
 	waiting, err := f.db.FoundryRelayWaiting(ctx, link.ID)
 	require.NoError(t, err)
 	assert.False(t, waiting)
+}
+
+// The door holds gaps from requests no one verified: a relayed install
+// keeps only those of channels it reads, of days a window keeps, and past
+// its cap they widen one gap of every channel instead of growing.
+func TestFoundryRelayFeedGaps(t *testing.T) {
+	ctx := context.Background()
+	f := newSlackFixture(t, "rgaps")
+	link := f.linked(t, 1, f.workspaceID)
+	i := f.relayed(t, 5, link, "local-1", "TR1")
+	require.NoError(t, f.db.SetFoundryRelayFeeds(ctx, link.ID, []model.RelayFeedOn{{LocalWorkspaceID: "local-1", On: true}}))
+	require.NoError(t, f.db.RecordFoundryRelayChannels(ctx, i.ID, []string{"C1"}))
+	at := time.Now().UTC()
+	gaps := func(gaps ...model.SlackFeedGap) model.RelayFeedAppended {
+		t.Helper()
+		out, err := f.db.AppendFoundryRelayFeed(ctx, i.ID, model.RelayFeedAppend{Gaps: gaps, At: at}, relayLimits)
+		require.NoError(t, err)
+		return out
+	}
+	held := func(channel string) int {
+		return dbCount(t, `SELECT COUNT(*) FROM foundry_relay_feed WHERE install_id=? AND kind='gap' AND channel_id=?`, i.ID, channel)
+	}
+
+	assert.Equal(t, model.SlackAppendDuplicate, gaps(model.SlackMinuteGap("C7", at)).Outcome, "a channel it doesn't read")
+	assert.Equal(t, model.SlackAppendDuplicate, gaps(model.SlackMinuteGap("C1", at.AddDate(-1, 0, 0))).Outcome, "past any window")
+	assert.Equal(t, 2, gaps(model.SlackMinuteGap("C1", at), model.SlackMinuteGap("", at)).Rows)
+	assert.Equal(t, 0, held("C7"))
+	assert.Equal(t, 1, held("C1"))
+
+	// At the cap, a gap widens the newest unclaimed gap of every channel.
+	rows := make([]any, 0, 6*model.RelayFeedMaxGaps)
+	for n := range model.RelayFeedMaxGaps - 2 {
+		g := model.SlackMinuteGap("C1", at.Add(-time.Duration(2*n+10)*time.Minute))
+		r := g.Row("C1")
+		rows = append(rows, id26(fmt.Sprintf("RG%05d", n)), link.ID, i.ID, r.DedupeKey, r.Day, string(r.Payload))
+	}
+	dbExec(t, `INSERT INTO foundry_relay_feed (id, link_id, install_id, relay_workspace_id, dedupe_key, channel_id, day, kind, payload, bytes, expires_at)
+VALUES `+strings.TrimSuffix(strings.Repeat(`(?, ?, ?, 'local-1', ?, 'C1', ?, 'gap', ?, 40, NOW(6) + INTERVAL 1 HOUR), `, model.RelayFeedMaxGaps-2), ", "), rows...)
+	far := model.SlackMinuteGap("C1", at.Add(-6*time.Hour))
+	assert.Equal(t, 1, gaps(far).Rows)
+	assert.Equal(t, model.RelayFeedMaxGaps-1, held("C1"), "not a gap of its own")
+	var payload string
+	require.NoError(t, testDB.QueryRow(`SELECT payload FROM foundry_relay_feed WHERE install_id=? AND kind='gap' AND channel_id=''`, i.ID).Scan(&payload))
+	var span struct{ From, To time.Time }
+	require.NoError(t, json.Unmarshal([]byte(payload), &span))
+	assert.True(t, span.From.Equal(far.From) && span.To.Equal(model.SlackMinuteGap("", at).To), "every channel's gap spans it: %+v", span)
+	assert.Equal(t, 1, held(""))
 }
 
 func TestFoundryRelayProxyScope(t *testing.T) {

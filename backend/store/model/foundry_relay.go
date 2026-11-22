@@ -40,6 +40,11 @@ const (
 	// reach Helix (Slack's retries): a gap of expired rows starts this long
 	// before the first of them arrived.
 	RelayFeedLateness = 10 * time.Minute
+	// RelayFeedMaxGaps bounds the gaps a relayed install's feed holds: past
+	// it, a gap widens the install's newest unclaimed gap of every channel
+	// instead, so gaps no one claims (an install offline, or gaps the door
+	// held from unverified requests) never grow without end.
+	RelayFeedMaxGaps = 1000
 )
 
 // RelayLink is a local install linked to a Helix workspace: Slack's requests

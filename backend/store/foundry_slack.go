@@ -118,7 +118,12 @@ FROM foundry_slack_installs WHERE revoked_at IS NOT NULL AND uninstalled_at IS N
 //     (model.SlackInstalled);
 //   - a live install of the team for the destination is a reinstall: it
 //     keeps its id, links and threads, and takes in's names, scopes,
-//     installers, link and a new token (reinstalled true);
+//     installers and a new token (reinstalled true);
+//   - but a relayed one through another link is replaced: revoked and
+//     uninstalled here (Slack keeps the app, which this install holds now),
+//     cleared as a disconnect clears one, and in inserted with its own id,
+//     so the new link's local install mirrors it afresh, whatever the old
+//     link's local install revoked of the old one;
 //   - else in is inserted with its token.
 //
 // Either way the install has its Tier-1 slots (foundry_slack_slots). A new
@@ -176,7 +181,13 @@ FROM foundry_slack_installs WHERE (team_id=? AND uninstalled_at IS NULL) OR live
 			return err
 		}
 		id := in.ID
+		var replaced []string
 		for _, h := range held {
+			if old, ok := h.Destination.(model.SlackServesRelay); ok && relayLink.Valid && h.TeamID == in.TeamID && h.RevokedAt == nil &&
+				model.SlackDestinationKey(h.WorkspaceID, h.Destination) == destination && old.LinkID != relayLink.String {
+				replaced = append(replaced, h.ID)
+				continue
+			}
 			switch {
 			case h.TeamID == in.TeamID && h.RevokedAt != nil:
 				return model.SlackRefusal{Reason: model.SlackDisconnecting,
@@ -189,6 +200,15 @@ FROM foundry_slack_installs WHERE (team_id=? AND uninstalled_at IS NULL) OR live
 					Detail: "this Foundry workspace is connected to another Slack workspace; disconnect it first"}
 			}
 			id, reinstalled = h.ID, true
+		}
+		if len(replaced) > 0 {
+			ids, args := idPlaceholders(len(replaced)), toAnySlice(replaced)
+			if err := tx.revokeFoundrySlackMirror(ctx, `SELECT id FROM foundry_slack_installs WHERE id IN (`+ids+`)`, args...); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_slack_install_tokens WHERE install_id IN (`+ids+`)`, args...); err != nil {
+				return err
+			}
 		}
 		token, err := seal(id)
 		if err != nil {
