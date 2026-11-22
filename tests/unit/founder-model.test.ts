@@ -115,11 +115,25 @@ describe("Founder's threads in the sidebar", () => {
           title: "Unpaid invoices",
           updatedAt: "2026-11-16T09:00:00Z",
         },
-        { id: "t2", createdAt: "2026-11-15T09:00:00Z" },
+        {
+          id: "t2",
+          createdAt: "2026-11-15T09:00:00Z",
+          surface: "FOUNDRY_AGENT_SURFACE_SLACK",
+        },
       ]),
     ).toEqual([
-      { id: "t1", title: "Unpaid invoices", last: "2026-11-16T09:00:00Z" },
-      { id: "t2", title: "Untitled", last: "2026-11-15T09:00:00Z" },
+      {
+        id: "t1",
+        title: "Unpaid invoices",
+        last: "2026-11-16T09:00:00Z",
+        slack: false,
+      },
+      {
+        id: "t2",
+        title: "Untitled",
+        last: "2026-11-15T09:00:00Z",
+        slack: true,
+      },
     ]);
     expect(founderThreads(undefined)).toEqual([]);
   });
@@ -133,11 +147,21 @@ describe("Founder's threads in the sidebar", () => {
           createdAt: "2026-11-01T09:00:00Z",
           updatedAt: "2026-11-16T09:00:00Z",
         },
-        { id: "t2", createdAt: null, updatedAt: null },
+        {
+          id: "t2",
+          createdAt: null,
+          updatedAt: null,
+          surface: "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
+        },
       ]),
     ).toEqual([
-      { id: "t1", title: "Untitled", last: "2026-11-16T09:00:00Z" },
-      { id: "t2", title: "Untitled", last: "" },
+      {
+        id: "t1",
+        title: "Untitled",
+        last: "2026-11-16T09:00:00Z",
+        slack: false,
+      },
+      { id: "t2", title: "Untitled", last: "", slack: false },
     ]);
   });
 

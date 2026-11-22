@@ -602,6 +602,24 @@ describe("a turn's surface", () => {
     const bad = await send("Hi", { surface: "FOUNDRY_AGENT_SURFACE_EMAIL" });
     expect(bad.status).toBe(400);
   });
+
+  it("labels a thread by its first turn's surface, read or listed", async () => {
+    const SLACK = "FOUNDRY_AGENT_SURFACE_SLACK";
+    const site = await send("What ontologies do I have?");
+    const slack = await send("What ontologies do I have?", { surface: SLACK });
+    await events(slack.body.turn.id);
+    // A later turn from the site keeps the thread Slack's.
+    const later = await send("And loads?", { threadId: slack.body.thread.id });
+    expect(later.body.turn.surface).toBeUndefined();
+    const read = await call("GET", `${A}/threads/${slack.body.thread.id}`);
+    expect(read.body.thread.surface).toBe(SLACK);
+    const list = await call("GET", `${A}/threads`);
+    const surfaces = Object.fromEntries(
+      list.body.threads.map((t: any) => [t.id, t.surface]),
+    );
+    expect(surfaces[slack.body.thread.id]).toBe(SLACK);
+    expect(surfaces[site.body.thread.id]).toBeUndefined();
+  });
 });
 
 describe("a local install", () => {

@@ -194,6 +194,13 @@ export function AgentDock({
                   onSelect={() => open(t.id)}
                 >
                   {t.title || "Untitled"}
+                  {/* Started in Slack, through Helix Foundry's app. */}
+                  {t.surface === "FOUNDRY_AGENT_SURFACE_SLACK" && (
+                    <>
+                      {" "}
+                      <Tag>Slack</Tag>
+                    </>
+                  )}
                 </MenuItem>
               ))}
             </>

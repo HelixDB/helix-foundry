@@ -544,13 +544,21 @@ function advance(t: StoredTurn) {
 const advanceThread = (threadId: string) =>
   state.turns.filter((t) => t.threadId === threadId).forEach(advance);
 
-const toThread = (t: StoredThread): FoundryAgentThread => ({
-  id: t.id,
-  title: t.title,
-  runtime: t.runtime,
-  createdAt: t.createdAt,
-  updatedAt: t.updatedAt,
-});
+// A thread says where it was started: its first turn's surface, as the
+// backend's thread reads say it (Slack only; the site's is left unset).
+const toThread = (t: StoredThread): FoundryAgentThread => {
+  const first = state.turns.find((x) => x.threadId === t.id);
+  return {
+    id: t.id,
+    title: t.title,
+    runtime: t.runtime,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+    ...(first?.surface === "FOUNDRY_AGENT_SURFACE_SLACK" && {
+      surface: first.surface,
+    }),
+  };
+};
 const toTurn = (t: StoredTurn): FoundryAgentTurn => ({
   id: t.id,
   threadId: t.threadId,
