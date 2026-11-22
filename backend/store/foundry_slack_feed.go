@@ -167,7 +167,7 @@ FROM foundry_slack_feeds WHERE live_connector=? FOR UPDATE`, id))
 // order given.
 func (s *mysqlDB) bindFoundrySlackFeed(ctx context.Context, workspaceID, connectorID string, bind model.SlackFeedBind) error {
 	install, err := scanFoundrySlackInstall(s.db.QueryRowContext(ctx, "SELECT "+foundrySlackInstallColumns+`
-FROM foundry_slack_installs WHERE live_workspace=? FOR UPDATE`, workspaceID))
+FROM foundry_slack_installs WHERE live_destination=? FOR UPDATE`, model.SlackDestinationKey(workspaceID, model.SlackServesWorkspace{})))
 	switch {
 	case errors.Is(err, ErrNotFound):
 		return model.SlackFeedRefusal{Reason: model.SlackFeedNotInstalled}

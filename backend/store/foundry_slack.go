@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -29,7 +30,8 @@ import (
 // clocks never disagree about a lease.
 
 const foundrySlackInstallColumns = `id, workspace_id, team_id, enterprise_id, team_name, app_id, bot_user_id, scopes, installed_by_user_id,
-       installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at, bot_id, installer_admin, events_limited_at, bot_credential_id`
+       installed_by_slack_user_id, created_at, updated_at, revoked_at, uninstalled_at, bot_id, installer_admin, events_limited_at, bot_credential_id,
+       relay_link_id, relay_workspace_id, feed_on`
 
 const foundrySlackThreadColumns = `s.id, s.install_id, s.channel_id, s.thread_ts, s.slack_user_id, s.agent_thread_id, s.created_at, s.last_at,
        s.bot_at, s.others_at`
@@ -57,11 +59,11 @@ const dueFoundrySlackThread = `(s.last_at < NOW(6) - INTERVAL ? MICROSECOND
 
 // --- Installs ---
 
-// GetFoundrySlackInstall returns the workspace's live install; ErrNotFound
-// when it has none.
+// GetFoundrySlackInstall returns the workspace's own live install (not one
+// serving a local install through its link); ErrNotFound when it has none.
 func (s *mysqlDB) GetFoundrySlackInstall(ctx context.Context, workspaceID string) (*model.SlackInstall, error) {
 	return scanFoundrySlackInstall(s.db.QueryRowContext(ctx, "SELECT "+foundrySlackInstallColumns+`
-FROM foundry_slack_installs WHERE live_workspace=?`, workspaceID))
+FROM foundry_slack_installs WHERE live_destination=?`, model.SlackDestinationKey(workspaceID, model.SlackServesWorkspace{})))
 }
 
 // GetFoundrySlackInstallByTeam returns the Slack team's live install, which
@@ -102,23 +104,27 @@ FROM foundry_slack_installs WHERE revoked_at IS NOT NULL AND uninstalled_at IS N
 }
 
 // InstallFoundrySlack records an OAuth install of in.TeamID for
-// in.WorkspaceID, with the bot token seal makes for the install's id, in one
-// transaction holding the workspace's lock (ErrNotFound when it is deleted):
+// in.WorkspaceID, serving in.Destination (nil is the workspace's own;
+// model.SlackServesRelay a local install through its link, which must be
+// the workspace's and live: ErrNotFound otherwise), with the bot token seal
+// makes for the install's id, in one transaction holding the workspace's
+// lock (ErrNotFound when it is deleted):
 //   - a revoked install of the team that Slack hasn't been told of refuses it
 //     (model.SlackDisconnecting): the sweep's apps.uninstall must never reach
 //     a newer install;
-//   - a live install of the team for another workspace refuses it
+//   - a live install of the team for another destination refuses it
 //     (model.SlackTeamTaken);
-//   - a live install of another team for the workspace refuses it
+//   - a live install of another team for the destination refuses it
 //     (model.SlackInstalled);
-//   - a live install of the team for the workspace is a reinstall: it keeps
-//     its id, links and threads, and takes in's names, scopes, installers and
-//     a new token (reinstalled true);
+//   - a live install of the team for the destination is a reinstall: it
+//     keeps its id, links and threads, and takes in's names, scopes,
+//     installers, link and a new token (reinstalled true);
 //   - else in is inserted with its token.
 //
 // Either way the install has its Tier-1 slots (foundry_slack_slots). A new
 // install of a team the workspace's feeds read (one whose install was
-// removed) takes them over (repointFoundrySlackFeeds).
+// removed) takes them over (repointFoundrySlackFeeds); a relayed install's
+// feeds are its local install's.
 //
 // It returns the install as stored. Two workspaces installing one team at
 // once may deadlock on the team's gap lock: the loser runs again, and is
@@ -128,6 +134,18 @@ func (s *mysqlDB) InstallFoundrySlack(ctx context.Context, in *model.SlackInstal
 	if err := in.Validate(); err != nil {
 		return nil, false, err
 	}
+	var relayLink, localWorkspace sql.NullString
+	switch d := in.Destination.(type) {
+	case nil, model.SlackServesWorkspace:
+	case model.SlackServesRelay:
+		if d.LinkID == "" || d.LocalWorkspaceID == "" {
+			return nil, false, fmt.Errorf("a relayed Slack install names its link and local workspace")
+		}
+		relayLink, localWorkspace = sql.NullString{String: d.LinkID, Valid: true}, sql.NullString{String: d.LocalWorkspaceID, Valid: true}
+	default:
+		return nil, false, fmt.Errorf("unknown Slack destination %T", in.Destination)
+	}
+	destination := model.SlackDestinationKey(in.WorkspaceID, in.Destination)
 	var out *model.SlackInstall
 	reinstalled := false
 	install := func(txDB Store) error {
@@ -136,9 +154,20 @@ func (s *mysqlDB) InstallFoundrySlack(ctx context.Context, in *model.SlackInstal
 		if err := tx.workspaces.Lock(ctx, tx.db, in.WorkspaceID); err != nil {
 			return err
 		}
+		if relayLink.Valid {
+			var locked string
+			err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_relay_links WHERE id=? AND workspace_id=? AND revoked_at IS NULL FOR UPDATE`,
+				relayLink.String, in.WorkspaceID).Scan(&locked)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+		}
 		rows, err := tx.db.QueryContext(ctx, "SELECT "+foundrySlackInstallColumns+`
-FROM foundry_slack_installs WHERE (team_id=? AND uninstalled_at IS NULL) OR live_workspace=? ORDER BY revoked_at IS NULL FOR UPDATE`,
-			in.TeamID, in.WorkspaceID)
+FROM foundry_slack_installs WHERE (team_id=? AND uninstalled_at IS NULL) OR live_destination=? ORDER BY revoked_at IS NULL FOR UPDATE`,
+			in.TeamID, destination)
 		if err != nil {
 			return err
 		}
@@ -152,7 +181,7 @@ FROM foundry_slack_installs WHERE (team_id=? AND uninstalled_at IS NULL) OR live
 			case h.TeamID == in.TeamID && h.RevokedAt != nil:
 				return model.SlackRefusal{Reason: model.SlackDisconnecting,
 					Detail: "Helix is still disconnecting this Slack workspace; try again in a minute"}
-			case h.TeamID == in.TeamID && h.WorkspaceID != in.WorkspaceID:
+			case h.TeamID == in.TeamID && model.SlackDestinationKey(h.WorkspaceID, h.Destination) != destination:
 				return model.SlackRefusal{Reason: model.SlackTeamTaken,
 					Detail: "this Slack workspace is connected to another Foundry workspace"}
 			case h.TeamID != in.TeamID:
@@ -171,15 +200,17 @@ FROM foundry_slack_installs WHERE (team_id=? AND uninstalled_at IS NULL) OR live
 		scopes := strings.Join(in.Scopes, ",")
 		if reinstalled {
 			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_slack_installs
-SET enterprise_id=?, team_name=?, app_id=?, bot_user_id=?, scopes=?, installed_by_user_id=?, installed_by_slack_user_id=?, updated_at=NOW(6)
-WHERE id=?`, in.EnterpriseID, in.TeamName, in.AppID, in.BotUserID, scopes, in.InstalledByUserID, in.InstalledBySlackUserID, id); err != nil {
+SET enterprise_id=?, team_name=?, app_id=?, bot_user_id=?, scopes=?, installed_by_user_id=?, installed_by_slack_user_id=?, relay_link_id=?,
+  updated_at=NOW(6)
+WHERE id=?`, in.EnterpriseID, in.TeamName, in.AppID, in.BotUserID, scopes, in.InstalledByUserID, in.InstalledBySlackUserID, relayLink, id); err != nil {
 				return err
 			}
 		} else {
 			_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_slack_installs
-  (id, workspace_id, team_id, enterprise_id, team_name, app_id, bot_user_id, scopes, installed_by_user_id, installed_by_slack_user_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, in.WorkspaceID, in.TeamID, in.EnterpriseID, in.TeamName, in.AppID, in.BotUserID, scopes,
-				in.InstalledByUserID, in.InstalledBySlackUserID)
+  (id, workspace_id, relay_link_id, relay_workspace_id, team_id, enterprise_id, team_name, app_id, bot_user_id, scopes, installed_by_user_id,
+   installed_by_slack_user_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, in.WorkspaceID, relayLink, localWorkspace, in.TeamID, in.EnterpriseID, in.TeamName, in.AppID,
+				in.BotUserID, scopes, in.InstalledByUserID, in.InstalledBySlackUserID)
 			var me *mysql.MySQLError
 			switch {
 			case errors.As(err, &me) && me.Number == 1062 && strings.Contains(me.Message, "foundry_slack_installs_team_uq"):
@@ -200,7 +231,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, in.WorkspaceID, in.TeamID, in.Enterp
 			id, model.SlackSlotHistory, id, model.SlackSlotReplies); err != nil {
 			return err
 		}
-		if !reinstalled {
+		if !reinstalled && !relayLink.Valid {
 			if err := tx.repointFoundrySlackFeeds(ctx, in.WorkspaceID, in.TeamID, id); err != nil {
 				return err
 			}
@@ -236,7 +267,7 @@ WHERE id=? AND workspace_id=? AND revoked_at IS NULL`, uninstalled, installID, w
 				return err
 			}
 		}
-		return tx.clearFoundrySlackInstall(ctx, `SELECT ?`, installID, false)
+		return tx.clearFoundrySlackInstall(ctx, `SELECT ?`, false, installID)
 	})
 }
 
@@ -303,7 +334,7 @@ VALUES (?, ?, ?, 'event', 'done', NOW(6))`, intakeID, live.ID, dedupeKey)
 			return err
 		}
 		outcome = model.SlackUninstallDone
-		return tx.clearFoundrySlackInstall(ctx, `SELECT ?`, live.ID, false)
+		return tx.clearFoundrySlackInstall(ctx, `SELECT ?`, false, live.ID)
 	})
 	if err != nil {
 		return "", err
@@ -311,28 +342,34 @@ VALUES (?, ?, ?, 'event', 'done', NOW(6))`, intakeID, live.ID, dedupeKey)
 	return outcome, nil
 }
 
-// PurgeFoundrySlack ends a deleted workspace's Slack: its live install is
-// revoked (the sweep tells Slack), its OAuth states, and every install's
-// links, link tokens, intake and replies, are deleted; its threads'
+// PurgeFoundrySlack ends a deleted workspace's Slack: its live installs,
+// relayed ones too, are revoked (the sweep tells Slack), and its relay links;
+// its OAuth states and relay codes, and every install's links, link tokens,
+// intake, replies and relay rows, are deleted; its threads'
 // Slack-born text is due for PurgeFoundrySlackThreads at once. It runs plain
 // statements, so its host may run it in the transaction that deletes the
 // workspace (InTx); running it again changes nothing.
 func (s *mysqlDB) PurgeFoundrySlack(ctx context.Context, workspaceID string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_slack_installs SET revoked_at=NOW(6) WHERE workspace_id=? AND revoked_at IS NULL`,
-		workspaceID); err != nil {
-		return err
+	for _, stmt := range []string{
+		`UPDATE foundry_slack_installs SET revoked_at=NOW(6) WHERE workspace_id=? AND revoked_at IS NULL`,
+		`DELETE FROM foundry_slack_install_states WHERE workspace_id=?`,
+		`UPDATE foundry_relay_links SET revoked_at=NOW(6) WHERE workspace_id=? AND revoked_at IS NULL`,
+		`DELETE FROM foundry_relay_codes WHERE workspace_id=?`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt, workspaceID); err != nil {
+			return err
+		}
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_slack_install_states WHERE workspace_id=?`, workspaceID); err != nil {
-		return err
-	}
-	return s.clearFoundrySlackInstall(ctx, `SELECT id FROM foundry_slack_installs WHERE workspace_id=?`, workspaceID, true)
+	return s.clearFoundrySlackInstall(ctx, `SELECT id FROM foundry_slack_installs WHERE workspace_id=?`, true, workspaceID)
 }
 
-// clearFoundrySlackInstall deletes the links, link tokens, replies and open
-// intake (every intake row when all) of the installs installs selects with
-// arg. Done and failed intake rows hold no payload, and keep deduping
-// Slack's retries until they are pruned.
-func (s *mysqlDB) clearFoundrySlackInstall(ctx context.Context, installs string, arg any, all bool) error {
+// clearFoundrySlackInstall deletes the links, link tokens, access requests,
+// replies and open intake (every intake row when all) of the installs
+// installs selects with args; and, of a relayed one, expires its open
+// deliveries, unnoticed, and deletes its feed and what its calls may name.
+// Done and failed intake rows, and acked and expired deliveries, hold no
+// payload, and keep deduping Slack's retries until they are pruned.
+func (s *mysqlDB) clearFoundrySlackInstall(ctx context.Context, installs string, all bool, args ...any) error {
 	intake := `DELETE FROM foundry_slack_intake WHERE install_id IN (` + installs + `) AND status IN ('queued', 'running')`
 	if all {
 		intake = `DELETE FROM foundry_slack_intake WHERE install_id IN (` + installs + `)`
@@ -340,10 +377,16 @@ func (s *mysqlDB) clearFoundrySlackInstall(ctx context.Context, installs string,
 	for _, stmt := range []string{
 		`DELETE FROM foundry_slack_links WHERE install_id IN (` + installs + `)`,
 		`DELETE FROM foundry_slack_link_tokens WHERE install_id IN (` + installs + `)`,
+		`DELETE FROM foundry_slack_access_requests WHERE install_id IN (` + installs + `)`,
 		`DELETE FROM foundry_slack_replies WHERE install_id IN (` + installs + `)`,
 		intake,
+		`UPDATE foundry_relay_deliveries SET status='expired', payload=NULL, lease_until=NULL, finished_at=NOW(6)
+WHERE install_id IN (` + installs + `) AND status IN ('queued', 'leased')`,
+		`DELETE FROM foundry_relay_feed WHERE install_id IN (` + installs + `)`,
+		`DELETE FROM foundry_relay_channels WHERE install_id IN (` + installs + `)`,
+		`DELETE FROM foundry_relay_users WHERE install_id IN (` + installs + `)`,
 	} {
-		if _, err := s.db.ExecContext(ctx, stmt, arg); err != nil {
+		if _, err := s.db.ExecContext(ctx, stmt, args...); err != nil {
 			return err
 		}
 	}
@@ -369,6 +412,31 @@ VALUES (?, ?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND)`, stateHash, workspaceID, u
 	return err
 }
 
+// CreateFoundrySlackRelayInstallState records an install a local install
+// started through its live link linkID (ErrNotFound otherwise) for its
+// workspace localWorkspaceID: its state's SHA-256 (hex), live for ttl, as
+// the link's creator, whose answer goes back to the link's own Settings ›
+// Slack (RelayLink.ReturnTo). ErrConflict when the hash is taken.
+func (s *mysqlDB) CreateFoundrySlackRelayInstallState(ctx context.Context, linkID, localWorkspaceID, stateHash string, ttl time.Duration) error {
+	if linkID == "" || localWorkspaceID == "" || !model.ValidSHA256Hex(stateHash) || ttl <= 0 {
+		return fmt.Errorf("a relayed Slack install state names its link and local workspace, a SHA-256 and a lifetime")
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO foundry_slack_install_states
+  (state_hash, workspace_id, user_id, relay_link_id, relay_workspace_id, return_to, expires_at)
+SELECT ?, workspace_id, created_by_user_id, id, ?, CONCAT(redirect_origin, ?), NOW(6) + INTERVAL ? MICROSECOND
+FROM foundry_relay_links WHERE id=? AND revoked_at IS NULL`, stateHash, localWorkspaceID, model.RelaySettingsPath, ttl.Microseconds(), linkID)
+	if isDuplicateKey(err) {
+		return ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return cmp.Or(err, ErrNotFound)
+	}
+	return nil
+}
+
 // SpendFoundrySlackInstallState spends the state, once, for the member who
 // started it: ErrNotFound when it is absent, expired, spent or another's
 // (which leaves it unspent).
@@ -376,11 +444,15 @@ func (s *mysqlDB) SpendFoundrySlackInstallState(ctx context.Context, stateHash, 
 	var out model.SlackInstallState
 	err := s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		var returnPath sql.NullString
-		err := tx.db.QueryRowContext(ctx, `SELECT state_hash, workspace_id, user_id, return_path, expires_at FROM foundry_slack_install_states
+		var returnPath, relayLink, localWorkspace, returnTo sql.NullString
+		err := tx.db.QueryRowContext(ctx, `SELECT state_hash, workspace_id, user_id, return_path, relay_link_id, relay_workspace_id, return_to,
+  expires_at FROM foundry_slack_install_states
 WHERE state_hash=? AND user_id=? AND used_at IS NULL AND expires_at > NOW(6) FOR UPDATE`, stateHash, userID).
-			Scan(&out.StateHash, &out.WorkspaceID, &out.UserID, &returnPath, &out.ExpiresAt)
-		out.ReturnPath = returnPath.String
+			Scan(&out.StateHash, &out.WorkspaceID, &out.UserID, &returnPath, &relayLink, &localWorkspace, &returnTo, &out.ExpiresAt)
+		out.ReturnPath, out.ReturnTo, out.Destination = returnPath.String, returnTo.String, model.SlackServesWorkspace{}
+		if relayLink.Valid {
+			out.Destination = model.SlackServesRelay{LinkID: relayLink.String, LocalWorkspaceID: localWorkspace.String}
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -400,13 +472,13 @@ WHERE state_hash=? AND user_id=? AND used_at IS NULL AND expires_at > NOW(6) FOR
 
 // GetFoundrySlackLink returns the Slack user's link in the install.
 func (s *mysqlDB) GetFoundrySlackLink(ctx context.Context, installID, slackUserID string) (*model.SlackLink, error) {
-	return scanFoundrySlackLink(s.db.QueryRowContext(ctx, `SELECT install_id, slack_user_id, user_id, created_at
+	return scanFoundrySlackLink(s.db.QueryRowContext(ctx, `SELECT install_id, slack_user_id, user_id, access, created_at
 FROM foundry_slack_links WHERE install_id=? AND slack_user_id=?`, installID, slackUserID))
 }
 
 // ListFoundrySlackLinks returns the install's links, oldest first.
 func (s *mysqlDB) ListFoundrySlackLinks(ctx context.Context, installID string) ([]*model.SlackLink, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT install_id, slack_user_id, user_id, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT install_id, slack_user_id, user_id, access, created_at
 FROM foundry_slack_links WHERE install_id=? ORDER BY created_at, slack_user_id`, installID)
 	if err != nil {
 		return nil, err
@@ -469,9 +541,11 @@ WHERE k.token_hash=? AND k.used_at IS NULL AND k.expires_at > NOW(6)`, tokenHash
 
 // LinkFoundrySlackUser spends a live link token of workspaceID's live
 // install (ErrNotFound otherwise, and nothing is spent) and links its Slack
-// user to userID, replacing any link of that Slack user or of userID in the
-// install: one Slack user acts as one Foundry user, and one Foundry user has
-// one Slack user an install. The caller checks who userID is first.
+// user to userID in full (model.SlackFullAccess), replacing any link of that
+// Slack user, or userID's full link, in the install: one Slack user acts as
+// one Foundry user, and one Foundry user has one Slack user of their own an
+// install (a local owner's read-only people act as them too). The caller
+// checks who userID is first.
 func (s *mysqlDB) LinkFoundrySlackUser(ctx context.Context, workspaceID, tokenHash, userID string) (*model.SlackLink, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("a Slack link names its Foundry user")
@@ -494,7 +568,9 @@ WHERE k.token_hash=? AND k.used_at IS NULL AND k.expires_at > NOW(6) FOR UPDATE`
 			args []any
 		}{
 			{`UPDATE foundry_slack_link_tokens SET used_at=NOW(6) WHERE token_hash=?`, []any{tokenHash}},
-			{`DELETE FROM foundry_slack_links WHERE install_id=? AND (slack_user_id=? OR user_id=?)`, []any{installID, slackUserID, userID}},
+			{`DELETE FROM foundry_slack_links WHERE install_id=? AND (slack_user_id=? OR (user_id=? AND access='full'))`,
+				[]any{installID, slackUserID, userID}},
+			{`DELETE FROM foundry_slack_access_requests WHERE install_id=? AND slack_user_id=?`, []any{installID, slackUserID}},
 			{`INSERT INTO foundry_slack_links (install_id, slack_user_id, user_id) VALUES (?, ?, ?)`, []any{installID, slackUserID, userID}},
 		} {
 			if _, err := tx.db.ExecContext(ctx, stmt.q, stmt.args...); err != nil {
@@ -505,6 +581,97 @@ WHERE k.token_hash=? AND k.used_at IS NULL AND k.expires_at > NOW(6) FOR UPDATE`
 		return err
 	})
 	return out, err
+}
+
+// AllowFoundrySlackUser links the Slack user of the live install installID
+// (ErrNotFound otherwise) to userID, the local install's owner, read-only
+// (model.SlackReadAccess), and drops their access request, in one
+// transaction. A read link is replaced; a full link (the owner's own) is
+// never made read-only (ErrConflict).
+func (s *mysqlDB) AllowFoundrySlackUser(ctx context.Context, installID, slackUserID, userID string) (*model.SlackLink, error) {
+	if installID == "" || !model.ValidSlackID(slackUserID) || userID == "" {
+		return nil, fmt.Errorf("an allowed Slack user names the install, the Slack user and the owner")
+	}
+	var out *model.SlackLink
+	err := s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		var id string
+		err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_slack_installs WHERE id=? AND revoked_at IS NULL FOR UPDATE`, installID).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		switch held, err := tx.GetFoundrySlackLink(ctx, installID, slackUserID); {
+		case err == nil && held.Access == model.SlackFullAccess{}:
+			return ErrConflict
+		case err != nil && !errors.Is(err, ErrNotFound):
+			return err
+		}
+		for _, stmt := range []struct {
+			q    string
+			args []any
+		}{
+			{`DELETE FROM foundry_slack_links WHERE install_id=? AND slack_user_id=?`, []any{installID, slackUserID}},
+			{`INSERT INTO foundry_slack_links (install_id, slack_user_id, user_id, access) VALUES (?, ?, ?, 'read')`, []any{installID, slackUserID, userID}},
+			{`DELETE FROM foundry_slack_access_requests WHERE install_id=? AND slack_user_id=?`, []any{installID, slackUserID}},
+		} {
+			if _, err := tx.db.ExecContext(ctx, stmt.q, stmt.args...); err != nil {
+				return err
+			}
+		}
+		out, err = tx.GetFoundrySlackLink(ctx, installID, slackUserID)
+		return err
+	})
+	return out, err
+}
+
+// RequestFoundrySlackAccess records that the Slack user asked to use the
+// live install r.InstallID (ErrNotFound otherwise), once: requested is false
+// when they had asked already (their first name stays) or are linked, so
+// the bot tells them once.
+func (s *mysqlDB) RequestFoundrySlackAccess(ctx context.Context, r *model.SlackAccessRequest) (requested bool, err error) {
+	if err := r.Validate(); err != nil {
+		return false, err
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_slack_access_requests (install_id, slack_user_id, slack_name)
+SELECT id, ?, ? FROM foundry_slack_installs i WHERE id=? AND revoked_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM foundry_slack_links l WHERE l.install_id=i.id AND l.slack_user_id=?)`,
+		r.SlackUserID, r.SlackName, r.InstallID, r.SlackUserID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 1 {
+		return n == 1, err
+	}
+	var live bool
+	err = s.db.QueryRowContext(ctx, `SELECT revoked_at IS NULL FROM foundry_slack_installs WHERE id=?`, r.InstallID).Scan(&live)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !live {
+		return false, ErrNotFound
+	}
+	return false, err
+}
+
+// ListFoundrySlackAccessRequests returns the install's access requests,
+// oldest first.
+func (s *mysqlDB) ListFoundrySlackAccessRequests(ctx context.Context, installID string) ([]*model.SlackAccessRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT install_id, slack_user_id, slack_name, created_at FROM foundry_slack_access_requests
+WHERE install_id=? ORDER BY created_at, slack_user_id`, installID)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, func(r rowScanner) (*model.SlackAccessRequest, error) {
+		var a model.SlackAccessRequest
+		return &a, r.Scan(&a.InstallID, &a.SlackUserID, &a.SlackName, &a.CreatedAt)
+	})
+}
+
+// DeleteFoundrySlackAccessRequest drops the Slack user's request, unanswered;
+// ErrNotFound when there was none.
+func (s *mysqlDB) DeleteFoundrySlackAccessRequest(ctx context.Context, installID, slackUserID string) error {
+	return execOrNotFound(ctx, s.db, `DELETE FROM foundry_slack_access_requests WHERE install_id=? AND slack_user_id=?`, installID, slackUserID)
 }
 
 // --- Threads ---
@@ -991,8 +1158,11 @@ WHERE turn_id=? AND status='following' AND lease_owner=?`, turnID, owner)
 // PruneFoundrySlack deletes, up to limit rows of each, what Slack's
 // retention lets go: intake rows older than intake
 // (foundry.slack.retention.intake), replies done for replies
-// (foundry.slack.retention.replies), and link tokens and install states
-// expired for model.SlackSecretsKept. It returns how many rows it deleted.
+// (foundry.slack.retention.replies), link tokens, install states and relay
+// codes expired for model.SlackSecretsKept, relay deliveries acked or
+// expired for model.RelayFinishedKept, and the channels and users a
+// relayed install was sent nothing from for model.RelayChannelSeen. It
+// returns how many rows it deleted.
 func (s *mysqlDB) PruneFoundrySlack(ctx context.Context, intake, replies time.Duration, limit int) (int64, error) {
 	if intake <= 0 || replies <= 0 || limit < 1 {
 		return 0, fmt.Errorf("a Slack prune keeps intake and replies a while, and has a limit")
@@ -1008,6 +1178,11 @@ func (s *mysqlDB) PruneFoundrySlack(ctx context.Context, intake, replies time.Du
 		{`DELETE FROM foundry_slack_link_tokens WHERE expires_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY expires_at LIMIT ?`, model.SlackSecretsKept},
 		{`DELETE FROM foundry_slack_install_states WHERE expires_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY expires_at LIMIT ?`,
 			model.SlackSecretsKept},
+		{`DELETE FROM foundry_relay_codes WHERE expires_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY expires_at LIMIT ?`, model.SlackSecretsKept},
+		{`DELETE FROM foundry_relay_deliveries WHERE finished_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY finished_at LIMIT ?`,
+			model.RelayFinishedKept},
+		{`DELETE FROM foundry_relay_channels WHERE last_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY last_at LIMIT ?`, model.RelayChannelSeen},
+		{`DELETE FROM foundry_relay_users WHERE last_at < NOW(6) - INTERVAL ? MICROSECOND ORDER BY last_at LIMIT ?`, model.RelayChannelSeen},
 	} {
 		res, err := s.db.ExecContext(ctx, p.q, p.kept.Microseconds(), limit)
 		if err != nil {
@@ -1028,9 +1203,10 @@ func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 	var i model.SlackInstall
 	var scopes string
 	var revoked, uninstalled, limited sql.NullTime
-	var bot sql.NullString
+	var bot, relayLink, localWorkspace sql.NullString
 	if err := scanner.Scan(&i.ID, &i.WorkspaceID, &i.TeamID, &i.EnterpriseID, &i.TeamName, &i.AppID, &i.BotUserID, &scopes, &i.InstalledByUserID,
-		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled, &i.BotID, &i.InstallerAdmin, &limited, &bot); err != nil {
+		&i.InstalledBySlackUserID, &i.CreatedAt, &i.UpdatedAt, &revoked, &uninstalled, &i.BotID, &i.InstallerAdmin, &limited, &bot,
+		&relayLink, &localWorkspace, &i.FeedOn); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1040,6 +1216,15 @@ func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 	i.Scopes, i.Mode = strings.Split(scopes, ","), model.SlackPerPerson{}
 	if bot.Valid {
 		i.Mode = model.SlackSharedBot{CredentialID: bot.String}
+	}
+	// So is whom it serves: a link and a local workspace, both or neither.
+	switch {
+	case relayLink.Valid && localWorkspace.Valid:
+		i.Destination = model.SlackServesRelay{LinkID: relayLink.String, LocalWorkspaceID: localWorkspace.String}
+	case relayLink.Valid || localWorkspace.Valid:
+		return nil, fmt.Errorf("read Slack install %s: a relayed install names its link and local workspace", i.ID)
+	default:
+		i.Destination = model.SlackServesWorkspace{}
 	}
 	if revoked.Valid {
 		i.RevokedAt = &revoked.Time
@@ -1053,11 +1238,16 @@ func scanFoundrySlackInstall(scanner rowScanner) (*model.SlackInstall, error) {
 
 func scanFoundrySlackLink(scanner rowScanner) (*model.SlackLink, error) {
 	var l model.SlackLink
-	if err := scanner.Scan(&l.InstallID, &l.SlackUserID, &l.UserID, &l.CreatedAt); err != nil {
+	var access string
+	if err := scanner.Scan(&l.InstallID, &l.SlackUserID, &l.UserID, &access, &l.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	var err error
+	if l.Access, err = model.ParseSlackLinkAccess(access); err != nil {
+		return nil, fmt.Errorf("read Slack link %s/%s: %w", l.InstallID, l.SlackUserID, err)
 	}
 	return &l, nil
 }

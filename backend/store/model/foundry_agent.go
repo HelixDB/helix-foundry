@@ -210,7 +210,12 @@ type FoundryAgentTurn struct {
 	// Surface is where its person reads it. A continuation (an action's
 	// result) takes its action's turn's, whatever its caller says.
 	Surface FoundryAgentSurface
-	Input   string
+	// ReadOnly turns only read and ask, whatever their person may do
+	// (Slack users a local install's owner allowed, and the owner's own while
+	// they keep approvals out of Slack). A continuation takes its action's
+	// turn's.
+	ReadOnly bool
+	Input    string
 	// AutomationRunID and AutomationNodeID are set exactly on an automation's
 	// turn: the run and step it is.
 	AutomationRunID  *string

@@ -32,7 +32,7 @@ const foundryAgentThreadColumns = `id, workspace_id, principal_kind, user_id, ki
 const foundryAgentThreadSurface = `, COALESCE((SELECT u.surface FROM foundry_agent_turns u WHERE u.thread_id=foundry_agent_threads.id
   ORDER BY u.created_at, u.id LIMIT 1), 'site')`
 
-const foundryAgentTurnColumns = `id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, input, automation_run_id, automation_node_id, page_context,
+const foundryAgentTurnColumns = `id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, read_only, input, automation_run_id, automation_node_id, page_context,
        asked, answers, status, error, client_token,
        lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros, lost_micros, input_tokens,
        output_tokens, steps, last_seq, created_at, started_at, finished_at`
@@ -162,9 +162,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, principal.Kind.Str
 			answers = raw
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, input, page_context, answers, status, client_token, max_usd_micros)
-SELECT ?, ?, ?, ?, ?, runtime, ?, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
-			t.ID, t.WorkspaceID, t.ThreadID, principal.Kind.String(), principal.ID, string(t.Kind), t.Surface.String(), t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
+  (id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, read_only, input, page_context, answers, status, client_token,
+   max_usd_micros)
+SELECT ?, ?, ?, ?, ?, runtime, ?, ?, ?, ?, ?, ?, 'queued', ?, ? FROM foundry_agent_threads WHERE id=?`,
+			t.ID, t.WorkspaceID, t.ThreadID, principal.Kind.String(), principal.ID, string(t.Kind), t.Surface.String(), t.ReadOnly, t.Input, nullJSON(t.PageContext), nullJSON(answers), t.ClientToken, maxMicros, t.ThreadID)
 		if isDuplicateKey(err) {
 			if live, liveErr := tx.liveFoundryAgentTurn(ctx, t.ThreadID); liveErr == nil && live {
 				return model.FoundryAgentRefusal{Reason: model.FoundryAgentThreadBusy, Detail: "Founder is still answering in this thread"}
@@ -1065,9 +1066,9 @@ func (s *mysqlDB) claimFoundryAgentAction(ctx context.Context, workspaceID strin
 // whether it ran: its result is {operation, status, decided_by}, and its
 // error a fixed sentence (model.FoundryAgentProposalFailed, …Unknown), so
 // its thread, which everyone in the Slack thread reads, never learns what
-// only its approver may. The continuation takes the surface and principal of
-// the action's turn, wherever the click came from, and continuation.Surface
-// and continuation.Principal are set to them once queued. continuation.MaxUSDMicros
+// only its approver may. The continuation takes the surface, read-only and
+// principal of the action's turn, wherever the click came from, and
+// continuation.Surface, .ReadOnly and .Principal are set to them once queued. continuation.MaxUSDMicros
 // is an 'api' turn's cap: on a helper's thread it is stored as 0. The thread is idle (the
 // claim checked, and sends wait for the click), so the turn is live alone;
 // should one be live after all, the click still ends, with no continuation.
@@ -1117,8 +1118,8 @@ WHERE id=? AND status='executing'`,
 		t := continuation
 		// A helper's thread runs on its owner's subscription: its turns' cap is 0.
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
-  (id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, input, status, max_usd_micros)
-SELECT ?, ?, ?, src.principal_kind, src.user_id, th.runtime, ?, src.surface, ?, 'queued', IF(th.runtime='api', ?, 0)
+  (id, workspace_id, thread_id, principal_kind, user_id, runtime, kind, surface, read_only, input, status, max_usd_micros)
+SELECT ?, ?, ?, src.principal_kind, src.user_id, th.runtime, ?, src.surface, src.read_only, ?, 'queued', IF(th.runtime='api', ?, 0)
 FROM foundry_agent_threads th
 JOIN foundry_agent_actions a ON a.id=? AND a.thread_id=th.id
 JOIN foundry_agent_turns src ON src.id=a.turn_id
@@ -1136,8 +1137,8 @@ WHERE th.id=?`,
 			return err
 		}
 		var surface, kind, owner string
-		if err := tx.db.QueryRowContext(ctx, `SELECT surface, principal_kind, user_id FROM foundry_agent_turns WHERE id=?`, t.ID).Scan(&surface, &kind,
-			&owner); err != nil {
+		if err := tx.db.QueryRowContext(ctx, `SELECT surface, read_only, principal_kind, user_id FROM foundry_agent_turns WHERE id=?`, t.ID).Scan(&surface,
+			&t.ReadOnly, &kind, &owner); err != nil {
 			return err
 		}
 		if t.Surface, err = model.ParseFoundryAgentSurface(surface); err != nil {
@@ -1285,7 +1286,7 @@ func scanFoundryAgentTurn(scanner rowScanner) (*model.FoundryAgentTurn, error) {
 	var pageContext, asked, answers, errText, clientToken, leaseOwner, automationRun, automationNode sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &t.Spend
-	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &principalKind, &owner, &runtime, &kind, &surface, &t.Input, &automationRun, &automationNode, &pageContext,
+	if err := scanner.Scan(&t.ID, &t.WorkspaceID, &t.ThreadID, &principalKind, &owner, &runtime, &kind, &surface, &t.ReadOnly, &t.Input, &automationRun, &automationNode, &pageContext,
 		&asked, &answers, &status, &errText, &clientToken,
 		&leaseOwner, &leaseUntil, &t.Attempts, &t.NextAttemptAt, &t.MaxUSDMicros, &t.ReservedMicros, &spend.USDMicros, &t.LostMicros, &spend.InputTokens,
 		&spend.OutputTokens, &t.Steps, &t.LastSeq, &t.CreatedAt, &startedAt, &finishedAt); err != nil {

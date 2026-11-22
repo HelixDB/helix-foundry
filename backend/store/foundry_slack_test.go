@@ -387,7 +387,7 @@ func TestFoundrySlackLinks(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrNotFound, "a replaced token")
 	link, err := f.db.LinkFoundrySlackUser(ctx, f.workspaceID, sha("t2"), agentUser)
 	require.NoError(t, err)
-	assert.Equal(t, model.SlackLink{InstallID: i.ID, SlackUserID: "UADA", UserID: agentUser, CreatedAt: link.CreatedAt}, *link)
+	assert.Equal(t, model.SlackLink{InstallID: i.ID, SlackUserID: "UADA", UserID: agentUser, Access: model.SlackFullAccess{}, CreatedAt: link.CreatedAt}, *link)
 	_, err = f.db.LinkFoundrySlackUser(ctx, f.workspaceID, sha("t2"), agentUser)
 	assert.ErrorIs(t, err, store.ErrNotFound, "spent once")
 	_, err = f.db.GetFoundrySlackLinkToken(ctx, sha("t2"))

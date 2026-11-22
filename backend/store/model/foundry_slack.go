@@ -69,7 +69,13 @@ type SlackInstall struct {
 	// authed_user.id).
 	InstalledBySlackUserID string
 	Mode                   SlackIdentityMode
-	CreatedAt              time.Time
+	// Destination is whom it serves, read from its row: never nil once
+	// stored. InstallFoundrySlack takes nil as SlackServesWorkspace.
+	Destination SlackDestination
+	// FeedOn says a relayed install's local Slack data connector reads it:
+	// hosted holds its channel messages for its local install.
+	FeedOn    bool
+	CreatedAt time.Time
 	// UpdatedAt is the last install or reinstall.
 	UpdatedAt time.Time
 	// RevokedAt is set once it is disconnected or uninstalled; UninstalledAt
@@ -155,7 +161,12 @@ type SlackInstallState struct {
 	// ReturnPath is where the site goes once Slack hands the install back;
 	// "" is Settings › Slack.
 	ReturnPath string
-	ExpiresAt  time.Time
+	// Destination is whom the install will serve: SlackServesRelay for one
+	// a local install started through its link, whose ReturnTo is that
+	// link's Settings › Slack (RelayLink.ReturnTo).
+	Destination SlackDestination
+	ReturnTo    string
+	ExpiresAt   time.Time
 }
 
 // SlackLink is a Slack user of an install linked to a Foundry user, who the
@@ -164,7 +175,10 @@ type SlackLink struct {
 	InstallID   string
 	SlackUserID string
 	UserID      string
-	CreatedAt   time.Time
+	// Access is what the Slack user may do as UserID: SlackFullAccess but
+	// for the people a local install's owner allowed (SlackReadAccess).
+	Access    SlackLinkAccess
+	CreatedAt time.Time
 }
 
 // SlackLinkToken is a one-time link the bot sent one Slack user: its

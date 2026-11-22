@@ -2104,3 +2104,143 @@ func (u Unimplemented) FlipSlackAppConnector(context.Context, string, string, js
 	u.unimplemented("FlipSlackAppConnector")
 	return nil
 }
+
+func (u Unimplemented) GetFoundryRelayLinkByToken(context.Context, string) (*model.RelayLink, error) {
+	u.unimplemented("GetFoundryRelayLinkByToken")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryRelayLinks(context.Context, string) ([]*model.RelayLink, error) {
+	u.unimplemented("ListFoundryRelayLinks")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryRelayInstalls(context.Context, string) ([]*model.SlackInstall, error) {
+	u.unimplemented("ListFoundryRelayInstalls")
+	return nil, nil
+}
+
+func (u Unimplemented) GetFoundryRelayInstall(context.Context, string, string) (*model.SlackInstall, error) {
+	u.unimplemented("GetFoundryRelayInstall")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundryRelayWaiting(context.Context, string) (bool, error) {
+	u.unimplemented("FoundryRelayWaiting")
+	return false, nil
+}
+
+func (u Unimplemented) KnowsFoundryRelayChannel(context.Context, string, string) (bool, error) {
+	u.unimplemented("KnowsFoundryRelayChannel")
+	return false, nil
+}
+
+func (u Unimplemented) KnowsFoundryRelayUsers(context.Context, string, []string) (bool, error) {
+	u.unimplemented("KnowsFoundryRelayUsers")
+	return false, nil
+}
+
+func (u Unimplemented) GetFoundryRelayUsage(context.Context, string, time.Time) (model.RelayUsage, error) {
+	u.unimplemented("GetFoundryRelayUsage")
+	return model.RelayUsage{}, nil
+}
+
+func (u Unimplemented) ListFoundrySlackAccessRequests(context.Context, string) ([]*model.SlackAccessRequest, error) {
+	u.unimplemented("ListFoundrySlackAccessRequests")
+	return nil, nil
+}
+
+func (u Unimplemented) CreateFoundryRelayCode(context.Context, *model.RelayCode, time.Duration) error {
+	u.unimplemented("CreateFoundryRelayCode")
+	return nil
+}
+
+func (u Unimplemented) RedeemFoundryRelayCode(context.Context, string, string, string, string) (*model.RelayLink, error) {
+	u.unimplemented("RedeemFoundryRelayCode")
+	return nil, nil
+}
+
+func (u Unimplemented) SeeFoundryRelayLink(context.Context, string, string) error {
+	u.unimplemented("SeeFoundryRelayLink")
+	return nil
+}
+
+func (u Unimplemented) RevokeFoundryRelayLink(context.Context, string, string) error {
+	u.unimplemented("RevokeFoundryRelayLink")
+	return nil
+}
+
+func (u Unimplemented) CreateFoundrySlackRelayInstallState(context.Context, string, string, string, time.Duration) error {
+	u.unimplemented("CreateFoundrySlackRelayInstallState")
+	return nil
+}
+
+func (u Unimplemented) SetFoundryRelayFeeds(context.Context, string, []model.RelayFeedOn) error {
+	u.unimplemented("SetFoundryRelayFeeds")
+	return nil
+}
+
+func (u Unimplemented) QueueFoundryRelayDelivery(context.Context, *model.RelayDelivery, time.Duration, model.RelaySeen) error {
+	u.unimplemented("QueueFoundryRelayDelivery")
+	return nil
+}
+
+func (u Unimplemented) LeaseFoundryRelay(context.Context, string, time.Duration, model.RelayBudget) (model.RelayClaim, error) {
+	u.unimplemented("LeaseFoundryRelay")
+	return model.RelayClaim{}, nil
+}
+
+func (u Unimplemented) AckFoundryRelay(context.Context, string, []string) (int, error) {
+	u.unimplemented("AckFoundryRelay")
+	return 0, nil
+}
+
+func (u Unimplemented) ExpireFoundryRelayDeliveries(context.Context, time.Duration, int) ([]*model.RelayDelivery, error) {
+	u.unimplemented("ExpireFoundryRelayDeliveries")
+	return nil, nil
+}
+
+func (u Unimplemented) NoticeFoundryRelayOffline(context.Context, time.Duration, time.Duration, int) ([]*model.RelayDelivery, error) {
+	u.unimplemented("NoticeFoundryRelayOffline")
+	return nil, nil
+}
+
+func (u Unimplemented) AppendFoundryRelayFeed(context.Context, string, model.RelayFeedAppend, model.RelayFeedLimits) (model.RelayFeedAppended, error) {
+	u.unimplemented("AppendFoundryRelayFeed")
+	return model.RelayFeedAppended{}, nil
+}
+
+func (u Unimplemented) ExpireFoundryRelayFeed(context.Context, time.Duration, int) (int, error) {
+	u.unimplemented("ExpireFoundryRelayFeed")
+	return 0, nil
+}
+
+func (u Unimplemented) RecordFoundryRelayChannels(context.Context, string, []string) error {
+	u.unimplemented("RecordFoundryRelayChannels")
+	return nil
+}
+
+func (u Unimplemented) CountFoundryRelayUsage(context.Context, string, model.RelayUsage) error {
+	u.unimplemented("CountFoundryRelayUsage")
+	return nil
+}
+
+func (u Unimplemented) MirrorFoundrySlackInstalls(context.Context, []*model.SlackInstall) error {
+	u.unimplemented("MirrorFoundrySlackInstalls")
+	return nil
+}
+
+func (u Unimplemented) AllowFoundrySlackUser(context.Context, string, string, string) (*model.SlackLink, error) {
+	u.unimplemented("AllowFoundrySlackUser")
+	return nil, nil
+}
+
+func (u Unimplemented) RequestFoundrySlackAccess(context.Context, *model.SlackAccessRequest) (bool, error) {
+	u.unimplemented("RequestFoundrySlackAccess")
+	return false, nil
+}
+
+func (u Unimplemented) DeleteFoundrySlackAccessRequest(context.Context, string, string) error {
+	u.unimplemented("DeleteFoundrySlackAccessRequest")
+	return nil
+}

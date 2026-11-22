@@ -275,6 +275,19 @@ type ReadStore interface {
 	IsFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) (bool, error)
 	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
 
+	// Helix Foundry for Slack's relay (L3): links, relayed installs, what
+	// waits for a claim, what proxied calls may name and daily counts
+	// (foundry_relay.go); a local install's access requests (foundry_slack.go)
+	GetFoundryRelayLinkByToken(ctx context.Context, tokenHash string) (*model.RelayLink, error)
+	ListFoundryRelayLinks(ctx context.Context, workspaceID string) ([]*model.RelayLink, error)
+	ListFoundryRelayInstalls(ctx context.Context, linkID string) ([]*model.SlackInstall, error)
+	GetFoundryRelayInstall(ctx context.Context, linkID, localWorkspaceID string) (*model.SlackInstall, error)
+	FoundryRelayWaiting(ctx context.Context, linkID string) (bool, error)
+	KnowsFoundryRelayChannel(ctx context.Context, installID, channelID string) (bool, error)
+	KnowsFoundryRelayUsers(ctx context.Context, installID string, userIDs []string) (bool, error)
+	GetFoundryRelayUsage(ctx context.Context, linkID string, day time.Time) (model.RelayUsage, error)
+	ListFoundrySlackAccessRequests(ctx context.Context, installID string) ([]*model.SlackAccessRequest, error)
+
 	// The Slack data connector on Helix's Slack app: feeds, their buffer,
 	// the day mirror's index and the backfill (foundry_slack_feed.go)
 	GetFoundrySlackFeed(ctx context.Context, connectorID string) (*model.SlackFeed, error)
@@ -586,6 +599,31 @@ type Store interface {
 	MarkFoundrySlackThreadOthers(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
 	SetFoundrySlackMode(ctx context.Context, workspaceID, installID string, mode model.SlackIdentityMode) (model.SlackIdentityMode, error)
 	AddFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) error
+
+	// Helix Foundry for Slack's relay (L3): codes and links, relayed
+	// installs' states and feeds, deliveries and the relay feed under
+	// leases, what proxied calls may name, counts (foundry_relay.go); a local
+	// install's mirror of its installs, and the Slack users its owner allows
+	// (foundry_relay.go, foundry_slack.go)
+	CreateFoundryRelayCode(ctx context.Context, c *model.RelayCode, ttl time.Duration) error
+	RedeemFoundryRelayCode(ctx context.Context, codeHash, verifier, linkID, tokenHash string) (*model.RelayLink, error)
+	SeeFoundryRelayLink(ctx context.Context, linkID, addr string) error
+	RevokeFoundryRelayLink(ctx context.Context, workspaceID, linkID string) error
+	CreateFoundrySlackRelayInstallState(ctx context.Context, linkID, localWorkspaceID, stateHash string, ttl time.Duration) error
+	SetFoundryRelayFeeds(ctx context.Context, linkID string, feeds []model.RelayFeedOn) error
+	QueueFoundryRelayDelivery(ctx context.Context, d *model.RelayDelivery, ttl time.Duration, seen model.RelaySeen) error
+	LeaseFoundryRelay(ctx context.Context, linkID string, lease time.Duration, budget model.RelayBudget) (model.RelayClaim, error)
+	AckFoundryRelay(ctx context.Context, linkID string, ids []string) (int, error)
+	ExpireFoundryRelayDeliveries(ctx context.Context, grace time.Duration, limit int) ([]*model.RelayDelivery, error)
+	NoticeFoundryRelayOffline(ctx context.Context, offline, every time.Duration, limit int) ([]*model.RelayDelivery, error)
+	AppendFoundryRelayFeed(ctx context.Context, installID string, a model.RelayFeedAppend, limits model.RelayFeedLimits) (model.RelayFeedAppended, error)
+	ExpireFoundryRelayFeed(ctx context.Context, ttl time.Duration, limit int) (int, error)
+	RecordFoundryRelayChannels(ctx context.Context, installID string, channelIDs []string) error
+	CountFoundryRelayUsage(ctx context.Context, linkID string, u model.RelayUsage) error
+	MirrorFoundrySlackInstalls(ctx context.Context, installs []*model.SlackInstall) error
+	AllowFoundrySlackUser(ctx context.Context, installID, slackUserID, userID string) (*model.SlackLink, error)
+	RequestFoundrySlackAccess(ctx context.Context, r *model.SlackAccessRequest) (bool, error)
+	DeleteFoundrySlackAccessRequest(ctx context.Context, installID, slackUserID string) error
 
 	// The Slack data connector on Helix's Slack app: binding, appends, folds,
 	// channels, Tier-1 slots and the backfill (foundry_slack_feed.go)
