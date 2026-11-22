@@ -373,6 +373,9 @@ func (k *slackAppKind) Changes(ctx context.Context, src Source, tables []Table, 
 		if !readable || d.Day.Before(p.window) {
 			continue
 		}
+		// The documents read their threads' replies, and a day cut for
+		// size its messages, from the mirror's days, as a full read does.
+		mirror.days[d.ChannelID] = append(mirror.days[d.ChannelID], d)
 		held[id] = d
 		if d.UpdatedSeq > *prev.Seq {
 			rewrite[d.Day.Format(time.DateOnly)] = true

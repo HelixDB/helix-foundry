@@ -409,6 +409,53 @@ func slackDocs(docs *granolaDocs) []string {
 	return out
 }
 
+// feedParityEvents buffers the parity fixture's history as Slack's events
+// deliver it, each day of the window closed once it is over.
+func feedParityEvents(a *slackAppTest) {
+	event := func(kind model.SlackFeedRowKind, channel, payload string) {
+		a.feed.append(kind, model.SlackFeedFromEvent, channel, slackAtOf(payload), payload)
+	}
+	replied := func(channel, root string, count, users int, latest string) {
+		event(model.SlackRowReplied, channel, fmt.Sprintf(`{"ts":%q,"reply_count":%d,"reply_users_count":%d,"latest_reply":%q}`, root, count, users, latest))
+	}
+	ts := func(raw string) string {
+		var m slackMessage
+		_ = json.Unmarshal([]byte(raw), &m)
+		return m.TS
+	}
+	event(model.SlackRowMessage, "C2", fmt.Sprintf(`{"user":"U2","text":"Old thread","ts":%q}`, parityT))
+	event(model.SlackRowMessage, "C2", parityTR)
+	replied("C2", parityT, 1, 1, ts(parityTR))
+	event(model.SlackRowMessage, "C1", parityM1)
+	event(model.SlackRowMessage, "C1", parityH1)
+	event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U1","text":"Morning","ts":%q}`, parityP))
+	// The edit, before any reply: its reply fields are none.
+	event(model.SlackRowChanged, "C1", fmt.Sprintf(`{"user":"U1","ts":%q,"edited":{"user":"U1","ts":%q},"text":"Morning <@U2>, see <#C2|design>"}`,
+		parityP, slackTS("2026-10-28T09:16:00Z")))
+	event(model.SlackRowMessage, "C1", parityR1)
+	replied("C1", parityP, 1, 1, ts(parityR1))
+	event(model.SlackRowMessage, "C1", parityR2)
+	replied("C1", parityP, 2, 2, ts(parityR2))
+	event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U1","text":"Lunch?","ts":%q}`, slackTS("2026-10-28T16:00:00Z")))
+	event(model.SlackRowChanged, "C1", parityL)
+	event(model.SlackRowMessage, "C1", parityR3)
+	replied("C1", parityP, 3, 3, ts(parityR3))
+	event(model.SlackRowMessage, "C1", parityB)
+	replied("C1", parityP, 4, 3, parityBTS)
+	event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U2","text":"Oops","ts":%q}`, parityD))
+	event(model.SlackRowMessage, "C1", parityRD)
+	replied("C1", parityD, 1, 1, parityRDTS)
+	event(model.SlackRowChanged, "C1", parityTomb)
+	typo := slackTS("2026-10-29T12:00:00Z")
+	event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U1","text":"Typo","ts":%q}`, typo))
+	event(model.SlackRowDeleted, "C1", fmt.Sprintf(`{"deleted_ts":%q,"ts":%q}`, typo, typo))
+	event(model.SlackRowMessage, "C2", parityQ)
+	for _, cd := range [][2]string{{"C1", "2026-10-27"}, {"C1", "2026-10-28"}, {"C1", "2026-10-29"}, {"C2", "2026-10-27"}, {"C2", "2026-10-28"}, {"C2", "2026-10-29"}} {
+		day, _ := time.Parse(time.DateOnly, cd[1])
+		a.feed.append(model.SlackRowComplete, model.SlackFeedFromEvent, cd[0], day, `{}`)
+	}
+}
+
 func TestSlackAppParity(t *testing.T) {
 	// polling is the token's full read of the fixture.
 	ws := newSlackParityWorkspace()
@@ -469,52 +516,35 @@ func TestSlackAppParity(t *testing.T) {
 
 	t.Run("events write the same rows, documents and versions as polling", func(t *testing.T) {
 		a := newSlackAppTest(t, ws.routes())
-		event := func(kind model.SlackFeedRowKind, channel, payload string) {
-			a.feed.append(kind, model.SlackFeedFromEvent, channel, slackAtOf(payload), payload)
-		}
-		replied := func(channel, root string, count, users int, latest string) {
-			event(model.SlackRowReplied, channel, fmt.Sprintf(`{"ts":%q,"reply_count":%d,"reply_users_count":%d,"latest_reply":%q}`, root, count, users, latest))
-		}
-		ts := func(raw string) string {
-			var m slackMessage
-			_ = json.Unmarshal([]byte(raw), &m)
-			return m.TS
-		}
-		event(model.SlackRowMessage, "C2", fmt.Sprintf(`{"user":"U2","text":"Old thread","ts":%q}`, parityT))
-		event(model.SlackRowMessage, "C2", parityTR)
-		replied("C2", parityT, 1, 1, ts(parityTR))
-		event(model.SlackRowMessage, "C1", parityM1)
-		event(model.SlackRowMessage, "C1", parityH1)
-		event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U1","text":"Morning","ts":%q}`, parityP))
-		// The edit, before any reply: its reply fields are none.
-		event(model.SlackRowChanged, "C1", fmt.Sprintf(`{"user":"U1","ts":%q,"edited":{"user":"U1","ts":%q},"text":"Morning <@U2>, see <#C2|design>"}`,
-			parityP, slackTS("2026-10-28T09:16:00Z")))
-		event(model.SlackRowMessage, "C1", parityR1)
-		replied("C1", parityP, 1, 1, ts(parityR1))
-		event(model.SlackRowMessage, "C1", parityR2)
-		replied("C1", parityP, 2, 2, ts(parityR2))
-		event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U1","text":"Lunch?","ts":%q}`, slackTS("2026-10-28T16:00:00Z")))
-		event(model.SlackRowChanged, "C1", parityL)
-		event(model.SlackRowMessage, "C1", parityR3)
-		replied("C1", parityP, 3, 3, ts(parityR3))
-		event(model.SlackRowMessage, "C1", parityB)
-		replied("C1", parityP, 4, 3, parityBTS)
-		event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U2","text":"Oops","ts":%q}`, parityD))
-		event(model.SlackRowMessage, "C1", parityRD)
-		replied("C1", parityD, 1, 1, parityRDTS)
-		event(model.SlackRowChanged, "C1", parityTomb)
-		typo := slackTS("2026-10-29T12:00:00Z")
-		event(model.SlackRowMessage, "C1", fmt.Sprintf(`{"user":"U1","text":"Typo","ts":%q}`, typo))
-		event(model.SlackRowDeleted, "C1", fmt.Sprintf(`{"deleted_ts":%q,"ts":%q}`, typo, typo))
-		event(model.SlackRowMessage, "C2", parityQ)
-		for _, cd := range [][2]string{{"C1", "2026-10-27"}, {"C1", "2026-10-28"}, {"C1", "2026-10-29"}, {"C2", "2026-10-27"}, {"C2", "2026-10-28"}, {"C2", "2026-10-29"}} {
-			day, _ := time.Parse(time.DateOnly, cd[1])
-			a.feed.append(model.SlackRowComplete, model.SlackFeedFromEvent, cd[0], day, `{}`)
-		}
+		feedParityEvents(a)
 		a.fold(t)
 		compare(t, a, func(string) bool { return true })
 		if lines, _ := a.mirror(t, "C1", "2026-10-28"); slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "A bot reply") }) {
 			t.Fatalf("the mirror keeps Helix's bot's text: %v", lines)
+		}
+	})
+
+	// A change read renders each day's document from the mirror as the
+	// full read does: its threads' replies included, as polling lists them.
+	t.Run("a change read offers the same documents as polling", func(t *testing.T) {
+		a := newSlackAppTest(t, ws.routes())
+		a.feed.cover("C1", "C2")
+		cursor := a.start(t)
+		feedParityEvents(a)
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		a.changes(t, cursor, docs)
+		got := map[string]Document{}
+		for _, p := range docs.puts {
+			got[p.doc.ExternalID] = p.doc
+		}
+		for _, p := range pollDocs.puts {
+			want := p.doc
+			if g, ok := got[want.ExternalID]; !ok || string(g.Text) != string(want.Text) || g.Version != want.Version {
+				t.Errorf("document %s (offered: %v) reads:\n%s\nwant:\n%s", want.ExternalID, ok, g.Text, want.Text)
+			}
+		}
+		if len(got) != len(pollDocs.puts) {
+			t.Errorf("offered %v", slices.Sorted(maps.Keys(got)))
 		}
 	})
 
