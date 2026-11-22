@@ -84,6 +84,10 @@ type Syncer struct {
 	// Accounts vends signed-in connectors' tokens; nil where none sign in,
 	// and a connector with an account then waits, retried, for one.
 	Accounts ports.ProviderAccounts
+	// SlackApps opens the installs of Helix's Slack app that Slack
+	// connectors read through; nil where foundry.slack.feed is off, and
+	// such a connector then fails for good (Credentials.Source).
+	SlackApps SlackApps
 	// Plans is nil when the deployment sells no Foundry plan; every workspace is then Free.
 	Plans       planReader
 	PlanCatalog *foundryplan.Catalog
@@ -225,9 +229,14 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 		return res, retryable(fmt.Errorf("load connector: %w", err))
 	}
 	res.SyncEverySeconds, res.AccountGeneration = c.SyncEverySeconds, AccountGeneration(c)
-	kind, err := s.Catalog.Kind(c.Kind)
-	if err != nil {
+	// The kind its settings read with: a Slack connector through Helix's
+	// Slack app is pushed where one with a token is not.
+	kind, err := s.Catalog.KindFor(c.Kind, c.Config)
+	if errors.Is(err, connector.ErrUnknownKind) {
 		return res, &Failure{Message: "this connector kind is no longer supported", Permanent: true, Err: err}
+	}
+	if err != nil {
+		return res, &Failure{Message: "this connector's settings can't be read", Permanent: true, Err: err}
 	}
 	if floor, ok := kind.(connector.IntervalFloor); ok {
 		res.MinEvery = floor.MinInterval(connector.Source{Settings: c.Config, WorkspaceID: c.WorkspaceID, ConnectorID: c.ID})
@@ -249,6 +258,13 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	}
 	if c.Account != nil && err != nil {
 		return res, s.accountFailure(ctx, c, kind, err)
+	}
+	// A failure the credential says (an install of Helix's Slack app that
+	// is gone) is the sync's as it is: retrying a permanent one would never
+	// pause the schedule.
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return res, failure
 	}
 	if err != nil {
 		return res, retryable(err)
@@ -427,7 +443,7 @@ func AccountGeneration(c *model.Connector) *int {
 // credentials opens connectors' credentials with the syncer's keyring and
 // broker, recording each token vended.
 func (s *Syncer) credentials() Credentials {
-	return Credentials{Keys: s.Keys, Accounts: s.Accounts, Checked: s.DB}
+	return Credentials{Keys: s.Keys, Accounts: s.Accounts, Checked: s.DB, SlackApps: s.SlackApps}
 }
 
 // accountFailure is why a signed-in connector's sync stopped when its
@@ -465,7 +481,7 @@ func (s *Syncer) accountFailure(ctx context.Context, c *model.Connector, kind co
 // such as a replication slot, then forgets the cursor. The sync worker calls
 // it for connectors no sync will read again.
 func (s *Syncer) Release(ctx context.Context, c *model.Connector) error {
-	kind, err := s.Catalog.Kind(c.Kind)
+	kind, err := s.Catalog.KindFor(c.Kind, c.Config)
 	if err != nil {
 		return err
 	}

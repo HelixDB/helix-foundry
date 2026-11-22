@@ -28,6 +28,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -181,6 +182,21 @@ func New(d Deps) (*Task, error) {
 		connector.NewS3Options(d.Cfg, d.AWS), connector.EventsOptions{Batches: d.DB, Objects: snapshots,
 			Budget:    events.ReadBudget{Batches: ev.MaxBatchesPerSync, Pieces: ev.MaxPiecesPerSync, Bytes: ev.MaxBytesPerSync},
 			Extracted: ev.MaxExtracted})
+	// Slack connectors read through Helix's Slack app fold its feed into
+	// their day mirror, beside the snapshots; hosted holds the installs'
+	// bot tokens they read with (a standalone install reaches Slack through
+	// Helix's relay, which isn't built yet).
+	sl := d.Cfg.Foundry.Slack
+	var slackApps syncer.SlackApps
+	if sl.Enabled && sl.Feed.Enabled {
+		catalog = catalog.WithSlackFeed(connector.SlackFeedOptions{Feed: d.DB, Objects: snapshots,
+			Budget:     model.SlackFeedBudget{Rows: sl.Feed.ReadBudget.Rows, Bytes: sl.Feed.ReadBudget.Bytes},
+			HelixAppID: sl.AppID, DirectoryEvery: sl.Feed.DirectoryEvery, RedocumentEvery: sl.Feed.RedocumentEvery, RepliesDays: sl.Backfill.RepliesDays})
+		if !d.Cfg.Host.Local {
+			required, _ := slack.Required(sl.Feed.Enabled, sl.Follow.Enabled)
+			slackApps = syncer.HostedSlackApps{DB: d.DB, Keys: keys, AppID: sl.AppID, Required: required, OrphanRetention: sl.Feed.OrphanRetention}
+		}
+	}
 	planCatalog, err := foundryplan.NewCatalog(d.Cfg.Billing.Plans, connector.KindNames())
 	if err != nil {
 		return nil, err
@@ -203,6 +219,7 @@ func New(d Deps) (*Task, error) {
 		Allowances:       d.Cfg.Foundry.SetAllowances(),
 		Plans:            d.Plans,
 		Accounts:         d.Accounts,
+		SlackApps:        slackApps,
 	}
 	return &Task{
 		deps: d, cfg: d.Cfg.Foundry.Sync, queue: d.DB, runner: s,

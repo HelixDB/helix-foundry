@@ -48,13 +48,31 @@ type Credentials struct {
 	Accounts ports.ProviderAccounts
 	// Checked records each token the broker vends; nil records none.
 	Checked accountChecks
+	// SlackApps opens the installs of Helix's Slack app that Slack
+	// connectors read through; nil where foundry.slack.feed is off.
+	SlackApps SlackApps
 }
 
 // Source is the connector's stored settings with its credential, Source.SignIn
 // set for a vended token. Its errors are Token's, for a connector with an
-// account.
+// account. A Slack connector read through Helix's Slack app (SlackAppRead)
+// has no credential of its own: Source.SlackApp is its install, as
+// SlackApps opens it, whose *Failure is returned as it is; where SlackApps
+// is nil it fails for good.
 func (c Credentials) Source(ctx context.Context, conn *model.Connector) (connector.Source, error) {
 	src := connector.Source{Settings: conn.Config, WorkspaceID: conn.WorkspaceID, ConnectorID: conn.ID}
+	if SlackAppRead(conn.Kind, conn.Config) {
+		if c.SlackApps == nil {
+			return src, &Failure{Message: "Slack through Helix Foundry's app isn't available here: switch this connection to a bot token",
+				Permanent: true}
+		}
+		app, err := c.SlackApps.SlackAppSource(ctx, conn.WorkspaceID, conn.ID)
+		if err != nil {
+			return src, err
+		}
+		src.SlackApp = app
+		return src, nil
+	}
 	if conn.Account == nil {
 		secret, err := c.Keys.Open(conn.SecretCiphertext, conn.SecretKeyID, connector.SecretContext(conn.ID))
 		if err != nil {
