@@ -459,6 +459,18 @@ func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.S
 	case err != nil && !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
 	}
+	// A standalone install adds the app through Helix, which holds its
+	// install and returns the owner to its Settings › Slack.
+	if s.deps.Relay != nil {
+		authorize, err := s.deps.Relay.StartSlackInstall(ctx, ws)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, foundryPrecondition(ws, "FOUNDRY_RELAY_NOT_LINKED", "link this Foundry to Helix first: Slack reaches it through Helix")
+		case err != nil:
+			return nil, status.Errorf(codes.Unavailable, "start adding Helix Foundry to Slack through Helix: %v", err)
+		}
+		return &foundryv1.StartFoundrySlackInstallResponse{AuthorizeUrl: authorize}, nil
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, status.Errorf(codes.Internal, "make the install's state: %v", err)
@@ -805,6 +817,16 @@ func (s *Service) uninstallSlackApp(ctx context.Context, install *model.SlackIns
 	return false
 }
 
+// slackAs is the Web API client and install's bot that call Slack as it:
+// through Helix's relay on a standalone install, else with its own token.
+func (s *Service) slackAs(ctx context.Context, install *model.SlackInstall) (*slack.Client, slack.Bot, error) {
+	if s.deps.Relay != nil {
+		return s.deps.Relay.Slack(ctx, install)
+	}
+	bot, err := s.slackBot(ctx, install.ID)
+	return s.deps.Slack, bot, err
+}
+
 // slackBot is install installID's bot token, opened.
 func (s *Service) slackBot(ctx context.Context, installID string) (slack.Bot, error) {
 	if s.deps.ConnectorKeys == nil {
@@ -880,7 +902,10 @@ type slackLinkCheck struct {
 // FOUNDRY_SLACK_LINK_EXPIRED unless raw is a live token of the workspace's
 // install. The Slack user must be a full member of the installed Slack
 // workspace, with a confirmed email that is userID's (case aside), so no
-// one links a Slack account to a Foundry account not theirs.
+// one links a Slack account to a Foundry account not theirs. A standalone
+// install has one person, its owner, and Helix keeps Slack's emails: there
+// only the Slack account that installed the app links (the bot offers no
+// one else a link, the spec's §10.5), as the owner.
 func (s *Service) checkSlackLink(ctx context.Context, workspaceID, userID, raw string) (slackLinkCheck, error) {
 	if !strings.HasPrefix(raw, slackLinkTokenPrefix) || len(raw) > maxSlackArg {
 		return slackLinkCheck{}, status.Error(codes.InvalidArgument, "token is the one Helix Foundry's link carries")
@@ -895,26 +920,31 @@ func (s *Service) checkSlackLink(ctx context.Context, workspaceID, userID, raw s
 		return slackLinkCheck{}, status.Errorf(codes.Internal, "read the Slack install: %v", err)
 	}
 	token, err := s.deps.DB.GetFoundrySlackLinkToken(ctx, hashToken(raw))
+	local := s.deps.Relay != nil
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || (err == nil && token.InstallID != install.ID):
 		return slackLinkCheck{}, expired
 	case err != nil:
 		return slackLinkCheck{}, status.Errorf(codes.Internal, "read the link: %v", err)
+	case local && token.SlackUserID != install.InstalledBySlackUserID:
+		return slackLinkCheck{}, expired
 	}
-	if s.deps.Emails == nil {
-		return slackLinkCheck{}, status.Error(codes.Unavailable, "Foundry can't read your email here, so it can't check the Slack account is yours")
+	email := ""
+	if !local {
+		if s.deps.Emails == nil {
+			return slackLinkCheck{}, status.Error(codes.Unavailable, "Foundry can't read your email here, so it can't check the Slack account is yours")
+		}
+		if email, err = s.deps.Emails.UserEmail(ctx, userID); err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
+			return slackLinkCheck{}, status.Errorf(codes.Unavailable, "read your email: %v", err)
+		}
 	}
-	email, err := s.deps.Emails.UserEmail(ctx, userID)
-	if err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
-		return slackLinkCheck{}, status.Errorf(codes.Unavailable, "read your email: %v", err)
-	}
-	bot, err := s.slackBot(ctx, install.ID)
+	client, bot, err := s.slackAs(ctx, install)
 	if err != nil {
 		return slackLinkCheck{}, status.Errorf(codes.Unavailable, "open the Slack install's token: %v", err)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, slackCallTimeout)
 	defer cancel()
-	user, err := s.deps.Slack.UserInfo(callCtx, bot, token.SlackUserID)
+	user, err := client.UserInfo(callCtx, bot, token.SlackUserID)
 	switch {
 	case slack.IsCode(err, "user_not_found"):
 		user = slack.User{ID: token.SlackUserID}
@@ -926,6 +956,8 @@ func (s *Service) checkSlackLink(ctx context.Context, workspaceID, userID, raw s
 	switch {
 	case !user.MemberOf(install.TeamID, install.EnterpriseID):
 		c.refusal = foundryv1.FoundrySlackLinkRefusal_FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER
+	case local:
+		// The installer, as the owner: no email to compare.
 	case email == "" || !strings.EqualFold(strings.TrimSpace(user.Email), strings.TrimSpace(email)):
 		c.refusal = foundryv1.FoundrySlackLinkRefusal_FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH
 	case !user.EmailConfirmed:
@@ -1031,21 +1063,26 @@ func (s *Service) tellSlackLinked(ctx context.Context, install *model.SlackInsta
 		log.From(ctx).Warn("foundry.slack.site_url isn't an origin", "err", err)
 		return
 	}
-	bot, err := s.slackBot(ctx, install.ID)
+	client, bot, err := s.slackAs(ctx, install)
 	if err != nil {
 		log.From(ctx).Warn("open the Slack install's token failed", "install_id", install.ID, "err", err)
 		return
 	}
-	text := site.Text("Your Slack account is linked to " + user.Email + " in Foundry, and I answer you as them. Not you? Unlink it now.")
+	// A standalone install's owner has no email Slack would show here.
+	whom := user.Email + " in Foundry"
+	if s.deps.Relay != nil {
+		whom = "the owner of the Foundry on your computer"
+	}
+	text := site.Text("Your Slack account is linked to " + whom + ", and I answer you as them. Not you? Unlink it now.")
 	msg := slack.Message{Text: text, Blocks: []slack.Block{
 		slack.Section{Text: text},
 		slack.Actions{Elements: []slack.Button{{ActionID: slack.ActionUnlink, Text: "Unlink", Style: slack.StyleDanger}}},
 	}}
 	callCtx, cancel := context.WithTimeout(ctx, slackCallTimeout)
 	defer cancel()
-	channel, err := s.deps.Slack.OpenDM(callCtx, bot, user.ID)
+	channel, err := client.OpenDM(callCtx, bot, user.ID)
 	if err == nil {
-		_, err = s.deps.Slack.PostMessage(callCtx, bot, slack.Post{Channel: channel, Message: msg})
+		_, err = client.PostMessage(callCtx, bot, slack.Post{Channel: channel, Message: msg})
 	}
 	if err != nil {
 		log.From(ctx).Warn("tell the Slack user they are linked failed", "install_id", install.ID, "err", err)

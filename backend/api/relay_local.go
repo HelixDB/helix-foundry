@@ -12,6 +12,7 @@ import (
 
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -40,6 +41,14 @@ type RelayLinker interface {
 	SetSlackApprovals(ctx context.Context, on bool) error
 	// Unlink revokes the link at Helix, best effort, and forgets it.
 	Unlink(ctx context.Context) error
+	// StartSlackInstall starts adding Helix's Slack app for the local
+	// workspace workspaceID, through Helix: Slack's page to send the owner
+	// to, which Helix finishes and sends back to Settings › Slack;
+	// store.ErrNotFound while unlinked.
+	StartSlackInstall(ctx context.Context, workspaceID string) (authorizeURL string, err error)
+	// Slack is a Web API client that calls Slack through Helix's relay, and
+	// install's bot it calls as: store.ErrNotFound once the install is gone.
+	Slack(ctx context.Context, install *model.SlackInstall) (*slack.Client, slack.Bot, error)
 }
 
 // RelayState is a standalone install's link to Helix: Linked false and the

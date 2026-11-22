@@ -12,16 +12,33 @@ import (
 	"google.golang.org/grpc/status"
 
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// fakeLinker is a standalone install's link to Helix.
+// fakeLinker is a standalone install's link to Helix: its Slack calls go
+// to slack, as bot "xoxb-relayed".
 type fakeLinker struct {
 	state    RelayState
 	codes    []string
 	err      error
 	unlinked bool
+	slack    *slack.Client
+	// installs are the workspaces it started adding Slack for.
+	installs []string
+}
+
+func (l *fakeLinker) StartSlackInstall(_ context.Context, workspaceID string) (string, error) {
+	if !l.state.Linked {
+		return "", foundrystore.ErrNotFound
+	}
+	l.installs = append(l.installs, workspaceID)
+	return "https://slack.com/oauth/v2/authorize?state=relayed", l.err
+}
+
+func (l *fakeLinker) Slack(_ context.Context, install *model.SlackInstall) (*slack.Client, slack.Bot, error) {
+	return l.slack, slack.Bot{InstallID: install.ID, Token: "xoxb-relayed"}, l.err
 }
 
 func (l *fakeLinker) Relay(context.Context) (RelayState, error) { return l.state, l.err }
