@@ -7,17 +7,22 @@ import type {
   FoundryLoadAccessInputs,
   FoundryPrincipal,
   FoundryPrincipalKind,
+  FoundrySourceAudience,
+  FoundrySourcePerson,
   FoundryTeam,
   ListFoundryAccessResponse,
   ResourceScope,
   WorkspaceMember,
 } from "../../../shared/wfe";
+import { plural } from "../../kit/util";
 
 // Source grants as Settings › Access and restricted mode read them, pure:
 // what a grant gives (Grant, from and to the WFE's targets), the workspace's
 // sources as the grants editor lists them (sourceTree), what a load holds
 // that grants don't cover (missing, the backend's Grants.Missing), who reads
-// what, whether a member can be restricted, and where a grantee may go.
+// what, whether a member can be restricted, where a grantee may go, and the
+// connections whose sources' own permissions narrow their grants (Source
+// permissions).
 
 /**
  * What one grant gives, as the editor holds it: a connector (its tables now
@@ -700,3 +705,145 @@ export const readsPart = (
   me: Parameters<typeof readAccess>[0] & { partial: readonly string[] },
   o: { id: string; projectId?: string },
 ) => readAccess(me, o) === "grants" && me.partial.includes(o.id);
+
+// ---------------------------------------------------------------- source permissions
+//
+// A connection whose source reports its own permissions (Slack: who each
+// channel is shared with) gives someone restricted only what the source
+// shares with their email, and its tables only once that is all of it
+// (plans/SOURCE_ACLS.md). Its syncs read those permissions; a read over 7
+// days old, or none, leaves it to people who aren't restricted.
+
+/**
+ * When a connection's source permissions were last read: never (no read
+ * has worked), too long ago (`stale`: over 7 days), or recently enough to
+ * narrow its grants.
+ */
+export type AudienceRead =
+  | { kind: "never" }
+  | { kind: "stale"; at: string }
+  | { kind: "fresh"; at: string };
+
+/**
+ * A connection's AudienceRead, from GET .../foundry/access/sources.
+ *
+ *     audienceRead({ readAt: "2026-11-20T10:00:00Z", stale: false }) // { kind: "fresh", at: "2026-11-20T10:00:00Z" }
+ *     audienceRead({ stale: true }) // { kind: "never" }
+ */
+export const audienceRead = (a: FoundrySourceAudience): AudienceRead =>
+  !a.readAt
+    ? { kind: "never" }
+    : a.stale
+      ? { kind: "stale", at: a.readAt }
+      : { kind: "fresh", at: a.readAt };
+
+/**
+ * The workspace's members as a source's people match them, by email
+ * (trimmed and lowercased, as the backend matches them): those it knows,
+ * those of them it knows as guests, and those it doesn't (no email, or one
+ * it doesn't hold), in the order given.
+ */
+export type SourceMatch = {
+  matched: WorkspaceMember[];
+  guests: WorkspaceMember[];
+  unmatched: WorkspaceMember[];
+};
+
+/**
+ * How a source's people match the members.
+ *
+ *     sourceMatch([{ email: "ada@example.com" }], [ada, eve]) // { matched: [ada], guests: [], unmatched: [eve] }
+ */
+export function sourceMatch(
+  people: readonly FoundrySourcePerson[],
+  members: readonly WorkspaceMember[],
+): SourceMatch {
+  const guest = new Map(
+    people.map((p) => [(p.email || "").trim().toLowerCase(), !!p.guest]),
+  );
+  const emailOf = (m: WorkspaceMember) =>
+    (m.user?.email || "").trim().toLowerCase();
+  const matched = members.filter((m) => !!emailOf(m) && guest.has(emailOf(m)));
+  return {
+    matched,
+    guests: matched.filter((m) => guest.get(emailOf(m))),
+    unmatched: members.filter((m) => !matched.includes(m)),
+  };
+}
+
+/** A source kind's words: what it shares, with everyone and with the people it lists. */
+const sourceWords = (kind = "") =>
+  kind === "slack"
+    ? {
+        follows: "Follows Slack channel membership",
+        grant: "only the channels each person is in, now and later",
+        source: "Slack",
+        everyone: "its public channels",
+        listed: "the private channels that list them",
+        items: (everyone: number, listed: number) =>
+          `${plural(everyone, "public channel")}, ${plural(listed, "private", "private")}`,
+      }
+    : {
+        follows: "Follows its source’s permissions",
+        grant: "only what its source shares with each person, now and later",
+        source: "its source",
+        everyone: "what it shares with everyone",
+        listed: "what lists them",
+        items: (everyone: number, listed: number) =>
+          `${plural(everyone + listed, "item")}, ${plural(listed, "private", "private")}`,
+      };
+
+/**
+ * What a grant of a connection that follows its source's permissions gives,
+ * said beside it in the grants editor in place of "all of it".
+ *
+ *     grantNote("slack") // "only the channels each person is in, now and later"
+ */
+export const grantNote = (kind?: string) => sourceWords(kind).grant;
+
+/**
+ * One connection's row on Source permissions, in words: what it follows (its
+ * tag), a line of when its permissions were read (`relative` words a time),
+ * what they share and how many members its people match, then notes: who
+ * isn't matched, its guests, and why the last read failed.
+ *
+ *     sourcePermissions({ kind: "slack", readAt, everyoneItems: 5, membersItems: 1, people }, members, nameOf, formatRelative)
+ *     // { follows: "Follows Slack channel membership", line: "Read 2h ago · 5 public channels, 1 private · 3 of 3 members matched", notes: [] }
+ */
+export function sourcePermissions(
+  a: FoundrySourceAudience,
+  members: readonly WorkspaceMember[],
+  name: (m: WorkspaceMember) => string,
+  relative: (at: string) => string,
+) {
+  const words = sourceWords(a.kind),
+    read = audienceRead(a),
+    match = sourceMatch(a.people || [], members);
+  const unread =
+    "only owners, admins and members who aren’t restricted read it until a sync reads them again";
+  const readText =
+    read.kind === "never"
+      ? `Not read yet: ${unread}`
+      : read.kind === "stale"
+        ? `Last read ${relative(read.at)}, over 7 days ago: ${unread}`
+        : `Read ${relative(read.at)}`;
+  return {
+    follows: words.follows,
+    line: [
+      readText,
+      read.kind !== "never" &&
+        words.items(a.everyoneItems || 0, a.membersItems || 0),
+      `${match.matched.length} of ${plural(members.length, "member")} matched`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    notes: [
+      match.unmatched.length > 0 &&
+        `Not in ${words.source} by their email: ${match.unmatched.map(name).join(", ")}. Restricted, they read only ${words.everyone}.`,
+      match.guests.length > 0 &&
+        `${match.guests.length > 1 ? "Guests" : "A guest"} in ${words.source}: ${match.guests.map(name).join(", ")}. Restricted, they read only ${words.listed}.`,
+      a.problem?.message &&
+        `The last read of who it shares what with failed: ${a.problem.message}.`,
+    ].filter((n): n is string => !!n),
+  };
+}
