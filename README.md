@@ -33,13 +33,7 @@ Connect your databases, tools and documents, let an agent draft an ontology over
 **On Helix Cloud.** Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
 
 ```text
-Set up Helix Foundry with me on Helix Cloud.
-
-Read https://foundry.helix-db.com/llms-full.txt and follow its "Setup
-prompt for an agent" step by step: connect the Helix MCP, sign me in (or
-sign me up), connect my data, then draft, review and load my first
-ontology. Ask me before each change, and never ask me to paste a password
-or API key into this chat.
+Set up Helix Foundry with me: https://foundry.new
 ```
 
 The agent adds the Helix MCP, signs you up through it if you don't have an account yet, and builds your first ontology with you. You never need the Helix dashboard: the agent sends you a link only to sign in or to enter a password or key.
