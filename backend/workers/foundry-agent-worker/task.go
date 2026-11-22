@@ -112,7 +112,7 @@ func New(d Deps) (*Task, error) {
 		workerID: t.workerID, now: time.Now, writers: suggestionWriters, retryWait: suggestionRetryWait}
 	t.runner = &agent.Runner{
 		DB: d.DB, Sessions: d.Sessions, AI: resolver, Models: llm.New, Catalog: catalog, Keys: resolver.Keyring, Databases: d.Databases,
-		Cfg: cfg, WorkerID: t.workerID, Now: time.Now,
+		Cfg: cfg, WorkerID: t.workerID, Now: time.Now, ProposalTTL: d.Cfg.Foundry.Slack.Bot.ProposalTTL,
 	}
 	return t, nil
 }
