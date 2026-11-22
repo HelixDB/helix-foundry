@@ -1276,6 +1276,37 @@ func TestSlackFeedValidate(t *testing.T) {
 	}
 }
 
+// The Slack worker folds the feeds' days into their mirror in the data
+// bucket, so with the feed on it needs one; the follow-ups alone write none,
+// and the other roles never touch the mirror.
+func TestSlackFeedNeedsTheDataBucket(t *testing.T) {
+	for name, tc := range map[string]struct {
+		feed, follow bool
+		roles        Roles
+		want         string // empty when valid
+	}{
+		"the worker with the feed":         {feed: true, roles: Roles{SlackWorker: true}, want: "foundry.sync.data_bucket must be set when 'foundry-slack-worker' is in tasks and foundry.slack.feed is on"},
+		"the worker with both":             {feed: true, follow: true, roles: Roles{SlackWorker: true}, want: "foundry.sync.data_bucket must be set when 'foundry-slack-worker'"},
+		"the worker with the follow-ups":   {follow: true, roles: Roles{SlackWorker: true}},
+		"the API with the feed":            {feed: true, roles: Roles{API: true}},
+		"the worker with neither (bot on)": {roles: Roles{SlackWorker: true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := slackOn()
+			c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "k1", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+			c.Foundry.Slack.Feed.Enabled, c.Foundry.Slack.Follow.Enabled = tc.feed, tc.follow
+			c.Foundry.Sync.DataBucket = ""
+			if err := c.Validate(tc.roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			c.Foundry.Sync.DataBucket = "foundry-data"
+			if err := c.Validate(tc.roles); err != nil {
+				t.Fatalf("with the bucket: %v", err)
+			}
+		})
+	}
+}
+
 // The app reads channel messages, and asks Slack for what that takes, while
 // either the feed or the follow-ups is on.
 func ExampleSlackConfig_ReadsHistory() {

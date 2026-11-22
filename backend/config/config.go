@@ -2387,6 +2387,10 @@ func (c *Config) validateRoles(roles Roles) error {
 	if err := f.Slack.validate(roles, c.Host.Local, f.Agent); err != nil {
 		return err
 	}
+	if roles.SlackWorker && f.Slack.Enabled && f.Slack.Feed.Enabled && f.Sync.DataBucket == "" {
+		// The worker folds each feed's days into its mirror there.
+		return fmt.Errorf("foundry.sync.data_bucket must be set when 'foundry-slack-worker' is in tasks and foundry.slack.feed is on: it holds the feeds' day mirror")
+	}
 	if roles.AutomationWorker && f.Automations.Enabled {
 		a := f.Automations
 		switch {
