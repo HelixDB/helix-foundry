@@ -36,6 +36,8 @@ var (
 	UsersInfo = Method{name: "users.info", perMinute: 100, form: true}
 	// ConversationsOpen is Tier 3.
 	ConversationsOpen = Method{name: "conversations.open", perMinute: 50}
+	// ConversationsInfo is Tier 3.
+	ConversationsInfo = Method{name: "conversations.info", perMinute: 50, form: true}
 	// AgentSessionSetStatus is Tier 3.
 	AgentSessionSetStatus = Method{name: "agents.sessions.setStatus", perMinute: 50}
 	// AppsUninstall is Tier 1.

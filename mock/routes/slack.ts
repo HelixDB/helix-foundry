@@ -274,7 +274,7 @@ export const slackRoutes: MockRoute[] = [
       url.searchParams.set("client_id", "mock-client");
       url.searchParams.set(
         "scope",
-        "app_mentions:read,im:history,im:write,chat:write,assistant:write,users:read,users:read.email",
+        "app_mentions:read,im:history,im:write,chat:write,assistant:write,users:read,users:read.email,channels:read,groups:read,mpim:read",
       );
       url.searchParams.set(
         "redirect_uri",

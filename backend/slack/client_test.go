@@ -303,6 +303,33 @@ func TestOpenDM(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestExtShared(t *testing.T) {
+	fake, client, _ := newFake(t)
+	ctx := context.Background()
+	for body, want := range map[string]bool{
+		`{"ok":true,"channel":{"id":"C1","is_ext_shared":false}}`:                              false,
+		`{"ok":true,"channel":{"id":"C1","is_shared":true}}`:                                   false,
+		`{"ok":true,"channel":{"id":"C1","is_ext_shared":true}}`:                               true,
+		`{"ok":true,"channel":{"id":"C1","is_ext_shared":false,"is_pending_ext_shared":true}}`: true,
+	} {
+		fake.answers["conversations.info"] = answer(200, body)
+		shared, err := client.ExtShared(ctx, slack.Bot{InstallID: "I" + body, Token: "t"}, "C1")
+		require.NoError(t, err, body)
+		require.Equal(t, want, shared, body)
+	}
+	c := fake.last()
+	require.Equal(t, "application/x-www-form-urlencoded", c.contentType)
+	require.Equal(t, url.Values{"channel": {"C1"}}, c.form)
+	_, err := client.ExtShared(ctx, bot, "c 1")
+	require.Error(t, err)
+	fake.answers["conversations.info"] = answer(200, `{"ok":true,"channel":{"id":"C2"}}`)
+	_, err = client.ExtShared(ctx, slack.Bot{InstallID: "I4", Token: "t"}, "C1")
+	require.Error(t, err, "answered for another channel")
+	fake.answers["conversations.info"] = answer(200, `{"ok":false,"error":"missing_scope","needed":"groups:read"}`)
+	_, err = client.ExtShared(ctx, slack.Bot{InstallID: "I5", Token: "t"}, "G1")
+	require.True(t, slack.IsCode(err, "missing_scope"))
+}
+
 func TestOAuthAccess(t *testing.T) {
 	fake, client, _ := newFake(t)
 	ctx := context.Background()

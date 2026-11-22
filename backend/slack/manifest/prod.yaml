@@ -31,6 +31,9 @@ oauth_config:
       - assistant:write
       - users:read
       - users:read.email
+      - channels:read
+      - groups:read
+      - mpim:read
 settings:
   event_subscriptions:
     request_url: https://ingest.helix-db.com/v1/slack/events

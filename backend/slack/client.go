@@ -423,6 +423,31 @@ func (c *Client) OpenDM(ctx context.Context, bot Bot, userID string) (string, er
 	return out.Channel.ID, nil
 }
 
+// ExtShared reports whether a channel is shared with another organisation,
+// or invited to be (conversations.info's is_ext_shared and
+// is_pending_ext_shared), where Foundry's data never shows. It needs
+// channels:read, groups:read or mpim:read for the channel's kind.
+func (c *Client) ExtShared(ctx context.Context, bot Bot, channel string) (bool, error) {
+	if !idRE.MatchString(channel) {
+		return false, fmt.Errorf("slack: conversations.info of %q", channel)
+	}
+	var out struct {
+		Channel struct {
+			ID               string `json:"id"`
+			ExtShared        bool   `json:"is_ext_shared"`
+			PendingExtShared bool   `json:"is_pending_ext_shared"`
+		} `json:"channel"`
+	}
+	form := url.Values{"channel": {channel}}
+	if err := c.call(ctx, request{method: ConversationsInfo, bot: bot, form: form}, &out); err != nil {
+		return false, err
+	}
+	if out.Channel.ID != channel {
+		return false, errors.New("slack: conversations.info answered for another channel")
+	}
+	return out.Channel.ExtShared || out.Channel.PendingExtShared, nil
+}
+
 // AgentStatus is an agent session's status: a closed set.
 type AgentStatus struct{ s string }
 

@@ -20,8 +20,9 @@
 package slack
 
 // Scopes are the bot scopes the app asks for, and every install must hold:
-// mentions and direct messages in, posting and agent status out, and who a
-// Slack user is (their email, for linking).
+// mentions and direct messages in, posting and agent status out, who a
+// Slack user is (their email, for linking), and whether a channel a card
+// is clicked in is shared with another organisation (conversations.info).
 var Scopes = []string{
 	"app_mentions:read",
 	"im:history",
@@ -30,6 +31,9 @@ var Scopes = []string{
 	"assistant:write",
 	"users:read",
 	"users:read.email",
+	"channels:read",
+	"groups:read",
+	"mpim:read",
 }
 
 // Subscriptions are the bot events the app subscribes to: the events
