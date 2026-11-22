@@ -160,6 +160,10 @@ type Result struct {
 	// Pushed is set for a Pushed kind once the sync stored its cursor; nil
 	// for any other kind, and for a sync that stopped before.
 	Pushed *PushedResult
+	// PushedConnector says the connector syncs when its data arrives
+	// (model.Connector.Pushed), once the sync read it: a sync of it that
+	// gives up tries again by its arrivals' spacing, not its plan's interval.
+	PushedConnector bool
 }
 
 // PushedResult is what the worker schedules a Pushed kind's next sync by.
@@ -228,7 +232,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	if err != nil {
 		return res, retryable(fmt.Errorf("load connector: %w", err))
 	}
-	res.SyncEverySeconds, res.AccountGeneration = c.SyncEverySeconds, AccountGeneration(c)
+	res.SyncEverySeconds, res.AccountGeneration, res.PushedConnector = c.SyncEverySeconds, AccountGeneration(c), c.Pushed
 	// The kind its settings read with: a Slack connector through Helix's
 	// Slack app is pushed where one with a token is not.
 	kind, err := s.Catalog.KindFor(c.Kind, c.Config)

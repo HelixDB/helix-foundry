@@ -387,9 +387,13 @@ func TestSyncerSlackApp(t *testing.T) {
 	})
 	t.Run("retries a store failure", func(t *testing.T) {
 		f, _ := newSlackFixture(t, slackAppSettings, &slackApps{err: errors.New("store down")})
-		_, err := f.syncer.Run(ctx, f.sync)
+		f.store.connectors["conn-1"].Pushed = true
+		res, err := f.syncer.Run(ctx, f.sync)
 		if got := failure(t, err); got.Permanent || !strings.Contains(got.Error(), "store down") {
 			t.Fatalf("failure = %+v", got)
+		}
+		if !res.PushedConnector {
+			t.Fatal("a failed sync of a pushed connector doesn't say it is pushed, for the worker to schedule by")
 		}
 	})
 	t.Run("fails for good where the app isn't read", func(t *testing.T) {

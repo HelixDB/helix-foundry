@@ -460,9 +460,10 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, syncID
 // backoff that doubles from a minute, or failed for good, and with a terminal
 // one the connector's next scheduled sync.
 //
-// An event source (a Pushed kind, every sync of which is origin events) has
-// no interval: it syncs when pieces arrive, a send scheduling a sync when
-// none is. After a sync, it syncs again by what waits beyond its cursor:
+// A pushed connector (an event source, every sync of which is origin
+// events, or a Slack connection through Helix's Slack app, whose syncs are
+// the scheduler's or a settings change's) has no interval: it syncs when
+// its data arrives, an arrival scheduling a sync when none is. After a sync, it syncs again by what waits beyond its cursor:
 // with nothing, it keeps what a send scheduled; with less than one read
 // takes, it syncs after the spacing; with more, at once. The spacing grows
 // with its table's rows, since each merge rewrites the table. Giving up on
@@ -508,7 +509,9 @@ func (t *Task) outcome(ctx context.Context, sync *model.ConnectorSync, result sy
 	case failure.Permanent:
 		// The same refusal comes back every time until the owner changes something.
 		schedule = &model.ConnectorScheduleOutcome{Paused: message, Every: result.SyncEverySeconds, Generation: result.AccountGeneration}
-	case sync.Origin == model.ConnectorSyncEvents:
+	case sync.Origin == model.ConnectorSyncEvents || result.PushedConnector:
+		// Arrivals schedule a sync only when none is due: the plan's
+		// interval would hold back what they buffer until then.
 		message = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, sync.Attempts)
 		schedule = &model.ConnectorScheduleOutcome{Pushed: model.PushedNotBefore{At: t.now().Add(t.spacing.For(max(result.StoredRows, rows)))}}
 	default:
