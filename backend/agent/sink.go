@@ -29,7 +29,8 @@ import (
 // it (cards). An automation's turn runs at once, as its owner, what fits an
 // action they approved for its step (approved, through sessions), and a
 // person's turn what autoRun lets it run because their message asked for it;
-// anything else waits for them as a card.
+// anything else waits for them as a card. A Slack install's bot's turn
+// proposes instead (Propose): the action alone, for an owner or admin.
 type actionSink struct {
 	db         Store
 	keys       *secretbox.Keyring
@@ -42,16 +43,21 @@ type actionSink struct {
 	// and what autoRun runs.
 	approved []automation.Action
 	sessions integration.SessionHost
-	// reach is the turn's person's, set once their session opens: under
-	// ReachGrants it allows, records and runs nothing.
+	// reach is the turn's, set once its session opens: under ReachGrants it
+	// allows, records and runs nothing; under ReachBot it only proposes.
 	reach Reach
+	// proposalTTL is how long a bot's proposal waits; 0 keeps none.
+	proposalTTL time.Duration
 }
 
-var _ integration.ActionSink = (*actionSink)(nil)
+var (
+	_ integration.ActionSink   = (*actionSink)(nil)
+	_ integration.ProposalSink = (*actionSink)(nil)
+)
 
 // autoRun is what Founder runs without a card: a new dashboard (always unpinned and unpublished:
-// CreateFoundryDashboardRequest has neither field) the person's own message asked for. The dock offers Undo.
-// Everything else (pinning, publishing, loads, deletes, …) stays a card the person clicks.
+// CreateFoundryDashboardRequest has neither field) the person's own message on the site asked for. The dock offers Undo.
+// Everything else (pinning, publishing, loads, deletes, …), and anything in Slack, stays a card the person clicks.
 var autoRun = map[string]func(turn *model.FoundryAgentTurn) bool{
 	"create_dashboard": askedForDashboard,
 }
@@ -59,12 +65,14 @@ var autoRun = map[string]func(turn *model.FoundryAgentTurn) bool{
 // dashboardWord is the word dashboard or dashboards, whole, in any case.
 var dashboardWord = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])dashboards?(?:$|[^\pL\pN_])`)
 
-// askedForDashboard reports whether turn is a message the person wrote that
-// asks for a dashboard: it holds the word dashboard or dashboards, whole, in
-// any case. An automation's turn, an action's result and answers to
-// questions never ask.
+// askedForDashboard reports whether turn is a message the person wrote on
+// the site that asks for a dashboard: it holds the word dashboard or
+// dashboards, whole, in any case. An automation's turn, an action's result
+// and answers to questions never ask, and nor does a message read in Slack,
+// whose words may quote anyone in the channel: there a new dashboard is a
+// card like any other action.
 func askedForDashboard(turn *model.FoundryAgentTurn) bool {
-	return turn.Kind == model.FoundryAgentTurnMessage && dashboardWord.MatchString(turn.Input)
+	return turn.Kind == model.FoundryAgentTurnMessage && turn.Surface == model.FoundryAgentSurfaceSite && dashboardWord.MatchString(turn.Input)
 }
 
 // autoRuns reports whether a runs at once under autoRun: an operation it
@@ -76,10 +84,58 @@ func (s *actionSink) autoRuns(a integration.PreparedAction) bool {
 }
 
 // Allows is Founder's operations, which hold every one an automation's
-// owner may approve for a step (automation.Operations); none for a
-// restricted member's turn.
+// owner may approve for a step (automation.Operations); BotOperations for a
+// Slack install's bot; none for a restricted member's turn.
 func (s *actionSink) Allows(operation string) bool {
-	return s.reach == ReachWorkspace && Operations[operation]
+	switch s.reach {
+	case ReachWorkspace:
+		return Operations[operation]
+	case ReachBot:
+		return BotOperations[operation]
+	}
+	return false
+}
+
+// Propose keeps a bot's proposal, prepared for an owner or admin until
+// proposalTTL from now, with its event (Proposed): the action alone, with
+// no display and nothing read of the workspace, since the owner or admin who
+// reviews it draws its card as themselves. Its target must be in the turn's
+// workspace. A payload the turn already proposed is the proposal already
+// kept while it waits; once decided, proposing it again is refused.
+func (s *actionSink) Propose(ctx context.Context, p integration.ProposedAction) (integration.AwaitingAdmin, error) {
+	switch {
+	case s.reach != ReachBot:
+		return integration.AwaitingAdmin{}, status.Error(codes.PermissionDenied, "only a Slack install's bot proposes actions")
+	case s.proposalTTL <= 0:
+		return integration.AwaitingAdmin{}, status.Error(codes.Unavailable, "Founder can't keep proposals on this host")
+	}
+	_, rest, _ := strings.Cut(p.Target, ":")
+	if inWorkspace, _, _ := strings.Cut(rest, "/"); inWorkspace != s.turn.WorkspaceID {
+		return integration.AwaitingAdmin{}, status.Error(codes.InvalidArgument, "the target is of another workspace: Founder acts in this one only")
+	}
+	stored, err := s.db.GetFoundryAgentActionByPayload(ctx, s.turn.ID, p.PayloadHash)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		stored, err = s.db.RecordFoundryAgentAction(ctx, s.workerID, &model.FoundryAgentAction{
+			ID: id.New(), TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, Principal: s.turn.Principal,
+			Operation: p.Operation, Target: p.Target, Payload: p.Payload, PayloadHash: p.PayloadHash, Display: json.RawMessage(`{}`),
+			Approval: model.AdminApproval{}, Status: model.FoundryAgentActionPrepared, ExpiresAt: time.Now().Add(s.proposalTTL),
+		}, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
+			return MarshalEvent(Proposed{ActionID: stored.ID, Operation: stored.Operation})
+		})
+	}
+	var refusal model.FoundryAgentRefusal
+	switch {
+	case errors.As(err, &refusal):
+		return integration.AwaitingAdmin{}, status.Error(codes.FailedPrecondition, refusal.Detail)
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return integration.AwaitingAdmin{}, ErrLost
+	case err != nil:
+		return integration.AwaitingAdmin{}, err
+	case stored.Shown(time.Now()) == model.FoundryAgentActionPrepared:
+		return integration.AwaitingAdmin{ActionID: stored.ID, ExpiresAt: stored.ExpiresAt}, nil
+	}
+	return integration.AwaitingAdmin{}, status.Error(codes.FailedPrecondition,
+		"this proposal is already "+string(stored.Shown(time.Now()))+". Don't propose it again unless someone asks")
 }
 
 // Record checks the action acts in the turn's workspace, names what it acts
@@ -244,13 +300,18 @@ func (s *actionSink) record(ctx context.Context, a integration.PreparedAction, a
 		return nil, fmt.Errorf("seal the action's confirmation: %w", err)
 	}
 	action := &model.FoundryAgentAction{
-		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, UserID: s.turn.UserID,
+		ID: actionID, TurnID: s.turn.ID, ThreadID: s.turn.ThreadID, WorkspaceID: s.turn.WorkspaceID, Principal: s.turn.Principal,
 		Operation: a.Operation, Target: a.Target, Payload: a.Payload, PayloadHash: a.PayloadHash, Display: card.Display,
-		TargetNamedByUser: named, ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID,
+		TargetNamedByUser: named, Approval: model.PersonApproval{ConfirmationID: a.Confirmation.ID, TokenSealed: sealed, KeyID: keyID},
 		Status: model.FoundryAgentActionPrepared, ExpiresAt: a.Confirmation.ExpiresAt,
 	}
 	if approved {
-		action.Status, action.DecidedBy = model.FoundryAgentActionExecuting, &s.turn.UserID
+		// An automation's step, run as its owner, a person.
+		owner, ok := s.turn.Principal.(model.AgentPerson)
+		if !ok {
+			return nil, fmt.Errorf("only a person's turn approves its own action")
+		}
+		action.Status, action.DecidedBy = model.FoundryAgentActionExecuting, &owner.UserID
 	}
 	return s.db.RecordFoundryAgentAction(ctx, s.workerID, action, s.maxPending, func(stored *model.FoundryAgentAction) (json.RawMessage, error) {
 		return MarshalEvent(ActionCard{

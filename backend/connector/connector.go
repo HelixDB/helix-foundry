@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -38,6 +39,39 @@ type Source struct {
 	// skips the key's format checks (and takes no Secret at all, to check
 	// settings alone), and the kind sends it as the OAuth token it is.
 	SignIn bool
+	// SlackApp is the workspace's install of Helix's Slack app a Slack
+	// connector reads through (SlackCredentialApp), set by the host for its
+	// sync and Test; nil for every other source.
+	SlackApp *SlackApp
+}
+
+// SlackApp is a source read through a workspace's install of Helix's Slack
+// app: the install, its team, its bot (whose own messages are kept without
+// their text) and how its Web API calls reach Slack.
+type SlackApp struct {
+	InstallID, TeamID string
+	// BotUserID, BotID and AppID name Helix's bot in the team: its user,
+	// auth.test's bot_id and the app (foundry.slack.app_id). Each is
+	// compared only when it isn't empty.
+	BotUserID, BotID, AppID string
+	// Caller sends the install's calls: hosted, with its bot token;
+	// a standalone install, through Helix's relay.
+	Caller SlackCaller
+}
+
+// SlackCaller sends one GET of a Slack Web API method for an install and
+// returns Slack's answer as it came: its status, headers (X-OAuth-Scopes,
+// Retry-After) and body. An error is a call that got no answer.
+type SlackCaller interface {
+	Call(ctx context.Context, method string, query url.Values) (status int, header http.Header, body []byte, err error)
+}
+
+// Variant is a kind whose reader depends on a connector's stored settings,
+// such as a Slack connector read with a token or through Helix's Slack app.
+type Variant interface {
+	// For is the kind that reads a connector stored with settings; an error
+	// for settings the kind can't read.
+	For(settings json.RawMessage) (Kind, error)
 }
 
 func (s Source) Allows(c Capture) bool { return slices.Contains(s.Captures, c) }
@@ -314,6 +348,8 @@ func NewCatalog(endpoints Endpoints, guard Guard, s3 S3Options, pushed EventsOpt
 	saas := &http.Client{Timeout: 30 * time.Second, CheckRedirect: noRedirects}
 	// PostHog's export mode reads the customer's bucket the way the s3 kind does.
 	files := newS3Kind(endpoints, guard, s3)
+	slack := &slackKind{base: endpoints.Slack, http: saas}
+	slack.app = &slackAppKind{poll: slack}
 	return &Catalog{kinds: []Kind{
 		&stripeKind{base: endpoints.Stripe, http: saas},
 		&workosKind{base: endpoints.WorkOS, http: saas},
@@ -322,7 +358,7 @@ func NewCatalog(endpoints Endpoints, guard Guard, s3 S3Options, pushed EventsOpt
 		&linearKind{base: endpoints.Linear, http: saas},
 		&calcomKind{base: endpoints.Calcom, http: saas},
 		&granolaKind{base: endpoints.Granola, http: saas},
-		&slackKind{base: endpoints.Slack, http: saas},
+		slack,
 		&notionKind{base: endpoints.Notion, http: saas},
 		&googleKind{base: endpoints.Google, tokenURL: endpoints.GoogleToken, http: saas},
 		&databuddyKind{base: endpoints.Databuddy, http: saas},
@@ -347,9 +383,27 @@ func NewCatalogOf(kinds ...Kind) *Catalog { return &Catalog{kinds: kinds} }
 
 func (c *Catalog) Kinds() []Kind { return slices.Clone(c.kinds) }
 
+// WithSlackFeed is the catalog with its Slack kind wired to Helix's Slack
+// app: the app connectors' feeds and mirror (opts), and Helix's own app,
+// whose bot's messages either credential keeps without their text. c is
+// unchanged.
+func (c *Catalog) WithSlackFeed(opts SlackFeedOptions) *Catalog {
+	kinds := slices.Clone(c.kinds)
+	for i, k := range kinds {
+		if old, ok := k.(*slackKind); ok {
+			slack := &slackKind{base: old.base, http: old.http, helixAppID: opts.HelixAppID}
+			slack.app = &slackAppKind{poll: slack, SlackFeedOptions: opts}
+			kinds[i] = slack
+		}
+	}
+	return &Catalog{kinds: kinds}
+}
+
 // ErrUnknownKind is a kind the catalog does not hold.
 var ErrUnknownKind = errors.New("connector: unknown kind")
 
+// Kind is the kind named name, as the kind list shows it. A connector is
+// read by KindFor its settings.
 func (c *Catalog) Kind(name string) (Kind, error) {
 	for _, k := range c.kinds {
 		if k.Name() == name {
@@ -357,6 +411,21 @@ func (c *Catalog) Kind(name string) (Kind, error) {
 		}
 	}
 	return nil, fmt.Errorf("%w %q", ErrUnknownKind, name)
+}
+
+// KindFor is the kind that reads a connector of kind name stored with
+// settings: a Variant's choice, else the named kind itself. Everything that
+// syncs, tests, schedules or describes a stored connector resolves its kind
+// here, since a variant may be Pushed where its kind is not.
+func (c *Catalog) KindFor(name string, settings json.RawMessage) (Kind, error) {
+	k, err := c.Kind(name)
+	if err != nil {
+		return nil, err
+	}
+	if v, ok := k.(Variant); ok {
+		return v.For(settings)
+	}
+	return k, nil
 }
 
 // saasTable is a fixed API object exposed as a table keyed by key.

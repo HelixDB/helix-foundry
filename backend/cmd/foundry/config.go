@@ -87,12 +87,33 @@ type LocalConfig struct {
 	// local/compose.yaml publishes it on loopback (FOUNDRY_MCP_PORT): the
 	// Assistant's helper's pair command names it when it isn't 8081.
 	MCPPort int `koanf:"mcp_port"`
+	// Relay is Helix's Slack relay, which the owner may link the install to
+	// in Settings › Slack: Slack reaches the install only through it.
+	Relay RelayConfig `koanf:"relay"`
 	// SecretsDir, when set, is the directory `foundry init-secrets` wrote
 	// the install's secrets to: the site token, the store's secret, the
 	// database's password (for a db.dsn without one) and the connector key
 	// are read from it unless configured otherwise, which wins.
 	SecretsDir string `koanf:"secrets_dir"`
 }
+
+// RelayConfig is Helix's Slack relay (local.relay): its door, whose
+// /v1/relay routes the install calls with its link's token, and its site,
+// whose /relay/link the owner's browser links the install at. Each is
+// Helix's own (helixDoor, helixSite) unless AllowCustomHost, for Helix's
+// development stamps and tests, which may use http too.
+type RelayConfig struct {
+	URL             string `koanf:"url"`
+	SiteURL         string `koanf:"site_url"`
+	AllowCustomHost bool   `koanf:"allow_custom_host"`
+}
+
+// helixDoor and helixSite are Helix's own door and site, which the relay is
+// pinned to.
+const (
+	helixDoor = "https://ingest.helix-db.com"
+	helixSite = "https://foundry.helix-db.com"
+)
 
 // ListenConfig is the install's listeners: the site and the owner's agents
 // call REST, and gRPC and health stay on loopback.
@@ -115,17 +136,20 @@ func defaults() Config {
 		Backend: BackendConfig{FoundryRead: f.Read},
 		AWS:     AWSConfig{Region: "us-east-1"},
 		Local: LocalConfig{SiteOrigin: "http://localhost:3000", Listen: ListenConfig{REST: ":8081", GRPC: "127.0.0.1:50061", Health: "127.0.0.1:8083"},
-			MCPPort: 8081},
+			MCPPort: 8081, Relay: RelayConfig{URL: helixDoor, SiteURL: helixSite}},
 		Log: LogConfig{Format: "json", Level: "info"},
 	}
 	c.Billing.Autumn.Foundry = f.Billing
 	return c
 }
 
-// foundry is Foundry's configuration, as a host that runs on one machine.
+// foundry is Foundry's configuration, as a host that runs on one machine:
+// the links its Slack bot posts open on this machine's site.
 func (c *Config) foundry() *foundryconfig.Config {
+	f := c.Foundry
+	f.Slack.SiteURL = c.Local.SiteOrigin
 	return &foundryconfig.Config{
-		Foundry: c.Foundry, Billing: c.Billing.Autumn.Foundry, Read: c.Backend.FoundryRead,
+		Foundry: f, Billing: c.Billing.Autumn.Foundry, Read: c.Backend.FoundryRead,
 		Host: foundryconfig.Host{Local: true, DetectedAI: c.detectedAI},
 	}
 }
@@ -216,6 +240,18 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s must be an http(s) origin, got %q", endpoint.name, endpoint.raw)
 		}
 	}
+	for _, pinned := range []struct{ name, raw, helix string }{
+		{"local.relay.url", c.Local.Relay.URL, helixDoor},
+		{"local.relay.site_url", c.Local.Relay.SiteURL, helixSite},
+	} {
+		u, err := url.Parse(pinned.raw)
+		switch {
+		case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "":
+			return fmt.Errorf("%s must be an http(s) origin, got %q", pinned.name, pinned.raw)
+		case !c.Local.Relay.AllowCustomHost && pinned.raw != pinned.helix:
+			return fmt.Errorf("%s must be %s, Helix's own, unless local.relay.allow_custom_host", pinned.name, pinned.helix)
+		}
+	}
 	if c.Local.MCPPort < 1 || c.Local.MCPPort > 65535 {
 		return fmt.Errorf("local.mcp_port is a port, 1 to 65535, got %d", c.Local.MCPPort)
 	}
@@ -236,12 +272,14 @@ func (c *Config) validate() error {
 	}
 	// The install runs the API, foundry-read and every worker but people
 	// enrichment's and the emails', self-healing's with foundry.heal.enabled,
-	// the Assistant's with foundry.agent.enabled and automations' with
-	// foundry.automations.enabled.
+	// the Assistant's with foundry.agent.enabled, automations' with
+	// foundry.automations.enabled and the Slack bot's with
+	// foundry.slack.enabled.
 	f := c.foundry()
 	if err := f.Validate(foundryconfig.Roles{
 		API: true, Read: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true, AskWorker: true,
 		HealWorker: f.Foundry.Heal.Enabled, AgentWorker: f.Foundry.Agent.Enabled, AutomationWorker: f.Foundry.Automations.Enabled,
+		SlackWorker: f.Foundry.Slack.Enabled,
 	}); err != nil {
 		return err
 	}

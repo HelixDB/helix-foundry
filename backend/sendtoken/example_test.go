@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/pkg/keytoken"
 	"github.com/helixdb/helix-foundry/backend/sendtoken"
 )
 
@@ -16,14 +17,14 @@ func Example() {
 		sendtoken.Hash(token): {TokenID: "token-1", WorkspaceID: "workspace-1", ConnectorID: "source-1"},
 	}
 	// The HTTP door caches a token found live for 30 s, as the backend checks it on every send.
-	admission := sendtoken.New(func(_ context.Context, hash string) (sendtoken.Sender, bool, error) {
+	admission := sendtoken.New(keytoken.ValidateEventSource, func(_ context.Context, hash string) (sendtoken.Sender, bool, error) {
 		sender, ok := live[hash]
 		return sender, ok, nil
 	}, 30*time.Second)
 	ctx, now := context.Background(), time.Now()
 
 	sent := admission.Admit(ctx, "203.0.113.9", token, now)
-	fmt.Println(sent.Verdict == sendtoken.Admitted, sent.ConnectorID)
+	fmt.Println(sent.Verdict == sendtoken.Admitted, sent.Bearer.ConnectorID)
 
 	// The token is revoked. The cache still admits it, and the backend refuses the send.
 	delete(live, sendtoken.Hash(token))

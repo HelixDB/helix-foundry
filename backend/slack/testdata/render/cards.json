@@ -1,0 +1,5456 @@
+{
+  "a long delete": [
+    {
+      "text": "Delete the dashboard “R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D &lt;Q4&gt; R&amp;D”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Delete the dashboard “R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D \u003cQ4\u003e R\u0026D”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nR\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Delete",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "danger",
+              "confirm": {
+                "title": {
+                  "type": "plain_text",
+                  "text": "Run this?",
+                  "emoji": true
+                },
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Delete the dashboard “R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D \u0026lt;Q4\u0026gt; R\u0026amp;D”? Deletes the …",
+                  "verbatim": true
+                },
+                "confirm": {
+                  "type": "plain_text",
+                  "text": "Delete",
+                  "emoji": true
+                },
+                "deny": {
+                  "type": "plain_text",
+                  "text": "Cancel",
+                  "emoji": true
+                },
+                "style": "danger"
+              }
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "a long title": [
+    {
+      "text": "Set up the workflow “Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name ”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set up the workflow “Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very lon…",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\n“Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name Very long name ” (as Founder wrote it)",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Saves this workflow and turns it on, and the click that runs it approves its steps. You can pause or change it on its page.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Its Founder steps spend the workspace’s workflows budget.",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.open",
+              "text": {
+                "type": "plain_text",
+                "text": "Review in Foundry",
+                "emoji": true
+              },
+              "url": "https://foundry.helix-db.com/ask?workspace=01WS\u0026chat=01THREAD",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this, in Foundry.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "add_sample_data 0": [
+    {
+      "text": "Add the sample company’s data for “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Add the sample company’s data for “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Connects Acme Corp’s sample database and uploads its documents into the set “Acme Corp sample”, for drafting from. The data is made up; nothing of yours changes.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Add sample data",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_dashboard 0": [
+    {
+      "text": "Make the dashboard “Invoices”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Make the dashboard “Invoices”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\n“Invoices” (as Founder wrote it)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Tiles*\nOpen invoices (Sales), Untitled (ont_2)",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes a dashboard of these tiles. Everyone in the workspace sees it, and each reads its tiles as themselves.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_dashboard 1": [
+    {
+      "text": "Make the dashboard “Empty”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Make the dashboard “Empty”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\n“Empty” (as Founder wrote it)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Tiles*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes a dashboard of these tiles. Everyone in the workspace sees it, and each reads its tiles as themselves.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_document_set 0": [
+    {
+      "text": "Create the document set “Contracts”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Create the document set “Contracts”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\nContracts",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Description*\nSigned MSAs",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*For*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes an empty set of documents in the workspace. Upload documents into it from Data; the agent reads its description when it drafts.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create set",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_document_set 1": [
+    {
+      "text": "Create the document set “Contracts”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Create the document set “Contracts”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\nContracts",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Description*\nNone",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*For*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes an empty set of documents in the workspace. Upload documents into it from Data; the agent reads its description when it drafts.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create set",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load 0": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Load",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load dismissed": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Dismissed by \u003c@U0GRACE01\u003e.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load dismissed elsewhere": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Dismissed.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load expired": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Expired: it wasn’t run in time. Prepare it again to run it.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.refresh",
+              "text": {
+                "type": "plain_text",
+                "text": "Prepare again",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load failed": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Ran by \u003c@U0ADA0001\u003e: failed: the version \u0026lt;isn't\u0026gt; done",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load failed without why": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Ran: failed: it failed",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load ran": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Ran by \u003c@U0ADA0001\u003e: succeeded.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_load ran on the site": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Ran: succeeded.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_ontology 0": [
+    {
+      "text": "Create the ontology “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Create the ontology “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Database*\nsales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes an empty ontology on this database, which no other ontology may then use. Nothing is drafted or loaded yet.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_ontology 1": [
+    {
+      "text": "Create the ontology “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Create the ontology “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Database*\nNew: sales (sales-1)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Project*\nNew: Production",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes a new Helix database on the shared cluster, then an empty ontology on it. Nothing is drafted or loaded yet.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_ontology 2": [
+    {
+      "text": "Create the ontology “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Create the ontology “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Database*\nNew: sales (sales-1)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Project*\nproj_1",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Makes a new Helix database on the shared cluster, then an empty ontology on it. Nothing is drafted or loaded yet.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Create",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "create_workflow 0": [
+    {
+      "text": "Set up the workflow “Weekly renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set up the workflow “Weekly renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\n“Weekly renewals” (as Founder wrote it)",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Saves this workflow and turns it on, and the click that runs it approves its steps. You can pause or change it on its page.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Its Founder steps spend the workspace’s workflows budget.",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.open",
+              "text": {
+                "type": "plain_text",
+                "text": "Review in Foundry",
+                "emoji": true
+              },
+              "url": "https://foundry.helix-db.com/ask?workspace=01WS\u0026chat=01THREAD",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this, in Foundry.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "delete_dashboard 0": [
+    {
+      "text": "Delete the dashboard “Revenue”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Delete the dashboard “Revenue”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Delete",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "danger",
+              "confirm": {
+                "title": {
+                  "type": "plain_text",
+                  "text": "Run this?",
+                  "emoji": true
+                },
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Delete the dashboard “Revenue”? Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+                  "verbatim": true
+                },
+                "confirm": {
+                  "type": "plain_text",
+                  "text": "Delete",
+                  "emoji": true
+                },
+                "deny": {
+                  "type": "plain_text",
+                  "text": "Cancel",
+                  "emoji": true
+                },
+                "style": "danger"
+              }
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "delete_workflow 0": [
+    {
+      "text": "Delete the workflow “Renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Delete the workflow “Renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · on",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Deletes the workflow and its runs. Nothing it already did is undone.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Delete",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "danger",
+              "confirm": {
+                "title": {
+                  "type": "plain_text",
+                  "text": "Run this?",
+                  "emoji": true
+                },
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Delete the workflow “Renewals”? Deletes the workflow and its runs. Nothing it already did is undone.",
+                  "verbatim": true
+                },
+                "confirm": {
+                  "type": "plain_text",
+                  "text": "Delete",
+                  "emoji": true
+                },
+                "deny": {
+                  "type": "plain_text",
+                  "text": "Cancel",
+                  "emoji": true
+                },
+                "style": "danger"
+              }
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generate_ontology 0": [
+    {
+      "text": "Draft a new version of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Draft a new version of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Goal*\nCustomers and their contracts",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Connections*\nStripe",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document sets*\nGeneral",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*API sources*\nNotes as documents, con_4 (other)",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Generate",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generate_ontology 1": [
+    {
+      "text": "Draft a new version of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Draft a new version of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Goal*\nNone: the agent decides",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Connections*\nNone: documents only",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document sets*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Generate",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generate_ontology 2": [
+    {
+      "text": "Draft a new version of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Draft a new version of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Goal*\nNone: the agent decides",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Connections*\nEvery connection (none yet)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document sets*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Generate",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generate_ontology 3": [
+    {
+      "text": "Draft a new version of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Draft a new version of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Goal*\nNone: the agent decides",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Connections*\nEvery connection: Stripe",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document sets*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Generate",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generate_ontology 4": [
+    {
+      "text": "Draft a new version of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Draft a new version of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Goal*\nNone: the agent decides",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Connections*\nStripe, Acme sample",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document sets*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent drafts a new version from these sources. Nothing changes until you make the draft current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Acme sample is the made-up sample company’s data: this draft would hold its records beside yours.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Generate",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generate_ontology 5": [
+    {
+      "text": "Draft the sample company’s version of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Draft the sample company’s version of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Goal*\nNone: the agent decides",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Connections*\nAcme sample",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document sets*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Takes the sample company’s ready-made draft as a new version, in seconds, with no AI. Nothing changes until you make it current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Generate",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "move_document 0": [
+    {
+      "text": "Move `“msa.md”` to “Contracts”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Move “msa.md” to “Contracts”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Document*\n`msa.md`",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*From*\nGeneral",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*To*\nContracts",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Ontologies read it by the sets their versions read: those that read the new set take it, and those that read the old one drop it at their next load.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Move",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "move_document 1": [
+    {
+      "text": "Move doc_1 to set_2",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Move doc_1 to set_2",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Document*\ndoc_1",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*From*\nUnknown",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*To*\nset_2",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Ontologies read it by the sets their versions read: those that read the new set take it, and those that read the old one drop it at their next load.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Move",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pause_workflow 0": [
+    {
+      "text": "Pause the workflow “Renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Pause the workflow “Renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · on",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "It stops running when it would start. A run already going finishes.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Pause",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pin_dashboard 0": [
+    {
+      "text": "Pin the dashboard dash_2 for everyone",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Pin the dashboard dash_2 for everyone",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\ndash_2",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Pinned dashboards lead every member’s list of dashboards, and are the ones people reading through shared sources see.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Pin",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pin_dashboard 1": [
+    {
+      "text": "Unpin the dashboard “Revenue” for everyone",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Unpin the dashboard “Revenue” for everyone",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Pinned dashboards lead every member’s list of dashboards, and are the ones people reading through shared sources see.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Unpin",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "publish_dashboard 0": [
+    {
+      "text": "Publish the dashboard dash_2 at a public link",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Publish the dashboard dash_2 at a public link",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\ndash_2",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Link ends*\n7 days after publishing",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in, until it is published again. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Anyone who has the link sees this data.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Publish",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "publish_dashboard 1": [
+    {
+      "text": "Refresh the public snapshot of “Revenue”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Refresh the public snapshot of “Revenue”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Link ends*\nAs it is set now",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in, until it is published again. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Anyone who has the link sees this data.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Publish",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "publish_dashboard 2": [
+    {
+      "text": "Refresh the public snapshot of “Revenue”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Refresh the public snapshot of “Revenue”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Link ends*\nNever",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in, until it is published again. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Anyone who has the link sees this data.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Publish",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "publish_dashboard 3": [
+    {
+      "text": "Publish the dashboard dash_2 at a public link",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Publish the dashboard dash_2 at a public link",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\ndash_2",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Link ends*\n1 day after publishing",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Anyone with the link sees a snapshot of what its tiles read now, as you can read it, without signing in, until it is published again. Nothing else of the workspace shows. The link is on the dashboard’s page, never given to Founder.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Anyone who has the link sees this data.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Publish",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "resume_workflow 0": [
+    {
+      "text": "Turn the workflow “Renewals” back on",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Turn the workflow “Renewals” back on",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · paused",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "It runs again each time it starts, from now on.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Turn on",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "revise_version 0": [
+    {
+      "text": "Save 2 edits to v3 of “Sales” as a new version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Save 2 edits to v3 of “Sales” as a new version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Edits*\nChange `type.Person`; Remove `rule.old`",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent checks these edits and saves them as a new version. The current version stays until you make the new one current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save version",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "revise_version 1": [
+    {
+      "text": "Preview 1 edit to v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Preview 1 edit to v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Edits*\nChange `type.Person`",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The ontology agent checks these edits against the version and its data, and saves nothing.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Preview",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "revoke_assistant_helper 0": [
+    {
+      "text": "Revoke the helper “Ada's laptop”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Revoke the helper “Ada's laptop”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Helper*\nAda's laptop",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Runs*\nClaude Code, Codex",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Status*\nRunning",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "It stops running Founder’s turns at once, and a turn it is running ends. To run more, pair it again from Settings › AI models.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Revoke",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "revoke_assistant_helper 1": [
+    {
+      "text": "Revoke the helper host_2",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Revoke the helper host_2",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Helper*\nhost_2",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Runs*\nNothing yet",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Status*\nNot running",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "It stops running Founder’s turns at once, and a turn it is running ends. To run more, pair it again from Settings › AI models.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Revoke",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "run_workflow 0": [
+    {
+      "text": "Run the workflow “Renewals” now",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Run the workflow “Renewals” now",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · on",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Runs its approved steps once, now, as you.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Run now",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_assistant_runtime 0": [
+    {
+      "text": "Run new Founder threads on your Claude subscription",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Run new Founder threads on your Claude subscription",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Now*\nFoundry’s AI model",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*From then on*\nMy Claude subscription",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Helper*\nNot running",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "New threads run on Claude Code through the helper on your computer, billed to the account it’s signed in to instead of the workspace’s Founder budget. Threads already started keep where they run.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "No helper running Claude Code is online: start it on your computer before you send.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Switch",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_assistant_runtime 1": [
+    {
+      "text": "Run new Founder threads on your ChatGPT subscription",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Run new Founder threads on your ChatGPT subscription",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Now*\nMy Claude subscription",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*From then on*\nMy ChatGPT subscription (Codex)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Helper*\nRunning",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "New threads run on Codex through the helper on your computer, billed to the account it’s signed in to instead of the workspace’s Founder budget. Threads already started keep where they run.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Switch",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_assistant_runtime 2": [
+    {
+      "text": "Run new Founder threads on the workspace’s AI model",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Run new Founder threads on the workspace’s AI model",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Now*\nMy ChatGPT subscription (Codex)",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*From then on*\nFoundry’s AI model",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "New threads run on the workspace’s AI model and count toward its Founder budget. Threads already started keep where they run.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Switch",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_assistant_runtime 3": [
+    {
+      "text": "Run new Founder threads on future",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Run new Founder threads on future",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Now*\nFoundry’s AI model",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*From then on*\nfuture",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Helper*\nNot running",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "New threads run on future through the helper on your computer, billed to the account it’s signed in to instead of the workspace’s Founder budget. Threads already started keep where they run.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "No helper running future is online: start it on your computer before you send.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Switch",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_current_load 0": [
+    {
+      "text": "Make the v3 load current for “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Make the v3 load current for “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Load*\nv3 load, ready, started 1 Nov 2026",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Current now*\nv2 load, partial",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Explorer, Records and Founder read this load from then on. Nothing is written or deleted.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Make current",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_current_load 1": [
+    {
+      "text": "Make a load current for “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Make a load current for “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Load*\nA load",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Current now*\nNone yet",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Explorer, Records and Founder read this load from then on. Nothing is written or deleted.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Make current",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_current_version 0": [
+    {
+      "text": "Make v3 current for “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Make v3 current for “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Current now*\nv2",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "New loads write this version from then on. Loads already written stay as they are, and review decisions it doesn’t take are dropped.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Make current",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "set_current_version 1": [
+    {
+      "text": "Make a version current for ont_2",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Make a version current for ont_2",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nont_2",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\na version",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Current now*\nNone yet",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "New loads write this version from then on. Loads already written stay as they are, and review decisions it doesn’t take are dropped.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Make current",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 0": [
+    {
+      "text": "Link “globex” to Globex",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Link “globex” to Globex",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document*\n`msa.md`",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Links to*\nGlobex",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Suggested*\nGlobex, scus_2",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Quote*\n_Globex Ltd signs for \u0026lt;`acme.com`\u0026gt;._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The name is this entity in every load from the next one.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Link",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 1": [
+    {
+      "text": "Link “globex” to scus_9",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Link “globex” to scus_9",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document*\n`msa.md`",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Links to*\nscus_9",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Suggested*\nGlobex, scus_2",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Quote*\n_Globex Ltd signs for \u0026lt;`acme.com`\u0026gt;._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The name is this entity in every load from the next one.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "This entity isn’t one the review suggested.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Link",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 2": [
+    {
+      "text": "Mark “globex” as not in the data",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Mark “globex” as not in the data",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Document*\n`msa.md`",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Suggested*\nGlobex, scus_2",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Quote*\n_Globex Ltd signs for \u0026lt;`acme.com`\u0026gt;._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The name is no one in the data: later loads leave it unlinked.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Mark not in data",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 3": [
+    {
+      "text": "Set Globex’s currency to “GBP”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set Globex’s currency to “GBP”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Entity*\nGlobex",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Replaces the property’s value from the next load on, whatever documents or tables say.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "The decision holds in every later load, even after the tables change.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Set value",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 4": [
+    {
+      "text": "Set Customer’s seats to 12000000000000000001",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set Customer’s seats to 12000000000000000001",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Replaces the property’s value from the next load on, whatever documents or tables say.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "The decision holds in every later load, even after the tables change.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Set value",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 5": [
+    {
+      "text": "Set the value to false",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set the value to false",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Replaces the property’s value from the next load on, whatever documents or tables say.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "The decision holds in every later load, even after the tables change.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Set value",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 6": [
+    {
+      "text": "Set the value to a value",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set the value to a value",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Replaces the property’s value from the next load on, whatever documents or tables say.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "The decision holds in every later load, even after the tables change.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Set value",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 7": [
+    {
+      "text": "Remove scus_7’s currency",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Remove scus_7’s currency",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Entity*\nscus_7",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Leaves the property without a value from the next load on.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Remove value",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 8": [
+    {
+      "text": "Approve the held statement",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Approve the held statement",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Statement*\nContract “MSA” signed_with Customer",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes the statement into the current load now.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Approve",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "settle_review 9": [
+    {
+      "text": "Reject the held statement",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Reject the held statement",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Quote*\n_We promise support._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes nothing, and the review no longer shows.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Reject",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "sync_connector 0": [
+    {
+      "text": "Sync “Stripe”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Sync “Stripe”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Connection*\nStripe",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Kind*\nstripe",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Reads the connection’s tables from the source again. Loads that read them take the new rows at their next load.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Sync",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "sync_connector 1": [
+    {
+      "text": "Sync con_9",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Sync con_9",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Connection*\ncon_9",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Reads the connection’s tables from the source again. Loads that read them take the new rows at their next load.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Sync",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unpublish_dashboard 0": [
+    {
+      "text": "Unpublish the dashboard “Revenue”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Unpublish the dashboard “Revenue”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Its public link stops showing anything at once, for everyone who has it.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Unpublish",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_dashboard 0": [
+    {
+      "text": "Change the dashboard “Revenue”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Change the dashboard “Revenue”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New name*\n“Revenue 2027”",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New description*\n“By month”",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Tiles*\nMRR (Sales)",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Changes its name, description or tiles to what the full request holds. Everyone who opens it sees the change.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_dashboard 1": [
+    {
+      "text": "Change the dashboard dash_2",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Change the dashboard dash_2",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\ndash_2",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New description*\nNone",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Changes its name, description or tiles to what the full request holds. Everyone who opens it sees the change.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_document_set 0": [
+    {
+      "text": "Rename the set “General” to “Contracts”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Rename the set “General” to “Contracts”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Set*\nGeneral",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New name*\nContracts",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Its documents stay where they are, and ontologies that read the set go on reading it. The agent reads the description when it drafts.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_document_set 1": [
+    {
+      "text": "Change the description of the set “General”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Change the description of the set “General”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Set*\nGeneral",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Description*\nCleared",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Its documents stay where they are, and ontologies that read the set go on reading it. The agent reads the description when it drafts.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_document_set 2": [
+    {
+      "text": "Rename and describe the set “General”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Rename and describe the set “General”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Set*\nGeneral",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New name*\nContracts",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Description*\nSigned MSAs",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Its documents stay where they are, and ontologies that read the set go on reading it. The agent reads the description when it drafts.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_workflow 0": [
+    {
+      "text": "Change the workflow “Renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Change the workflow “Renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · on",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New name*\n“Renewals weekly”",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Saves these changes to the workflow, and the click that runs it approves its steps.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Its steps show only in Foundry, so it runs there: review them in this thread in Foundry, then run it.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.open",
+              "text": {
+                "type": "plain_text",
+                "text": "Review in Foundry",
+                "emoji": true
+              },
+              "url": "https://foundry.helix-db.com/ask?workspace=01WS\u0026chat=01THREAD",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this, in Foundry.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "update_workflow 1": [
+    {
+      "text": "Change the workflow wf_2",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Change the workflow wf_2",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nwf_2 · waits for approval",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Saves these changes to the workflow. Its steps don’t change, so this approves nothing.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.approve",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Only \u003c@U0ADA0001\u003e can run this.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

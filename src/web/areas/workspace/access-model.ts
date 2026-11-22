@@ -81,6 +81,23 @@ export function targetOf(g: Grant): FoundryAccessTarget {
 export const principalKey = (p: FoundryPrincipal) =>
   `${p.kind || "KIND_UNSPECIFIED"}:${p.id || ""}`;
 
+/**
+ * The agent's key a link to Settings › Access opens the sources of
+ * (`?principal=service_credential:<id>`, paths.keySources): its id, or null
+ * for anything else, which opens nothing.
+ *
+ * @example
+ * keyParam("service_credential:sc_1"); // "sc_1"
+ * keyParam("user:usr_1"); // null
+ * keyParam(null); // null
+ */
+export function keyParam(raw: string | null): string | null {
+  const id = raw?.startsWith("service_credential:")
+    ? raw.slice("service_credential:".length)
+    : "";
+  return id || null;
+}
+
 /** The principals grants are for, as the editor names them. */
 export type Principal = {
   kind: Exclude<FoundryPrincipalKind, "KIND_UNSPECIFIED">;
@@ -603,9 +620,11 @@ export function restrictedHoldingNothing(
  * overviews, the read-only pages of their shared loads (Records, an
  * entity's page and a document's view) and, with its Usage permission
  * (`workflows`), their Usage pages (old `/workflows` links too, which
- * redirect there). Connectors, Settings, workflows (people's alone, under
- * `/workflows` and the old `/automations`) and making an ontology open Ask; the Explorer's graph opens Records, and an ontology's
- * other pages its overview.
+ * redirect there), and Settings › Slack, where they see the install and
+ * unlink their own Slack account. Connectors, Settings' other tabs,
+ * workflows (people's alone, under `/workflows` and the old `/automations`)
+ * and making an ontology open Ask; the Explorer's graph opens Records, and
+ * an ontology's other pages its overview.
  *
  *     granteeRedirect("/data/connections/c") // "/ask"
  *     granteeRedirect("/explore/o") // "/explore/o/records"
@@ -613,6 +632,8 @@ export function restrictedHoldingNothing(
  *     granteeRedirect("/ontology/o/usage/w", true) // undefined
  *     granteeRedirect("/ontology/o/usage/w") // "/ontology/o"
  *     granteeRedirect("/workflows/a") // "/ask"
+ *     granteeRedirect("/settings/slack") // undefined
+ *     granteeRedirect("/settings/members") // "/ask"
  */
 export function granteeRedirect(
   pathname: string,
@@ -638,8 +659,9 @@ export function granteeRedirect(
         (third === "entities" && fourth)
         ? undefined
         : `/explore/${second}/records`;
-    case "data":
     case "settings":
+      return second === "slack" && third === undefined ? undefined : "/ask";
+    case "data":
     case "workflows":
     case "automations":
       return "/ask";

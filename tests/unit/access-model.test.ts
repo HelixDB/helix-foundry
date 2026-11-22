@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type * as wfe from "@/shared/wfe";
 import {
+  keyParam,
   addsSources,
   covered,
   grantKey,
@@ -33,6 +34,7 @@ import {
   workflowsOn,
   type Grant,
 } from "@/web/areas/workspace/access-model";
+import { workspacePaths } from "@/web/areas/workspace/paths";
 
 // Source grants as Settings › Access and restricted mode read them: grants
 // to and from the WFE's targets, the editor's sources, what a load lacks,
@@ -617,6 +619,8 @@ describe("restricted mode", () => {
       "/explore/o/entities/e",
       "/workspaces",
       "/nowhere",
+      // Settings › Slack: the install, and unlinking their own account.
+      "/settings/slack",
     ])
       expect(granteeRedirect(path), path).toBeUndefined();
     for (const path of [
@@ -624,6 +628,8 @@ describe("restricted mode", () => {
       "/data/connections/c",
       "/settings",
       "/settings/access",
+      "/settings/members",
+      "/settings/slack/more",
       "/ontology/new",
       "/ontology/sample",
       "/workflows",
@@ -723,5 +729,23 @@ describe("restricted mode", () => {
         { id: "o" },
       ),
     ).toBe("none");
+  });
+});
+
+describe("a link to a key's sources", () => {
+  it("names a service credential, and nothing else", () => {
+    const link = new URL(workspacePaths.keySources("sc 1"), "http://x");
+    expect(link.pathname).toBe("/settings/access");
+    expect(keyParam(link.searchParams.get("principal"))).toBe("sc 1");
+    expect(keyParam("service_credential:sc_1")).toBe("sc_1");
+    for (const raw of [
+      null,
+      "",
+      "service_credential:",
+      "user:usr_1",
+      "team:t_1",
+      "KIND_SERVICE_CREDENTIAL:sc_1",
+    ])
+      expect(keyParam(raw)).toBeNull();
   });
 });

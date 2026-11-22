@@ -185,6 +185,24 @@ var methods = map[string]check{
 	foundry("CancelFoundryAutomationRun"):       checkWorkspace,
 	foundry("ListFoundryAutomationSuggestions"): checkWorkspace,
 
+	// Slack, through Helix's relay: the install's link to Helix and its
+	// Slack app's install there, the owner's own Slack account and the Slack
+	// users the owner lets ask it, read-only (each handler checks the owner,
+	// and reads the workspace's own install).
+	foundry("GetFoundrySlack"):          checkWorkspace,
+	foundry("StartFoundrySlackInstall"): checkWorkspace,
+	foundry("UpdateFoundrySlack"):       checkWorkspace,
+	foundry("ListFoundrySlackLinks"):    checkWorkspace,
+	foundry("PreviewFoundrySlackLink"):  checkWorkspace,
+	foundry("CreateFoundrySlackLink"):   checkWorkspace,
+	foundry("DeleteFoundrySlackLink"):   checkWorkspace,
+	foundry("SetFoundrySlackAccess"):    checkWorkspace,
+	foundry("GetFoundryRelay"):          checkWorkspace,
+	foundry("StartFoundryRelayLink"):    checkWorkspace,
+	foundry("CompleteFoundryRelayLink"): checkWorkspace,
+	foundry("UpdateFoundryRelay"):       checkWorkspace,
+	foundry("UnlinkFoundryRelay"):       checkWorkspace,
+
 	foundry("CreateFoundryWorkflow"):          checkOntology,
 	foundry("ListFoundryWorkflows"):           checkOntology,
 	foundry("GetFoundryWorkflow"):             checkOntology,

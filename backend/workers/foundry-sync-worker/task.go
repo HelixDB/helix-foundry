@@ -28,6 +28,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -49,6 +50,10 @@ type Deps struct {
 	AWS   aws.Config       `optional:"true"`
 	// Accounts gives signed-in connectors their tokens; nil where none sign in.
 	Accounts ports.ProviderAccounts `optional:"true"`
+	// SlackRelay calls Slack for a standalone install's installs of Helix's
+	// Slack app, through Helix's relay; nil hosted, where each install's
+	// own token does.
+	SlackRelay syncer.SlackCallers `optional:"true"`
 }
 
 type syncQueue interface {
@@ -181,6 +186,22 @@ func New(d Deps) (*Task, error) {
 		connector.NewS3Options(d.Cfg, d.AWS), connector.EventsOptions{Batches: d.DB, Objects: snapshots,
 			Budget:    events.ReadBudget{Batches: ev.MaxBatchesPerSync, Pieces: ev.MaxPiecesPerSync, Bytes: ev.MaxBytesPerSync},
 			Extracted: ev.MaxExtracted})
+	// Slack connectors read through Helix's Slack app fold its feed into
+	// their day mirror, beside the snapshots; hosted holds the installs'
+	// bot tokens they read with, and a standalone install reaches Slack
+	// through Helix's relay (Deps.SlackRelay).
+	sl := d.Cfg.Foundry.Slack
+	var slackApps syncer.SlackApps
+	if sl.Enabled && sl.Feed.Enabled {
+		catalog = catalog.WithSlackFeed(connector.SlackFeedOptions{Feed: d.DB, Objects: snapshots,
+			Budget:     model.SlackFeedBudget{Rows: sl.Feed.ReadBudget.Rows, Bytes: sl.Feed.ReadBudget.Bytes},
+			HelixAppID: sl.AppID, DirectoryEvery: sl.Feed.DirectoryEvery, RedocumentEvery: sl.Feed.RedocumentEvery, RepliesDays: sl.Backfill.RepliesDays})
+		if !d.Cfg.Host.Local || d.SlackRelay != nil {
+			required, _ := slack.Required(sl.Feed.Enabled, sl.Follow.Enabled)
+			slackApps = syncer.HostedSlackApps{DB: d.DB, Keys: keys, AppID: sl.AppID, Required: required, OrphanRetention: sl.Feed.OrphanRetention,
+				Caller: d.SlackRelay}
+		}
+	}
 	planCatalog, err := foundryplan.NewCatalog(d.Cfg.Billing.Plans, connector.KindNames())
 	if err != nil {
 		return nil, err
@@ -203,6 +224,7 @@ func New(d Deps) (*Task, error) {
 		Allowances:       d.Cfg.Foundry.SetAllowances(),
 		Plans:            d.Plans,
 		Accounts:         d.Accounts,
+		SlackApps:        slackApps,
 	}
 	return &Task{
 		deps: d, cfg: d.Cfg.Foundry.Sync, queue: d.DB, runner: s,
@@ -438,9 +460,10 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, syncID
 // backoff that doubles from a minute, or failed for good, and with a terminal
 // one the connector's next scheduled sync.
 //
-// An event source (a Pushed kind, every sync of which is origin events) has
-// no interval: it syncs when pieces arrive, a send scheduling a sync when
-// none is. After a sync, it syncs again by what waits beyond its cursor:
+// A pushed connector (an event source, every sync of which is origin
+// events, or a Slack connection through Helix's Slack app, whose syncs are
+// the scheduler's or a settings change's) has no interval: it syncs when
+// its data arrives, an arrival scheduling a sync when none is. After a sync, it syncs again by what waits beyond its cursor:
 // with nothing, it keeps what a send scheduled; with less than one read
 // takes, it syncs after the spacing; with more, at once. The spacing grows
 // with its table's rows, since each merge rewrites the table. Giving up on
@@ -486,7 +509,9 @@ func (t *Task) outcome(ctx context.Context, sync *model.ConnectorSync, result sy
 	case failure.Permanent:
 		// The same refusal comes back every time until the owner changes something.
 		schedule = &model.ConnectorScheduleOutcome{Paused: message, Every: result.SyncEverySeconds, Generation: result.AccountGeneration}
-	case sync.Origin == model.ConnectorSyncEvents:
+	case sync.Origin == model.ConnectorSyncEvents || result.PushedConnector:
+		// Arrivals schedule a sync only when none is due: the plan's
+		// interval would hold back what they buffer until then.
 		message = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, sync.Attempts)
 		schedule = &model.ConnectorScheduleOutcome{Pushed: model.PushedNotBefore{At: t.now().Add(t.spacing.For(max(result.StoredRows, rows)))}}
 	default:

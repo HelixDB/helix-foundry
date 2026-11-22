@@ -1158,8 +1158,10 @@ describe("credential forms", () => {
     // events, as the WFE's defaults do.
     expect(emptyForm("slack")).toEqual({
       kind: "slack",
+      credential: "token",
       botToken: "",
       historyDays: "90",
+      noticeVersion: 0,
     });
     expect(emptyForm("notion")).toEqual({ kind: "notion", token: "" });
     expect(emptyForm("google")).toEqual({
@@ -1172,14 +1174,22 @@ describe("credential forms", () => {
 
   it("sends Slack's, Notion's and Google Workspace's credentials trimmed, with their days", () => {
     expect(
-      toConfig({ kind: "slack", botToken: " xoxb-1-2 \n", historyDays: "30" }),
+      toConfig({
+        ...emptyForm("slack"),
+        botToken: " xoxb-1-2 \n",
+        historyDays: "30",
+      } as ConnectionForm),
     ).toEqual({ slack: { botToken: "xoxb-1-2", historyDays: 30 } });
     expect(toConfig(emptyForm("slack"))).toEqual({
       slack: { botToken: "", historyDays: 90 },
     });
     // Blank days are left to the WFE's default.
     expect(
-      toConfig({ kind: "slack", botToken: "xoxb-1", historyDays: "" }),
+      toConfig({
+        ...emptyForm("slack"),
+        botToken: "xoxb-1",
+        historyDays: "",
+      } as ConnectionForm),
     ).toEqual({ slack: { botToken: "xoxb-1", historyDays: 0 } });
     expect(toConfig({ kind: "notion", token: "\tntn_1 " })).toEqual({
       notion: { token: "ntn_1" },
@@ -1465,7 +1475,10 @@ describe("credential forms", () => {
     ).toBe(true);
     expect(hasCredential(emptyForm("slack"))).toBe(false);
     expect(
-      hasCredential({ kind: "slack", botToken: "xoxb-1", historyDays: "" }),
+      hasCredential({
+        ...emptyForm("slack"),
+        botToken: "xoxb-1",
+      } as ConnectionForm),
     ).toBe(true);
     expect(hasCredential({ kind: "notion", token: " " })).toBe(false);
     expect(hasCredential({ kind: "notion", token: "ntn_1" })).toBe(true);
@@ -1622,7 +1635,7 @@ describe("editing a stored connector", () => {
     // with the credential blank; a sparse config takes the defaults.
     expect(
       formFromConfig("slack", { slack: { botToken: "", historyDays: 30 } }),
-    ).toEqual({ kind: "slack", botToken: "", historyDays: "30" });
+    ).toEqual({ ...emptyForm("slack"), historyDays: "30" });
     expect(formFromConfig("slack", { slack: { historyDays: 0 } })).toEqual(
       emptyForm("slack"),
     );
@@ -2344,7 +2357,11 @@ describe("signInConfig", () => {
       }),
     ).toEqual({ github: { repos: ["acme/api", "acme/web"], reviewDays: 30 } });
     expect(
-      signInConfig({ kind: "slack", botToken: "xoxb-1", historyDays: "45" }),
+      signInConfig({
+        ...emptyForm("slack"),
+        botToken: "xoxb-1",
+        historyDays: "45",
+      } as ConnectionForm),
     ).toEqual({ slack: { historyDays: 45 } });
     expect(
       signInConfig({

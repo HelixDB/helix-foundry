@@ -137,18 +137,22 @@ func (s *Service) RevokeFoundryAgentHost(ctx context.Context, req *foundryv1.Rev
 }
 
 // agentThreadRuntime is the runtime a message runs on: its thread's, or for
-// a new thread the workspace's, refusing a helper's while none that offers
-// it is online (FOUNDRY_AGENT_HOST_OFFLINE).
-func (s *Service) agentThreadRuntime(ctx context.Context, workspaceID, userID, threadID string) (foundrymodel.FoundryAgentRuntime, error) {
+// a new thread the workspace's (a Slack install's bot's, Foundry's worker:
+// a helper runs on its owner's subscription, which isn't the bot's),
+// refusing a helper's while none that offers it is online
+// (FOUNDRY_AGENT_HOST_OFFLINE).
+func (s *Service) agentThreadRuntime(ctx context.Context, workspaceID string, principal foundrymodel.FoundryAgentPrincipal,
+	threadID string) (foundrymodel.FoundryAgentRuntime, error) {
 	runtime := foundrymodel.FoundryAgentRuntimeAPI
+	_, bot := principal.(foundrymodel.AgentBot)
 	switch {
 	case threadID != "":
-		t, err := s.agentThread(ctx, workspaceID, userID, threadID)
+		t, err := s.agentThread(ctx, workspaceID, principal, threadID)
 		if err != nil {
 			return "", err
 		}
 		runtime = t.Runtime
-	case s.deps.AgentHosts != nil:
+	case s.deps.AgentHosts != nil && !bot:
 		r, err := s.deps.AgentHosts.AgentRuntime(ctx, workspaceID)
 		if err != nil {
 			return "", status.Errorf(codes.Internal, "read the runtime: %v", err)

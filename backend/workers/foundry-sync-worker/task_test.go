@@ -634,6 +634,21 @@ func TestEventSourceSchedule(t *testing.T) {
 			}
 		})
 	}
+	// A Slack connection through Helix's Slack app is pushed but its syncs
+	// are the scheduler's (pushed) or a settings change's: giving up on an
+	// outage tries again after the spacing all the same, since its arrivals
+	// schedule a sync only when none is due.
+	for _, origin := range []model.ConnectorSyncOrigin{model.ConnectorSyncPushed, model.ConnectorSyncSettings} {
+		t.Run("tries a pushed connector's "+string(origin)+" sync again after the spacing once it gives up", func(t *testing.T) {
+			got := syncOnce(t, &model.ConnectorSync{ID: "s1", Origin: origin, Attempts: 3}, func(context.Context, *model.ConnectorSync) (syncer.Result, error) {
+				return syncer.Result{StoredRows: 1_000_000, Plan: planNamed(t, "free"), PushedConnector: true}, errors.New("S3 throttled")
+			})
+			want := model.PushedNotBefore{At: now.Add(11 * time.Minute)}
+			if s := got.Schedule; got.Status != model.ConnectorSyncFailed || s == nil || s.Pushed != want || s.NextSyncAt != nil || s.Paused != "" {
+				t.Fatalf("outcome = %+v, schedule = %+v", got, s)
+			}
+		})
+	}
 	// Before its last attempt, a blip is retried as any sync's is.
 	t.Run("retries a blip with backoff", func(t *testing.T) {
 		got := syncOnce(t, events(1), failing(errors.New("S3 throttled")))

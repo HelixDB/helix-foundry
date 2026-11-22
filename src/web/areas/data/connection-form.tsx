@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { LOCAL } from "../../../shared/deployment";
 import type {
   Connector,
   ConnectorDiscovery,
   S3ConnectorSetup,
+  SlackConnectorSetup,
 } from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
-import { Select, Tag, connectorLabel } from "../../kit";
+import { sentence } from "../../api";
+import { Button, Segmented, Select, Tag, connectorLabel } from "../../kit";
+import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { ProGate, isProRequired } from "../workspace/pro-gate";
+import {
+  installFailed,
+  installFailure,
+  startSlackInstall,
+} from "../workspace/slack-api";
 import { ConnectionGuide, SignInGuide } from "./connection-guides";
 import { FileTableDetails, S3Fields, fileSummary } from "./connection-s3";
 import {
@@ -18,6 +27,7 @@ import {
   updateConnector,
 } from "./data-api";
 import {
+  SLACK_APP_HISTORY_DAYS,
   emptyForm,
   formFromConfig,
   formatBytes,
@@ -27,11 +37,14 @@ import {
   keySummary,
   relatedTables,
   signInConfig,
+  slackAppStep,
+  slackNotice,
   suggestedName,
   tableSelection,
   toConfig,
   type ConnectionForm as Form,
   type CredentialKind,
+  type SlackCredential,
 } from "./model";
 import { useSignInStart } from "./sign-in";
 import {
@@ -47,6 +60,16 @@ import {
 // fill in the credential, test it, choose what to sync, then connect. The
 // credential lives in this form only: it is sent to the WFE, which never
 // returns it, and is dropped when the dialog closes.
+//
+// Slack, where the kind carries its setup (`slack`, hosted with
+// foundry.slack.feed on), opens on a choice: Helix's Slack app, through the
+// workspace's install of it (Settings › Slack), or the customer's own app's
+// token, which reads its full history at once. The app side has no test:
+// it adds the app (or adds it again for what it lacks), or names the
+// connection that reads the Slack workspace already, else binds once an
+// owner or admin accepts the storage notice. A connection already reading
+// through the app sends no credential, so it keeps it; one switching from
+// its token keeps syncing by it until the app has read the history.
 //
 // Editing (`connector` set) starts from the stored settings with the
 // credential blank; left blank, the WFE keeps the stored one.
@@ -109,6 +132,7 @@ export function ConnectionForm({
   kind,
   connector,
   setup,
+  slack,
   signIn = false,
   installUrl,
   returnPath,
@@ -119,6 +143,8 @@ export function ConnectionForm({
   connector?: Connector;
   // The kind's S3 role setup, where role access is configured.
   setup?: S3ConnectorSetup | null;
+  // Slack's setup, where a connection may read through Helix's Slack app.
+  slack?: SlackConnectorSetup | null;
   // The kind connects by signing in at its provider, and GitHub's app's
   // install page.
   signIn?: boolean;
@@ -147,6 +173,8 @@ export function ConnectionForm({
       // An edit keeps the stored access, so a stored role stays one.
       if (editing) return formFromConfig(kind, stored);
       const f = emptyForm(kind);
+      if (f.kind === "slack" && slack && !LOCAL)
+        return { ...f, credential: "app", historyDays: "90" };
       return f.kind === "s3" && roleOff ? { ...f, access: "keys" } : f;
     }),
     [name, setName] = useState(connector?.name || ""),
@@ -173,6 +201,53 @@ export function ConnectionForm({
       !editing && !LOCAL && signIn && !useKey && !!signInKind && !keyOnly,
     // No credential field: signing in, or signed in already.
     noKey = signingIn || !!account;
+  // Slack through Helix's app: what its side shows, and whether this save
+  // binds the connection to the install (a new one, a switch from a token,
+  // or the workspace's Slack changed), which takes the storage notice.
+  const slackApp = form.kind === "slack" && form.credential === "app",
+    storedApp = !!stored && "slack" in stored && !!stored.slack.helixApp,
+    binds =
+      slackApp &&
+      (!storedApp ||
+        connector?.slackStatus?.state === "SLACK_FEED_STATE_TEAM_CHANGED"),
+    step = slack ? slackAppStep(slack, connector?.id) : null,
+    notice = slackNotice(slack?.noticeVersion),
+    appReady =
+      slackApp &&
+      step?.kind === "ready" &&
+      (!binds || (!!notice && form.noticeVersion === slack!.noticeVersion));
+  const [installing, setInstalling] = useState(false),
+    [installError, setInstallError] = useState("");
+  // Adding the app (again) leaves for Slack, which comes back here: the
+  // form (Add data's Slack) or the connection's page.
+  const addToSlack = async () => {
+    setInstalling(true);
+    setInstallError("");
+    try {
+      window.location.assign(
+        await startSlackInstall(
+          id,
+          connector ? paths.connection(connector.id) : "/data?add=slack",
+        ),
+      );
+    } catch (e) {
+      installFailed(installFailure(e));
+      setInstallError(sentence((e as Error).message));
+      setInstalling(false);
+    }
+  };
+  const chooseCredential = (credential: SlackCredential) => {
+    trackEvent("slack_connector_mode_chosen", { mode: credential });
+    change({
+      credential,
+      // The app keeps at most 90 days.
+      ...(credential === "app" &&
+      form.kind === "slack" &&
+      Number(form.historyDays) > SLACK_APP_HISTORY_DAYS
+        ? { historyDays: String(SLACK_APP_HISTORY_DAYS) }
+        : {}),
+    } as Partial<Form>);
+  };
   // Another name is another sign-in, as other settings are (change()).
   useEffect(() => void renew(), [name, renew]);
   const label = connectorLabel(kind),
@@ -287,7 +362,12 @@ export function ConnectionForm({
           ...(renamed ? { name: name.trim() } : {}),
           ...(reconfigured ? { config } : {}),
         });
-        await onDone(saved.connector, "Connection saved");
+        await onDone(
+          saved.connector,
+          slackApp && !storedApp && saved.connector.slackStatus?.switching
+            ? "Switching to Helix Foundry’s Slack app. Your token keeps syncing until it has read the history"
+            : "Connection saved",
+        );
         return;
       }
       const created = await createConnector(id, {
@@ -295,6 +375,15 @@ export function ConnectionForm({
         config,
       });
       trackEvent("connector_created", { kind: form.kind });
+      // Through the app, Slack sends its messages and the app reads the
+      // history: there is no first sync to start.
+      if (slackApp) {
+        await onDone(
+          created.connector,
+          "Connected. Helix Foundry is reading the channels’ history",
+        );
+        return;
+      }
       // The first sync starts with the connection; a refusal is reported but
       // the connection is kept.
       await syncConnector(id, created.connector.id, "created").catch((e) =>
@@ -320,18 +409,32 @@ export function ConnectionForm({
       clientToken: start.clientToken,
       returnPath,
     });
+  const renamedOnly =
+    editing && !dirty && !discovered && name.trim() !== connector!.name;
   const canSubmit =
     selection !== "none" &&
     !overLimit &&
     !widened &&
-    (editing
-      ? name.trim() !== "" &&
-        (name.trim() !== connector!.name || dirty || !!discovered)
-      : !!discovered);
-  const credentialRequired = !editing,
+    (slackApp
+      ? // Through the app there is nothing to test; a rename alone sends no
+        // settings.
+        editing
+        ? name.trim() !== "" && (renamedOnly || (dirty && appReady))
+        : appReady
+      : editing
+        ? name.trim() !== "" &&
+          (name.trim() !== connector!.name || dirty || !!discovered)
+        : !!discovered);
+  // Leaving the app for a token takes a token: a blank one would keep the
+  // app.
+  const credentialRequired = !editing || (form.kind === "slack" && storedApp),
     // A role can't be tested where role access is off.
     untestable = form.kind === "s3" && form.access === "role" && roleOff,
-    testable = !signingIn && (!editing || hasCredential(form)) && !untestable;
+    testable =
+      !signingIn &&
+      !slackApp &&
+      (!editing || hasCredential(form)) &&
+      !untestable;
   return (
     <div className="connect-data">
       <form
@@ -420,7 +523,25 @@ export function ConnectionForm({
         )}
         {form.kind === "slack" && (
           <>
-            {!noKey && (
+            {slack && !LOCAL && !account && (
+              <div className="span2 dc-slack-choice">
+                <Segmented
+                  label="Read Slack with"
+                  value={form.credential}
+                  onChange={(v) => chooseCredential(v as SlackCredential)}
+                  options={[
+                    { value: "app", label: "Use the Helix Slack app" },
+                    { value: "token", label: "Use your own app’s token" },
+                  ]}
+                />
+                <small className="muted">
+                  {slackApp
+                    ? "New messages arrive as they’re posted, and older history fills in over the next days."
+                    : "Reads the full history at once, through an app you make in Slack."}
+                </small>
+              </div>
+            )}
+            {!slackApp && !noKey && (
               <label className="span2">
                 Bot token
                 <input
@@ -429,23 +550,115 @@ export function ConnectionForm({
                   spellCheck={false}
                   required={credentialRequired}
                   placeholder={
-                    secretHint ? `Leave blank to keep ${secretHint}` : "xoxb-…"
+                    secretHint && !storedApp
+                      ? `Leave blank to keep ${secretHint}`
+                      : "xoxb-…"
                   }
                   value={form.botToken}
                   onChange={(e) => update("botToken", e.target.value)}
                 />
               </label>
             )}
-            <label>
-              Days of history
-              <input
-                type="number"
-                min={1}
-                max={365}
-                value={form.historyDays}
-                onChange={(e) => update("historyDays", e.target.value)}
-              />
-            </label>
+            {slackApp && !step && (
+              <p className="span2 muted small">
+                Syncing Slack through Helix Foundry’s app isn’t available here.
+                Use your own app’s token.
+              </p>
+            )}
+            {slackApp && step && step.kind !== "ready" && (
+              <div className="span2 dc-slack-step" role="status">
+                {step.kind === "in_use" ? (
+                  <p className="small">
+                    <Link to={paths.connection(step.connectorId)}>
+                      Another connection
+                    </Link>{" "}
+                    already reads this Slack workspace: a Slack workspace is
+                    read by one connection.
+                  </p>
+                ) : (
+                  <>
+                    <p className="small">
+                      {step.kind === "install"
+                        ? "Add Helix Foundry to your Slack workspace first: Slack asks you to allow it, then brings you back here."
+                        : step.why === "scopes"
+                          ? "Helix Foundry needs new Slack permissions to sync channels. Add it to Slack again to grant them; it keeps answering in Slack meanwhile."
+                          : "A Slack workspace admin or owner must add Helix Foundry to Slack before it can sync channels. It was added by someone who isn’t one."}
+                    </p>
+                    {step.canInstall ? (
+                      <Button
+                        variant="primary"
+                        pending={installing}
+                        onClick={() => void addToSlack()}
+                      >
+                        {step.kind === "install"
+                          ? "Add Helix Foundry to Slack"
+                          : "Reinstall"}
+                      </Button>
+                    ) : (
+                      <p className="muted small">
+                        An owner or admin of this workspace adds it from
+                        Settings › Slack.
+                      </p>
+                    )}
+                    {installError && (
+                      <p role="alert" className="small error-text">
+                        {installError}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+            {slackApp && step?.kind === "ready" && (
+              <p className="span2 small">
+                Reads <strong>{step.team}</strong> through Helix Foundry, the
+                app added in Settings › Slack.
+                {editing &&
+                  !storedApp &&
+                  " Your token keeps syncing until Helix Foundry has read the history."}
+              </p>
+            )}
+            {(!slackApp || step?.kind === "ready") && (
+              <label>
+                Days of history
+                <input
+                  type="number"
+                  min={1}
+                  max={slackApp ? SLACK_APP_HISTORY_DAYS : 365}
+                  value={form.historyDays}
+                  onChange={(e) => update("historyDays", e.target.value)}
+                />
+              </label>
+            )}
+            {binds &&
+              step?.kind === "ready" &&
+              (notice ? (
+                <div className="span2 selection-row">
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.noticeVersion === slack!.noticeVersion}
+                      onChange={(e) =>
+                        change({
+                          noticeVersion: e.target.checked
+                            ? slack!.noticeVersion || 0
+                            : 0,
+                        } as Partial<Form>)
+                      }
+                    />
+                    <span>
+                      I’m allowed to have Helix keep this copy of {step.team}’s
+                      channels
+                      <small>{notice}</small>
+                    </span>
+                  </label>
+                </div>
+              ) : (
+                <p role="alert" className="span2 small error-text">
+                  Reload the page to read Helix Foundry’s current storage notice
+                  before connecting.
+                </p>
+              ))}
           </>
         )}
         {form.kind === "notion" && !noKey && (
@@ -968,21 +1181,23 @@ export function ConnectionForm({
             ))}
           </ul>
         )}
-        {(editing || discovered) && (
+        {(editing || discovered || (slackApp && step?.kind === "ready")) && (
           <button className="button primary" disabled={!!pending || !canSubmit}>
             {pending === "save"
               ? "Saving connection…"
               : editing
                 ? "Save changes"
-                : choice
-                  ? `Connect and sync ${
-                      selection === "none"
-                        ? "tables"
-                        : selection.length
-                          ? `${selection.length} ${selection.length === 1 ? "table" : "tables"}`
-                          : "every table"
-                    }`
-                  : "Connect and sync"}
+                : slackApp
+                  ? "Connect"
+                  : choice
+                    ? `Connect and sync ${
+                        selection === "none"
+                          ? "tables"
+                          : selection.length
+                            ? `${selection.length} ${selection.length === 1 ? "table" : "tables"}`
+                            : "every table"
+                      }`
+                    : "Connect and sync"}
           </button>
         )}
       </form>

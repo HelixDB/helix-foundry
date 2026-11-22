@@ -50,6 +50,11 @@ type accessStore struct {
 	teams      []foundrymodel.FoundryTeam
 	// workflowsOff are the principals whose Workflows permission is off.
 	workflowsOff []access.Principal
+	// slackBot is the service credential ws-1's Slack install acts as in
+	// bot mode (slack_bot_test.go); empty for none. slackBotErr fails its
+	// read.
+	slackBot    string
+	slackBotErr error
 }
 
 func (s *accessStore) ListFoundryAccessWorkflowsOff(_ context.Context, _ string, principals []access.Principal) ([]access.Principal, error) {

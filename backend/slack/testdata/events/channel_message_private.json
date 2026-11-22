@@ -1,0 +1,39 @@
+{
+  "token": "legacy-verification-token",
+  "team_id": "T0AAA1111",
+  "context_team_id": "T0AAA1111",
+  "context_enterprise_id": null,
+  "api_app_id": "A0FOUNDRY",
+  "event": {
+    "type": "message",
+    "subtype": "bot_message",
+    "channel_type": "group",
+    "bot_id": "B0OTHER01",
+    "app_id": "A0OTHER01",
+    "username": "Deploys",
+    "bot_profile": {
+      "id": "B0OTHER01",
+      "name": "Deploys",
+      "app_id": "A0OTHER01",
+      "deleted": false
+    },
+    "text": "Deployed *api*",
+    "ts": "1795000016.000100",
+    "channel": "C0PRIV0001",
+    "event_ts": "1795000016.000100"
+  },
+  "type": "event_callback",
+  "event_id": "Ev0GRPMSG01",
+  "event_time": 1795000000,
+  "authorizations": [
+    {
+      "enterprise_id": null,
+      "team_id": "T0AAA1111",
+      "user_id": "U0BOT0001",
+      "is_bot": true,
+      "is_enterprise_install": false
+    }
+  ],
+  "is_ext_shared_channel": false,
+  "event_context": "4-eyJldCI6Im1lc3NhZ2UifQ"
+}

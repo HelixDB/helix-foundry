@@ -24,6 +24,10 @@ import { BillingTab } from "./billing";
 import { EnrichmentTab } from "./enrichment";
 import { publicLinks } from "../dashboards/public-links";
 import { SharingTab } from "./sharing";
+import { SlackTab } from "./slack";
+import { SlackInstalledPage } from "./slack-installed";
+import { SlackLinkPage } from "./slack-link";
+import { RelayLinkPage } from "./relay-link";
 import { DASHBOARD_URL, MembersTab } from "./members";
 import type { SettingsTab } from "./paths";
 import { roleLabel } from "./people";
@@ -84,7 +88,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI models" },
   // A local build has no team, access, billing or People enrichment (its
-  // lookups are a hosted service's).
+  // lookups are a hosted service's). Its Slack goes through Helix's relay.
   ...(LOCAL
     ? []
     : [
@@ -93,16 +97,20 @@ const tabs: { id: Tab; label: string }[] = [
         { id: "billing" as const, label: "Plan & billing" },
         { id: "enrichment" as const, label: "People enrichment" },
       ]),
+  { id: "slack" as const, label: "Slack" },
   // Public dashboard links, where the build has them (never a local one).
   ...(publicLinks ? [{ id: "sharing" as const, label: "Sharing" }] : []),
 ];
 
 function SettingsPage({ tab }: { tab: Tab }) {
-  const { name, role } = useWorkspace(),
+  const { name, role, grantee } = useWorkspace(),
     navigate = useNavigate();
-  // Access is owners' and admins'.
-  const shown = tabs.filter(
-    (t) => t.id !== "access" || canManage(role) || tab === "access",
+  // Access is owners' and admins'. A grantee reaches only Slack, to see the
+  // install and unlink their own account (granteeRedirect).
+  const shown = tabs.filter((t) =>
+    grantee
+      ? t.id === "slack"
+      : t.id !== "access" || canManage(role) || tab === "access",
   );
   return (
     <Page>
@@ -144,6 +152,8 @@ function SettingsPage({ tab }: { tab: Tab }) {
           <BillingTab />
         ) : tab === "sharing" ? (
           <SharingTab />
+        ) : tab === "slack" ? (
+          <SlackTab />
         ) : (
           <EnrichmentTab />
         )}
@@ -154,8 +164,9 @@ function SettingsPage({ tab }: { tab: Tab }) {
 
 // /settings, /settings/ai, /settings/members, /settings/access,
 // /settings/billing (where Stripe Checkout returns) and
-// /settings/enrichment, and /settings/sharing where the build has public
-// dashboard links; only /settings and /settings/ai in a local build.
+// /settings/enrichment, /settings/slack, and /settings/sharing where the
+// build has public dashboard links; only /settings, /settings/ai and
+// /settings/slack in a local build.
 export function SettingsRoutes() {
   return (
     <Routes>
@@ -172,9 +183,34 @@ export function SettingsRoutes() {
           />
         </>
       )}
+      <Route path="slack" element={<SettingsPage tab="slack" />} />
       {publicLinks && (
         <Route path="sharing" element={<SettingsPage tab="sharing" />} />
       )}
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+}
+
+// /slack/installed, where Slack returns from adding Helix Foundry (hosted:
+// Helix finishes a local install's), and /slack/link, the link it sends a
+// person in Slack.
+export function SlackRoutes() {
+  return (
+    <Routes>
+      {!LOCAL && <Route path="installed" element={<SlackInstalledPage />} />}
+      <Route path="link" element={<SlackLinkPage />} />
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+}
+
+// /relay/link (hosted): a local Foundry install asks to be linked to one of
+// the caller's workspaces (main.tsx mounts it outside a local build).
+export function RelayRoutes() {
+  return (
+    <Routes>
+      <Route path="link" element={<RelayLinkPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

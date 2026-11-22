@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -58,4 +59,29 @@ type Deps struct {
 	// install's integration listener, when not at the helper's default
 	// (agent.DefaultHelperFoundry): the pair command names it.
 	AgentHostURL string
+	// BotCredentials makes the service credentials a Slack install's bot
+	// mode acts as; nil where the host has none (a standalone install), and
+	// bot mode is then refused.
+	BotCredentials ports.BotCredentials
+	// SlackURL is Slack's web origin, https://slack.com when empty: an
+	// install of the Slack app starts at its /oauth/v2/authorize, and the
+	// Web API is under its /api. Tests point it at a fake Slack.
+	SlackURL string
+	// Relay is a standalone install's link to Helix's Slack relay (package
+	// local/relay); nil hosted, where the install's relay methods are
+	// refused (FOUNDRY_RELAY_LOCAL_ONLY).
+	Relay RelayLinker
+	// Emails reads users' email addresses: linking a Slack account needs its
+	// Slack email to be its Foundry user's. A hosted API with foundry.slack
+	// enabled needs it (New refuses to start without it); a standalone
+	// install leaves it nil, since its front end refuses every Slack method
+	// until Slack reaches it through Helix's relay.
+	Emails UserEmails
+}
+
+// UserEmails reads users' email addresses.
+type UserEmails interface {
+	// UserEmail is userID's address; store.ErrNotFound when the user is
+	// gone or has none.
+	UserEmail(ctx context.Context, userID string) (string, error)
 }

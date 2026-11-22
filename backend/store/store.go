@@ -242,15 +242,65 @@ type ReadStore interface {
 
 	// The Assistant (foundry_agent.go)
 	GetFoundryAgentThread(ctx context.Context, workspaceID, id string) (*model.FoundryAgentThread, error)
-	ListFoundryAgentThreads(ctx context.Context, workspaceID, userID string, keep func(*model.FoundryAgentThread) bool, pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
+	ListFoundryAgentThreads(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, keep func(*model.FoundryAgentThread) bool,
+		pageToken string, limit int) ([]*model.FoundryAgentThread, string, error)
 	GetFoundryAgentTurn(ctx context.Context, workspaceID, id string) (*model.FoundryAgentTurn, error)
-	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID, userID, clientToken string) (*model.FoundryAgentTurn, error)
+	GetFoundryAgentTurnByClientToken(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, clientToken string) (*model.FoundryAgentTurn, error)
 	ListFoundryAgentTurns(ctx context.Context, threadID string, limit int) ([]*model.FoundryAgentTurn, error)
 	ListFoundryAgentEvents(ctx context.Context, turnID string, afterSeq, limit int) ([]model.FoundryAgentEvent, error)
 	ListFoundryAgentMessages(ctx context.Context, threadID string) ([]model.FoundryAgentMessage, error)
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryAgentActionByPayload(ctx context.Context, turnID, payloadHash string) (*model.FoundryAgentAction, error)
 	ListFoundryAgentActions(ctx context.Context, threadID string) ([]*model.FoundryAgentAction, error)
+
+	// Helix Foundry for Slack: installs, links, threads and replies (foundry_slack.go)
+	GetFoundrySlackInstall(ctx context.Context, workspaceID string) (*model.SlackInstall, error)
+	GetFoundrySlackInstallByTeam(ctx context.Context, teamID string) (*model.SlackInstall, error)
+	GetFoundrySlackInstallByEnterprise(ctx context.Context, enterpriseID string) (*model.SlackInstall, error)
+	GetFoundrySlackInstallByID(ctx context.Context, id string) (*model.SlackInstall, error)
+	GetFoundrySlackInstallToken(ctx context.Context, installID string) (model.SlackSealedToken, error)
+	ListFoundrySlackUninstalls(ctx context.Context, limit int) ([]*model.SlackInstall, error)
+	GetFoundrySlackLink(ctx context.Context, installID, slackUserID string) (*model.SlackLink, error)
+	ListFoundrySlackLinks(ctx context.Context, installID string) ([]*model.SlackLink, error)
+	GetFoundrySlackLinkToken(ctx context.Context, tokenHash string) (*model.SlackLinkToken, error)
+	GetFoundrySlackThread(ctx context.Context, installID, channelID, threadTS, slackUserID string) (*model.SlackThread, error)
+	GetFoundrySlackReply(ctx context.Context, turnID string) (*model.SlackReply, error)
+	ListFoundrySlackFollows(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackReply, error)
+	CountFoundrySlackFollows(ctx context.Context, installID string) (int, error)
+	ListFoundrySlackThreadMappings(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackThread, error)
+	// Bot mode (L2): whether a credential is a workspace's live bot, or any
+	// install's; the bots' keys of revoked installs, for the sweep to revoke
+	// and forget; and who has spoken to the bot in a thread.
+	IsFoundrySlackBot(ctx context.Context, workspaceID, credentialID string) (bool, error)
+	IsFoundrySlackBotCredential(ctx context.Context, credentialID string) (bool, error)
+	ListFoundrySlackRetiredBots(ctx context.Context, limit int) ([]*model.SlackInstall, error)
+	ForgetFoundrySlackBot(ctx context.Context, installID, credentialID string) error
+	IsFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) (bool, error)
+	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
+
+	// Helix Foundry for Slack's relay (L3): links, relayed installs, what
+	// waits for a claim, what proxied calls may name and daily counts
+	// (foundry_relay.go); a local install's access requests (foundry_slack.go)
+	GetFoundryRelayLinkByToken(ctx context.Context, tokenHash string) (*model.RelayLink, error)
+	ListFoundryRelayLinks(ctx context.Context, workspaceID string) ([]*model.RelayLink, error)
+	ListFoundryRelayInstalls(ctx context.Context, linkID string) ([]*model.SlackInstall, error)
+	GetFoundryRelayInstall(ctx context.Context, linkID, localWorkspaceID string) (*model.SlackInstall, error)
+	FoundryRelayWaiting(ctx context.Context, linkID string) (bool, error)
+	SeenFoundryRelayChannel(ctx context.Context, installID, channelID string) (time.Duration, bool, error)
+	KnowsFoundryRelayUsers(ctx context.Context, installID string, userIDs []string) (bool, error)
+	GetFoundryRelayUsage(ctx context.Context, linkID string, day time.Time) (model.RelayUsage, error)
+	ListFoundrySlackAccessRequests(ctx context.Context, installID string) ([]*model.SlackAccessRequest, error)
+
+	// The Slack data connector on Helix's Slack app: feeds, their buffer,
+	// the day mirror's index and the backfill (foundry_slack_feed.go)
+	GetFoundrySlackFeed(ctx context.Context, connectorID string) (*model.SlackFeed, error)
+	FoundrySlackFeedAfter(ctx context.Context, feedID string, after int64, budget model.SlackFeedBudget) ([]model.SlackFeedRow, error)
+	FoundrySlackDaysAfter(ctx context.Context, feedID string, seq int64) ([]model.SlackFeedDay, error)
+	ListFoundrySlackFeedChannels(ctx context.Context, feedID string) ([]model.SlackChannelJoin, error)
+	DueFoundrySlackBackfill(ctx context.Context, method model.SlackSlotMethod, limit int) ([]model.SlackBackfillWork, error)
+	FoundrySlackBackfillProgress(ctx context.Context, feedID string) (model.SlackBackfillProgress, error)
+	ListFoundrySlackOrphans(ctx context.Context, retention time.Duration, limit int) ([]*model.SlackFeed, error)
+	ListFoundrySlackFeeds(ctx context.Context, after string, limit int) ([]*model.SlackFeed, error)
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	GetFoundryDashboard(ctx context.Context, workspaceID, id string) (*model.FoundryDashboard, error)
@@ -486,9 +536,9 @@ type Store interface {
 	// foundry-agent-worker's turns (foundry_agent.go)
 	CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAgentTurn, thread *model.FoundryAgentThread, limits model.FoundryAgentLimits, first json.RawMessage) error
 	AskFoundryAgentQuestions(ctx context.Context, turnID, workerID string, asked *model.FoundryAgentAsked, event json.RawMessage) error
-	DeleteFoundryAgentThread(ctx context.Context, workspaceID, userID, id string) error
+	DeleteFoundryAgentThread(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, id string) error
 	RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error
-	CancelFoundryAgentTurn(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentTurn, error)
+	CancelFoundryAgentTurn(ctx context.Context, workspaceID string, principal model.FoundryAgentPrincipal, id string) (*model.FoundryAgentTurn, error)
 	ClaimFoundryAgentTurn(ctx context.Context, workerID string, claim model.FoundryAgentClaim) (*model.FoundryAgentTurn, error)
 	RenewFoundryAgentTurnLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	AppendFoundryAgentEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
@@ -508,8 +558,100 @@ type Store interface {
 	ClaimFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string) (*model.FoundryAgentAction, error)
 	FinishFoundryAgentAction(ctx context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn, firstEvent json.RawMessage) error
 	DismissFoundryAgentAction(ctx context.Context, workspaceID, userID, id string) (*model.FoundryAgentAction, error)
+	// A bot's proposals, run or dismissed by an owner or admin of the
+	// workspace (Helix Foundry for Slack's bot mode).
+	ClaimFoundryAgentProposal(ctx context.Context, workspaceID, id, payloadHash, approverID string) (*model.FoundryAgentAction, error)
+	DismissFoundryAgentProposal(ctx context.Context, workspaceID, id, deciderID string) (*model.FoundryAgentAction, error)
 	RefreshFoundryAgentAction(ctx context.Context, workspaceID, userID, id, payloadHash string, display json.RawMessage, confirmationID string,
 		sealed []byte, keyID string, expiresAt time.Time) (*model.FoundryAgentAction, error)
+
+	// Helix Foundry for Slack: installs and their OAuth states, links, the
+	// Founder threads Slack threads continue, intake and replies under
+	// fenced leases, and Slack's retention (foundry_slack.go)
+	InstallFoundrySlack(ctx context.Context, in *model.SlackInstall, seal func(installID string) (model.SlackSealedToken, error)) (
+		*model.SlackInstall, bool, error)
+	RevokeFoundrySlackInstall(ctx context.Context, workspaceID, installID string, uninstalled bool) error
+	MarkFoundrySlackUninstalled(ctx context.Context, installID string) error
+	UninstallFoundrySlackTeam(ctx context.Context, teamID, intakeID, dedupeKey string, eventTime time.Time) (model.SlackUninstallOutcome, error)
+	// PurgeFoundrySlack ends a deleted workspace's Slack; its host calls it
+	// when it deletes the workspace.
+	PurgeFoundrySlack(ctx context.Context, workspaceID string) error
+	CreateFoundrySlackInstallState(ctx context.Context, workspaceID, userID, stateHash, returnPath string, ttl time.Duration) error
+	SpendFoundrySlackInstallState(ctx context.Context, stateHash, userID string) (*model.SlackInstallState, error)
+	CreateFoundrySlackLinkToken(ctx context.Context, installID, slackUserID, tokenHash string, ttl time.Duration) error
+	LinkFoundrySlackUser(ctx context.Context, workspaceID, tokenHash, userID string) (*model.SlackLink, error)
+	DeleteFoundrySlackLink(ctx context.Context, installID, slackUserID string) error
+	CreateFoundrySlackThread(ctx context.Context, m *model.SlackThread) error
+	TouchFoundrySlackThread(ctx context.Context, id string) error
+	PurgeFoundrySlackThreads(ctx context.Context, idle time.Duration, limit int) (int, error)
+	QueueFoundrySlackIntake(ctx context.Context, in *model.SlackIntake) error
+	ClaimFoundrySlackIntake(ctx context.Context, lease time.Duration) (*model.SlackIntake, error)
+	SetFoundrySlackIntakeInput(ctx context.Context, id, owner, input string) error
+	EndFoundrySlackIntake(ctx context.Context, id, owner string, outcome model.SlackIntakeOutcome) error
+	WakeFoundrySlackIntake(ctx context.Context, turnID string) (int64, error)
+	HoldFoundrySlackReply(ctx context.Context, r *model.SlackReply) (*model.SlackReply, error)
+	ReleaseFoundrySlackHold(ctx context.Context, turnID string) error
+	StartFoundrySlackReply(ctx context.Context, turnID, messageTS, intakeID, intakeOwner string) error
+	ClaimFoundrySlackReply(ctx context.Context, lease time.Duration) (*model.SlackReply, error)
+	UpdateFoundrySlackReply(ctx context.Context, turnID, owner string, u model.SlackReplyUpdate) error
+	ReleaseFoundrySlackReply(ctx context.Context, turnID, owner string, after time.Duration) error
+	FinishFoundrySlackReply(ctx context.Context, turnID, owner string) error
+	PruneFoundrySlack(ctx context.Context, intake, replies time.Duration, limit int) (int64, error)
+	UpdateFoundrySlackInstallBot(ctx context.Context, installID string, u model.SlackInstallBotUpdate) error
+	MarkFoundrySlackThreadBot(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+	MarkFoundrySlackThreadOthers(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+	SetFoundrySlackMode(ctx context.Context, workspaceID, installID string, mode model.SlackIdentityMode) (model.SlackIdentityMode, error)
+	AddFoundrySlackThreadPerson(ctx context.Context, threadID, slackUserID string) error
+
+	// Helix Foundry for Slack's relay (L3): codes and links, relayed
+	// installs' states and feeds, deliveries and the relay feed under
+	// leases, what proxied calls may name, counts (foundry_relay.go); a local
+	// install's mirror of its installs, and the Slack users its owner allows
+	// (foundry_relay.go, foundry_slack.go)
+	CreateFoundryRelayCode(ctx context.Context, c *model.RelayCode, ttl time.Duration) error
+	RedeemFoundryRelayCode(ctx context.Context, codeHash, verifier, linkID, tokenHash string) (*model.RelayLink, error)
+	SeeFoundryRelayLink(ctx context.Context, linkID, addr string) error
+	RevokeFoundryRelayLink(ctx context.Context, workspaceID, linkID string) error
+	CreateFoundrySlackRelayInstallState(ctx context.Context, linkID, localWorkspaceID, stateHash string, ttl time.Duration) error
+	SetFoundryRelayFeeds(ctx context.Context, linkID string, feeds []model.RelayFeedOn) error
+	QueueFoundryRelayDelivery(ctx context.Context, d *model.RelayDelivery, ttl time.Duration, seen model.RelaySeen) error
+	LeaseFoundryRelay(ctx context.Context, linkID string, lease time.Duration, budget model.RelayBudget) (model.RelayClaim, error)
+	AckFoundryRelay(ctx context.Context, linkID string, ids []string) (int, error)
+	ExpireFoundryRelayDeliveries(ctx context.Context, grace time.Duration, limit int) ([]*model.RelayDelivery, error)
+	NoticeFoundryRelayOffline(ctx context.Context, offline, every time.Duration, limit int) ([]*model.RelayDelivery, error)
+	AppendFoundryRelayFeed(ctx context.Context, installID string, a model.RelayFeedAppend, limits model.RelayFeedLimits) (model.RelayFeedAppended, error)
+	ExpireFoundryRelayFeed(ctx context.Context, ttl time.Duration, limit int) (int, error)
+	RecordFoundryRelayChannels(ctx context.Context, installID string, channelIDs []string) error
+	ForgetFoundryRelayChannel(ctx context.Context, installID, channelID string) error
+	CountFoundryRelayUsage(ctx context.Context, linkID string, u model.RelayUsage) error
+	MirrorFoundrySlackInstalls(ctx context.Context, installs []*model.SlackInstall) error
+	AllowFoundrySlackUser(ctx context.Context, installID, slackUserID, userID string) (*model.SlackLink, error)
+	RequestFoundrySlackAccess(ctx context.Context, r *model.SlackAccessRequest) (bool, error)
+	DeleteFoundrySlackAccessRequest(ctx context.Context, installID, slackUserID string) error
+
+	// The Slack data connector on Helix's Slack app: binding, appends, folds,
+	// channels, Tier-1 slots and the backfill (foundry_slack_feed.go)
+	CreateSlackAppConnector(ctx context.Context, c *model.Connector, bind model.SlackFeedBind) error
+	UpdateSlackAppConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate, sw model.SlackAppSwitch) error
+	AppendFoundrySlackFeed(ctx context.Context, installID string, batch model.SlackFeedBatch, limits model.SlackFeedLimits) (model.SlackFeedAppended, error)
+	AppendFoundrySlackFeedGaps(ctx context.Context, installID string, gaps []model.SlackFeedGap, spacing time.Duration) (model.SlackFeedAppended, error)
+	RecordFoundrySlackEventsLimited(ctx context.Context, installID string, minute time.Time, spacing time.Duration) (model.SlackFeedAppended, error)
+	CommitFoundrySlackFold(ctx context.Context, fold model.SlackFold) error
+	ForgetFoundrySlackObjects(ctx context.Context, feedID string, keys []string) error
+	MarkFoundrySlackDaysDocumented(ctx context.Context, feedID string, days []model.SlackDayKey) error
+	PruneFoundrySlackFeed(ctx context.Context, limit int) (int64, error)
+	JoinFoundrySlackChannels(ctx context.Context, feedID string, joins []model.SlackChannelJoin) (int, error)
+	PurgeFoundrySlackChannel(ctx context.Context, feedID, channelID string) error
+	ReserveFoundrySlackSlot(ctx context.Context, installID string, method model.SlackSlotMethod, every time.Duration) (bool, error)
+	DeferFoundrySlackSlot(ctx context.Context, installID string, method model.SlackSlotMethod, after time.Duration) error
+	AdvanceFoundrySlackBackfill(ctx context.Context, step model.SlackBackfillStep, spacing time.Duration) error
+	QueueFoundrySlackThreads(ctx context.Context, threads []model.SlackBackfillThread) (int, error)
+	FailFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, message string, maxAttempts int) (model.SlackBackfillStatus, error)
+	EndFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, status model.SlackBackfillStatus, message string) error
+	SpendFoundrySlackGap(ctx context.Context, feedID string, max int) (bool, error)
+	// The foundry-slack-worker's closes and flips (foundry_slack_feed_sweep.go)
+	CloseFoundrySlackDays(ctx context.Context, feedID string, before time.Time, spacing time.Duration) (int, error)
+	FlipSlackAppConnector(ctx context.Context, workspaceID, connectorID string, staged, flipped json.RawMessage, sealed []byte, keyID string) error
 
 	// Dashboards and their public snapshots (foundry_dashboards.go)
 	CreateFoundryDashboard(ctx context.Context, d *model.FoundryDashboard, max int) error

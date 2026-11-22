@@ -309,7 +309,7 @@ func (n granolaNotes) read(ctx context.Context, summaries []granolaSummary, writ
 				wanted = append(wanted, stream)
 			}
 		}
-		note, transcript, err := n.c.note(ctx, s.id, slices.Contains(wanted, granolaTranscriptsStream))
+		note, transcript, err := n.c.note(ctx, s.id, slices.ContainsFunc(wanted, func(s Stream) bool { return s.Name == granolaTranscriptsStream.Name }))
 		if err != nil {
 			return err
 		}

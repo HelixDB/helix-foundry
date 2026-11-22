@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,6 +23,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	foundryplan "github.com/helixdb/helix-foundry/backend/plan"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
@@ -34,6 +36,10 @@ type Service struct {
 	// loadDocuments keeps what a busy load made of its documents a few
 	// seconds, for the callers that poll it.
 	loadDocuments loadDocumentSets
+	// slackFeed holds the slots and installs of Slack's channel events.
+	slackFeed slackFeedIntake
+	// relay paces the calls linked installs make to Slack through it.
+	relay relayLimits
 }
 
 var (
@@ -86,15 +92,34 @@ type runtimeDeps struct {
 	// AgentHostURL is the pair command's --foundry; empty for the helper's
 	// default.
 	AgentHostURL string
+	// Slack calls Slack's Web API for Settings › Slack (never for
+	// ReceiveSlackRequest), and SlackURL is Slack's web origin, whose OAuth
+	// page an install starts at.
+	Slack    *slack.Client
+	SlackURL string
+	// Emails is nil only where Slack accounts aren't linked: foundry.slack
+	// off, or a standalone install (New).
+	Emails UserEmails
+	// BotCredentials is nil where bot mode is refused (a standalone install).
+	BotCredentials ports.BotCredentials
+	// Relay is nil hosted, where a standalone install's relay methods are
+	// refused.
+	Relay RelayLinker
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
-// plan catalog, foundry-read client (connected lazily) and event sends.
+// plan catalog, foundry-read client (connected lazily) and event sends. A
+// hosted API with foundry.slack enabled needs Deps.Emails, without which no
+// Slack account could be linked.
 func New(d Deps) (*Service, error) {
 	if d.DB == nil || d.Cfg == nil {
 		return nil, errors.New("api: store and configuration are required")
 	}
 	cfg := d.Cfg
+	if cfg.Foundry.Slack.Enabled && !cfg.Host.Local && d.Emails == nil {
+		return nil, errors.New("api: foundry.slack is enabled but the host reads no user's email (Deps.Emails): " +
+			"no Slack account could be linked")
+	}
 	connectorKeys, err := connector.NewKeyring(cfg.Foundry.Connectors)
 	if err != nil {
 		return nil, err
@@ -115,10 +140,23 @@ func New(d Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	slackURL := strings.TrimRight(d.SlackURL, "/")
+	if slackURL == "" {
+		slackURL = defaultSlackURL
+	}
+	slackLimiter, err := slack.NewLimiter(slackAPIShare)
+	if err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
+	slackClient, err := slack.NewClient(slack.ClientOptions{BaseURL: slackURL + "/api", Limiter: slackLimiter})
+	if err != nil {
+		return nil, fmt.Errorf("api: %w", err)
+	}
 	s := &Service{deps: &runtimeDeps{
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
 		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
 		LocalAI: d.LocalAI, AgentSessions: d.AgentSessions, AgentHosts: d.AgentHosts, AgentHostURL: d.AgentHostURL,
+		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails, BotCredentials: d.BotCredentials, Relay: d.Relay,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

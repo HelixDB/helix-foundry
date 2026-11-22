@@ -1,0 +1,49 @@
+{
+  "type": "block_actions",
+  "user": {
+    "id": "U0ADA0001",
+    "username": "ada",
+    "name": "ada",
+    "team_id": "T0AAA1111"
+  },
+  "api_app_id": "A0FOUNDRY",
+  "token": "legacy",
+  "container": {
+    "type": "view",
+    "view_id": "V1"
+  },
+  "trigger_id": "123.456.abc",
+  "team": {
+    "id": "T0AAA1111",
+    "domain": "acme"
+  },
+  "enterprise": null,
+  "is_enterprise_install": false,
+  "channel": {
+    "id": "C0GEN0001",
+    "name": "general"
+  },
+  "message": {
+    "type": "message",
+    "ts": "1795000050.000100",
+    "text": "card"
+  },
+  "state": {
+    "values": {}
+  },
+  "response_url": "https://hooks.slack.com/actions/T0AAA1111/1/secret",
+  "actions": [
+    {
+      "action_id": "foundry.dismiss",
+      "block_id": "card",
+      "text": {
+        "type": "plain_text",
+        "text": "Run",
+        "emoji": true
+      },
+      "type": "button",
+      "action_ts": "1795000100.123456",
+      "value": "{\"a\": \"01JBACTXN00000000000000000\"}"
+    }
+  ]
+}

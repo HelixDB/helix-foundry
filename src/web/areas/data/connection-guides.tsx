@@ -78,6 +78,37 @@ function DatabaseReach() {
   );
 }
 
+// The Slack token's steps: the customer's own app, made in Slack.
+const SlackTokenGuide = () => (
+  <ol>
+    <li>
+      Open{" "}
+      <External href="https://api.slack.com/apps">your apps in Slack</External>,
+      click <strong>Create New App</strong> and choose{" "}
+      <strong>From scratch</strong>. Name it “Helix Foundry” and pick your
+      workspace.
+    </li>
+    <li>
+      Under <strong>OAuth &amp; Permissions</strong>, add the Bot Token Scopes{" "}
+      <code>channels:read</code> and <code>channels:history</code> for public
+      channels, <code>groups:read</code> and <code>groups:history</code> for
+      private ones, and <code>users:read</code> and{" "}
+      <code>users:read.email</code> to name people.
+    </li>
+    <li>
+      Click <strong>Install to Workspace</strong>, copy the{" "}
+      <strong>Bot User OAuth Token</strong> (<code>xoxb-…</code>) and paste it
+      below.
+    </li>
+    <li>
+      Invite the app to each channel to sync, public or private, with{" "}
+      <code>/invite @Helix Foundry</code>. The messages of a kind of channel
+      whose history scope the app lacks are not read. Direct messages are never
+      read, nor are the answers of Helix’s own Slack app.
+    </li>
+  </ol>
+);
+
 const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
   stripe: () => (
     <ol>
@@ -270,37 +301,22 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
     </ol>
   ),
-  slack: () => (
-    <ol>
-      <li>
-        Open{" "}
-        <External href="https://api.slack.com/apps">
-          your apps in Slack
-        </External>
-        , click <strong>Create New App</strong> and choose{" "}
-        <strong>From scratch</strong>. Name it “Helix Foundry” and pick your
-        workspace.
-      </li>
-      <li>
-        Under <strong>OAuth &amp; Permissions</strong>, add the Bot Token Scopes{" "}
-        <code>channels:read</code> and <code>channels:history</code> for public
-        channels, <code>groups:read</code> and <code>groups:history</code> for
-        private ones, and <code>users:read</code> and{" "}
-        <code>users:read.email</code> to name people.
-      </li>
-      <li>
-        Click <strong>Install to Workspace</strong>, copy the{" "}
-        <strong>Bot User OAuth Token</strong> (<code>xoxb-…</code>) and paste it
-        below.
-      </li>
-      <li>
-        Invite the app to each channel to sync, public or private, with{" "}
-        <code>/invite @Helix Foundry</code>. The messages of a kind of channel
-        whose history scope the app lacks are not read. Direct messages are
-        never read.
-      </li>
-    </ol>
-  ),
+  slack: (form) =>
+    form.kind === "slack" && form.credential === "app" ? (
+      // Helix's own Slack app, added in Settings › Slack.
+      <p>
+        Helix Foundry reads the channels you invite it to (
+        <code>/invite @Helix Foundry</code>), public or private, never direct
+        messages or channels shared with other organisations. New messages
+        arrive as they’re posted. Older history fills in at the pace Slack
+        allows apps outside the Slack Marketplace, which can take days. Slack
+        delivers at most 30,000 messages an hour per workspace to an app, so in
+        very busy workspaces some may be missed; to read everything now, use
+        your own app’s token.
+      </p>
+    ) : (
+      <SlackTokenGuide />
+    ),
   notion: () => (
     <ol>
       <li>
