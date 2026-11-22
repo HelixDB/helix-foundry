@@ -845,12 +845,17 @@ export const papiRoutes = [
 
   // Slack (Settings › Slack, /slack/installed, /slack/link): Helix's own
   // Slack app. Owners and admins add it (start, then finish once Slack
-  // returns to the site), see who is linked and disconnect it; each person
-  // previews and makes their own link from the token the app sent them, and
-  // unlinks it.
+  // returns to the site), switch it between per person and the shared bot,
+  // see who is linked and disconnect it; each person previews and makes
+  // their own link from the token the app sent them, and unlinks it.
   {
     area: "slack",
     method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack",
+  },
+  {
+    area: "slack",
+    method: "PATCH",
     path: "/v1/workspaces/{workspaceId}/foundry/slack",
   },
   {

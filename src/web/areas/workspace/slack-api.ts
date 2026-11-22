@@ -6,6 +6,7 @@ import type {
   FoundrySlackLinkResponse,
   FoundrySlackResponse,
   ListFoundrySlackLinksResponse,
+  UpdateFoundrySlackRequest,
   PreviewFoundrySlackLinkResponse,
   StartFoundrySlackInstallRequest,
   StartFoundrySlackInstallResponse,
@@ -40,6 +41,7 @@ export const SLACK_REASONS = [
   "FOUNDRY_SLACK_DISCONNECTING",
   "FOUNDRY_SLACK_LINK_EXPIRED",
   "FOUNDRY_SLACK_LINK_REFUSED",
+  "FOUNDRY_SLACK_BOT_HOSTED_ONLY",
 ] as const;
 export type SlackReason = (typeof SLACK_REASONS)[number];
 
@@ -75,6 +77,43 @@ const errorInfo = (error: unknown) =>
 export const slackReason = (error: unknown): SlackReason | undefined =>
   errorInfo(error)?.reason;
 
+/**
+ * Whom an install's bot acts as: each linked Slack user as themselves, or
+ * one shared bot, a workspace key no one holds, whose sources Settings ›
+ * Access chooses (its `credentialId`; null when the WFE didn't say).
+ * `broken`: the key was revoked, deleted, expired or given database
+ * permissions, so the bot can't answer until bot mode is turned off and on.
+ */
+export type SlackMode =
+  | { kind: "per_person" }
+  | {
+      kind: "bot";
+      credentialId: string | null;
+      credentialName: string;
+      broken: boolean;
+    };
+
+/**
+ * An install's mode as the WFE says it: BOT is the shared bot, anything
+ * else (PER_PERSON, unset from a WFE before bot mode) per person.
+ *
+ * @example
+ * slackMode({ identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT", bot: { credentialId: "sc_1", credentialName: "Slack bot (Acme)" } });
+ * // { kind: "bot", credentialId: "sc_1", credentialName: "Slack bot (Acme)", broken: false }
+ * slackMode({}); // { kind: "per_person" }
+ */
+export function slackMode(install: FoundrySlackInstall): SlackMode {
+  if (install.identityMode !== "FOUNDRY_SLACK_IDENTITY_MODE_BOT")
+    return { kind: "per_person" };
+  const bot = install.bot || {};
+  return {
+    kind: "bot",
+    credentialId: bot.credentialId || null,
+    credentialName: bot.credentialName || "",
+    broken: !!bot.broken,
+  };
+}
+
 /** Settings › Slack's state: what the workspace has and what the caller may do. */
 export type SlackView =
   // Helix Foundry for Slack is off where this site's API runs.
@@ -86,6 +125,7 @@ export type SlackView =
       kind: "installed";
       canManage: boolean;
       install: FoundrySlackInstall;
+      mode: SlackMode;
       myLink: FoundrySlackLink | null;
     };
 
@@ -105,6 +145,7 @@ export function slackView(s: FoundrySlack | undefined): SlackView {
       kind: "installed",
       canManage,
       install: s.install,
+      mode: slackMode(s.install),
       myLink: s.myLink || null,
     };
   return {
@@ -299,6 +340,29 @@ export async function disconnectSlack(ws: string): Promise<SlackView> {
     {},
   );
   trackEvent("slack_disconnected");
+  return slackView(slack);
+}
+
+/**
+ * Sets whom the install acts as, for owners and admins: "bot" makes the
+ * shared bot's key, "per_person" revokes it and deletes the bot's threads.
+ * The mode it has already changes nothing.
+ */
+export async function updateSlackMode(
+  ws: string,
+  mode: SlackMode["kind"],
+): Promise<SlackView> {
+  const { slack } = await api<FoundrySlackResponse>(
+    path(ws),
+    {
+      identityMode:
+        mode === "bot"
+          ? "FOUNDRY_SLACK_IDENTITY_MODE_BOT"
+          : "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+    } satisfies UpdateFoundrySlackRequest,
+    "PATCH",
+  );
+  trackEvent("slack_mode_changed", { mode });
   return slackView(slack);
 }
 

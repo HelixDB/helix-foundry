@@ -81,6 +81,23 @@ export function targetOf(g: Grant): FoundryAccessTarget {
 export const principalKey = (p: FoundryPrincipal) =>
   `${p.kind || "KIND_UNSPECIFIED"}:${p.id || ""}`;
 
+/**
+ * The agent's key a link to Settings › Access opens the sources of
+ * (`?principal=service_credential:<id>`, paths.keySources): its id, or null
+ * for anything else, which opens nothing.
+ *
+ * @example
+ * keyParam("service_credential:sc_1"); // "sc_1"
+ * keyParam("user:usr_1"); // null
+ * keyParam(null); // null
+ */
+export function keyParam(raw: string | null): string | null {
+  const id = raw?.startsWith("service_credential:")
+    ? raw.slice("service_credential:".length)
+    : "";
+  return id || null;
+}
+
 /** The principals grants are for, as the editor names them. */
 export type Principal = {
   kind: Exclude<FoundryPrincipalKind, "KIND_UNSPECIFIED">;

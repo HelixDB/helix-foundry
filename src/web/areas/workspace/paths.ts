@@ -14,6 +14,11 @@ export type SettingsTab =
 
 export const workspacePaths = {
   settings: (tab?: SettingsTab) => "/settings" + (tab ? "/" + tab : ""),
+  // Settings › Access with an agent's key's sources open
+  // (?principal=service_credential:<id>, read by access-model's keyParam).
+  keySources: (credentialId: string) =>
+    "/settings/access?principal=service_credential:" +
+    encodeURIComponent(credentialId),
   // Choose or create a workspace.
   workspaces: () => "/workspaces",
 };

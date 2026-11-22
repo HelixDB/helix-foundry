@@ -1037,6 +1037,65 @@ const credentialOut = ({
   ...c
 }: StoredCredential): ServiceCredential => structuredClone(c);
 
+/**
+ * Revokes a key, as the host does: its grants and Usage permission go with
+ * it (DeleteFoundryAccessPrincipal).
+ */
+function revoke(c: StoredCredential) {
+  c.revokedAt = now();
+  state.grants = state.grants.filter(
+    (g) =>
+      !(
+        g.principal.kind === "KIND_SERVICE_CREDENTIAL" &&
+        g.principal.id === c.id
+      ),
+  );
+  state.workflowsOff.delete(
+    `${c.workspaceId}\u001f${principalKey({ kind: "KIND_SERVICE_CREDENTIAL", id: c.id })}`,
+  );
+}
+
+/**
+ * A Slack install's shared bot's key (./slack.ts's bot mode), as hosted's
+ * BotCredentials makes it: a workspace key whose token no one holds, with
+ * no database grants. Its id.
+ */
+export function makeBotKey(
+  workspaceId: string,
+  name: string,
+  userId: string,
+): string {
+  const at = now();
+  const c: StoredCredential = {
+    id: id("sc"),
+    workspaceId,
+    name,
+    tokenPrefix: `hlxs_${randomBytes(3).toString("hex")}`,
+    workspaceOwner: { workspaceId },
+    grants: [],
+    createdBy: userId,
+    expiresAt: null,
+    revokedAt: null,
+    lastUsedAt: null,
+    timestamps: { createdAt: at, updatedAt: at },
+  };
+  state.credentials.push(c);
+  return c.id;
+}
+
+/** The workspace's live key `credentialId`, if it is one. */
+export const liveKey = (workspaceId: string, credentialId: string) =>
+  state.credentials.find(
+    (c) =>
+      c.workspaceId === workspaceId && c.id === credentialId && !c.revokedAt,
+  );
+
+/** Revokes the workspace's key `credentialId`, if it is live. */
+export function revokeKey(workspaceId: string, credentialId: string) {
+  const c = liveKey(workspaceId, credentialId);
+  if (c) revoke(c);
+}
+
 const PRINCIPAL_KINDS = new Set<FoundryPrincipalKind>([
   "KIND_USER",
   "KIND_SERVICE_CREDENTIAL",
@@ -1599,19 +1658,7 @@ export const accessRoutes: MockRoute[] = [
           !x.revokedAt,
       );
       if (!c) return fail("NOT_FOUND", "service credential not found");
-      c.revokedAt = now();
-      // The host deletes a revoked key's grants and Usage permission
-      // (DeleteFoundryAccessPrincipal).
-      state.grants = state.grants.filter(
-        (g) =>
-          !(
-            g.principal.kind === "KIND_SERVICE_CREDENTIAL" &&
-            g.principal.id === c.id
-          ),
-      );
-      state.workflowsOff.delete(
-        `${m.workspaceId}\u001f${principalKey({ kind: "KIND_SERVICE_CREDENTIAL", id: c.id })}`,
-      );
+      revoke(c);
       return ok({});
     },
   },

@@ -19,8 +19,10 @@ import {
   slackReason,
   slackReturnCopy,
   slackReturnFailure,
+  slackMode,
   slackView,
   startSlackInstall,
+  updateSlackMode,
 } from "@/web/areas/workspace/slack-api";
 
 // Settings › Slack's calls and words (src/web/areas/workspace/slack-api.ts):
@@ -73,13 +75,61 @@ describe("the page's state", () => {
       kind: "installed",
       canManage: true,
       install,
+      mode: { kind: "per_person" },
       myLink: { slackUserId: "U1" },
     });
     expect(slackView({ install, myLink: null })).toEqual({
       kind: "installed",
       canManage: false,
       install,
+      mode: { kind: "per_person" },
       myLink: null,
+    });
+  });
+  it("reads the install's mode: BOT is the shared bot, anything else per person", () => {
+    const bot = (b: wfe.FoundrySlackBot | null | undefined) =>
+      slackMode({ identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT", bot: b });
+    expect(
+      bot({ credentialId: "sc_1", credentialName: "Slack bot (Acme)" }),
+    ).toEqual({
+      kind: "bot",
+      credentialId: "sc_1",
+      credentialName: "Slack bot (Acme)",
+      broken: false,
+    });
+    expect(bot({ credentialId: "sc_1", broken: true })).toEqual({
+      kind: "bot",
+      credentialId: "sc_1",
+      credentialName: "",
+      broken: true,
+    });
+    // A bot the WFE didn't describe has no key to link to.
+    expect(bot(null)).toEqual({
+      kind: "bot",
+      credentialId: null,
+      credentialName: "",
+      broken: false,
+    });
+    expect(bot({ credentialId: "" })).toMatchObject({ credentialId: null });
+    for (const identityMode of [
+      "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+      "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED",
+      undefined,
+    ] as const)
+      expect(
+        slackMode({ identityMode, bot: { credentialId: "sc_stale" } }),
+      ).toEqual({ kind: "per_person" });
+    expect(
+      slackView({
+        install: {
+          ...install,
+          identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+          bot: { credentialId: "sc_1" },
+        },
+      }),
+    ).toMatchObject({
+      kind: "installed",
+      mode: { kind: "bot", credentialId: "sc_1" },
     });
   });
   it("offers Add to Slack only on the install list", () => {
@@ -329,6 +379,53 @@ describe("adding the app", () => {
     tracked.mockClear();
     call.mockRejectedValueOnce(new ApiError("nope", 403));
     await expect(disconnectSlack("ws")).rejects.toThrow("nope");
+    expect(tracked).not.toHaveBeenCalled();
+  });
+});
+
+describe("the mode", () => {
+  it("PATCHes the setting, reporting the mode once accepted", async () => {
+    const answer = {
+      slack: {
+        canManage: true,
+        install: {
+          ...install,
+          identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+          bot: { credentialId: "sc_1" },
+        },
+      },
+    } satisfies wfe.FoundrySlackResponse;
+    call.mockResolvedValueOnce(answer);
+    await expect(updateSlackMode("ws 1", "bot")).resolves.toMatchObject({
+      kind: "installed",
+      mode: { kind: "bot", credentialId: "sc_1" },
+    });
+    expect(call).toHaveBeenCalledWith(
+      "/v1/workspaces/ws%201/foundry/slack",
+      { identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT" },
+      "PATCH",
+    );
+    expect(tracked).toHaveBeenCalledWith("slack_mode_changed", { mode: "bot" });
+    tracked.mockClear();
+    call.mockResolvedValueOnce({ slack: { install } });
+    await expect(updateSlackMode("ws", "per_person")).resolves.toMatchObject({
+      mode: { kind: "per_person" },
+    });
+    expect(call).toHaveBeenLastCalledWith(
+      "/v1/workspaces/ws/foundry/slack",
+      { identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON" },
+      "PATCH",
+    );
+    expect(tracked).toHaveBeenCalledWith("slack_mode_changed", {
+      mode: "per_person",
+    });
+    tracked.mockClear();
+    const refused = new ApiError("hosted only", 400, 9, [
+      { reason: "FOUNDRY_SLACK_BOT_HOSTED_ONLY" },
+    ]);
+    call.mockRejectedValueOnce(refused);
+    await expect(updateSlackMode("ws", "bot")).rejects.toBe(refused);
+    expect(slackReason(refused)).toBe("FOUNDRY_SLACK_BOT_HOSTED_ONLY");
     expect(tracked).not.toHaveBeenCalled();
   });
 });

@@ -318,6 +318,15 @@ test("every main page in both themes", async ({ page }, info) => {
     slackLossyDays: 2,
   });
   await visit("slack-installed", "/settings/slack");
+  // The shared bot, its key refused: the mode cards and its error.
+  await page.getByRole("radio", { name: "Shared bot" }).check();
+  await page
+    .getByRole("dialog", { name: /^Turn on the shared bot/ })
+    .getByRole("button", { name: "Turn on" })
+    .click();
+  await expect(page.getByRole("heading", { name: "Shared bot" })).toBeVisible();
+  await mock.configure({ slackBotBroken: true });
+  await visit("slack-bot", "/settings/slack");
   await visit("slack-connection", `/data/connections/${slackConnection}`);
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();

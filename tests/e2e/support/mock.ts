@@ -243,6 +243,8 @@ export const mock = {
     slackScopesOld?: boolean;
     slackInstallerMember?: boolean;
     slackEventsLimited?: boolean;
+    // The shared bot's key can't answer (mock/routes/slack.ts's bot mode).
+    slackBotBroken?: boolean;
     slackBackfillMs?: number;
     slackLossyDays?: number;
   }) =>

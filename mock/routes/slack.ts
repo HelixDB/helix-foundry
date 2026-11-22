@@ -13,6 +13,7 @@ import type {
   PreviewFoundrySlackLinkResponse,
   StartFoundrySlackInstallRequest,
   StartFoundrySlackInstallResponse,
+  UpdateFoundrySlackRequest,
 } from "../../src/shared/wfe";
 import { fail, now, ok, type MockReply, type MockRoute } from "../http";
 import { escape, page, send } from "../pages";
@@ -27,6 +28,7 @@ import {
   onReset,
   type Membership,
 } from "../state";
+import { liveKey, makeBotKey, revokeKey } from "./access";
 import { foundryPrecondition } from "./ai";
 
 // Helix Foundry for Slack as the backend serves it (backend api/slack.go),
@@ -63,6 +65,13 @@ import { foundryPrecondition } from "./ai";
 // admin's install, and carries a return path back through Finish.
 // Disconnecting remembers the team, which a connection that read it says
 // it was removed from, and when.
+//
+// Bot mode (PATCH .../foundry/slack, owners and admins): BOT makes the
+// shared bot a key of Settings › Access (./access.ts's makeBotKey: no
+// grants, its token no one's), named "Slack bot (<team>)" cut to 64
+// characters; PER_PERSON revokes it with its grants, as a disconnect does.
+// The bot is `broken` once its key is revoked in Access, or with
+// `slackBotBroken: true` (its last turn refused, as the backend reads it).
 
 type Knobs = {
   slackAvailable?: boolean;
@@ -73,6 +82,7 @@ type Knobs = {
   slackScopesOld?: boolean;
   slackInstallerMember?: boolean;
   slackEventsLimited?: boolean;
+  slackBotBroken?: boolean;
   // Founder off (./agent.ts): an install can't start.
   agentEnabled?: boolean;
 };
@@ -124,6 +134,8 @@ const state = {
   // The Slack workspace each Foundry workspace was last disconnected from,
   // and when.
   removed: new Map<string, { teamId: string; teamName: string; at: number }>(),
+  // The shared bot's key, by workspace, while its install is in bot mode.
+  bots: new Map<string, string>(),
   // Codes the mock Slack page gave, by code: the state they answer.
   codes: new Map<string, string>(),
   tokens: new Map<string, LinkToken>(),
@@ -135,6 +147,7 @@ onReset(() => {
   state.codes.clear();
   state.tokens.clear();
   state.removed.clear();
+  state.bots.clear();
   delete knobs.slackAvailable;
   delete knobs.slackInstallAllowed;
   delete knobs.slackTeamTaken;
@@ -143,6 +156,7 @@ onReset(() => {
   delete knobs.slackScopesOld;
   delete knobs.slackInstallerMember;
   delete knobs.slackEventsLimited;
+  delete knobs.slackBotBroken;
 });
 
 /** The scopes the feed needs beyond the bot's (backend slack.HistoryScopes). */
@@ -173,8 +187,20 @@ export function slackInstallOf(
 ): FoundrySlackInstall | undefined {
   const install = state.installs.get(workspaceId);
   if (!install) return undefined;
+  const bot = state.bots.get(workspaceId),
+    key = bot ? liveKey(workspaceId, bot) : undefined;
   return {
     ...install,
+    identityMode: bot
+      ? "FOUNDRY_SLACK_IDENTITY_MODE_BOT"
+      : "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+    bot: bot
+      ? {
+          credentialId: bot,
+          credentialName: key?.name || "",
+          broken: !key || !!knobs.slackBotBroken,
+        }
+      : null,
     missingScopes: slackFeedOn() && knobs.slackScopesOld ? HISTORY_SCOPES : [],
     installerAdmin: !knobs.slackInstallerMember,
     ...(knobs.slackEventsLimited && {
@@ -474,8 +500,49 @@ export const slackRoutes: MockRoute[] = [
       });
       state.installs.delete(m.workspaceId);
       state.links.delete(m.workspaceId);
+      const bot = state.bots.get(m.workspaceId);
+      if (bot) revokeKey(m.workspaceId, bot);
+      state.bots.delete(m.workspaceId);
       for (const [raw, t] of state.tokens)
         if (t.workspaceId === m.workspaceId) state.tokens.delete(raw);
+      return ok({ slack: view(m) } satisfies FoundrySlackResponse);
+    },
+  },
+  {
+    method: "PATCH",
+    path: BASE,
+    handle: ({ params, body, principal: { user } }) => {
+      const m = slackMember(params.workspaceId!, user.id);
+      if (isReply(m)) return m;
+      const mode = (body as Partial<UpdateFoundrySlackRequest> | undefined)
+        ?.identityMode;
+      if (
+        mode !== "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON" &&
+        mode !== "FOUNDRY_SLACK_IDENTITY_MODE_BOT"
+      )
+        return fail("INVALID_ARGUMENT", "identity_mode is PER_PERSON or BOT");
+      if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
+      const install = state.installs.get(m.workspaceId);
+      if (!install)
+        return fail("NOT_FOUND", "this workspace isn't connected to Slack");
+      const bot = state.bots.get(m.workspaceId);
+      if (mode === "FOUNDRY_SLACK_IDENTITY_MODE_BOT" && !bot) {
+        // service_credentials.name holds 64 characters.
+        const name = [...`Slack bot (${install.teamName})`];
+        state.bots.set(
+          m.workspaceId,
+          makeBotKey(
+            m.workspaceId,
+            name.length > 64
+              ? [...name.slice(0, 62), "…)"].join("")
+              : name.join(""),
+            user.id,
+          ),
+        );
+      } else if (mode === "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON" && bot) {
+        revokeKey(m.workspaceId, bot);
+        state.bots.delete(m.workspaceId);
+      }
       return ok({ slack: view(m) } satisfies FoundrySlackResponse);
     },
   },

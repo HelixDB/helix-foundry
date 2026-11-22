@@ -359,6 +359,9 @@ export type AnalyticsEvents = {
   slack_linked: undefined;
   slack_link_refused: { reason: SlackLinkFailure };
   slack_disconnected: undefined;
+  // Settings › Slack's mode: each linked person as themselves, or the
+  // shared bot (turned on or off by an owner or admin).
+  slack_mode_changed: { mode: "per_person" | "bot" };
   // A Slack connection (areas/data): through Helix's Slack app or a bot
   // token, chosen on its form; its history backfill shown on its page; and
   // a switch from its token to the app made at once.

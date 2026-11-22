@@ -331,3 +331,125 @@ describe("disconnecting", () => {
     expect((await call("GET", `${W}/links`)).body.links).toEqual([]);
   });
 });
+
+describe("bot mode", () => {
+  const K = "/v1/workspaces/ws_acme/service-credentials";
+  const keys = async () =>
+    (await call("GET", K)).body.credentials as {
+      id: string;
+      name: string;
+      grants: unknown[];
+      revokedAt: string | null;
+    }[];
+  // The bot's keys, beside Acme's own agent's.
+  const bots = async () =>
+    (await keys()).filter((k) => k.name.startsWith("Slack bot"));
+  const mode = (identityMode: unknown, userId = "usr_ada") =>
+    call("PATCH", W, { identityMode }, userId);
+
+  it("starts per person, with no bot", async () => {
+    const r = await installAcme();
+    expect(r.body.slack.install).toMatchObject({
+      identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+      bot: null,
+    });
+  });
+  it("refuses an unknown mode, a member and a workspace without an install", async () => {
+    expect((await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT")).status).toBe(404);
+    await installAcme();
+    for (const bad of [
+      "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED",
+      "BOT",
+      undefined,
+    ])
+      expect((await mode(bad)).status).toBe(400);
+    expect(
+      (await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT", "usr_alan")).status,
+    ).toBe(403);
+    expect(await bots()).toEqual([]);
+  });
+  it("makes the bot a key with no grants, once, and turns it off by revoking it", async () => {
+    await installAcme();
+    const on = await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    expect(on.status).toBe(200);
+    const [key] = await bots();
+    expect(key).toMatchObject({
+      name: "Slack bot (Acme Slack)",
+      grants: [],
+      revokedAt: null,
+    });
+    expect(on.body.slack.install).toMatchObject({
+      identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+      bot: {
+        credentialId: key!.id,
+        credentialName: "Slack bot (Acme Slack)",
+        broken: false,
+      },
+    });
+    // The mode it has changes nothing: no second key.
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    expect(await bots()).toHaveLength(1);
+    // Members read the mode too.
+    expect(
+      (await call("GET", W, undefined, "usr_alan")).body.slack.install.bot
+        .credentialId,
+    ).toBe(key!.id);
+
+    const off = await mode("FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON");
+    expect(off.body.slack.install).toMatchObject({
+      identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+      bot: null,
+    });
+    expect((await bots())[0]!.revokedAt).not.toBeNull();
+    // Again, nothing changes; on again, a new key.
+    expect((await mode("FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON")).status).toBe(
+      200,
+    );
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    expect((await bots()).filter((k) => !k.revokedAt)).toHaveLength(1);
+  });
+  it("cuts the key's name to 64 characters", async () => {
+    db.workspaces.get("ws_acme")!.displayName = "A".repeat(80);
+    await installAcme();
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    const [key] = await bots();
+    expect([...key!.name]).toHaveLength(64);
+    expect(key!.name).toMatch(/^Slack bot \(A+…\)$/);
+  });
+  it("is broken once its key is revoked in Access, or by the knob", async () => {
+    await installAcme();
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    knobs.slackBotBroken = true;
+    expect((await call("GET", W)).body.slack.install.bot.broken).toBe(true);
+    delete knobs.slackBotBroken;
+    const [key] = await bots();
+    expect((await call("DELETE", `${K}/${key!.id}`)).status).toBe(200);
+    expect((await call("GET", W)).body.slack.install.bot).toEqual({
+      credentialId: key!.id,
+      credentialName: "",
+      broken: true,
+    });
+    // Off and on again gives it a new key that works.
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON");
+    const on = await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    expect(on.body.slack.install.bot.broken).toBe(false);
+  });
+  it("revokes the bot's key on a disconnect, and an install again starts per person", async () => {
+    await installAcme();
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    await call("POST", `${W}:disconnect`, {});
+    expect((await bots())[0]!.revokedAt).not.toBeNull();
+    const again = await installAcme();
+    expect(again.body.slack.install).toMatchObject({
+      identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+      bot: null,
+    });
+  });
+  it("refuses every mode change where foundry.slack is off", async () => {
+    await installAcme();
+    knobs.slackAvailable = false;
+    expect(reason(await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT"))).toBe(
+      "FOUNDRY_SLACK_DISABLED",
+    );
+  });
+});

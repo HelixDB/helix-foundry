@@ -349,3 +349,129 @@ test("the setting says when Helix doesn't offer the app", async ({ page }) => {
     page.getByText("Helix Foundry for Slack isn’t available here."),
   ).toBeVisible();
 });
+
+test("an owner turns on the shared bot, chooses its sources and turns it off", async ({
+  page,
+}) => {
+  await signIn(page);
+  await addToSlack(page);
+  const modes = settingsPanel(page, "Who it answers as");
+  await expect(modes.getByRole("radio", { name: "Per person" })).toBeChecked();
+  await expect(settingsPanel(page, "Shared bot")).toHaveCount(0);
+
+  // Cancelled, nothing changes.
+  await modes.getByRole("radio", { name: "Shared bot" }).check();
+  const on = page.getByRole("dialog", {
+    name: "Turn on the shared bot in Acme Slack?",
+  });
+  await expect(on).toContainText("reads nothing until you choose its sources");
+  await on.getByRole("button", { name: "Cancel" }).click();
+  await expect(modes.getByRole("radio", { name: "Per person" })).toBeChecked();
+
+  await modes.getByRole("radio", { name: "Shared bot" }).check();
+  await on.getByRole("button", { name: "Turn on" }).click();
+  await expect(modes.getByRole("radio", { name: "Shared bot" })).toBeChecked();
+  const bot = settingsPanel(page, "Shared bot");
+  await expect(bot).toContainText("Slack bot (Acme Slack)");
+  await expect(bot).toContainText("Answering");
+  await expect(settingsPanel(page, "Slack")).toContainText(
+    "anyone in your Slack workspace",
+  );
+
+  // Its sources open in Settings › Access, then the address drops the key.
+  await bot.getByRole("link", { name: "Choose the bot’s sources" }).click();
+  const sources = page.getByRole("dialog", {
+    name: "Sources for Slack bot (Acme Slack)",
+  });
+  await expect(sources).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/access$/);
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(
+    page.getByText("Saved what Slack bot (Acme Slack) can read."),
+  ).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+  // Its row says it is the bot's, and is retired from Settings › Slack.
+  const row = page.getByRole("listitem", { name: "Slack bot (Acme Slack)" });
+  await expect(row.getByText("Slack bot", { exact: true })).toBeVisible();
+  await expect(row).toContainText("Turn bot mode off in Settings › Slack");
+  await expect(
+    page.getByRole("button", { name: "Revoke Slack bot (Acme Slack)" }),
+  ).toHaveCount(0);
+  await row.getByRole("link", { name: "Settings › Slack" }).click();
+  await expect(page).toHaveURL(/\/settings\/slack$/);
+
+  await settingsPanel(page, "Who it answers as")
+    .getByRole("radio", { name: "Per person" })
+    .check();
+  const off = page.getByRole("dialog", { name: "Turn off the shared bot?" });
+  await expect(off).toContainText("The bot’s key is revoked");
+  await off.getByRole("button", { name: "Turn off" }).click();
+  await expect(
+    settingsPanel(page, "Who it answers as").getByRole("radio", {
+      name: "Per person",
+    }),
+  ).toBeChecked();
+  await expect(settingsPanel(page, "Shared bot")).toHaveCount(0);
+  await page.goto("/settings/access");
+  await expect(
+    page.getByRole("listitem", { name: "Slack bot (Acme Slack)" }),
+  ).toHaveCount(0);
+});
+
+test("a link to a revoked key's sources says so", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/settings/access?principal=service_credential:sc_gone");
+  await expect(page.getByText("That agent key was revoked.")).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/access$/);
+  await expect(page.getByRole("tab", { name: "Agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+test("members see the shared bot without changing it, and a broken bot says why", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await addToSlack(page);
+  await settingsPanel(page, "Who it answers as")
+    .getByRole("radio", { name: "Shared bot" })
+    .check();
+  await page
+    .getByRole("dialog", { name: "Turn on the shared bot in Acme Slack?" })
+    .getByRole("button", { name: "Turn on" })
+    .click();
+  await expect(settingsPanel(page, "Shared bot")).toContainText("Answering");
+
+  const alan = await newPage(browser);
+  await signIn(alan, "alan@example.com");
+  await alan.goto("/settings/slack");
+  const modes = settingsPanel(alan, "Who it answers as");
+  await expect(modes).toContainText("Shared bot: Anyone in your Slack");
+  await expect(modes.getByRole("radio")).toHaveCount(0);
+  const bot = settingsPanel(alan, "Shared bot");
+  await expect(bot).toContainText("Slack bot (Acme Slack)");
+  await expect(
+    bot.getByRole("link", { name: "Choose the bot’s sources" }),
+  ).toHaveCount(0);
+  await expect(settingsPanel(alan, "Your Slack account")).toContainText(
+    "Not linked, and no need",
+  );
+
+  // Its key refused (revoked or given database permissions in Helix), the
+  // bot can't answer until it is turned off and on again.
+  await mock.configure({ slackBotBroken: true });
+  await alan.reload();
+  await expect(settingsPanel(alan, "Shared bot")).toContainText(
+    "An owner or admin turns bot mode off and on again",
+  );
+  await page.goto("/settings/slack");
+  const broken = settingsPanel(page, "Shared bot");
+  await expect(broken).toContainText("Can’t answer");
+  await expect(broken).toContainText("Turn bot mode off and on again");
+  await expect(
+    broken.getByRole("link", { name: "Choose the bot’s sources" }),
+  ).toHaveCount(0);
+});
