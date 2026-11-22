@@ -71,6 +71,11 @@ export type OnboardingPromptInput = {
   // source says its `send_url` takes them too; unset or "" (prod, local
   // mode), the prompt says nothing of HTTP.
   eventsUrl?: string;
+  // Where a prompt without a workspace is read: /setup.md (what foundry.new
+  // serves) or llms-full.txt. Its sign-up link to Foundry carries it as
+  // utm_source, with utm_medium=agent, so a sign-up from it is attributed
+  // (src/web/first-touch.ts).
+  via?: "foundry_new" | "llms_txt";
 } & (
   | OnboardingWorkspace
   // Someone who hasn't signed in (the landing page): no workspace is known,
@@ -165,6 +170,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
     billing = link(paths.settings("billing"));
   // Where an agent registers itself, beside the MCP.
   const authMd = new URL("/auth.md", input.mcpUrl).href;
+  const signUp = `${input.origin}/login${input.via ? `?utm_source=${input.via}&utm_medium=agent&utm_campaign=setup` : ""}`;
   const connectors = known?.connectors ?? [],
     sources = known?.eventSources ?? [],
     sets = known?.sets ?? [];
@@ -407,11 +413,11 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           "",
           "### If I don’t have one yet",
           "",
-          `You can sign me up from here, with no dashboard, unless I’d rather sign up at ${input.origin}/login myself and make a workspace there, then go on as above. Tell me the difference first: your sandbox is a one-month trial, and a workspace I make in Foundry comes with a longer free Helix plan.`,
+          `You can sign me up from here, with no dashboard, unless I’d rather sign up at ${signUp} myself and make a workspace there, then go on as above: give me or open that link exactly as written, its query included. Tell me the difference first: your sandbox is a one-month trial, and a workspace I make in Foundry comes with a longer free Helix plan.`,
           "",
           `1. Register yourself as an agent, exactly as ${authMd} says: an anonymous registration, then an access token with \`resource\` set to ${input.mcpUrl}. Keep its secrets only where it keeps them, in the system keychain: never in the chat, a file or a command’s output. Each command you run starts a fresh shell, so read the assertion from the keychain, exchange it for an access token and use the token, all in one command. The token lasts about 5 minutes: exchange again when it runs out. If your sandbox blocks network access or the keychain, ask me to allow it for these commands.`,
           `2. Call \`helix_get_started\` with it: POST \`{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "helix_get_started", "arguments": {}}}\` to ${input.mcpUrl}, with the headers \`Authorization: Bearer <access token>\`, \`Content-Type: application/json\` and \`Accept: application/json, text/event-stream\`. It makes your one-month Helix sandbox: a workspace named “Agent Sandbox …” with a project and a database. Its answer is in \`result.structuredContent\`: \`workspace_id\`, \`project_id\`, \`database\` (\`tenant:<id>\`) and \`trial_ends_at\`. Keep them, and tell me when the trial ends. If \`result.isError\` is true, its text is a code: for \`unavailable\`, wait a few seconds and call again, as it carries on where it stopped; for \`resourceexhausted\`, wait a minute, call again once, then tell me; for anything else, tell me what it says.`,
-          `3. Only once \`helix_get_started\` has answered, claim the sandbox for me with the claim ceremony that page describes. Ask me for the email I want to sign in to Helix with, give me the link it makes, and I sign up there and read you back the code it shows me. That code isn’t a credential: it’s how the claim works. Once the claim completes, I have a Helix account and the workspace is mine.`,
+          `3. Only once \`helix_get_started\` has answered, claim the sandbox for me with the claim ceremony that page describes. Ask me for the email I want to sign in to Helix with, give me the link it makes exactly as it is, with nothing added or taken out, and I sign up there and read you back the code it shows me. That code isn’t a credential: it’s how the claim works. Once the claim completes, I have a Helix account and the workspace is mine.`,
           "4. Add the Helix MCP as above, and have me sign in with that same email: your registration can’t use Foundry’s tools; only I can. Before I restart you for the new tools, tell me the sandbox’s `workspace_id` and `database`, and I’ll resume this conversation (`claude --continue`, `codex resume --last`). The claim can take a minute to reach Helix: if my sign-in fails, or `helix_list_workspaces` doesn’t list the sandbox’s workspace yet, wait a minute and try again, twice at most, then tell me. In “Create the ontology”, don’t ask me which database: use the sandbox’s, with target `tenant:<id>`.",
           "",
           "## Where things stand",

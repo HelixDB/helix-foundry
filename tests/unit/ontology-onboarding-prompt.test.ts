@@ -209,6 +209,20 @@ describe("onboardingPrompt without a workspace", () => {
     workspace: null,
   });
 
+  it("tags its sign-up link with where it is read", () => {
+    for (const via of ["foundry_new", "llms_txt"] as const)
+      expect(
+        onboardingPrompt({
+          origin: "https://foundry.example.com",
+          mcpUrl: "https://mcp.example.com/mcp",
+          via,
+          workspace: null,
+        }),
+      ).toContain(
+        `sign up at https://foundry.example.com/login?utm_source=${via}&utm_medium=agent&utm_campaign=setup myself`,
+      );
+  });
+
   it("defaults to Helix Cloud, and follows the skill once signed in", () => {
     expect(text).toContain(
       "follow it on Helix Cloud once you have the Helix MCP’s tools, signed in as me; until then, follow “Before you start” below, which can sign me up and the skill can’t.",
@@ -241,6 +255,12 @@ describe("onboardingPrompt without a workspace", () => {
     expect(text).toContain("### If I don’t have one yet");
     expect(text).toContain(
       "unless I’d rather sign up at https://foundry.example.com/login myself",
+    );
+    expect(text).toContain(
+      "give me or open that link exactly as written, its query included.",
+    );
+    expect(text).toContain(
+      "give me the link it makes exactly as it is, with nothing added or taken out",
     );
     expect(text).toContain("your sandbox is a one-month trial");
     // Agent registration beside the MCP, its token bound to it.
