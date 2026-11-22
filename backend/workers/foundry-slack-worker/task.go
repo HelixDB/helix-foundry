@@ -73,6 +73,9 @@ type Deps struct {
 	// Databases says whose a database is, for a create_ontology proposal
 	// on one; without it such a proposal is refused at Review.
 	Databases ports.Databases `optional:"true"`
+	// Relayed reaches Slack through Helix's relay: a standalone install's
+	// (package local/relay), whose installs hold no token here. Nil hosted.
+	Relayed *slackbot.Relayed `optional:"true"`
 }
 
 // bot is what the worker runs: *slackbot.Bot.
@@ -96,8 +99,9 @@ type Task struct {
 
 // New is the worker on d's store and sessions, with Slack's Web API paced
 // at foundry.slack.api_share of its limits and installs' tokens opened with
-// the connectors' keyring; hosted, with the feed on, the feeds' mirror in
-// the data bucket.
+// the connectors' keyring, or, on a standalone install, called through
+// Helix's relay (Deps.Relayed); with the feed on, the feeds' mirror in the
+// data bucket.
 func New(d Deps) (*Task, error) {
 	cfg := d.Cfg.Foundry.Slack
 	slots := max(cfg.Concurrency, 1)
@@ -119,21 +123,24 @@ func New(d Deps) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("foundry-slack-worker: %w", err)
 	}
-	client, err := slack.NewClient(slack.ClientOptions{Limiter: limiter})
+	copts := slack.ClientOptions{Limiter: limiter}
+	if d.Relayed != nil {
+		copts.HTTP = d.Relayed.Client()
+	}
+	client, err := slack.NewClient(copts)
 	if err != nil {
 		return nil, fmt.Errorf("foundry-slack-worker: %w", err)
 	}
-	o := slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg}
+	o := slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg, Relayed: d.Relayed}
 	if d.People != nil {
 		// Bot mode's proposals, reviewed and run as an owner or admin; the
 		// turn the bot goes on in is capped as any Founder turn.
 		o.People = d.People
 		o.Proposals = agent.Proposals{DB: d.DB, Sessions: d.Sessions, Databases: d.Databases, MaxMicros: d.Cfg.Foundry.Agent.MaxMicros()}
 	}
-	// The feed's mirror sits beside the sync's snapshots. A standalone
-	// install reaches Slack through Helix's relay, which isn't built yet:
-	// its backfill waits for it.
-	if cfg.Feed.Enabled && !d.Cfg.Host.Local {
+	// The feed's mirror sits beside the sync's snapshots; a standalone
+	// install reads its history through Helix's relay.
+	if cfg.Feed.Enabled {
 		o.Objects = snapshot.NewS3(s3.NewFromConfig(d.AWS), d.Cfg.Foundry.Sync.DataBucket)
 	}
 	b, err := slackbot.New(o)

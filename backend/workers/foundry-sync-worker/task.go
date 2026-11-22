@@ -50,6 +50,10 @@ type Deps struct {
 	AWS   aws.Config       `optional:"true"`
 	// Accounts gives signed-in connectors their tokens; nil where none sign in.
 	Accounts ports.ProviderAccounts `optional:"true"`
+	// SlackRelay calls Slack for a standalone install's installs of Helix's
+	// Slack app, through Helix's relay; nil hosted, where each install's
+	// own token does.
+	SlackRelay syncer.SlackCallers `optional:"true"`
 }
 
 type syncQueue interface {
@@ -184,17 +188,18 @@ func New(d Deps) (*Task, error) {
 			Extracted: ev.MaxExtracted})
 	// Slack connectors read through Helix's Slack app fold its feed into
 	// their day mirror, beside the snapshots; hosted holds the installs'
-	// bot tokens they read with (a standalone install reaches Slack through
-	// Helix's relay, which isn't built yet).
+	// bot tokens they read with, and a standalone install reaches Slack
+	// through Helix's relay (Deps.SlackRelay).
 	sl := d.Cfg.Foundry.Slack
 	var slackApps syncer.SlackApps
 	if sl.Enabled && sl.Feed.Enabled {
 		catalog = catalog.WithSlackFeed(connector.SlackFeedOptions{Feed: d.DB, Objects: snapshots,
 			Budget:     model.SlackFeedBudget{Rows: sl.Feed.ReadBudget.Rows, Bytes: sl.Feed.ReadBudget.Bytes},
 			HelixAppID: sl.AppID, DirectoryEvery: sl.Feed.DirectoryEvery, RedocumentEvery: sl.Feed.RedocumentEvery, RepliesDays: sl.Backfill.RepliesDays})
-		if !d.Cfg.Host.Local {
+		if !d.Cfg.Host.Local || d.SlackRelay != nil {
 			required, _ := slack.Required(sl.Feed.Enabled, sl.Follow.Enabled)
-			slackApps = syncer.HostedSlackApps{DB: d.DB, Keys: keys, AppID: sl.AppID, Required: required, OrphanRetention: sl.Feed.OrphanRetention}
+			slackApps = syncer.HostedSlackApps{DB: d.DB, Keys: keys, AppID: sl.AppID, Required: required, OrphanRetention: sl.Feed.OrphanRetention,
+				Caller: d.SlackRelay}
 		}
 	}
 	planCatalog, err := foundryplan.NewCatalog(d.Cfg.Billing.Plans, connector.KindNames())

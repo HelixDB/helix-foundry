@@ -113,7 +113,9 @@ type slackAppStore interface {
 // how long a feed whose install is gone keeps its data
 // (foundry.slack.feed.orphan_retention), which its failure says. Calls go
 // to Slack's Web API at BaseURL (https://slack.com/api when empty) through
-// HTTP (one with a 30 s timeout when nil).
+// HTTP (one with a 30 s timeout when nil), with the install's token; or,
+// where Caller is set (a standalone install, whose installs Helix holds),
+// through what it gives for the install.
 type HostedSlackApps struct {
 	DB              slackAppStore
 	Keys            *secretbox.Keyring
@@ -122,7 +124,12 @@ type HostedSlackApps struct {
 	OrphanRetention time.Duration
 	BaseURL         string
 	HTTP            *http.Client
+	Caller          SlackCallers
 }
+
+// SlackCallers gives the calls of an install whose token this host doesn't
+// hold: a standalone install's, through Helix's relay.
+type SlackCallers func(install *model.SlackInstall) connector.SlackCaller
 
 var _ SlackApps = HostedSlackApps{}
 
@@ -159,6 +166,10 @@ func (h HostedSlackApps) SlackAppSource(ctx context.Context, workspaceID, connec
 			return nil, fmt.Errorf("read Slack install %s: %w", feed.InstallID, err)
 		}
 		return nil, &Failure{Message: SlackAppGoneMessage(gone, h.OrphanRetention), Permanent: true}
+	}
+	if h.Caller != nil {
+		return &connector.SlackApp{InstallID: live.ID, TeamID: live.TeamID, BotUserID: live.BotUserID, BotID: live.BotID, AppID: h.AppID,
+			Caller: h.Caller(live)}, nil
 	}
 	sealed, err := h.DB.GetFoundrySlackInstallToken(ctx, live.ID)
 	if err != nil {

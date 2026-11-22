@@ -172,6 +172,24 @@ func TestHostedSlackApps(t *testing.T) {
 		}
 	}
 
+	t.Run("live, through Helix's relay", func(t *testing.T) {
+		db, apps := setup()
+		delete(db.tokens, "inst-1")
+		relayed := SlackBotCaller{Token: "relayed"}
+		apps.Caller = func(install *model.SlackInstall) connector.SlackCaller {
+			if install.ID != "inst-1" {
+				t.Fatalf("a caller for %s", install.ID)
+			}
+			return relayed
+		}
+		app, err := apps.SlackAppSource(ctx, "ws-1", "conn-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if app.Caller != relayed || app.InstallID != "inst-1" || app.BotID != "B0BOT" || app.AppID != "A0FOUNDRY" {
+			t.Fatalf("app = %+v", app)
+		}
+	})
 	t.Run("live", func(t *testing.T) {
 		_, apps := setup()
 		app, err := apps.SlackAppSource(ctx, "ws-1", "conn-1")

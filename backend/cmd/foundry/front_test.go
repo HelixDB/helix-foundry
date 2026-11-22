@@ -94,7 +94,7 @@ func startFrontWith(t *testing.T, helixURL string, detector func(*Config) *detec
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	probes = newProbes(db.PingContext, logger)
 	directorySvc := directory.NewService(dir, cfg.Local.HelixURL, http.DefaultClient)
-	f, err := newFront(ctx, cfg, logger, probes, directorySvc, dir, store.NewMySQL(db, local.Workspaces{}), aws.Config{Region: "us-east-1"}, detector(cfg))
+	f, err := newFront(ctx, cfg, logger, probes, directorySvc, dir, store.NewMySQL(db, local.Workspaces{}), aws.Config{Region: "us-east-1"}, detector(cfg), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
