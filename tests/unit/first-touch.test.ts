@@ -49,6 +49,7 @@ describe("sanitiseTag", () => {
 
   it("is undefined when nothing is left", () => {
     expect(sanitiseTag("")).toBeUndefined();
+    expect(sanitiseTag("ada@example.com")).toBeUndefined();
     expect(sanitiseTag("  !! ")).toBeUndefined();
     expect(sanitiseTag(null)).toBeUndefined();
     expect(sanitiseTag(undefined)).toBeUndefined();
@@ -99,6 +100,8 @@ describe("firstTouchOf", () => {
     expect(firstTouchOf(page("", "not a url"), 0)).toBeNull();
     expect(firstTouchOf(page(""), 0)).toBeNull();
     expect(firstTouchOf(page("?utm_source=%20%21"), 0)).toBeNull();
+    // An email in a tag (URL-encoded or not) is no tag.
+    expect(firstTouchOf(page("?utm_campaign=ada%40example.com"), 0)).toBeNull();
   });
 
   it("caps and sanitises the landing path", () => {
@@ -135,7 +138,8 @@ describe("readFirstTouch", () => {
     expect(
       readFirstTouch(
         JSON.stringify({
-          source: "Ada Lovelace <ada@example.com>",
+          source: "Spring Sale!",
+          campaign: "ada@example.com",
           medium: 7,
           landing_path: 9,
           at: 0,
@@ -143,7 +147,7 @@ describe("readFirstTouch", () => {
         0,
       ),
     ).toEqual({
-      source: "ada_lovelace_ada_example.com",
+      source: "spring_sale",
       medium: undefined,
       campaign: undefined,
       referrer_host: undefined,

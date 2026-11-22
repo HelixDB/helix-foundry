@@ -36,13 +36,15 @@ const MAX_LENGTH = 40;
 /**
  * A tag as Databuddy keeps it: lowercase `[a-z0-9._-]`, any other run of
  * characters one `_`, at most 40 characters, or undefined when nothing is
- * left.
+ * left or it holds an `@` (an email some mailers put in a link's tags).
  *
  * @example
  * sanitiseTag("Spring Sale!"); // "spring_sale"
  * sanitiseTag("  "); // undefined
+ * sanitiseTag("ada@example.com"); // undefined
  */
 export function sanitiseTag(value: string | null | undefined) {
+  if (value?.includes("@")) return undefined;
   const tag = (value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "_")
