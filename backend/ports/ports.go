@@ -210,6 +210,12 @@ type Member struct {
 	// project's databases, outside Foundry: grants can't restrict what they
 	// read.
 	RawAccess bool
+	// Email is the member's verified email, as the host knows it; empty
+	// when it doesn't. Source permissions match a reader to a source's
+	// people by it (connector.ParseEmail), so an empty email reads as no
+	// one in any source: such a reader sees only what a source shares with
+	// everyone.
+	Email string
 }
 
 // PlanReader reads the Foundry plan a workspace holds now. Optional: where
