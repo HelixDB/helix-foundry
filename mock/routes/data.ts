@@ -587,6 +587,7 @@ function responseConfig(
     };
   if ("linear" in settings) return { linear: { apiKey: "" } };
   if ("calcom" in settings) return { calcom: { apiKey: "" } };
+  if ("attio" in settings) return { attio: { apiKey: "" } };
   if ("granola" in settings)
     return {
       granola: { apiKey: "", transcripts: !!settings.granola.transcripts },
