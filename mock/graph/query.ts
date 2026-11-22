@@ -1,4 +1,5 @@
-import type { MockGraph, Props, Value } from "./store";
+import { isRecord } from "../../src/shared/json";
+import { HelixDateTime, type MockGraph, type Props, type Value } from "./store";
 
 // Runs a v3 dynamic read request (the body a database takes on POST
 // /v2/query) over a MockGraph, as Helix answers it: each entry's result is
@@ -8,6 +9,15 @@ import type { MockGraph, Props, Value } from "./store";
 // invalid_query_json), so a query the mock can't run fails loudly in tests.
 //
 // `order_by` and `order_by_multiple` sort as Helix does (see ordered()).
+// A DateTime (store.ts HelixDateTime: a datetime prop a load wrote, a
+// `date_time` parameter or a `{"date_time": ms}` constant) is no string, as
+// in helix-db a29a8d4: it equals only a DateTime of the same millisecond
+// (`neq` holds against anything else), compares only with DateTimes (`lt`
+// and the like are false against text), sorts after numbers and before
+// text, is never `contains`ed or `starts_with` anything, groups by its
+// instant, is skipped by `aggregate_by`, and renders as `…mmmZ`.
+// Parameters are typed as Helix types them once `parameter_types` is sent
+// (see typedParams()); without it they are the JSON they are.
 // Answers follow Helix's shapes: `values` rows hold only the properties a
 // row has; `value_map` every property; `edge_properties` the edge's
 // properties with `$from` and `$to`; `group_count` rows `{<property>, count}`;
@@ -51,12 +61,22 @@ function elements(r: Result | undefined, where: string): El[] {
   return r as El[];
 }
 
-// A literal (tagged PropertyValue) as plain JSON.
+// A literal (tagged PropertyValue) as plain JSON, a DateTime as itself.
 function constant(c: Ast): Value {
   const [tag, v] = one(c, "constant");
   if (tag === "null") return null;
+  if (tag === "date_time")
+    return Number.isSafeInteger(v)
+      ? new HelixDateTime(v as unknown as number)
+      : refuse("a date_time constant is milliseconds since the epoch");
   return v as Value;
 }
+
+// Helix's equality: a DateTime equals only a DateTime of the same instant.
+const same = (a: Value, b: Value) =>
+  a instanceof HelixDateTime || b instanceof HelixDateTime
+    ? a instanceof HelixDateTime && b instanceof HelixDateTime && a.ms === b.ms
+    : JSON.stringify(a) === JSON.stringify(b);
 
 function expr(scope: Scope, e: Ast, row?: El): Value {
   if ("property" in e) return row ? property(scope, row, e.property) : null;
@@ -87,25 +107,35 @@ function property(scope: Scope, el: El, name: string): Value {
 const compare = (a: Value, b: Value) =>
   typeof a === "number" && typeof b === "number"
     ? a - b
-    : typeof a === "string" && typeof b === "string"
-      ? a < b
-        ? -1
-        : a > b
-          ? 1
-          : 0
-      : NaN;
+    : a instanceof HelixDateTime && b instanceof HelixDateTime
+      ? a.ms - b.ms
+      : typeof a === "string" && typeof b === "string"
+        ? a < b
+          ? -1
+          : a > b
+            ? 1
+            : 0
+        : NaN;
 
-// Helix's sort (db execution/interpreter/stream/order.rs): a missing value
-// sorts first ascending and last descending, values of one kind by value,
-// and ties keep id order whichever the direction.
+// Helix's sort (db execution/interpreter/stream/order.rs, the total order of
+// property_value.rs): a missing value sorts first ascending and last
+// descending, values by kind (booleans, numbers, DateTimes, then text) and
+// within one by value, and ties keep id order whichever the direction.
 const ORDERS = new Set(["asc", "desc"]);
-const KIND = ["boolean", "number", "string"];
+const KIND = ["boolean", "number", "datetime", "string"];
+const kindOf = (v: Value) =>
+  v instanceof HelixDateTime ? "datetime" : typeof v;
 function ordered(a: Value, b: Value): number {
   if (a === null || b === null) return a === b ? 0 : a === null ? -1 : 1;
-  const ka = KIND.indexOf(typeof a),
-    kb = KIND.indexOf(typeof b);
+  const ka = KIND.indexOf(kindOf(a)),
+    kb = KIND.indexOf(kindOf(b));
   if (ka !== kb) return ka - kb;
-  const [x, y] = ka < 0 ? [JSON.stringify(a), JSON.stringify(b)] : [a, b];
+  const [x, y] =
+    ka < 0
+      ? [JSON.stringify(a), JSON.stringify(b)]
+      : a instanceof HelixDateTime && b instanceof HelixDateTime
+        ? [a.ms, b.ms]
+        : [a, b];
   return x! < y! ? -1 : x! > y! ? 1 : 0;
 }
 
@@ -114,9 +144,9 @@ function test(scope: Scope, p: Ast, el: El): boolean {
   const side = (k: string) => expr(scope, a[k], el);
   switch (op) {
     case "eq":
-      return JSON.stringify(side("left")) === JSON.stringify(side("right"));
+      return same(side("left"), side("right"));
     case "neq":
-      return JSON.stringify(side("left")) !== JSON.stringify(side("right"));
+      return !same(side("left"), side("right"));
     case "gt":
       return compare(side("left"), side("right")) > 0;
     case "gte":
@@ -133,8 +163,8 @@ function test(scope: Scope, p: Ast, el: El): boolean {
       return !test(scope, a.predicate ?? a, el);
     case "is_in": {
       const list = expr(scope, a.values, el);
-      const v = JSON.stringify(expr(scope, a.value, el));
-      return Array.isArray(list) && list.some((x) => JSON.stringify(x) === v);
+      const v = expr(scope, a.value, el);
+      return Array.isArray(list) && list.some((x) => same(x, v));
     }
     case "contains": {
       const v = expr(scope, a.value, el),
@@ -335,8 +365,9 @@ function run(scope: Scope, ast: Ast): Result {
     case "group_count": {
       const counts = new Map<string, { value: Value; count: number }>();
       for (const e of input()) {
+        // A DateTime and text of the same instant are two groups.
         const v = property(scope, e, a.property),
-          k = JSON.stringify(v);
+          k = `${kindOf(v)}:${JSON.stringify(v)}`;
         const c = counts.get(k) || { value: v, count: 0 };
         c.count += 1;
         counts.set(k, c);
@@ -344,6 +375,35 @@ function run(scope: Scope, ast: Ast): Result {
       return [...counts.values()]
         .sort((x, y) => String(x.value).localeCompare(String(y.value)))
         .map((c) => ({ [a.property]: c.value, count: c.count }));
+    }
+    case "aggregate_by": {
+      // Helix's aggregateBy (stream/aggregate.rs): of the property's values
+      // the numbers (an integer, a float, or decimal text that reads as
+      // one), a DateTime and any other kind skipped, in one row named
+      // `<property>_<Function>`; a min, max or mean of none is 0.
+      const values = input().flatMap((e) => {
+        const v = property(scope, e, a.property);
+        return typeof v === "number"
+          ? [v]
+          : typeof v === "string" &&
+              /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(v)
+            ? [Number(v)]
+            : [];
+      });
+      const sum = values.reduce((x, y) => x + y, 0);
+      const fn = String(a.function);
+      const value = {
+        count: values.length,
+        sum,
+        min: values.length ? values.reduce((x, y) => Math.min(x, y)) : 0,
+        max: values.length ? values.reduce((x, y) => Math.max(x, y)) : 0,
+        mean: values.length ? sum / values.length : 0,
+      }[fn];
+      if (value === undefined || typeof a.property !== "string")
+        refuse(`aggregate_by: bad function ${fn} or property`);
+      return [
+        { [`${a.property}_${fn[0]!.toUpperCase()}${fn.slice(1)}`]: value! },
+      ];
     }
     case "values": {
       const keys = selected(a.properties);
@@ -389,13 +449,65 @@ function answer(scope: Scope, r: Result, ast: Ast): unknown {
   return isEls(r) && r.length ? r.map((e) => ({ $id: e.id })) : (r as unknown);
 }
 
+// A parameter's value as Helix takes it once its type is declared
+// (query.rs normalize_typed_value): of the families the site sends, a
+// string, a boolean, an integer, a number, an array of strings or integers,
+// and a `date_time`, RFC 3339 text that becomes its DateTime, in UTC to the
+// millisecond. A value of another kind is refused as Helix refuses it, and
+// a type the mock doesn't model is refused too.
+function typedParam(name: string, type: unknown, v: Value): Value {
+  const fits =
+    type === "string"
+      ? typeof v === "string"
+      : type === "bool"
+        ? typeof v === "boolean"
+        : type === "i64"
+          ? Number.isSafeInteger(v)
+          : type === "f64"
+            ? typeof v === "number"
+            : type === "date_time"
+              ? typeof v === "string" && HelixDateTime.parse(v) !== undefined
+              : undefined;
+  if (fits === undefined) {
+    const of = isRecord(type) ? type.array : undefined;
+    if (Object.keys(type || {}).length !== 1 || (of !== "string" && of !== "i64"))
+      refuse(`parameter '${name}': the mock doesn't model type ${JSON.stringify(type)}`);
+    return Array.isArray(v)
+      ? v.map((x, i) => typedParam(`${name}[${i}]`, of, x))
+      : refuse(`parameter '${name}' expected array of ${of}, but received ${kindOf(v)}`);
+  }
+  if (!fits)
+    refuse(`parameter '${name}' expected ${type}, but received ${kindOf(v)}`);
+  return type === "date_time" ? HelixDateTime.parse(v as string)! : v;
+}
+
+// A request's parameters as Helix reads them (query.rs
+// validate_raw_request): untyped without `parameter_types`; with it every
+// value is declared and every declaration has a value
+// (ParameterNameMismatch), each typed by typedParam.
+function typedParams(req: Ast): Props {
+  const values = (req.parameters || {}) as Props;
+  if (req.parameter_types === undefined) return values;
+  const types = req.parameter_types as Record<string, unknown>;
+  const names = (xs: string[]) => `[${xs.map((x) => JSON.stringify(x)).join(", ")}]`;
+  const missing = Object.keys(types).filter((k) => !(k in values)),
+    extra = Object.keys(values).filter((k) => !(k in types));
+  if (missing.length || extra.length)
+    refuse(
+      `parameter schema names do not match values (missing values: ${names(missing)}, extra values: ${names(extra)})`,
+    );
+  return Object.fromEntries(
+    Object.entries(values).map(([k, v]) => [k, typedParam(k, types[k], v)]),
+  );
+}
+
 /** Runs `request` over `graph`; never throws. */
 export function runQuery(graph: MockGraph, request: unknown): QueryAnswer {
   try {
     const req = request as Ast;
     if (req?.request_type !== "read" || !req.query?.read)
       refuse("only read requests run here");
-    const params = (req.parameters || {}) as Props;
+    const params = typedParams(req);
     const scope: Scope = { graph, params, vars: new Map() };
     const roots = new Map<string, Ast>();
     for (const entry of req.query.read.entries as Ast[]) {
@@ -408,7 +520,8 @@ export function runQuery(graph: MockGraph, request: unknown): QueryAnswer {
       if (!scope.vars.has(name)) refuse(`unknown return ${name}`);
       body[name] = answer(scope, scope.vars.get(name)!, roots.get(name)!);
     }
-    return { status: 200, body };
+    // As the wire carries it: a DateTime as its text.
+    return { status: 200, body: JSON.parse(JSON.stringify(body)) };
   } catch (e) {
     if (e instanceof Refused)
       return {

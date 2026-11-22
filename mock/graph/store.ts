@@ -1,3 +1,4 @@
+import { helixDateTime } from "../../src/shared/datetime";
 import { FOUNDRY_LOAD } from "../../src/shared/foundry-labels";
 
 // A Helix database's graph, in memory: nodes and edges with a label and
@@ -6,11 +7,43 @@ import { FOUNDRY_LOAD } from "../../src/shared/foundry-labels";
 // write the ontology layout into it through a LoadGraph (../routes/loads.ts),
 // and databases:query-read runs v3 read requests over it (./query.ts).
 
+/**
+ * Helix's DateTime property value (PropertyValue::DateTime, UTC
+ * milliseconds since the epoch): what a load writes for a datetime prop,
+ * and what a `date_time` parameter or constant is. It is no string: it
+ * equals, orders against and compares with DateTimes only, and a read
+ * renders it as `YYYY-MM-DDTHH:MM:SS.mmmZ` (its toJSON).
+ *
+ * @example
+ * JSON.stringify(new HelixDateTime(Date.UTC(2026, 2, 14, 8, 30))); // "\"2026-03-14T08:30:00.000Z\""
+ */
+export class HelixDateTime {
+  constructor(readonly ms: number) {
+    if (!Number.isSafeInteger(ms)) throw new Error(`DateTime ${ms}`);
+  }
+  toJSON(): string {
+    return new Date(this.ms).toISOString();
+  }
+  toString(): string {
+    return this.toJSON();
+  }
+  /**
+   * RFC 3339 text as a `date_time` parameter makes it a DateTime
+   * (helixDateTime: in UTC, to the millisecond), or undefined when Helix
+   * would refuse it.
+   */
+  static parse(raw: string): HelixDateTime | undefined {
+    const at = helixDateTime(raw);
+    return at === undefined ? undefined : new HelixDateTime(Date.parse(at));
+  }
+}
+
 export type Value =
   | null
   | boolean
   | number
   | string
+  | HelixDateTime
   | Value[]
   | { [key: string]: Value };
 export type Props = Record<string, Value>;
