@@ -31,9 +31,17 @@ import (
 //
 // Attio offers no change reads: no record, entry, note or task carries an
 // update time, and no list filters by one, so every table is read in full
-// on every sync (the kind is no ChangeReader), and the plans' reconcile is
-// the only schedule that matters.
-var _ PassKind = (*attioKind)(nil)
+// on every sync (the kind is no ChangeReader). Each read spends the
+// workspace's rate limits, which Attio sums across every app and token, so
+// the kind syncs at most once a day on every plan (MinInterval).
+var (
+	_ PassKind      = (*attioKind)(nil)
+	_ IntervalFloor = (*attioKind)(nil)
+)
+
+// attioMinInterval is the least time between two scheduled syncs of one
+// connector: a sync is a full read of the workspace.
+const attioMinInterval = 24 * time.Hour
 
 const (
 	// attioTokenLength is an access token's length: Attio refuses any other
@@ -162,6 +170,12 @@ type attioKind struct {
 
 func (k *attioKind) Name() string        { return "attio" }
 func (k *attioKind) DisplayName() string { return "Attio" }
+
+// MinInterval keeps every Attio connector to one scheduled sync a day,
+// whatever the plan allows: with no change reads, each sync reads the whole
+// workspace against the rate limits it shares with the customer's other
+// integrations.
+func (k *attioKind) MinInterval(Source) time.Duration { return attioMinInterval }
 
 var _ Identifier = (*attioKind)(nil)
 
