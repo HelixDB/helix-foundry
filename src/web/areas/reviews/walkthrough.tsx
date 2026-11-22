@@ -35,6 +35,7 @@ import {
   plural,
 } from "../../kit";
 import { ApiError } from "../../api";
+import { sizeBucket, trackEvent } from "../../analytics";
 import { paths } from "../../paths";
 import { useShell } from "../../shell/context";
 import { canManage, useWorkspace } from "../../ui";
@@ -151,6 +152,18 @@ export function useWalk() {
   const sending = [...state.outcomes.values()].some(
     (x) => x.kind === "sending",
   );
+  // The walk's end, once per load: past its last card, having taken some.
+  const finished =
+    state.loadId !== "" && state.order.length > 0 && current(state) === null;
+  const reported = useRef("");
+  useEffect(() => {
+    if (!finished || reported.current === state.loadId) return;
+    reported.current = state.loadId;
+    const p = progress(state);
+    trackEvent("review_walk_finished", {
+      size_bucket: sizeBucket(p.accepted + p.chosen),
+    });
+  }, [finished, state.loadId]);
   useEffect(() => {
     if (!sending) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -276,7 +289,14 @@ export function useWalk() {
           }),
         );
         const gone = removed.flatMap((r) => (r.ok ? [r.key] : []));
-        if (gone.length) dispatch({ type: "undone", keys: gone });
+        if (gone.length) {
+          const out = now.current.outcomes.get(gone[0]!);
+          trackEvent("review_undone", {
+            kind:
+              out && "how" in out && out.how === "batch" ? "batch" : "choice",
+          });
+          dispatch({ type: "undone", keys: gone });
+        }
         await refresh(true);
         const failed = removed.flatMap((r) => (r.ok ? [] : [r.error]));
         if (failed.length)
@@ -511,11 +531,16 @@ export function ReviewWalkthrough({
     moved.current = true;
     say(r.text, false, r.error);
   };
-  const decide = (choice: FoundryReviewChoice, how: How) => {
+  const decide = (choice: FoundryReviewChoice, how: "accepted" | "chosen") => {
     if (!card || !manage || !open) return;
     const covers = choice.resolve?.entityKey ? siblings : [];
     q.keepCards([card.key]);
     api.decide({ card, choice, how, covers, effect: effectFor(card, choice) });
+    trackEvent("review_decided", {
+      how,
+      kind: card.kind,
+      rule: advice?.kind === "suggest" ? advice.rule : "none",
+    });
     moved.current = true;
     const kind = choices.find((c) => same(c.decision, choice))?.kind;
     say(
@@ -840,6 +865,11 @@ export function ReviewWalkthrough({
             });
             q.keepCards(items.map((s) => s.card.key));
             moved.current = true;
+            if (dialog.advice.kind === "suggest")
+              trackEvent("review_batch_accepted", {
+                size_bucket: sizeBucket(items.length),
+                rule: dialog.advice.rule,
+              });
             const results = await api.batch(items, signal, onProgress);
             return results.map((r) => ({
               key: r.item.card.key,

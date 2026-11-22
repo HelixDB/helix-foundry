@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, LoaderCircle, X } from "lucide-react";
 import type { FoundryLoad, OntologyGeneration } from "../../../shared/wfe";
 import { ApiError } from "../../api";
+import { formatNumber } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { liveRead } from "../documents/model";
@@ -13,7 +14,7 @@ import {
   useGenerationProgress,
   useLoadJobProgress,
 } from "./job-progress";
-import { generationTitle } from "./model";
+import { generationTitle, loadDocumentTotals } from "./model";
 import { isBusyLoad, isLive, isLiveJob, ontologyQueries } from "./queries";
 import { ontologyName } from "./scope";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -260,19 +261,23 @@ function LoadCard({
   );
 }
 
+// A load its documents left reviews in points at the Review page, else at
+// the Explorer.
 function loadEnding(l: FoundryLoad, o: string): Ending | null {
   if (isBusyLoad(l)) return null;
-  return l.status === "ready" || l.status === "partial"
-    ? {
-        tone: "done",
-        title: l.status === "ready" ? "Data loaded" : "Data loaded, in part",
-        go: paths.explore(o),
-        label: "Explore it",
-      }
-    : {
-        tone: "failed",
-        title: "The load failed",
-        go: paths.load(o, l.id),
-        label: "See why",
-      };
+  if (l.status !== "ready" && l.status !== "partial")
+    return {
+      tone: "failed",
+      title: "The load failed",
+      go: paths.load(o, l.id),
+      label: "See why",
+    };
+  const reviews = loadDocumentTotals(l)?.reviews ?? 0;
+  return {
+    tone: "done",
+    title: l.status === "ready" ? "Data loaded" : "Data loaded, in part",
+    ...(reviews
+      ? { go: paths.review(o), label: `Review ${formatNumber(reviews)}` }
+      : { go: paths.explore(o), label: "Explore it" }),
+  };
 }
