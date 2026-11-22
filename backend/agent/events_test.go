@@ -36,6 +36,7 @@ func everyEvent(t *testing.T) []Event {
 			ExpiresAt: time.Date(2026, 11, 21, 12, 0, 0, 5, time.UTC), Auto: true},
 		ActionResult{ActionID: "act1", Operation: "create_load", Status: "failed", Result: json.RawMessage(`{"load_id":"load2"}`), Error: "refused",
 			Auto: true},
+		Proposed{ActionID: "act2", Operation: "create_dashboard"},
 		Finished{Status: "done", Reason: StopAnswered},
 		Finished{Status: "failed", Reason: StopFailed, Error: "the model is down"},
 		Reported{Summary: "Nine invoices are overdue.", Answer: &yes, Count: &count},

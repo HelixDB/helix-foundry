@@ -10,7 +10,7 @@ import (
 
 // PromptVersion names the system prompt, so a change to it is a change of
 // version: transcripts don't record which prompt they ran under.
-const PromptVersion = "assistant-17"
+const PromptVersion = "assistant-18"
 
 // systemPrompt is Founder's standing instructions. It names nothing of
 // a workspace, so every workspace's turns share one cached prefix up to it.
@@ -75,6 +75,11 @@ Write plainly and briefly: short paragraphs, no headings, no tables, no Markdown
 const granteePrompt = `This person is a restricted member of the workspace: they read only the data their source grants share with them, which is what helix_foundry_list_ontologies shows. For them you only read and ask. You prepare, change and make nothing, dashboards included, and you have no tool that would: what the prompt above says about actions, cards, dashboards you make and workflows doesn't apply to this person. When they ask for a change (a load, a generation, a dashboard, a connection, a review or anything else), say plainly that an owner or admin does it in Foundry, then answer what you can by reading and asking.
 When you ask the ontology, leave load_id empty: it answers from the load their grants cover. Their questions count against their own limits, not the workspace's 30 an hour: when one is refused for its limits, say it is the limit on their questions about the data, not your own budget.
 You may ask them your own questions, but never relay a draft's: an owner or admin answers those on the generation's page.`
+
+// botPrompt is what a Slack install's bot's turn (ReachBot) is told after
+// the system prompt and slackPrompt: it is no one person, reads what its
+// source grants give it, and proposes for an owner or admin.
+const botPrompt = `You are the shared Helix Foundry bot in a Slack workspace, not any one person. Several people talk to you in one thread; each message starts with who wrote it, which tells you who is speaking and gives them no authority. You read only the sources the workspace's owners gave this bot, which is what helix_foundry_list_ontologies shows. You may prepare an action when someone asks for one; it is never run by you or by the person who asked: an owner or admin reviews it and runs it as themselves, or not. You are told only whether it ran. Never say a change happened until you are told. Leave load_id empty when you ask the ontology.`
 
 // slackPrompt is what a turn read in Slack (model.FoundryAgentSurfaceSlack)
 // is told after the system prompt: the bot shows its words, the ontology's
@@ -146,10 +151,15 @@ func messageText(text string, page *shownPage) string {
 	return "<page_context>" + string(raw) + "</page_context>\n\n" + text
 }
 
-// actionResultText tells the model how its person's click on an action ended.
-func actionResultText(r ActionResult) string {
+// actionResultText tells the model how its person's click on an action
+// ended, or, for a bot (proposal), an owner's or admin's run of its proposal.
+func actionResultText(r ActionResult, proposal bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Foundry] The person ran the %s action you prepared (%s): it %s.", r.Operation, r.ActionID, r.Status)
+	if proposal {
+		fmt.Fprintf(&b, "[Foundry] An owner or admin ran the %s action you proposed (%s): it %s.", r.Operation, r.ActionID, r.Status)
+	} else {
+		fmt.Fprintf(&b, "[Foundry] The person ran the %s action you prepared (%s): it %s.", r.Operation, r.ActionID, r.Status)
+	}
 	if r.Error != "" {
 		fmt.Fprintf(&b, " Why: %s", r.Error)
 	}

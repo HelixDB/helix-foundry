@@ -269,8 +269,9 @@ func TestRunApprovedPreparesAndRunsOnce(t *testing.T) {
 }
 
 // FounderAPI is narrow: Founder's turn and action routes a caller acting for
-// a person needs, each one of FoundryService's RPCs, and nothing else (no
-// thread deletes, no runtime or helper changes).
+// a person needs, and the approval of a workflow a bot's proposal they ran
+// made, each one of FoundryService's RPCs, and nothing else (no thread
+// deletes, no runtime or helper changes).
 func TestFounderAPIIsFoundersOwnRoutesAlone(t *testing.T) {
 	rpcs := map[string]bool{}
 	for _, m := range foundryv1.FoundryService_ServiceDesc.Methods {
@@ -284,5 +285,5 @@ func TestFounderAPIIsFoundersOwnRoutesAlone(t *testing.T) {
 		assert.True(t, rpcs[name], "%s is a FoundryService RPC", name)
 	}
 	assert.ElementsMatch(t, []string{"SendFoundryAgentMessage", "ListFoundryAgentTurnEvents", "ExecuteFoundryAgentAction",
-		"DismissFoundryAgentAction", "RefreshFoundryAgentAction", "CancelFoundryAgentTurn"}, names)
+		"DismissFoundryAgentAction", "RefreshFoundryAgentAction", "CancelFoundryAgentTurn", "ApproveFoundryAutomation"}, names)
 }

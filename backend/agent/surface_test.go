@@ -42,7 +42,7 @@ func TestSlackPromptSaysHowSlackReadsIt(t *testing.T) {
 	assert.Equal(t, "\n\n"+slackPrompt, surfacePrompt(model.FoundryAgentSurfaceSlack))
 	assert.PanicsWithValue(t, "agent: no prompt for FoundryAgentSurface(7)", func() { surfacePrompt(model.FoundryAgentSurface(7)) },
 		"a surface outside the closed set is a bug")
-	assert.Equal(t, "assistant-17", PromptVersion)
+	assert.Equal(t, "assistant-18", PromptVersion)
 }
 
 // The worker's own turns are told their surface's prompt, after the

@@ -210,8 +210,27 @@ type FoundryOperation interface {
 
 // AddFoundryActionTools registers prepare and Execute for a user who may manage connectors or
 // ontologies, for a service key with database.query.write on some project, and, offering only
-// memberOperations, for a user who may read the workspace.
+// memberOperations, for a user who may read the workspace. A Slack install's bot
+// (ConfirmByAdmin), whose key holds no grant, gets prepare alone, which proposes what its sink
+// allows (proposeForAdmin).
 func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) {
+	no, yes := false, true
+	if admin, ok := identity.Confirm.(ConfirmByAdmin); ok {
+		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
+			Description: "Propose a Foundry action: an owner or admin reviews it in Slack and runs it as themselves, or not. " +
+				"Proposing changes nothing, you can't run it, and you are told only whether it ran. Its target must be the workspace (workspace:<id>) or something you read.",
+			InputSchema: foundryOperationSchema(s, admin.Sink.Allows),
+			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
+		}, func(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput) (ProposedForAdminOutput, int, error) {
+			proposed, err := s.proposeForAdmin(ctx, identity, call, input, admin.Sink)
+			if err != nil {
+				return ProposedForAdminOutput{}, 0, err
+			}
+			return ProposedForAdminOutput{ActionID: proposed.ActionID, Status: "awaiting_admin",
+				ExpiresAt: proposed.ExpiresAt.UTC().Format(time.RFC3339Nano), Next: awaitingAdminNext}, 1, nil
+		})
+		return
+	}
 	// offered is what the caller may prepare: every operation the host offers, or a member's.
 	offered, member := everyOperation, false
 	switch {
@@ -228,7 +247,6 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		}
 		offered, member = memberOperation, true
 	}
-	no, yes := false, true
 	if person, ok := identity.Confirm.(ConfirmByPerson); ok {
 		addFoundryTool(s, server, identity, &mcp.Tool{Name: toolPrepareFoundry,
 			Description: "Check a Foundry action and put it before the person you work for as a card, which they run, or not, with a click. " +
@@ -333,13 +351,17 @@ func (s *Service) ExecuteFoundryOperation(
 
 // executeFoundry runs a prepared action, and says whether it spent the
 // confirmation: after that, a failure may follow a change the backend made.
-// An identity whose person confirms never executes: its person's click does.
+// An identity whose person confirms never executes: its person's click does;
+// nor a bot's, whose proposals an owner or admin runs.
 func (s *Service) executeFoundry(
 	ctx context.Context, identity *Identity, call *Call, input ExecuteFoundryInput,
 ) (FoundryOperationOutput, int, bool, error) {
 	call.ResourceKind, call.ResourceID = TargetKind(input.Target), input.Target
-	if _, person := identity.Confirm.(ConfirmByPerson); person {
+	switch identity.Confirm.(type) {
+	case ConfirmByPerson:
 		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeFailedPrecondition, message: "only the person runs a prepared action, from Foundry"}
+	case ConfirmByAdmin:
+		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeFailedPrecondition, message: "only an owner or admin runs a proposal, as themselves"}
 	}
 	operation, err := s.ValidateFoundryOperation(ctx, identity, FoundryOperationInput{
 		Operation: input.Operation, Target: input.Target, Payload: input.Payload,

@@ -363,6 +363,11 @@ func (f *founder) DismissFoundryAgentAction(ctx context.Context, req *foundryv1.
 	return f.api.DismissFoundryAgentAction(ctx, req)
 }
 
+func (f *founder) ApproveFoundryAutomation(ctx context.Context, req *foundryv1.ApproveFoundryAutomationRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryAutomationResponse, error) {
+	return f.api.ApproveFoundryAutomation(ctx, req)
+}
+
 func (f *founder) CancelFoundryAgentTurn(ctx context.Context, req *foundryv1.CancelFoundryAgentTurnRequest, _ ...grpc.CallOption) (
 	*foundryv1.FoundryAgentTurnResponse, error) {
 	return f.api.CancelFoundryAgentTurn(ctx, req)

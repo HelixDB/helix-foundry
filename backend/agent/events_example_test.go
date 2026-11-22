@@ -14,6 +14,7 @@ func ExampleDecodeEvent() {
 		`{"type":"started","model":"claude-sonnet-4-5","attempt":1}`,
 		`{"type":"tool_call","tool_use_id":"toolu_1","name":"helix_foundry_ask","title":"Asked Sales graph","input":{}}`,
 		`{"type":"text","step":1,"text":"Nine invoices are overdue."}`,
+		`{"type":"action_proposal","action_id":"act1","operation":"create_load"}`,
 		`{"type":"finished","status":"done","reason":"answered"}`,
 		`{"type":"thinking"}`,
 	} {
@@ -25,6 +26,8 @@ func ExampleDecodeEvent() {
 			fmt.Println("status:", e.Title)
 		case agent.Said:
 			fmt.Println("said:", e.Text)
+		case agent.Proposed:
+			fmt.Println("proposed for an owner or admin:", e.Operation)
 		case agent.Finished:
 			fmt.Println("finished:", e.Reason)
 		default:
@@ -35,6 +38,7 @@ func ExampleDecodeEvent() {
 	// started on claude-sonnet-4-5
 	// status: Asked Sales graph
 	// said: Nine invoices are overdue.
+	// proposed for an owner or admin: create_load
 	// finished: answered
 	// error: agent: unknown event type "thinking"
 }

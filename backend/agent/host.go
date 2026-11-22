@@ -778,13 +778,15 @@ var (
 // person's session in the turn's workspace, confirming as the person (what
 // it prepares becomes a card, its token sealed and never returned, but for
 // what autoRun runs at once as the person, through Sessions), Tools alone
-// (GranteeTools for a restricted member: reachOf), toolAskPerson among them; once the turn asked its person, only that
+// (GranteeTools for a restricted member: turnReach), toolAskPerson among them; once the turn asked its person, only that
 // tool runs. Each call is counted by spend first, the ask tool's client token is
 // forced (the same question in a turn is asked once), and the call and its
 // result are shown to the person as the worker shows its own. A call after
 // the claim lost its lease fails.
 func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, spend HostSpend) (*mcp.Server, error) {
 	sink := &actionSink{db: h.DB, keys: h.Keys, turn: turn, workerID: workerID, maxPending: h.Cfg.MaxPendingActions, sessions: h.Sessions}
+	// A helper runs a person's turns only: a Slack install's bot's threads
+	// run on Foundry's own worker ('api').
 	person, ok := turn.Principal.(model.AgentPerson)
 	if !ok {
 		return nil, fmt.Errorf("agent: a helper runs a person's turns only")
@@ -795,7 +797,7 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 		return nil, err
 	}
 	// As the worker's own turns: a restricted member's reads and asks only.
-	reach, err := reachOf(session, turn.WorkspaceID)
+	reach, err := turnReach(session, turn)
 	if err != nil {
 		return nil, err
 	}

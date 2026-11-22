@@ -42,9 +42,15 @@ func RunAction(ctx context.Context, sessions integration.SessionHost, keys *secr
 	if err != nil {
 		return failed("your access to this workspace couldn't be read; nothing ran, so you can ask again")
 	}
-	switch done := session.Service.ExecuteForPerson(session.Ctx, session.Identity, integration.ExecuteFoundryInput{
+	return actionEnd(session.Service.ExecuteForPerson(session.Ctx, session.Identity, integration.ExecuteFoundryInput{
 		Operation: a.Operation, Target: a.Target, Payload: payload, ConfirmationID: confirmation.ConfirmationID, ConfirmationToken: string(token),
-	}).(type) {
+	}))
+}
+
+// actionEnd is how an action that ran ended, for the store: succeeded with
+// its result, unknown when its answer (or its result) was lost, or failed.
+func actionEnd(done integration.Executed) model.FoundryAgentActionEnd {
+	switch done := done.(type) {
 	case integration.ExecutedOK:
 		result, err := json.Marshal(done.Result)
 		if err != nil {
@@ -55,10 +61,9 @@ func RunAction(ctx context.Context, sessions integration.SessionHost, keys *secr
 		return model.FoundryAgentActionEnd{Status: model.FoundryAgentActionUnknown,
 			Error: "it may or may not have run: Foundry lost its answer (" + ToolErrorText(done.Err) + ")"}
 	case integration.ExecutedFailed:
-		return failed(ToolErrorText(done.Err))
-	default:
-		return failed("it ended in a way Foundry doesn't know")
+		return model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: ToolErrorText(done.Err)}
 	}
+	return model.FoundryAgentActionEnd{Status: model.FoundryAgentActionFailed, Error: "it ended in a way Foundry doesn't know"}
 }
 
 // ToolErrorText is a tool's error for the person: its message, else its code.

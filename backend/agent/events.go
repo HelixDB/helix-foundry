@@ -140,6 +140,15 @@ type ActionResult struct {
 	Auto      bool            `json:"auto,omitempty"`
 }
 
+// Proposed is an action a Slack install's bot proposed, for an owner or
+// admin to review and run as themselves (agent.Proposals): its id and
+// operation alone. Its card is drawn as whoever reviews it, never from what
+// the bot read, and the bot's thread learns only whether it ran.
+type Proposed struct {
+	ActionID  string `json:"action_id"`
+	Operation string `json:"operation"`
+}
+
 // Asked shows the person the questions the turn asks them
 // (toolAskPerson), which it ends waiting on (StopAsked): Founder's own, or
 // a generation's, as its agent wrote them (Generation set). They are the
@@ -213,6 +222,7 @@ func (ToolCalled) eventType() string   { return "tool_call" }
 func (ToolReturned) eventType() string { return "tool_result" }
 func (ActionCard) eventType() string   { return "action_card" }
 func (ActionResult) eventType() string { return "action_result" }
+func (Proposed) eventType() string     { return "action_proposal" }
 func (Finished) eventType() string     { return "finished" }
 func (Reported) eventType() string     { return "automation_report" }
 func (Asked) eventType() string        { return "questions" }
@@ -245,6 +255,7 @@ var decoders = map[string]func(json.RawMessage) (Event, error){
 	ToolReturned{}.eventType(): decodeAs[ToolReturned],
 	ActionCard{}.eventType():   decodeAs[ActionCard],
 	ActionResult{}.eventType(): decodeAs[ActionResult],
+	Proposed{}.eventType():     decodeAs[Proposed],
 	Finished{}.eventType():     decodeAs[Finished],
 	Reported{}.eventType():     decodeAs[Reported],
 	Asked{}.eventType():        decodeAs[Asked],
