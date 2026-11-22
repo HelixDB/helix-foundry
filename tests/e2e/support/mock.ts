@@ -235,6 +235,16 @@ export const mock = {
     slackInstallAllowed?: boolean;
     slackTeamTaken?: boolean;
     slackEmailMismatch?: boolean;
+    // The Slack data connector on the app (mock/routes/data.ts): off, the
+    // install lacking the history scopes, made by someone who isn't a
+    // Slack admin, Slack holding back the team's events, a backfill's
+    // length, and days published with messages possibly missing.
+    slackFeedOff?: boolean;
+    slackScopesOld?: boolean;
+    slackInstallerMember?: boolean;
+    slackEventsLimited?: boolean;
+    slackBackfillMs?: number;
+    slackLossyDays?: number;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
@@ -285,6 +295,22 @@ export const mock = {
    * the workspace's install (Acme's by default) for a Slack user with that
    * email, and the site's /slack/link URL carrying it in its fragment.
    */
+  /**
+   * A message posted in a channel Helix's Slack app is in (by id or name),
+   * which Slack sends the app: the workspace's Slack connection through the
+   * app syncs it.
+   */
+  slackFeed: async (message: {
+    channel: string;
+    text: string;
+    workspaceId?: string;
+  }) => {
+    const res = await fetch(`${MOCK}/__mock/slack/feed`, {
+      method: "POST",
+      body: JSON.stringify(message),
+    });
+    if (!res.ok) throw new Error(`slack feed: ${res.status}`);
+  },
   slackLinkToken: async (link: {
     email: string;
     slackUser?: string;

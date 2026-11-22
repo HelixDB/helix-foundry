@@ -7,6 +7,7 @@ import type {
   FoundrySlackResponse,
   ListFoundrySlackLinksResponse,
   PreviewFoundrySlackLinkResponse,
+  StartFoundrySlackInstallRequest,
   StartFoundrySlackInstallResponse,
 } from "../../../shared/wfe";
 import { trackBeforeLeaving, trackEvent } from "../../analytics";
@@ -135,13 +136,39 @@ export const slackLinksQuery = (ws: string) => ({
 });
 
 /**
- * Starts adding the app: Slack's page to send the browser to, an http(s)
- * address only. The event goes before the page leaves.
+ * Where an install may return to once finished, as the WFE allows it:
+ * Settings › Slack (its own path, or empty), the Data area's Slack form,
+ * or a connection's page; null for anything else, which could send the
+ * person elsewhere.
+ *
+ * @example
+ * slackReturnTo("/data?add=slack"); // "/data?add=slack"
+ * slackReturnTo("/data/connections/conn_1"); // "/data/connections/conn_1"
+ * slackReturnTo(""); // "/settings/slack"
+ * slackReturnTo("https://evil.example/"); // null
  */
-export async function startSlackInstall(ws: string): Promise<string> {
+export function slackReturnTo(path: string | undefined): string | null {
+  if (!path || path === "/settings/slack") return "/settings/slack";
+  if (path === "/data?add=slack") return path;
+  // The WFE's ids are letters and digits; the mock's have an underscore.
+  return /^\/data\/connections\/[0-9A-Za-z_]{1,64}$/.test(path) ? path : null;
+}
+
+/**
+ * Starts adding the app, or adding it again for the permissions it lacks:
+ * Slack's page to send the browser to, an http(s) address only, coming
+ * back to `returnPath` once finished (Settings › Slack by default). The
+ * event goes before the page leaves.
+ */
+export async function startSlackInstall(
+  ws: string,
+  returnPath?: string,
+): Promise<string> {
   const { authorizeUrl } = await api<StartFoundrySlackInstallResponse>(
     path(ws) + ":start-install",
-    {},
+    (returnPath
+      ? { returnPath }
+      : {}) satisfies StartFoundrySlackInstallRequest,
   );
   let url: URL;
   try {
@@ -242,19 +269,23 @@ export const installFailed = (reason: SlackInstallFailure) =>
 
 /**
  * Finishes adding the app with what Slack returned: the workspace's Slack
- * after it, which names the workspace the state was for.
+ * after it, which names the workspace the state was for, and where the
+ * install was started from (slackReturnTo).
  */
 export async function finishSlackInstall(
   code: string,
   state: string,
-): Promise<FoundrySlack> {
+): Promise<{ slack: FoundrySlack; returnPath: string }> {
   try {
-    const { slack } = await api<FoundrySlackResponse>(
+    const { slack, returnPath } = await api<FoundrySlackResponse>(
       "/v1/foundry/slack:finish-install",
       { code, state },
     );
     trackEvent("slack_installed");
-    return slack || {};
+    return {
+      slack: slack || {},
+      returnPath: slackReturnTo(returnPath) || "/settings/slack",
+    };
   } catch (e) {
     installFailed(installFailure(e));
     throw e;

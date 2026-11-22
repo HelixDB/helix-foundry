@@ -489,7 +489,10 @@ export function ConnectData({
                 key={kind}
                 kind={kind}
                 setup={chosen.s3}
-                signIn={!!chosen.signIn}
+                slack={chosen.slack}
+                // Where Helix's Slack app reads Slack, it is how Slack
+                // connects: Pipes' sign-in isn't offered beside it.
+                signIn={!!chosen.signIn && !chosen.slack}
                 installUrl={chosen.github?.installUrl}
                 returnPath={back}
                 onDone={done}

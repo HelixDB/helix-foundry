@@ -250,6 +250,13 @@ describe("adding the app", () => {
       {},
     );
     expect(beacon).toHaveBeenCalledWith("slack_install_started");
+    // Added (again) from the Data area, it comes back there.
+    call.mockResolvedValueOnce({ authorizeUrl: "https://slack.com/a" });
+    await startSlackInstall("ws", "/data/connections/c1");
+    expect(call).toHaveBeenLastCalledWith(
+      "/v1/workspaces/ws/foundry/slack:start-install",
+      { returnPath: "/data/connections/c1" },
+    );
   });
   it("never sends the browser to anything but an http(s) page", async () => {
     for (const authorizeUrl of [
@@ -268,8 +275,8 @@ describe("adding the app", () => {
   it("finishes with what Slack returned, once accepted", async () => {
     call.mockResolvedValueOnce({ slack: { workspaceId: "ws", install } });
     await expect(finishSlackInstall("c", "s")).resolves.toEqual({
-      workspaceId: "ws",
-      install,
+      slack: { workspaceId: "ws", install },
+      returnPath: "/settings/slack",
     });
     expect(call).toHaveBeenCalledWith("/v1/foundry/slack:finish-install", {
       code: "c",
@@ -277,7 +284,23 @@ describe("adding the app", () => {
     });
     expect(tracked).toHaveBeenCalledWith("slack_installed");
     call.mockResolvedValueOnce({});
-    await expect(finishSlackInstall("c", "s")).resolves.toEqual({});
+    await expect(finishSlackInstall("c", "s")).resolves.toEqual({
+      slack: {},
+      returnPath: "/settings/slack",
+    });
+  });
+  it("returns where the install was started from, and only where the WFE would send it", async () => {
+    call.mockResolvedValueOnce({ slack: {}, returnPath: "/data?add=slack" });
+    expect((await finishSlackInstall("c", "s")).returnPath).toBe(
+      "/data?add=slack",
+    );
+    call.mockResolvedValueOnce({
+      slack: {},
+      returnPath: "https://evil.example/",
+    });
+    expect((await finishSlackInstall("c", "s")).returnPath).toBe(
+      "/settings/slack",
+    );
   });
   it("reports why a finish was refused", async () => {
     const e = refusal("FOUNDRY_SLACK_TEAM_TAKEN");

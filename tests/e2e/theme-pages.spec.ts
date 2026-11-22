@@ -299,6 +299,26 @@ test("every main page in both themes", async ({ page }, info) => {
   await shoot("access-sources");
   await page.keyboard.press("Escape");
   await visit("slack", "/settings/slack");
+  // Helix's Slack app added, lacking new permissions, with a Slack
+  // connection through it, its callouts, and the form binding one.
+  await page.getByRole("button", { name: "Add to Slack" }).click();
+  await page.waitForURL(/\/mock\/slack\/authorize\?/);
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page).toHaveURL(/\/settings\/slack$/);
+  await visit("slack-data-form", "/data?add=slack");
+  const slackConnection = (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/connectors", {
+      name: "Acme Slack",
+      config: { slack: { historyDays: 30, helixApp: { noticeVersion: 1 } } },
+    })
+  ).connector.id;
+  await mock.configure({
+    slackScopesOld: true,
+    slackEventsLimited: true,
+    slackLossyDays: 2,
+  });
+  await visit("slack-installed", "/settings/slack");
+  await visit("slack-connection", `/data/connections/${slackConnection}`);
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();
   await shoot("billing-switch");

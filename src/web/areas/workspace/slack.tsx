@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FoundrySlackInstall,
@@ -16,7 +17,9 @@ import {
   Tag,
   formatDate,
 } from "../../kit";
+import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { connectorKindsQuery } from "../data/data-api";
 import { initials } from "./people";
 import {
   SLACK_NOTICE,
@@ -35,6 +38,11 @@ import {
 // user as their own Foundry user. Everyone sees whether it is added and
 // their own link; owners and admins add it (Slack's page, then back through
 // /slack/installed), see who is linked, unlink anyone and disconnect it.
+// The install says when it lacks permissions what Helix offers here needs
+// (owners and admins add it again), and, where a Slack connection may read
+// through it (the Slack kind's setup), the connection that does or the way
+// to make one, that no Slack admin or owner added it, and when Slack held
+// back the team's events.
 
 const PURPOSE =
   "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from your Foundry data as you.";
@@ -161,6 +169,24 @@ function Installed({
     [pending, setPending] = useState(false),
     [error, setError] = useState("");
   const team = install.teamName || install.teamId || "Slack";
+  // Where a Slack connection may read through the app (foundry.slack.feed).
+  const feed = useQuery({
+    ...connectorKindsQuery(id),
+    retry: false,
+  }).data?.kinds?.find((k) => k.kind === "slack")?.slack;
+  const missing = install.missingScopes || [];
+  const [reinstalling, setReinstalling] = useState(false);
+  const reinstall = async () => {
+    setReinstalling(true);
+    setError("");
+    try {
+      window.location.assign(await startSlackInstall(id));
+    } catch (e) {
+      installFailed(installFailure(e));
+      setError(sentence((e as Error).message));
+      setReinstalling(false);
+    }
+  };
   const disconnect = async () => {
     setPending(true);
     setError("");
@@ -182,9 +208,21 @@ function Installed({
       subtitle={PURPOSE}
       actions={
         canManage && (
-          <Button size="sm" variant="danger" onClick={() => setConfirm(true)}>
-            Disconnect
-          </Button>
+          <>
+            {!!missing.length && (
+              <Button
+                size="sm"
+                variant="primary"
+                pending={reinstalling}
+                onClick={() => void reinstall()}
+              >
+                Reinstall
+              </Button>
+            )}
+            <Button size="sm" variant="danger" onClick={() => setConfirm(true)}>
+              Disconnect
+            </Button>
+          </>
         )
       }
     >
@@ -195,7 +233,16 @@ function Installed({
             label: "Slack workspace",
             value: (
               <>
-                {team} <StatusBadge status="healthy" label="Added" size="sm" />
+                {team}{" "}
+                {missing.length ? (
+                  <StatusBadge
+                    status="stale"
+                    label="Needs new permissions"
+                    size="sm"
+                  />
+                ) : (
+                  <StatusBadge status="healthy" label="Added" size="sm" />
+                )}
               </>
             ),
           },
@@ -208,6 +255,58 @@ function Installed({
           { label: "Added", value: added && formatDate(added, false) },
         ]}
       />
+      {(!!missing.length ||
+        !!feed ||
+        !!install.eventsLimitedAt ||
+        (!!error && !confirm)) && (
+        <div className="wk-pad">
+          {!!missing.length && (
+            <p className="wk-note">
+              Helix Foundry needs new Slack permissions ({missing.join(", ")})
+              to sync channels and follow threads.{" "}
+              {canManage
+                ? "Reinstall it to grant them; it keeps answering in Slack meanwhile."
+                : "An owner or admin reinstalls it to grant them."}
+            </p>
+          )}
+          {feed && !install.installerAdmin && (
+            <p className="wk-note">
+              Installed by a non-admin: syncing its channels needs a Slack
+              workspace admin or owner to add it.
+            </p>
+          )}
+          {feed &&
+            (feed.inUseByConnectorId ? (
+              <p className="wk-note">
+                Its channels sync into{" "}
+                <Link to={paths.connection(feed.inUseByConnectorId)}>
+                  a Slack connection
+                </Link>
+                .
+              </p>
+            ) : (
+              canManage && (
+                <p className="wk-note">
+                  <Link to="/data?add=slack">Sync its channels</Link> into
+                  Foundry as a Slack connection.
+                </p>
+              )
+            ))}
+          {install.eventsLimitedAt && (
+            <p className="wk-note">
+              Slack held back some of {team}’s events on{" "}
+              {formatDate(install.eventsLimitedAt)}: it sends an app at most
+              30,000 an hour per workspace, so some messages may have been
+              missed.
+            </p>
+          )}
+          {error && !confirm && (
+            <p role="alert" className="hf-form-error">
+              {error}
+            </p>
+          )}
+        </div>
+      )}
       {confirm && (
         <ConfirmDialog
           title={`Disconnect ${team}?`}

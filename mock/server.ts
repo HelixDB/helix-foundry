@@ -12,6 +12,7 @@ import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
 import { handleConnectPage } from "./routes/sign-ins";
 import { handleSlackPage, slackLinkToken } from "./routes/slack";
+import { slackFeedPost } from "./routes/data";
 import {
   LOCAL_TOKEN,
   SEED_EMAIL,
@@ -49,7 +50,8 @@ import { handleWorkos } from "./workos";
 // automationRunsPerDay, automationsDisabled, automationAnswer,
 // automationCount, automationSuggestionsMs, automationSuggestionsOutcome,
 // automationSuggestionsAi, slackAvailable, slackInstallAllowed,
-// slackTeamTaken, slackEmailMismatch }.
+// slackTeamTaken, slackEmailMismatch, slackFeedOff, slackScopesOld,
+// slackInstallerMember, slackEventsLimited, slackBackfillMs, slackLossyDays }.
 //
 // GET /__mock/password-resets lists the reset links WorkOS would have
 // emailed, oldest first: [{ email, token }] (./routes/auth.ts).
@@ -59,6 +61,11 @@ import { handleWorkos } from "./workos";
 // person in Slack: a link token and the site's /slack/link URL
 // (./routes/slack.ts). /mock/slack/authorize is Slack's page that asks to
 // add the app.
+//
+// POST /__mock/slack/feed { channel, text, workspaceId? } is a message
+// posted in a channel the app is in (by id or name), which Slack sends the
+// app: the workspace's Slack connection through the app syncs it
+// (./routes/data.ts).
 //
 // GET /__mock/feedback lists the feedback POST /v1/feedback took
 // (./routes/feedback.ts), which the WFE would tell Helix's team of.
@@ -228,6 +235,12 @@ const server = createServer(async (req, res) => {
         req.method === "POST"
       ) {
         const reply = slackLinkToken(JSON.parse(raw || "{}"));
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
+      if (url.pathname === "/__mock/slack/feed" && req.method === "POST") {
+        const reply = slackFeedPost(JSON.parse(raw || "{}"));
         res.writeHead(reply.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(reply.body));
         return;

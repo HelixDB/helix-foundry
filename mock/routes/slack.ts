@@ -11,6 +11,7 @@ import type {
   FoundrySlackResponse,
   ListFoundrySlackLinksResponse,
   PreviewFoundrySlackLinkResponse,
+  StartFoundrySlackInstallRequest,
   StartFoundrySlackInstallResponse,
 } from "../../src/shared/wfe";
 import { fail, now, ok, type MockReply, type MockRoute } from "../http";
@@ -21,6 +22,7 @@ import {
   displayName,
   isReply,
   LOCAL_TOKEN,
+  PROD_STAMP,
   membership,
   onReset,
   type Membership,
@@ -48,12 +50,29 @@ import { foundryPrecondition } from "./ai";
 // workspace an install finishes in (FOUNDRY_SLACK_TEAM_TAKEN), and
 // `slackEmailMismatch: true` makes every Slack user's email someone else's
 // (EMAIL_MISMATCH). A local API refuses every route, as the backend does.
+//
+// The Slack data connector on the app (foundry.slack.feed, on here, but on
+// prod's stamp, unless `slackFeedOff: true`; ./data.ts binds connections to the install): an
+// install says the permissions it lacks (missingScopes: with
+// `slackScopesOld: true` it lacks the history scopes, as one made before
+// the feed was on), whether a Slack admin or owner made it
+// (`slackInstallerMember: true`: not), and when Slack last held back the
+// team's events (`slackEventsLimited: true`: an hour ago). Each is read as
+// the install is, so turning one off stands for adding the app again.
+// Start installs again while the install lacks a permission or a Slack
+// admin's install, and carries a return path back through Finish.
+// Disconnecting remembers the team, which a connection that read it says
+// it was removed from, and when.
 
 type Knobs = {
   slackAvailable?: boolean;
   slackInstallAllowed?: boolean;
   slackTeamTaken?: boolean;
   slackEmailMismatch?: boolean;
+  slackFeedOff?: boolean;
+  slackScopesOld?: boolean;
+  slackInstallerMember?: boolean;
+  slackEventsLimited?: boolean;
   // Founder off (./agent.ts): an install can't start.
   agentEnabled?: boolean;
 };
@@ -94,8 +113,17 @@ const state = {
   links: new Map<string, Link[]>(),
   states: new Map<
     string,
-    { workspaceId: string; userId: string; expires: number; used: boolean }
+    {
+      workspaceId: string;
+      userId: string;
+      returnPath: string;
+      expires: number;
+      used: boolean;
+    }
   >(),
+  // The Slack workspace each Foundry workspace was last disconnected from,
+  // and when.
+  removed: new Map<string, { teamId: string; teamName: string; at: number }>(),
   // Codes the mock Slack page gave, by code: the state they answer.
   codes: new Map<string, string>(),
   tokens: new Map<string, LinkToken>(),
@@ -106,11 +134,75 @@ onReset(() => {
   state.states.clear();
   state.codes.clear();
   state.tokens.clear();
+  state.removed.clear();
   delete knobs.slackAvailable;
   delete knobs.slackInstallAllowed;
   delete knobs.slackTeamTaken;
   delete knobs.slackEmailMismatch;
+  delete knobs.slackFeedOff;
+  delete knobs.slackScopesOld;
+  delete knobs.slackInstallerMember;
+  delete knobs.slackEventsLimited;
 });
+
+/** The scopes the feed needs beyond the bot's (backend slack.HistoryScopes). */
+const HISTORY_SCOPES = ["channels:history", "groups:history"];
+/** The storage notice binding a connection takes (backend slackFeedNotice). */
+export const SLACK_NOTICE_VERSION = 1;
+/** How long a removed install's connections keep their data (feed.orphan_retention). */
+export const SLACK_ORPHAN_MS = 7 * 86_400_000;
+
+/**
+ * Whether a Slack connection may read through the app here
+ * (foundry.slack.feed): off in a local API and on prod's stamp (pnpm
+ * docs:media), as prod has it until Slack agrees.
+ */
+export const slackFeedOn = () =>
+  !LOCAL_TOKEN &&
+  !PROD_STAMP &&
+  knobs.slackAvailable !== false &&
+  !knobs.slackFeedOff;
+
+/**
+ * The workspace's install as the backend shows it: with the permissions it
+ * lacks under the feed, whether a Slack admin or owner made it, and when
+ * Slack last held back its events (within a day); undefined without one.
+ */
+export function slackInstallOf(
+  workspaceId: string,
+): FoundrySlackInstall | undefined {
+  const install = state.installs.get(workspaceId);
+  if (!install) return undefined;
+  return {
+    ...install,
+    missingScopes: slackFeedOn() && knobs.slackScopesOld ? HISTORY_SCOPES : [],
+    installerAdmin: !knobs.slackInstallerMember,
+    ...(knobs.slackEventsLimited && {
+      eventsLimitedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    }),
+  };
+}
+
+/** The Slack workspace `workspaceId` was last disconnected from, and when. */
+export const slackRemoved = (workspaceId: string) =>
+  state.removed.get(workspaceId);
+
+/** Whether `m` may add the app (again) now: an owner or admin, offered it, with Founder on. */
+export const canInstallSlack = (m: Membership) => !installRefusal(m);
+
+/**
+ * Where an install may return once finished (backend slackReturnPath):
+ * Settings › Slack (""), the Data area's Slack form or a connection's
+ * page; null for any other. The mock's connector ids have an underscore.
+ */
+function returnPathOf(p: unknown): string | null {
+  if (p === undefined || p === "" || p === "/settings/slack") return "";
+  if (p === "/data?add=slack") return p;
+  return typeof p === "string" &&
+    /^\/data\/connections\/[0-9A-Za-z_]{1,64}$/.test(p)
+    ? p
+    : null;
+}
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/slack";
 const manages = (m: Membership) =>
@@ -160,7 +252,7 @@ function view(m: Membership): FoundrySlack {
     workspaceId: m.workspaceId,
     installAllowed: knobs.slackInstallAllowed !== false,
     canManage: manages(m),
-    install: install || null,
+    install: slackInstallOf(m.workspaceId) || null,
     myLink: install && mine ? linkOf(mine) : null,
   };
 }
@@ -252,12 +344,28 @@ export const slackRoutes: MockRoute[] = [
   {
     method: "POST",
     path: `${BASE}:start-install`,
-    handle: ({ params, principal: { user } }) => {
+    handle: ({ params, body, principal: { user } }) => {
       const m = slackMember(params.workspaceId!, user.id);
       if (isReply(m)) return m;
+      const returnPath = returnPathOf(
+        (body as Partial<StartFoundrySlackInstallRequest> | undefined)
+          ?.returnPath,
+      );
+      if (returnPath === null)
+        return fail(
+          "INVALID_ARGUMENT",
+          "return_path is /settings/slack, /data?add=slack or a Slack connection's page",
+        );
       const refused = installRefusal(m);
       if (refused) return refused;
-      if (state.installs.has(m.workspaceId))
+      // Added again while it lacks what the feed needs: a permission, or a
+      // Slack admin or owner's install.
+      const install = slackInstallOf(m.workspaceId);
+      if (
+        install &&
+        !install.missingScopes?.length &&
+        (!slackFeedOn() || install.installerAdmin)
+      )
         return foundryPrecondition(
           m.workspaceId,
           "FOUNDRY_SLACK_INSTALLED",
@@ -267,6 +375,7 @@ export const slackRoutes: MockRoute[] = [
       state.states.set(s, {
         workspaceId: m.workspaceId,
         userId: user.id,
+        returnPath,
         expires: Date.now() + STATE_TTL_MS,
         used: false,
       });
@@ -342,7 +451,10 @@ export const slackRoutes: MockRoute[] = [
         createdAt: was?.createdAt || at,
         updatedAt: at,
       });
-      return ok({ slack: view(m) } satisfies FoundrySlackResponse);
+      return ok({
+        slack: view(m),
+        returnPath: s.returnPath,
+      } satisfies FoundrySlackResponse);
     },
   },
   {
@@ -352,8 +464,14 @@ export const slackRoutes: MockRoute[] = [
       const m = slackMember(params.workspaceId!, user.id);
       if (isReply(m)) return m;
       if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
-      if (!state.installs.has(m.workspaceId))
+      const install = state.installs.get(m.workspaceId);
+      if (!install)
         return fail("NOT_FOUND", "this workspace isn't connected to Slack");
+      state.removed.set(m.workspaceId, {
+        teamId: install.teamId,
+        teamName: install.teamName,
+        at: Date.now(),
+      });
       state.installs.delete(m.workspaceId);
       state.links.delete(m.workspaceId);
       for (const [raw, t] of state.tokens)

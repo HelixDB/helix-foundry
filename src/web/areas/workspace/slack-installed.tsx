@@ -21,8 +21,10 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // moved into this tab, and the URL made bare, before the app made any call
 // (the root layout's SLACK_RETURN_BOOT), so a sign-in on the way keeps it. Here it
 // is finished once (a ref keeps <StrictMode>'s second effect from spending
-// the state again), then the page goes to Settings › Slack in the workspace
-// the state was for. A refusal is said in place, in the WFE's words: another
+// the state again), then the page goes where the install was started from
+// (Settings › Slack, the Data area's Slack form or a Slack connection's
+// page: the WFE's returnPath, read by slackReturnTo) in the workspace the
+// state was for. A refusal is said in place, in the WFE's words: another
 // Foundry workspace has the Slack workspace, Helix is still disconnecting
 // it, an org-wide install, a permission left out, an expired state. Slack's
 // own ?error= is said in fixed words (slackReturnCopy), never echoed.
@@ -59,15 +61,28 @@ export function SlackInstalledPage() {
       return;
     }
     void finishSlackInstall(kept.code, kept.state).then(
-      async (slack) => {
+      async ({ slack, returnPath }) => {
         const ws = slack.workspaceId;
-        if (ws) await qc.invalidateQueries({ queryKey: slackKey(ws) });
+        // The connector kinds carry the install too (the Slack form's setup).
+        if (ws)
+          await Promise.all(
+            [slackKey(ws), [ws, "connector-kinds"], [ws, "connectors"]].map(
+              (queryKey) => qc.invalidateQueries({ queryKey }),
+            ),
+          );
+        const team = slack.install?.teamName || "Slack";
         notify(
-          `Helix Foundry is in ${slack.install?.teamName || "Slack"}. Message it there to link your Slack account.`,
+          returnPath === paths.settings("slack")
+            ? `Helix Foundry is in ${team}. Message it there to link your Slack account.`
+            : `Helix Foundry is in ${team}.`,
         );
         navigate(
-          paths.settings("slack") +
-            (ws ? "?workspace=" + encodeURIComponent(ws) : ""),
+          returnPath +
+            (ws
+              ? (returnPath.includes("?") ? "&" : "?") +
+                "workspace=" +
+                encodeURIComponent(ws)
+              : ""),
           { replace: true },
         );
       },

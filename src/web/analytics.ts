@@ -359,6 +359,12 @@ export type AnalyticsEvents = {
   slack_linked: undefined;
   slack_link_refused: { reason: SlackLinkFailure };
   slack_disconnected: undefined;
+  // A Slack connection (areas/data): through Helix's Slack app or a bot
+  // token, chosen on its form; its history backfill shown on its page; and
+  // a switch from its token to the app made at once.
+  slack_connector_mode_chosen: { mode: "app" | "token" };
+  slack_backfill_shown: undefined;
+  slack_switch_now: undefined;
   signed_out: undefined;
 
   // The GitHub star prompt (src/web/shell/star-prompt.tsx): shown, with how
