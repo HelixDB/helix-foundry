@@ -1767,6 +1767,7 @@ export function addSlackFeedMessage(
 type AttioTable = {
   name: string;
   key: string[];
+  // As attio.go types them: "" for a column of no one JSON type.
   columns: [name: string, type: string, nullable?: true][];
   // The token scopes the table's reads need, as Attio's endpoints list them.
   scopes: string[];
@@ -1821,14 +1822,14 @@ const attioRecord = (
 };
 const attioRecordColumns: AttioTable["columns"] = [
   ["record_id", "string"],
-  ["created_at", "string"],
-  ["web_url", "string"],
+  ["created_at", "string", true],
+  ["web_url", "string", true],
 ];
 const attioEntryColumns: AttioTable["columns"] = [
   ["entry_id", "string"],
-  ["parent_object", "string"],
-  ["parent_record_id", "string"],
-  ["created_at", "string"],
+  ["parent_object", "string", true],
+  ["parent_record_id", "string", true],
+  ["created_at", "string", true],
 ];
 const ATTIO_RECORDS = ["record_permission:read", "object_configuration:read"];
 const ATTIO_TASKS = [
@@ -1847,7 +1848,7 @@ const attioTables: AttioTable[] = [
       ["last_name", "string", true],
       ["email_address", "string", true],
       ["access_level", "string", true],
-      ["created_at", "string"],
+      ["created_at", "string", true],
     ],
     scopes: ["user_management:read"],
     preview: [],
@@ -1861,7 +1862,7 @@ const attioTables: AttioTable[] = [
       ["api_slug", "string", true],
       ["singular_noun", "string", true],
       ["plural_noun", "string", true],
-      ["created_at", "string"],
+      ["created_at", "string", true],
     ],
     scopes: ["object_configuration:read"],
     preview: [],
@@ -1988,8 +1989,8 @@ const attioTables: AttioTable[] = [
       ["list_id", "string"],
       ["api_slug", "string", true],
       ["name", "string", true],
-      ["parent_object", "string", true],
-      ["created_at", "string"],
+      ["parent_object", "", true],
+      ["created_at", "string", true],
     ],
     scopes: ["list_configuration:read"],
     preview: [],
@@ -2066,7 +2067,7 @@ const attioTables: AttioTable[] = [
       ["completed_at", "string", true],
       ["created_by_type", "string", true],
       ["created_by_id", "string", true],
-      ["created_at", "string"],
+      ["created_at", "string", true],
     ],
     scopes: ATTIO_TASKS,
     preview: [],
@@ -2130,9 +2131,9 @@ const attioNotesStream: MockStream = {
   table: "notes",
   title: "Notes",
   description:
-    "Notes written in Attio on its records, one document each, as Markdown: the note's title, then its body " +
-    "as Attio writes it (headings, lists, emphasis and links; images are left out). The note's record is in the " +
-    "notes table, by its parent_object and parent_record_id.",
+    "Notes written in Attio on its records, one document each: the note's title as a heading, then its " +
+    "Markdown body. The notes table names the record each is on (parent_object, parent_record_id), its meeting " +
+    "and who wrote it.",
   mediaType: "text/markdown",
 };
 const ATTIO_NOTES = [
@@ -3636,9 +3637,10 @@ export function discover(
     const tables = readable.map(
       (t): ConnectorTable => ({
         name: t.name,
+        // A column of no one type (a list's parent_object) has none.
         columns: t.columns.map(([name, type, nullable]) => ({
           name,
-          type,
+          ...(type ? { type } : {}),
           ...(nullable ? { nullable } : {}),
         })),
         primaryKey: t.key,
