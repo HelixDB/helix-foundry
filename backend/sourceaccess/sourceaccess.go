@@ -39,11 +39,15 @@ type Reads struct {
 	mu      sync.Mutex
 	emails  map[[2]string]string
 	sharing map[[2]string]access.Sharing
+	// audienced are each workspace's connectors whose kinds report their
+	// sources' permissions, by id.
+	audienced map[string]map[string]connector.Audienced
 }
 
 // New reads through db and people as of now.
 func New(db Store, people ports.People, now time.Time) *Reads {
-	return &Reads{db: db, people: people, now: now, emails: map[[2]string]string{}, sharing: map[[2]string]access.Sharing{}}
+	return &Reads{db: db, people: people, now: now, emails: map[[2]string]string{}, sharing: map[[2]string]access.Sharing{},
+		audienced: map[string]map[string]connector.Audienced{}}
 }
 
 // Grants are what g holds: its own grants and its teams', narrowed by what
@@ -114,16 +118,27 @@ func (r *Reads) sharingFor(ctx context.Context, workspaceID, email string) (acce
 	if ok {
 		return sharing, nil
 	}
-	connectors, err := r.db.ListConnectors(ctx, workspaceID)
-	if err != nil {
-		return access.Sharing{}, fmt.Errorf("read connectors: %w", err)
-	}
-	kinds := map[string]connector.Audienced{}
-	reach := map[string]access.SourceReach{}
-	for _, c := range connectors {
-		if kind, ok := connector.AudiencedKind(c.Kind); ok {
-			kinds[c.ID], reach[c.ID] = kind, access.SourceReach{}
+	r.mu.Lock()
+	kinds, ok := r.audienced[workspaceID]
+	r.mu.Unlock()
+	if !ok {
+		connectors, err := r.db.ListConnectors(ctx, workspaceID)
+		if err != nil {
+			return access.Sharing{}, fmt.Errorf("read connectors: %w", err)
 		}
+		kinds = map[string]connector.Audienced{}
+		for _, c := range connectors {
+			if kind, ok := connector.AudiencedKind(c.Kind); ok {
+				kinds[c.ID] = kind
+			}
+		}
+		r.mu.Lock()
+		r.audienced[workspaceID] = kinds
+		r.mu.Unlock()
+	}
+	reach := make(map[string]access.SourceReach, len(kinds))
+	for id := range kinds {
+		reach[id] = access.SourceReach{}
 	}
 	if len(kinds) > 0 {
 		stored, err := r.db.SourceSharingFor(ctx, workspaceID, email)

@@ -164,6 +164,17 @@ func TestGrantsReadsNoMoreThanItNeeds(t *testing.T) {
 		require.NoError(t, err)
 		assert.Zero(t, store.asked["sharing"])
 	})
+	t.Run("readers of one workspace read its connections once", func(t *testing.T) {
+		store := newStore(access.ConnectorTarget("conn-slack"))
+		var asked int
+		r := sourceaccess.New(store, people{asked: &asked}, now)
+		for _, p := range []access.Principal{ada, key, team} {
+			_, err := r.Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: p})
+			require.NoError(t, err)
+		}
+		assert.Equal(t, 1, store.asked["connectors"])
+		assert.Equal(t, 2, store.asked["sharing"], "Ada's email, and no one's for the key and the team")
+	})
 	t.Run("a stored read of a connector deleted since is no one's", func(t *testing.T) {
 		store := newStore(access.ConnectorTarget("conn-slack"))
 		store.sharing[""] = []model.FoundrySourceSharing{{ConnectorID: "conn-gone", Visible: []string{"C1"}}}
