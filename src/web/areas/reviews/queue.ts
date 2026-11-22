@@ -283,8 +283,12 @@ const keyOf = (r: QueueReview) =>
 const nameKey = (type: string, docId: string, normName: string) =>
   JSON.stringify([type, docId, normName]);
 
-/** The reasons whose review of a name blocks an accepted claim with its link. */
-const BLOCKING = new Set([
+/**
+ * The reasons whose review of a name blocks an accepted claim with its link:
+ * the load still asks about the name (the backend's AsksAboutName), so a
+ * resolve of it applies at once to every document asking.
+ */
+export const BLOCKING: ReadonlySet<string> = new Set([
   "unresolved",
   "ambiguous",
   "collision",

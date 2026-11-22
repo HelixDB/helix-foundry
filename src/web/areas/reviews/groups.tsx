@@ -8,6 +8,7 @@ import { canManage, useWorkspace } from "../../ui";
 import { useOntology } from "../ontology/scope";
 import type { Naming } from "../explore/naming";
 import { reviewQueries, settleReview } from "./api";
+import { settleAll } from "./settle-pool";
 import {
   approvable,
   approveAllText,
@@ -114,19 +115,12 @@ function ApproveAll({
     setConfirming(false);
     setResult("");
     setProgress({ done: 0, total: cards.length });
-    const failed: string[] = [];
-    let next = 0,
-      done = 0;
-    // A few senders share one queue, so a long contract's approvals don't all
-    // go at once: a loop each, as a pool needs.
-    const send = async () => {
-      while (next < cards.length) {
-        const s = cards[next++]!;
-        try {
+    try {
+      const sent = await settleAll(
+        cards,
+        async (s) => {
           const { decision } = await settleReview(ws, o, s.reviewId, {
-            decision: {
-              release: { statementHash: s.hash },
-            },
+            decision: { release: { statementHash: s.hash } },
           });
           // Its card reads saved, and the count drops, as each one lands.
           qc.setQueryData<FoundryReviewDecision[]>(
@@ -138,28 +132,26 @@ function ApproveAll({
                 decision,
               ],
           );
-        } catch (e) {
-          failed.push((e as Error).message);
-        }
-        done += 1;
-        setProgress({ done, total: cards.length });
-      }
-    };
-    try {
-      await Promise.all(
-        Array.from({ length: Math.min(APPROVE_AT_ONCE, cards.length) }, send),
+        },
+        {
+          atOnce: APPROVE_AT_ONCE,
+          onProgress: (done) => setProgress({ done, total: cards.length }),
+        },
       );
-      await qc.invalidateQueries({
-        queryKey: reviewQueries.list(ws, o).queryKey,
-      });
-    } finally {
-      setProgress(undefined);
+      const failed = sent.flatMap((r) =>
+        r.kind === "failed" ? [r.error.message] : [],
+      );
       setResult(
         `${cards.length - failed.length} approved` +
           (failed.length
             ? `, ${failed.length} couldn’t be: ${[...new Set(failed)].join("; ")}`
             : ""),
       );
+      await qc.invalidateQueries({
+        queryKey: reviewQueries.list(ws, o).queryKey,
+      });
+    } finally {
+      setProgress(undefined);
     }
   };
   return (

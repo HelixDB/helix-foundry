@@ -17,11 +17,11 @@ import { useOntology } from "../ontology/scope";
 import { spanAnchor } from "../documents/model";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
+import { choicesOf } from "./choices";
 import type { Naming } from "../explore/naming";
 import {
   approvalOf,
   decidedText,
-  decisionFor,
   holdingEnds,
   holdsDecided,
   isUndoableLink,
@@ -272,17 +272,12 @@ export function SettleReview({
       : table
         ? "Replace the table’s value with"
         : "Keep value";
-  const decision =
-    isRelease || choice === ""
-      ? undefined
-      : isProp
-        ? decisionFor(review, {
-            value: s.values.find((v) => JSON.stringify(v.value) === choice)
-              ?.value,
-          })
-        : decisionFor(review, {
-            entityKey: choice === "none" ? null : choice.slice(4),
-          });
+  const choices = choicesOf(review, (c) => c.entity?.name ?? c.key);
+  // What a card's own buttons send: Approve and Reject of a held claim.
+  const approval = choices.find((c) => c.kind === "approve"),
+    rejection = choices.find((c) => c.kind === "reject");
+  // The choice picked in the form, of a name or a value.
+  const picked = isRelease ? undefined : choices.find((c) => c.id === choice);
   // Also when the version isn't known: a card promises no edge it can't.
   const single = isRelease && (!naming.version || naming.oneValued.has(s.link));
   // A claim held as conflicting with what its link holds, where the version
@@ -294,11 +289,11 @@ export function SettleReview({
   // The names of the claim the load linked on less than a name that hold it
   // in this load, in the order the engine refuses them.
   const unsettled = isRelease ? holdingEnds(s.unsettled, single) : [];
-  const approval = isRelease
+  const approved = isRelease
     ? approvalOf(query.data ?? [], s, editable)
     : undefined;
-  const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
-  const moved = !!approval?.moved;
+  const saved = approved?.saved ?? query.data?.find((d) => matchesReview(d, s));
+  const moved = !!approved?.moved;
   // An approval of this claim a person took back from this load (contract
   // 4.16.0): the claim is held again, and approving it saves a new one.
   const withdrawn =
@@ -378,17 +373,6 @@ export function SettleReview({
     } finally {
       setPending(false);
     }
-  };
-  // The record a person picked, if any.
-  const chosen = review.candidates.find((c) => `key:${c.key}` === choice);
-  // A name two candidates share reads with their keys.
-  const label = (c: Candidate) => {
-    const name = c.entity?.name ?? c.key;
-    return review.candidates.some(
-      (other) => other !== c && (other.entity?.name ?? other.key) === name,
-    )
-      ? `${name} (${c.key})`
-      : name;
   };
   return (
     <div className="on-stack">
@@ -517,9 +501,7 @@ export function SettleReview({
                 size="sm"
                 variant="ghost"
                 disabled={pending}
-                onClick={() =>
-                  void (held && save({ reject: { statementHash: held.hash } }))
-                }
+                onClick={() => void (rejection && save(rejection.decision))}
               >
                 Reject
               </Button>
@@ -529,9 +511,7 @@ export function SettleReview({
                 size="sm"
                 disabled={pending}
                 pending={pending}
-                onClick={() =>
-                  void (held && save({ release: { statementHash: held.hash } }))
-                }
+                onClick={() => void (approval && save(approval.decision))}
               >
                 Approve
               </Button>
@@ -551,8 +531,8 @@ export function SettleReview({
           className="on-stack"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!decision || pending) return;
-            await save(decision);
+            if (!picked || pending) return;
+            await save(picked.decision);
           }}
         >
           <label className="hf-field">
@@ -562,24 +542,7 @@ export function SettleReview({
               value={choice}
               disabled={pending}
               onChange={setChoice}
-              options={
-                isProp
-                  ? [
-                      ...new Map(
-                        s.values.map((v) => [JSON.stringify(v.value), v]),
-                      ).values(),
-                    ].map((v) => ({
-                      value: JSON.stringify(v.value),
-                      label: propValueText(v.value),
-                    }))
-                  : [
-                      ...review.candidates.map((c) => ({
-                        value: `key:${c.key}`,
-                        label: label(c),
-                      })),
-                      { value: "none", label: "Not in data" },
-                    ]
-              }
+              options={choices.map((c) => ({ value: c.id, label: c.label }))}
             />
           </label>
           <p className="on-muted">
@@ -593,9 +556,9 @@ export function SettleReview({
                 ? // This load links the name already: the engine keeps that
                   // link in place, and the next load reads the choice.
                   "This load keeps its link; a choice here, or Undo link, applies from the next load. A record chosen links this name in other documents too, where nothing else links it."
-                : chosen
-                  ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
-                  : choice === "none"
+                : picked?.kind === "link"
+                  ? `Links this name to ${picked.label} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
+                  : picked?.kind === "not_in_data"
                     ? "Not in data is for this document only: in this load at once, and in later loads."
                     : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
           </p>
@@ -618,7 +581,7 @@ export function SettleReview({
             <Button
               type="submit"
               size="sm"
-              disabled={!decision || pending}
+              disabled={!picked || pending}
               pending={pending}
             >
               Settle review
