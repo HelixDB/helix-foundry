@@ -312,6 +312,7 @@ describe("robots.txt", () => {
         userAgent: "*",
         allow: [
           "/$",
+          "/index.md",
           "/setup.md",
           "/llms.txt",
           "/llms-full.txt",

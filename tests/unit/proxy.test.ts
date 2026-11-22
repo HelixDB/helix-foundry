@@ -49,6 +49,7 @@ describe("proxy", () => {
     expect(config.matcher).toEqual([
       "/",
       "/login",
+      "/index.md",
       "/llms.txt",
       "/llms-full.txt",
       "/setup.md",
