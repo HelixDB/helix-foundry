@@ -660,6 +660,18 @@ func TestFoundryRelayFeedGaps(t *testing.T) {
 	assert.Equal(t, 0, held("C7"))
 	assert.Equal(t, 1, held("C1"))
 
+	// A channel the feed reads is known from its first row, before any call
+	// named it, so a real gap in it is held; the channel of a left row (the
+	// bot removed) isn't.
+	left := relayFeedRow("EvLeft", "C8")
+	left.Kind = model.SlackRowLeft
+	_, err := f.db.AppendFoundryRelayFeed(ctx, i.ID, model.RelayFeedAppend{Rows: []model.SlackFeedRow{relayFeedRow("EvJoin", "C7"), left}, At: at},
+		relayLimits)
+	require.NoError(t, err)
+	assert.Equal(t, 1, gaps(model.SlackMinuteGap("C7", at), model.SlackMinuteGap("C8", at)).Rows)
+	assert.Equal(t, 1, held("C7"))
+	assert.Equal(t, 0, held("C8"))
+
 	// At the cap, a gap widens the newest unclaimed gap of every channel.
 	rows := make([]any, 0, 6*model.RelayFeedMaxGaps)
 	for n := range model.RelayFeedMaxGaps - 2 {

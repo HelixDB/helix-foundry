@@ -523,10 +523,13 @@ func (s *mysqlDB) takeFoundryRelayDeliveries(ctx context.Context, pick string, a
 // feed on. Rows past limits.MaxRows held become a gap of the minute each
 // message was posted (model.SlackFeedRow.Minute, else a.At's) in its channel
 // (full); a row held already is dropped (duplicate when every one was, and
-// no gap was new). a.Gaps naming a channel are held only for a channel the
-// install's calls may name (foundry_relay_channels, within
-// model.RelayChannelSeen): the door holds gaps from requests no one
-// verified. Gaps are held merged with their channel's newest unclaimed gap
+// no gap was new). a.Rows come from requests the API verified, so each
+// row's channel but a left one's (the bot is in it) is one the install's
+// calls may name from now (foundry_relay_channels), full or not. a.Gaps
+// naming a channel are held only for a channel the install's calls may name
+// (within model.RelayChannelSeen): the door holds gaps from requests no one
+// verified, and a channel the feed reads is recorded by its first row, a
+// joined one or a message. Gaps are held merged with their channel's newest unclaimed gap
 // they meet or touch; past model.RelayFeedMaxGaps gaps held, one widens the
 // newest unclaimed gap of every channel instead. The link's day counts the
 // rows and their bytes.
@@ -550,6 +553,15 @@ func (s *mysqlDB) AppendFoundryRelayFeed(ctx context.Context, installID string, 
 			return err
 		}
 		out.Outcome = model.SlackAppended
+		var channels []string
+		for _, r := range a.Rows {
+			if r.Kind != model.SlackRowLeft {
+				channels = append(channels, r.ChannelID)
+			}
+		}
+		if err := tx.seeFoundryRelay(ctx, "foundry_relay_channels", "channel_id", installID, channels); err != nil {
+			return err
+		}
 		gaps, err := tx.knownFoundryRelayGaps(ctx, installID, a.Gaps, a.At)
 		if err != nil {
 			return err
