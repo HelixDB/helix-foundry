@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -320,6 +321,19 @@ VALUES (?, ?, ?, 'prop', 'Customer', 'c1', 'name', '"x"', ?, NOW(6))`, l.LoadID,
 		_, err = testDB.Exec(`DELETE FROM foundry_load_decisions WHERE id=?`, decision)
 		require.NoError(t, err)
 		_, err = testDB.Exec(`DELETE FROM foundry_load_enrichments WHERE load_id=?`, l.LoadID)
+		require.NoError(t, err)
+	})
+	t.Run("a connector's document holds its set's stream and its row's key", func(t *testing.T) {
+		c := newConnectorSync(t, f, "ACL-H")
+		note := c.note("ACL-note", "C1:2026-11-01", "v1", time.Now().UTC())
+		c.published(t, c.publish("ACL-note", []*model.FoundryDocument{note}, nil))
+		_, err := testDB.Exec(`INSERT INTO foundry_load_documents (load_id, document_id, set_id) VALUES (?, ?, ?)`, l.LoadID, note.ID, c.setID)
+		require.NoError(t, err)
+		h, err := f.db.FoundryLoadHoldings(ctx, ws, l.LoadID)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []access.DocumentRef{{ID: doc, Set: access.SetRef{SetID: general}},
+			{ID: note.ID, Set: access.SetRef{SetID: c.setID, ConnectorID: c.connector.ID}, Stream: "notes", ExternalID: "C1:2026-11-01"}}, h.Documents)
+		_, err = testDB.Exec(`DELETE FROM foundry_load_documents WHERE load_id=? AND document_id=?`, l.LoadID, note.ID)
 		require.NoError(t, err)
 	})
 	t.Run("a version's inputs", func(t *testing.T) {
