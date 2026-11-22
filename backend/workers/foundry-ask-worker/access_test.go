@@ -357,8 +357,8 @@ func slackHarness(t *testing.T, inAll bool) (*harness, *model.FoundryQuestion) {
 		visible = []string{"C1", "C2"}
 	}
 	h.store.sharing = map[string][]model.FoundrySourceSharing{
-		"Ada@Example.com": {{ConnectorID: "conn-slack", ReadAt: &now, Visible: visible, Items: 2}},
-		"":                {{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}, Items: 2}},
+		"ada@example.com": {{ConnectorID: "conn-slack", ReadAt: &now, Visible: visible}},
+		"agent":           {{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}}},
 	}
 	q := question(1)
 	q.Grantee = &ada
@@ -378,28 +378,50 @@ func TestGranteeQuestionsFollowSlack(t *testing.T) {
 			t.Fatalf("visibility %+v", req.Visibility)
 		}
 		seen := h.store.seen[q.ID]
-		if seen == nil || fmt.Sprint(seen.Sets) != "[{set-slack conn-slack}]" {
-			t.Fatalf("seen %+v", seen)
+		if seen == nil || fmt.Sprint(seen.Sets) != "[{set-slack conn-slack}]" || fmt.Sprint(h.store.seenItems[q.ID]) != "[{conn-slack C1}]" {
+			t.Fatalf("seen %+v, items %+v", seen, h.store.seenItems[q.ID])
 		}
 	})
-	t.Run("every channel shared with her reads the load whole", func(t *testing.T) {
+	// The load may hold days of a channel the last read didn't list, so no
+	// reader of every listed channel reads it whole: each document is told.
+	t.Run("every channel shared with her still reads the load document by document", func(t *testing.T) {
 		h, q := slackHarness(t, true)
+		holdings := h.store.holdings["load-1"]
+		holdings.Documents = append(holdings.Documents, access.DocumentRef{ID: "doc-exec", Set: access.SetRef{SetID: "set-slack", ConnectorID: "conn-slack"},
+			Stream: "conversations", ExternalID: "C9:2026-11-01"})
+		h.store.holdings["load-1"] = holdings
 		h.run(t, q)
 		req := askedWithin(t, h)
-		if req.Visibility == nil || !req.Visibility.Documents.All {
+		if req.Visibility == nil || req.Visibility.Documents.All || fmt.Sprint(req.Visibility.Documents.Only) != "[doc-general doc-deals]" {
 			t.Fatalf("visibility %+v", req.Visibility)
 		}
-		if got, ok := h.store.seen[q.ID]; ok {
-			t.Fatalf("seen %+v", got)
+		if got := h.store.seenItems[q.ID]; fmt.Sprint(got) != "[{conn-slack C1} {conn-slack C2}]" {
+			t.Fatalf("items %+v", got)
 		}
 	})
-	t.Run("no email reads as no one: public channels only", func(t *testing.T) {
+	t.Run("an email Slack has no account for reads none of its channels", func(t *testing.T) {
 		h, q := slackHarness(t, true)
-		h.task.runner.people = nil
+		h.task.runner.people = emails{"user-ada": "ada@elsewhere.example"}
+		settled := h.run(t, q)
+		if len(settled) != 1 || settled[0].Error != noLongerGranted || len(h.agent.calls()) != 0 {
+			t.Fatalf("settled %+v", settled)
+		}
+	})
+	// She is told of an earlier answer only while every channel it read is
+	// still hers: one that read #deals, which she has left, isn't told.
+	t.Run("told only of answers whose channels are still hers", func(t *testing.T) {
+		h, q := slackHarness(t, false)
+		read := access.Inputs{Sets: []access.SetRef{{SetID: "set-slack", ConnectorID: "conn-slack"}}}
+		h.store.history = []*model.FoundryQuestion{
+			{Question: "general", LoadID: "load-1", Seen: &read, SeenItems: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}},
+				Result: json.RawMessage(answeredResult)},
+			{Question: "deals", LoadID: "load-1", Seen: &read, SeenItems: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}},
+				Result: json.RawMessage(answeredResult)},
+		}
 		h.run(t, q)
-		req := askedWithin(t, h)
-		if req.Visibility == nil || fmt.Sprint(req.Visibility.Documents.Only) != "[doc-general]" {
-			t.Fatalf("visibility %+v", req.Visibility)
+		req, _ := decodeAsk(t, h.agent.calls()[0])
+		if len(req.History) != 1 || req.History[0].Question != "general" {
+			t.Fatalf("told %+v", req.History)
 		}
 	})
 	t.Run("audiences never read: nothing of it", func(t *testing.T) {
@@ -417,7 +439,7 @@ func TestGranteeQuestionsFollowSlack(t *testing.T) {
 		h.agent.ask = func(req string, stream agentv1.Agent_AskServer) error {
 			h.store.mu.Lock()
 			now := time.Now()
-			h.store.sharing["Ada@Example.com"] = []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}, Items: 2}}
+			h.store.sharing["ada@example.com"] = []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}}}
 			h.store.mu.Unlock()
 			return answerIt(req, stream)
 		}

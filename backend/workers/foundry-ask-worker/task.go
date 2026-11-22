@@ -64,9 +64,10 @@ type Deps struct {
 	// Plans says which workspaces' plans let them ask on their own provider.
 	Plans ports.PlanReader `optional:"true"`
 	// People tells a grantee's verified email, which what a source shares
-	// with it is matched by; without it a grantee reads only what sources
-	// share with everyone.
-	People ports.People `optional:"true"`
+	// with it is matched by. Required, so the worker narrows a grantee's
+	// question exactly as the API narrows the grantee: a host that wires none
+	// fails at start, never asks as a different reader.
+	People ports.People
 }
 
 type questionQueue interface {
@@ -104,6 +105,9 @@ type Task struct {
 func New(d Deps) (*Task, error) {
 	if d.DB == nil || d.Databases == nil {
 		return nil, errors.New("foundry-ask-worker: db not configured")
+	}
+	if d.People == nil {
+		return nil, errors.New("foundry-ask-worker: people not configured: a grantee's sources are matched by their email")
 	}
 	if d.Cfg.Foundry.Graph.LoadRateLimit.Enabled() && d.Boosts == nil {
 		return nil, errors.New("foundry-ask-worker: foundry.graph.load_rate_limit is set, but the host has no rate-limit boosts")

@@ -11,26 +11,23 @@ type FoundrySourceSharing struct {
 	// ReadAt is when the audiences were last read; nil while no read has
 	// worked: every item is then unknown, and the reader sees none.
 	ReadAt *time.Time
-	// Guest is a reader the source knows as a guest: they see only the
-	// items that list them, none shared with everyone.
-	Guest bool
+	// ProblemAt is when a read since ReadAt failed; nil for none.
+	ProblemAt *time.Time
 	// Visible are the keys of the items the source shares with the reader,
 	// sorted.
 	Visible []string
-	// Items counts the items the source shares with anyone at that read.
-	Items int
 }
 
-// SeesAll reports whether the reader sees every item the connector's source
-// holds, as of a read that worked.
-//
-//	at := time.Now()
-//	model.FoundrySourceSharing{ReadAt: &at, Visible: []string{"C1"}, Items: 1}.SeesAll() // true
-func (s FoundrySourceSharing) SeesAll() bool { return s.ReadAt != nil && len(s.Visible) == s.Items }
+// FoundrySourceAudienceRead is when a connector's audiences were last read
+// (nil while no read has worked) and when a read since failed (nil for
+// none).
+type FoundrySourceAudienceRead struct {
+	ReadAt, ProblemAt *time.Time
+}
 
 // FoundrySourceAudience is one connector's audiences as owners and admins
-// see them: when they were read, why the latest read failed, what its items
-// are shared with, and the source's people.
+// see them: when they were read, why the latest read failed, and how many of
+// its items are shared with whom.
 type FoundrySourceAudience struct {
 	ConnectorID string
 	// ReadAt is when the audiences were last read; nil while no read has worked.
@@ -39,10 +36,9 @@ type FoundrySourceAudience struct {
 	// nil otherwise.
 	Problem *FoundrySourceAudienceProblem
 	// EveryoneItems are shared with everyone but the source's guests (public
-	// channels), MembersItems with the people they list (private ones).
+	// channels), MembersItems with the people they list (private ones),
+	// whoever of them Foundry matches.
 	EveryoneItems, MembersItems int
-	// People are the source's people, by email, sorted.
-	People []FoundrySourcePerson
 }
 
 // FoundrySourceAudienceProblem is why a read of a connector's audiences
@@ -52,9 +48,9 @@ type FoundrySourceAudienceProblem struct {
 	At      time.Time
 }
 
-// FoundrySourcePerson is one of a source's people: their email, as
-// connector.ParseEmail writes it, and whether the source knows them as a guest.
+// FoundrySourcePerson is one of a source's people, as a reader's email
+// matched them: its connector, and whether the source knows them as a guest.
 type FoundrySourcePerson struct {
-	Email string
-	Guest bool
+	ConnectorID string
+	Guest       bool
 }

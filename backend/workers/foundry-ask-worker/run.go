@@ -17,6 +17,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
 	"github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/graphproxy"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
@@ -46,9 +47,9 @@ type store interface {
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
-	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs, items []access.ItemRef) error
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
-	SourceSharingFor(ctx context.Context, workspaceID, email string) ([]model.FoundrySourceSharing, error)
+	SourceSharingFor(ctx context.Context, workspaceID string, reader *connector.Email) ([]model.FoundrySourceSharing, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -102,8 +103,7 @@ type runner struct {
 	db  store
 	dbs ports.Databases
 	// people tells a grantee's verified email, which what its sources share
-	// with it is matched by; nil tells none, so a grantee reads only what
-	// sources share with everyone.
+	// with it is matched by, as the API does (Deps.People).
 	people ports.People
 	// boosts lift its database's rate limit for an attempt; nil never does.
 	boosts ports.Boosts
@@ -381,8 +381,10 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 	if err != nil {
 		return nil, retry("could not read the thread; Helix will retry", err)
 	}
-	// What the turns it's told of read: its answer can repeat them.
+	// What the turns it's told of read, and the channels their documents were
+	// of: its answer can repeat them.
 	var told access.Inputs
+	var toldItems []access.ItemRef
 	if grants != nil && len(history) > 0 {
 		// A grantee is told only what it said of loads its grants cover now, or
 		// of the part of one they still hold.
@@ -402,10 +404,10 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 				read = *h.Seen
 			}
 			// As the API keeps a grantee's questions (readableQuestions).
-			if !ok || h.Seen == nil && !grants.Covers(read) || h.Seen != nil && !grants.Keeps(read) {
+			if !ok || h.Seen == nil && !grants.Covers(read) || h.Seen != nil && !grants.Keeps(read, h.SeenItems) {
 				return true
 			}
-			told = told.Union(read)
+			told, toldItems = told.Union(read), append(toldItems, h.SeenItems...)
 			return false
 		})
 	}
@@ -414,26 +416,26 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 		// What it reads of the load is what its answer can say; the answer reads
 		// only while its grants hold that, with what an earlier attempt's events
 		// show, all of the load if it ran whole.
-		seen := held.part.Inputs().Union(told)
+		seen, items := held.part.Inputs().Union(told), slices.Concat(held.part.Items, toldItems)
 		if q.Attempts > 1 {
 			earlier := held.inputs
 			if q.Seen != nil {
 				earlier = *q.Seen
 			}
-			seen = seen.Union(earlier)
+			seen, items = seen.Union(earlier), append(items, q.SeenItems...)
 		}
-		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen, access.SortItems(items)); err != nil {
 			return nil, retry("could not record your access; Helix will retry", err)
 		}
 	case grants != nil && slices.ContainsFunc(history, func(h *model.FoundryQuestion) bool { return h.LoadID != q.LoadID }):
 		// All of this load, and a turn of another that may hold what this one doesn't.
 		seen := held.inputs.Union(told)
-		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen, access.SortItems(toldItems)); err != nil {
 			return nil, retry("could not record your access; Helix will retry", err)
 		}
 	case q.Seen != nil:
 		// It holds all of the load now: the answer reads only while it does.
-		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, nil); err != nil {
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, nil, nil); err != nil {
 			return nil, retry("could not record your access; Helix will retry", err)
 		}
 	}

@@ -38,8 +38,17 @@ func slackAudiences(t *testing.T) connector.Audiences {
 	}
 }
 
-// sharingOf is SourceSharingFor's answer by connector.
+// sharingOf is SourceSharingFor's answer by connector, for the person whose
+// email is reader, as connector.ParseEmail reads it (none for no address).
 func sharingOf(t *testing.T, db store.Store, workspaceID, reader string) map[string]model.FoundrySourceSharing {
+	t.Helper()
+	e, _ := connector.ParseEmail(reader)
+	return sharingAs(t, db, workspaceID, &e)
+}
+
+// sharingAs is SourceSharingFor's answer by connector for reader, nil for
+// an agent's key.
+func sharingAs(t *testing.T, db store.Store, workspaceID string, reader *connector.Email) map[string]model.FoundrySourceSharing {
 	t.Helper()
 	sharing, err := db.SourceSharingFor(context.Background(), workspaceID, reader)
 	require.NoError(t, err)
@@ -83,29 +92,74 @@ func TestSourceAudiences(t *testing.T) {
 	require.NoError(t, db.ReplaceSourceAudiences(ctx, other, elsewhere, read, slackAudiences(t)))
 	assert.Equal(t, "1 2 4 3", sourceRows(t, slack))
 
+	// A person reads a public channel only while Slack has an account for
+	// them that isn't a guest's: one it doesn't know by that email (a guest
+	// signed in with another address, someone offboarded), or one with no
+	// email, reads only what lists them. An agent's key, no one, reads the
+	// public ones.
 	t.Run("each reader sees what the source shares with them", func(t *testing.T) {
 		for reader, want := range map[string][]string{
 			"ada@example.com":       {"C1", "C2"},
 			"  ADA@Example.com\n":   {"C1", "C2"},
 			"grace@example.com":     {"C2"}, // a guest sees only what lists them
-			"zed@example.com":       {"C1"},
-			"":                      {"C1"},
-			"not an email":          {"C1"},
-			"bea@example.com":       {"C1", "C4"},
-			"ada@example.com.other": {"C1"},
+			"zed@example.com":       nil,
+			"":                      nil,
+			"not an email":          nil,
+			"bea@example.com":       {"C4"}, // listed, with no account
+			"ada@example.com.other": nil,
 		} {
 			got := sharingOf(t, db, ws, reader)
 			require.Len(t, got, 2, reader)
 			s := got[slack]
 			assert.Equal(t, want, s.Visible, reader)
-			assert.Equal(t, 4, s.Items, reader)
-			assert.Equal(t, reader == "grace@example.com", s.Guest, reader)
-			assert.False(t, s.SeesAll(), reader)
 			require.NotNil(t, s.ReadAt)
 			assert.True(t, s.ReadAt.Equal(stored), reader)
-			assert.True(t, got[public].SeesAll(), "everyone sees every public item: %s", reader)
+			assert.Nil(t, s.ProblemAt, reader)
+			assert.Empty(t, got[public].Visible, "a source with no account for them shares no public item: %s", reader)
 		}
+		agent := sharingAs(t, db, ws, nil)
+		assert.Equal(t, []string{"C1"}, agent[slack].Visible, "an agent's key reads the public channels")
+		assert.Equal(t, []string{"C9"}, agent[public].Visible)
 		assert.Empty(t, sharingOf(t, db, id26("SA-NONE"), "ada@example.com"), "audiences are the workspace's")
+	})
+
+	t.Run("tells whom of a workspace's people each source has an account for", func(t *testing.T) {
+		people, err := db.SourcePeopleByEmail(ctx, ws, []connector.Email{email(t, "ada@example.com"), email(t, "GRACE@example.com"),
+			email(t, "zed@example.com"), {}})
+		require.NoError(t, err)
+		assert.Equal(t, map[connector.Email][]model.FoundrySourcePerson{
+			email(t, "ada@example.com"):   {{ConnectorID: slack}},
+			email(t, "grace@example.com"): {{ConnectorID: slack, Guest: true}},
+		}, people)
+		elsewherePeople, err := db.SourcePeopleByEmail(ctx, other, []connector.Email{email(t, "ada@example.com")})
+		require.NoError(t, err)
+		assert.Equal(t, []model.FoundrySourcePerson{{ConnectorID: elsewhere}}, elsewherePeople[email(t, "ada@example.com")], "another workspace's are its own")
+		none, err := db.SourcePeopleByEmail(ctx, ws, nil)
+		require.NoError(t, err)
+		assert.Empty(t, none)
+	})
+
+	// The same read again only moves read_at: what is stored isn't written
+	// again, so a row the store didn't write survives it, and a read that
+	// differs replaces them all.
+	t.Run("a read like the one stored writes one row", func(t *testing.T) {
+		_, err := testDB.Exec(`INSERT INTO foundry_source_people (connector_id, email, guest) VALUES (?, 'marker@example.com', FALSE)`, slack)
+		require.NoError(t, err)
+		later := read.Add(time.Minute)
+		require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, slack, later, slackAudiences(t)))
+		assert.Equal(t, "1 3 4 3", sourceRows(t, slack), "the rows stay as they were")
+		last, err := db.SourceAudienceRead(ctx, ws, slack)
+		require.NoError(t, err)
+		require.NotNil(t, last.ReadAt)
+		assert.True(t, last.ReadAt.Equal(later.Truncate(time.Microsecond)), "read_at moves")
+		changed := slackAudiences(t)
+		changed.Items["C5"] = connector.EveryoneAudience()
+		require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, slack, later.Add(time.Minute), changed))
+		assert.Equal(t, "1 2 5 3", sourceRows(t, slack), "a read that differs replaces them")
+		require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, slack, later.Add(2*time.Minute), slackAudiences(t)))
+		assert.Equal(t, "1 2 4 3", sourceRows(t, slack))
+		read = later.Add(2 * time.Minute)
+		stored = read.Truncate(time.Microsecond)
 	})
 
 	t.Run("a newer read replaces them whole; an older or the same one changes nothing", func(t *testing.T) {
@@ -122,9 +176,7 @@ func TestSourceAudiences(t *testing.T) {
 		assert.Equal(t, "1 1 2 1", sourceRows(t, slack))
 		s := sharingOf(t, db, ws, "ada@example.com")[slack]
 		assert.Equal(t, []string{"C2"}, s.Visible, "now a guest, Ada sees only what lists her")
-		assert.True(t, s.Guest)
-		assert.Equal(t, 2, s.Items)
-		assert.Equal(t, []string{"C5"}, sharingOf(t, db, ws, "grace@example.com")[slack].Visible, "no longer a guest")
+		assert.Empty(t, sharingOf(t, db, ws, "grace@example.com")[slack].Visible, "no longer in the workspace, Grace sees nothing")
 		read = read.Add(time.Hour)
 	})
 
@@ -143,15 +195,23 @@ func TestSourceAudiences(t *testing.T) {
 		assert.Equal(t, "add the users:read.email scope", list[slack].Problem.Message, "the latest problem stays")
 		assert.True(t, list[slack].Problem.At.Equal(failed.Truncate(time.Microsecond)))
 		assert.True(t, list[slack].ReadAt.Equal(read.Truncate(time.Microsecond)), "and so does when the last read worked")
+		s := sharingOf(t, db, ws, "ada@example.com")[slack]
+		require.NotNil(t, s.ProblemAt)
+		assert.True(t, s.ProblemAt.Equal(failed.Truncate(time.Microsecond)), "a reader is told a read failed since")
+		last, err := db.SourceAudienceRead(ctx, ws, slack)
+		require.NoError(t, err)
+		require.NotNil(t, last.ProblemAt)
+		assert.True(t, last.ProblemAt.Equal(failed.Truncate(time.Microsecond)))
 
 		// A read that worked before the problem, stored late, keeps it.
 		require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, slack, read.Add(time.Minute), slackAudiences(t)))
 		list = audiencesOf(t, db, ws)
 		require.NotNil(t, list[slack].Problem)
 		assert.Equal(t, "1 2 4 3", sourceRows(t, slack))
-		// One after it clears it.
+		// One after it clears it, though it reads what the one stored did.
 		require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, slack, failed.Add(time.Minute), slackAudiences(t)))
 		assert.Nil(t, audiencesOf(t, db, ws)[slack].Problem)
+		assert.Nil(t, sharingOf(t, db, ws, "ada@example.com")[slack].ProblemAt)
 		read = failed.Add(time.Minute)
 
 		long := strings.Repeat("é", 1500)
@@ -167,25 +227,29 @@ func TestSourceAudiences(t *testing.T) {
 		s := sharingOf(t, db, ws, "ada@example.com")[never]
 		assert.Nil(t, s.ReadAt)
 		assert.Empty(t, s.Visible)
-		assert.Zero(t, s.Items)
-		assert.False(t, s.SeesAll(), "items unknown are not all seen")
 		a := audiencesOf(t, db, ws)[never]
 		assert.Nil(t, a.ReadAt)
 		require.NotNil(t, a.Problem)
 		assert.Equal(t, "Slack returned HTTP 500 for users.list", a.Problem.Message)
-		assert.Empty(t, a.People)
+		last, err := db.SourceAudienceRead(ctx, ws, never)
+		require.NoError(t, err)
+		assert.Nil(t, last.ReadAt)
+		assert.NotNil(t, last.ProblemAt)
+		fresh := id26("SA-FRESH")
+		connectorRow(t, db, ws, fresh)
+		last, err = db.SourceAudienceRead(ctx, ws, fresh)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundrySourceAudienceRead{}, last, "a connector never read nor tried")
 	})
 
-	t.Run("lists each connector's read, counts and people for owners and admins", func(t *testing.T) {
+	t.Run("lists each connector's read and counts for owners and admins", func(t *testing.T) {
 		list := audiencesOf(t, db, ws)
 		require.Len(t, list, 3)
 		a := list[slack]
 		assert.Equal(t, 1, a.EveryoneItems)
 		assert.Equal(t, 3, a.MembersItems)
-		assert.Equal(t, []model.FoundrySourcePerson{{Email: "ada@example.com"}, {Email: "grace@example.com", Guest: true}}, a.People)
 		assert.Equal(t, 1, list[public].EveryoneItems)
 		assert.Zero(t, list[public].MembersItems)
-		assert.Empty(t, list[public].People)
 		others, err := db.ListSourceAudiences(ctx, other)
 		require.NoError(t, err)
 		require.Len(t, others, 1)
@@ -200,6 +264,8 @@ func TestSourceAudiences(t *testing.T) {
 		for _, tc := range [][2]string{{ws, id26("SA-ABSENT")}, {other, slack}} {
 			assert.ErrorIs(t, db.ReplaceSourceAudiences(ctx, tc[0], tc[1], at, slackAudiences(t)), store.ErrNotFound)
 			assert.ErrorIs(t, db.RecordSourceAudienceProblem(ctx, tc[0], tc[1], at, "x"), store.ErrNotFound)
+			_, err := db.SourceAudienceRead(ctx, tc[0], tc[1])
+			assert.ErrorIs(t, err, store.ErrNotFound)
 		}
 		assert.Equal(t, "0 0 0 0", sourceRows(t, id26("SA-ABSENT")))
 	})
@@ -219,8 +285,9 @@ func TestSourceAudiences(t *testing.T) {
 		at := read.Add(72 * time.Hour)
 		require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, public, at, connector.Audiences{
 			Items: map[string]connector.Audience{"c1": connector.EveryoneAudience(), "C1": connector.MembersAudience(email(t, "jose@example.com"))}}))
-		assert.Equal(t, []string{"c1"}, sharingOf(t, db, ws, "josé@example.com")[public].Visible, "no collation matches josé and jose")
-		assert.Equal(t, []string{"C1", "c1"}, sharingOf(t, db, ws, "jose@example.com")[public].Visible)
+		assert.Empty(t, sharingOf(t, db, ws, "josé@example.com")[public].Visible, "no collation matches josé and jose")
+		assert.Equal(t, []string{"C1"}, sharingOf(t, db, ws, "jose@example.com")[public].Visible)
+		assert.Equal(t, []string{"c1"}, sharingAs(t, db, ws, nil)[public].Visible, "c1 and C1 are two items")
 	})
 
 	t.Run("deleting the connector deletes its audiences", func(t *testing.T) {
@@ -253,14 +320,18 @@ func TestSourceAudiencesInChunks(t *testing.T) {
 	require.NoError(t, db.ReplaceSourceAudiences(ctx, ws, slack, time.Now(), a))
 	assert.Equal(t, "1 1201 1202 1201", sourceRows(t, slack))
 	s := sharingOf(t, db, ws, "p1200@example.com")[slack]
-	assert.True(t, s.Guest)
-	assert.Equal(t, []string{"G"}, s.Visible)
+	assert.Equal(t, []string{"G"}, s.Visible, "a guest")
 	s = sharingOf(t, db, ws, "p1199@example.com")[slack]
 	assert.Len(t, s.Visible, 1202)
-	assert.True(t, s.SeesAll())
 	list := audiencesOf(t, db, ws)[slack]
-	assert.Len(t, list.People, 1201)
-	assert.Equal(t, "p0000@example.com", list.People[0].Email)
+	assert.Equal(t, 1201, list.EveryoneItems)
+	emails := make([]connector.Email, 0, 1201)
+	for e := range a.People {
+		emails = append(emails, e)
+	}
+	people, err := db.SourcePeopleByEmail(ctx, ws, emails)
+	require.NoError(t, err)
+	assert.Len(t, people, 1201, "matched past one query's emails")
 }
 
 // audiencesOf is ListSourceAudiences' answer by connector.

@@ -48,15 +48,35 @@ type memoryStore struct {
 	// wrote, which the store dropped.
 	discarded []string
 	// audiences are each connector's stored audiences, read at audiencesAt;
-	// problems the audience problems recorded, as "connector: problem".
-	// failAudiences fails the next ReplaceSourceAudiences.
+	// problems the audience problems recorded, as "connector: problem", the
+	// latest of each at problemAt. failAudiences fails the next
+	// ReplaceSourceAudiences; onAudiences runs as one starts.
 	audiences     map[string]connector.Audiences
 	audiencesAt   map[string]time.Time
 	problems      []string
+	problemAt     map[string]time.Time
 	failAudiences error
+	onAudiences   func()
+}
+
+func (m *memoryStore) SourceAudienceRead(_ context.Context, workspaceID, connectorID string) (model.FoundrySourceAudienceRead, error) {
+	if c := m.connectors[connectorID]; c == nil || c.WorkspaceID != workspaceID {
+		return model.FoundrySourceAudienceRead{}, foundrystore.ErrNotFound
+	}
+	var out model.FoundrySourceAudienceRead
+	if at, ok := m.audiencesAt[connectorID]; ok {
+		out.ReadAt = &at
+	}
+	if at, ok := m.problemAt[connectorID]; ok {
+		out.ProblemAt = &at
+	}
+	return out, nil
 }
 
 func (m *memoryStore) ReplaceSourceAudiences(_ context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error {
+	if m.onAudiences != nil {
+		m.onAudiences()
+	}
 	if err := m.failAudiences; err != nil {
 		m.failAudiences = nil
 		return err
@@ -71,11 +91,14 @@ func (m *memoryStore) ReplaceSourceAudiences(_ context.Context, workspaceID, con
 	return nil
 }
 
-func (m *memoryStore) RecordSourceAudienceProblem(_ context.Context, workspaceID, connectorID string, _ time.Time, problem string) error {
+func (m *memoryStore) RecordSourceAudienceProblem(_ context.Context, workspaceID, connectorID string, at time.Time, problem string) error {
 	if c := m.connectors[connectorID]; c == nil || c.WorkspaceID != workspaceID {
 		return foundrystore.ErrNotFound
 	}
-	m.problems = append(m.problems, connectorID+": "+problem)
+	if m.problemAt == nil {
+		m.problemAt = map[string]time.Time{}
+	}
+	m.problems, m.problemAt[connectorID] = append(m.problems, connectorID+": "+problem), at
 	return nil
 }
 

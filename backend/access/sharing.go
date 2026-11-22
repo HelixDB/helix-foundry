@@ -1,51 +1,67 @@
 package access
 
-import "time"
+import (
+	"cmp"
+	"maps"
+	"slices"
+	"time"
+)
 
 // MaxAudienceAge is how old the last read of a connector's audiences may be
 // and still say what a reader reads of it: past it, every item reads as
-// unknown, and the connector's documents and tables go to full readers only
+// unknown, and the connector's documents go to full readers only
 // (plans/SOURCE_ACLS.md).
 const MaxAudienceAge = 7 * 24 * time.Hour
 
-// reachKind is how much of an audienced connector's items one reader reads.
-type reachKind uint8
+// MaxFailingAudienceAge is how old that read may be once a later read of
+// them failed: a source that stops answering stops vouching for who was
+// removed from an item sooner.
+const MaxFailingAudienceAge = 24 * time.Hour
 
-const (
-	// reachUnknown: the items aren't known, never read or read too long ago;
-	// the reader reads none of them.
-	reachUnknown reachKind = iota
-	// reachSome: the reader reads the items it lists, not every one.
-	reachSome
-	// reachAll: the reader reads every item the last read listed.
-	reachAll
-)
+// AudiencesFresh reports whether the last read of a connector's audiences
+// that worked, at readAt (nil: none has), still says who reads its items at
+// now: within MaxAudienceAge, or MaxFailingAudienceAge once a read after it
+// failed (problemAt, nil for none). A read dated after now (another clock)
+// is fresh.
+//
+//	read := time.Now().Add(-48 * time.Hour)
+//	access.AudiencesFresh(&read, nil, time.Now())   // true
+//	failed := read.Add(time.Hour)
+//	access.AudiencesFresh(&read, &failed, time.Now()) // false: over a day old, and a read since failed
+func AudiencesFresh(readAt, problemAt *time.Time, now time.Time) bool {
+	if readAt == nil {
+		return false
+	}
+	limit := MaxAudienceAge
+	if problemAt != nil && problemAt.After(*readAt) {
+		limit = MaxFailingAudienceAge
+	}
+	return now.Sub(*readAt) <= limit
+}
 
 // SourceReach is what one reader reads of one connector whose source reports
-// who each of its items is shared with (a Slack connector's channels). The
-// zero SourceReach is unknown: the reader reads none of its items.
+// who each of its items is shared with (a Slack connector's channels): the
+// items it reads, when they are known. The zero SourceReach is unknown: the
+// reader reads none of its items.
 type SourceReach struct {
-	kind reachKind
-	// items are the item keys the reader reads, by key; nil for unknown.
+	// items are the item keys the reader reads; nil for unknown.
 	items map[string]bool
 }
 
-// ReachOf is the reach a read of a connector's audiences at readAt (nil:
-// none has worked) gives a reader the source shares visible of its items
-// items with, as of now. A read older than MaxAudienceAge is unknown.
+// ReachOf is the reach that a connector's audiences, last read at readAt
+// (nil: none has worked) with a failed read at problemAt (nil: none since),
+// give a reader the source shares visible of its items with, as of now:
+// unknown unless AudiencesFresh.
 //
 //	at := time.Now()
-//	access.ReachOf(&at, []string{"C1"}, 2, at).Sees("C1") // true
-func ReachOf(readAt *time.Time, visible []string, items int, now time.Time) SourceReach {
-	if readAt == nil || now.Sub(*readAt) > MaxAudienceAge {
+//	access.ReachOf(&at, nil, []string{"C1"}, at).Sees("C1") // true
+func ReachOf(readAt, problemAt *time.Time, visible []string, now time.Time) SourceReach {
+	if !AudiencesFresh(readAt, problemAt, now) {
 		return SourceReach{}
 	}
-	r := SourceReach{kind: reachSome, items: make(map[string]bool, len(visible))}
+	r := SourceReach{items: make(map[string]bool, len(visible))}
 	for _, key := range visible {
 		r.items[key] = true
-	}
-	if len(r.items) >= items {
-		r.kind = reachAll
 	}
 	return r
 }
@@ -54,11 +70,11 @@ func ReachOf(readAt *time.Time, visible []string, items int, now time.Time) Sour
 func (r SourceReach) Sees(key string) bool { return r.items[key] }
 
 // Known reports whether the connector's items are known: a read of them
-// worked within MaxAudienceAge.
-func (r SourceReach) Known() bool { return r.kind != reachUnknown }
+// worked recently enough (AudiencesFresh).
+func (r SourceReach) Known() bool { return r.items != nil }
 
-// All reports whether the reader reads every item the last read listed.
-func (r SourceReach) All() bool { return r.kind == reachAll }
+// ItemRef is one item of an audienced connector's source (a Slack channel).
+type ItemRef struct{ ConnectorID, Item string }
 
 // ItemOf is the item a document of a connector's set belongs to, by the
 // set's stream and the document's external id; ok is false for a document of
@@ -81,18 +97,31 @@ func NewSharing(reach map[string]SourceReach, itemOf ItemOf) Sharing {
 	return Sharing{reach: reach, itemOf: itemOf}
 }
 
-// whole reports whether the reader reads all of connectorID that grants give
-// it: every item of an audienced one, anything of another.
-func (s Sharing) whole(connectorID string) bool {
-	r, ok := s.reach[connectorID]
-	return !ok || r.All()
+// audienced reports whether connectorID's source reports its permissions:
+// no grant gives all of it, since the items its documents and rows are of
+// may be ones the last read of them didn't list (left, deleted, or joined
+// since).
+func (s Sharing) audienced(connectorID string) bool {
+	_, ok := s.reach[connectorID]
+	return ok && connectorID != ""
 }
 
 // some reports whether the reader reads anything of connectorID that grants
 // give it: an item, for an audienced one.
 func (s Sharing) some(connectorID string) bool {
 	r, ok := s.reach[connectorID]
-	return !ok || r.Known() && len(r.items) > 0
+	return !ok || len(r.items) > 0
+}
+
+// item is the item of an audienced connector's source that d is of; ok is
+// false for a document of a set no audienced connector owns, or of no item
+// its kind knows.
+func (s Sharing) item(d DocumentRef) (ItemRef, bool) {
+	if !s.audienced(d.Set.ConnectorID) || s.itemOf == nil {
+		return ItemRef{}, false
+	}
+	item, ok := s.itemOf(d.Set.ConnectorID, d.Stream, d.ExternalID)
+	return ItemRef{ConnectorID: d.Set.ConnectorID, Item: item}, ok
 }
 
 // reads reports whether the reader reads d as far as its source goes: any
@@ -100,13 +129,35 @@ func (s Sharing) some(connectorID string) bool {
 // source shares with the reader. A document of no item the kind knows, or of
 // a connector whose items are unknown, it doesn't.
 func (s Sharing) reads(d DocumentRef) bool {
-	r, ok := s.reach[d.Set.ConnectorID]
-	if !ok || d.Set.ConnectorID == "" {
+	if !s.audienced(d.Set.ConnectorID) {
 		return true
 	}
-	if !r.Known() || s.itemOf == nil {
-		return false
+	i, ok := s.item(d)
+	return ok && s.sees(i)
+}
+
+// sees reports whether the source of i's connector shares i with the reader
+// now.
+func (s Sharing) sees(i ItemRef) bool { return s.reach[i.ConnectorID].Sees(i.Item) }
+
+// visible are the items every audienced source shares with the reader now,
+// sorted.
+func (s Sharing) visible() []ItemRef {
+	var out []ItemRef
+	for _, id := range slices.Sorted(maps.Keys(s.reach)) {
+		for _, item := range slices.Sorted(maps.Keys(s.reach[id].items)) {
+			out = append(out, ItemRef{ConnectorID: id, Item: item})
+		}
 	}
-	item, ok := s.itemOf(d.Set.ConnectorID, d.Stream, d.ExternalID)
-	return ok && r.Sees(item)
+	return out
+}
+
+// SortItems sorts items by connector, then item, without repeats.
+//
+//	access.SortItems([]access.ItemRef{{"s", "C2"}, {"s", "C1"}, {"s", "C2"}}) // [{s C1} {s C2}]
+func SortItems(items []ItemRef) []ItemRef {
+	slices.SortFunc(items, func(a, b ItemRef) int {
+		return cmp.Or(cmp.Compare(a.ConnectorID, b.ConnectorID), cmp.Compare(a.Item, b.Item))
+	})
+	return slices.Compact(items)
 }

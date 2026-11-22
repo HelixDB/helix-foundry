@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/sourceaccess"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -19,13 +20,16 @@ import (
 var (
 	now  = time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	ada  = access.Principal{Kind: access.PrincipalUser, ID: "user-ada"}
+	bob  = access.Principal{Kind: access.PrincipalUser, ID: "user-bob"}
+	eve  = access.Principal{Kind: access.PrincipalUser, ID: "user-eve"}
 	key  = access.Principal{Kind: access.PrincipalServiceCredential, ID: "cred-1"}
 	team = access.Principal{Kind: access.PrincipalTeam, ID: "team-1"}
 	conv = access.SetRef{SetID: "set-conv", ConnectorID: "conn-slack"}
 )
 
 // fakeStore holds a workspace with a Stripe and a Slack connection; sharing
-// is what Slack shares with each reader, by email, and asked counts reads.
+// is what Slack shares with each reader, by email ("agent" for no one), and
+// asked counts reads.
 type fakeStore struct {
 	grants     []model.FoundryAccessGrant
 	connectors []*model.Connector
@@ -42,7 +46,7 @@ func newStore(targets ...access.Target) *fakeStore {
 		err:        map[string]error{},
 		asked:      map[string]int{},
 	}
-	for _, p := range []access.Principal{ada, key, team} {
+	for _, p := range []access.Principal{ada, bob, eve, key, team} {
 		for _, t := range targets {
 			s.grants = append(s.grants, model.FoundryAccessGrant{Principal: p, Target: t})
 		}
@@ -68,13 +72,18 @@ func (s *fakeStore) ListConnectors(context.Context, string) ([]*model.Connector,
 	return s.connectors, s.err["connectors"]
 }
 
-func (s *fakeStore) SourceSharingFor(_ context.Context, _, email string) ([]model.FoundrySourceSharing, error) {
+func (s *fakeStore) SourceSharingFor(_ context.Context, _ string, reader *connector.Email) ([]model.FoundrySourceSharing, error) {
 	s.asked["sharing"]++
+	email := "agent"
+	if reader != nil {
+		email = reader.String()
+	}
 	s.emails = append(s.emails, email)
 	return s.sharing[email], s.err["sharing"]
 }
 
-// people know Ada's email; err fails every read.
+// people know Ada's email, written as a person might, and Bob's, which is no
+// address; err fails every read.
 type people struct {
 	err   error
 	asked *int
@@ -86,15 +95,18 @@ func (people) DisplayName(context.Context, string) (string, error) { return "", 
 
 func (p people) Member(_ context.Context, _, userID string) (ports.Member, error) {
 	*p.asked++
-	if userID != ada.ID {
-		return ports.Member{}, nil
+	switch userID {
+	case ada.ID:
+		return ports.Member{Role: ports.RoleMember, Email: " Ada@Example.com "}, p.err
+	case bob.ID:
+		return ports.Member{Role: ports.RoleMember, Email: "bob"}, p.err
 	}
-	return ports.Member{Role: ports.RoleMember, Email: "ada@example.com"}, p.err
+	return ports.Member{}, p.err
 }
 
 func shared(visible ...string) []model.FoundrySourceSharing {
 	at := now.Add(-time.Hour)
-	return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, Visible: visible, Items: 2}}
+	return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, Visible: visible}}
 }
 
 func TestGrants(t *testing.T) {
@@ -102,28 +114,38 @@ func TestGrants(t *testing.T) {
 	public := access.DocumentRef{ID: "d1", Set: conv, Stream: "conversations", ExternalID: "C1:2026-11-01"}
 	private := access.DocumentRef{ID: "d2", Set: conv, Stream: "conversations", ExternalID: "C2:2026-11-01"}
 	for name, tc := range map[string]struct {
-		reader     access.Principal
-		sharing    map[string][]model.FoundrySourceSharing
-		wantEmail  string
-		reads      [2]bool
-		coversConv bool
+		reader    access.Principal
+		sharing   map[string][]model.FoundrySourceSharing
+		wantEmail []string
+		reads     [2]bool
 	}{
-		"a member reads the channels Slack shares with her email": {
-			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "": shared("C1")},
-			wantEmail: "ada@example.com", reads: [2]bool{true, true}, coversConv: true},
+		"a member reads the channels Slack shares with her email, in one form": {
+			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "agent": shared("C1")},
+			wantEmail: []string{"ada@example.com"}, reads: [2]bool{true, true}},
 		"a member left out of a private channel": {
 			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1")},
-			wantEmail: "ada@example.com", reads: [2]bool{true, false}},
+			wantEmail: []string{"ada@example.com"}, reads: [2]bool{true, false}},
+		// The store gives a person Slack has no account for no public
+		// channel; she is asked as herself, never as no one.
+		"a member whose email is no address is asked as no address": {
+			reader: bob, sharing: map[string][]model.FoundrySourceSharing{"": shared(), "agent": shared("C1")}, wantEmail: []string{""}},
+		"a member with no email is asked as no address, never as an agent": {
+			reader: eve, sharing: map[string][]model.FoundrySourceSharing{"": shared(), "agent": shared("C1")}, wantEmail: []string{""}},
 		"an agent's key is no one: public channels only": {
-			reader: key, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "": shared("C1")},
-			reads: [2]bool{true, false}},
+			reader: key, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "agent": shared("C1")},
+			wantEmail: []string{"agent"}, reads: [2]bool{true, false}},
 		"a team is no one: each member reads as themselves": {
-			reader: team, sharing: map[string][]model.FoundrySourceSharing{"": shared("C1")}, reads: [2]bool{true, false}},
-		"audiences never stored: nothing of the connector": {reader: ada, wantEmail: "ada@example.com"},
+			reader: team, sharing: map[string][]model.FoundrySourceSharing{"agent": shared("C1")}, wantEmail: []string{"agent"}, reads: [2]bool{true, false}},
+		"audiences never stored: nothing of the connector": {reader: ada, wantEmail: []string{"ada@example.com"}},
 		"audiences read over a week ago: nothing of the connector": {
-			reader: ada, wantEmail: "ada@example.com", sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": func() []model.FoundrySourceSharing {
+			reader: ada, wantEmail: []string{"ada@example.com"}, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": func() []model.FoundrySourceSharing {
 				at := now.Add(-8 * 24 * time.Hour)
-				return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, Visible: []string{"C1", "C2"}, Items: 2}}
+				return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, Visible: []string{"C1", "C2"}}}
+			}()}},
+		"audiences read two days ago, a read since failed: nothing of the connector": {
+			reader: ada, wantEmail: []string{"ada@example.com"}, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": func() []model.FoundrySourceSharing {
+				at, failed := now.Add(-48*time.Hour), now.Add(-time.Hour)
+				return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, ProblemAt: &failed, Visible: []string{"C1", "C2"}}}
 			}()}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -134,9 +156,10 @@ func TestGrants(t *testing.T) {
 			g, err := r.Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: tc.reader})
 			require.NoError(t, err)
 			assert.Equal(t, tc.reads, [2]bool{g.Reads(public), g.Reads(private)})
-			assert.Equal(t, tc.coversConv, g.CoversSet(conv))
+			assert.False(t, g.CoversSet(conv), "an audienced connector's set is never covered whole")
+			assert.False(t, g.CoversTable(access.TableRef{ConnectorID: "conn-slack", Table: "messages"}), "nor its tables")
 			assert.True(t, g.CoversTable(access.TableRef{ConnectorID: "conn-stripe", Table: "customers"}), "a source that reports nothing isn't narrowed")
-			assert.Equal(t, []string{tc.wantEmail}, store.emails)
+			assert.Equal(t, tc.wantEmail, store.emails)
 			// The same call reads none of it again.
 			_, err = r.Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: tc.reader})
 			require.NoError(t, err)
@@ -160,9 +183,28 @@ func TestGrantsReadsNoMoreThanItNeeds(t *testing.T) {
 	t.Run("no connection reports its permissions", func(t *testing.T) {
 		store := newStore(access.ConnectorTarget("conn-stripe"))
 		store.connectors = store.connectors[:1]
-		_, err := sourceaccess.New(store, nil, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
+		var asked int
+		_, err := sourceaccess.New(store, people{asked: &asked}, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
 		require.NoError(t, err)
 		assert.Zero(t, store.asked["sharing"])
+	})
+	// Without a way to tell emails, a user is never read as no one, which
+	// would give them every public channel, guests included.
+	t.Run("nothing tells a user's email: their sources' items are unknown", func(t *testing.T) {
+		store := newStore(access.ConnectorTarget("conn-slack"))
+		store.sharing["agent"] = shared("C1", "C2")
+		r := sourceaccess.New(store, nil, now)
+		g, err := r.Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
+		require.NoError(t, err)
+		assert.False(t, g.ReachesSet(conv))
+		assert.Nil(t, g.VisibleItems())
+		assert.Zero(t, store.asked["sharing"])
+		email, err := r.Email(ctx, "ws-1", ada.ID)
+		require.NoError(t, err)
+		assert.Equal(t, connector.Email{}, email)
+		asKey, err := r.Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: key})
+		require.NoError(t, err)
+		assert.True(t, asKey.ReachesSet(conv), "an agent's key still reads as no one")
 	})
 	t.Run("readers of one workspace read its connections once", func(t *testing.T) {
 		store := newStore(access.ConnectorTarget("conn-slack"))
@@ -174,11 +216,15 @@ func TestGrantsReadsNoMoreThanItNeeds(t *testing.T) {
 		}
 		assert.Equal(t, 1, store.asked["connectors"])
 		assert.Equal(t, 2, store.asked["sharing"], "Ada's email, and no one's for the key and the team")
+		email, err := r.Email(ctx, "ws-1", ada.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "ada@example.com", email.String())
+		assert.Equal(t, 1, asked, "her email is read once a call")
 	})
 	t.Run("a stored read of a connector deleted since is no one's", func(t *testing.T) {
 		store := newStore(access.ConnectorTarget("conn-slack"))
-		store.sharing[""] = []model.FoundrySourceSharing{{ConnectorID: "conn-gone", Visible: []string{"C1"}}}
-		g, err := sourceaccess.New(store, nil, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
+		store.sharing["agent"] = []model.FoundrySourceSharing{{ConnectorID: "conn-gone", Visible: []string{"C1"}}}
+		g, err := sourceaccess.New(store, nil, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: key})
 		require.NoError(t, err)
 		assert.False(t, g.ReachesSet(conv), "Slack's own read is missing, so its items are unknown")
 	})
@@ -202,7 +248,7 @@ func TestGrantsFailures(t *testing.T) {
 // with her email; the agent's key, matched to no one, the public ones.
 func ExampleReads_Of() {
 	store := newStore()
-	store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "": shared("C1")}
+	store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "agent": shared("C1")}
 	var asked int
 	r := sourceaccess.New(store, people{asked: &asked}, now)
 	private := access.DocumentRef{ID: "d2", Set: conv, Stream: "conversations", ExternalID: "C2:2026-11-01"}

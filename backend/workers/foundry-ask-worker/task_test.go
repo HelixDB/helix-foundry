@@ -25,6 +25,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
 	"github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/graphproxy"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
@@ -132,9 +133,11 @@ type memStore struct {
 	generation *model.OntologyGeneration
 	history    []*model.FoundryQuestion
 	// holdings are what each load holds, document by document, and seen what
-	// each question that read part of its load read.
-	holdings map[string]access.Holdings
-	seen     map[string]*access.Inputs
+	// each question that read part of its load read, and seenItems the
+	// channels its documents were of.
+	holdings  map[string]access.Holdings
+	seen      map[string]*access.Inputs
+	seenItems map[string][]access.ItemRef
 	// olderLoads are loads other than the current ones, by load.
 	olderLoads map[string]model.FoundryLoadInputs
 	// cancelAfter cancels the question once that many appends stored events
@@ -163,15 +166,18 @@ type memStore struct {
 	// teams are each user's teams.
 	teams map[string][]string
 	// slack adds a Slack connection, conn-slack, whose source's permissions
-	// sharing says, by reader's email.
+	// sharing says, by reader's email ("agent" for no one).
 	slack   bool
 	sharing map[string][]model.FoundrySourceSharing
 }
 
-func (s *memStore) SourceSharingFor(_ context.Context, _, email string) ([]model.FoundrySourceSharing, error) {
+func (s *memStore) SourceSharingFor(_ context.Context, _ string, reader *connector.Email) ([]model.FoundrySourceSharing, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sharing[email], nil
+	if reader == nil {
+		return s.sharing["agent"], nil
+	}
+	return s.sharing[reader.String()], nil
 }
 
 func (s *memStore) GetActiveFoundryAIConfig(context.Context, string) (*model.FoundryAIConfig, error) {
@@ -295,13 +301,13 @@ func (s *memStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (acc
 	return s.holdings[loadID], nil
 }
 
-func (s *memStore) SetFoundryQuestionSeen(_ context.Context, questionID string, seen *access.Inputs) error {
+func (s *memStore) SetFoundryQuestionSeen(_ context.Context, questionID string, seen *access.Inputs, items []access.ItemRef) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.seen == nil {
-		s.seen = map[string]*access.Inputs{}
+		s.seen, s.seenItems = map[string]*access.Inputs{}, map[string][]access.ItemRef{}
 	}
-	s.seen[questionID] = seen
+	s.seen[questionID], s.seenItems[questionID] = seen, items
 	return nil
 }
 
@@ -486,8 +492,9 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = proxy.Close() })
 	task := &Task{
 		cfg: cfg.Foundry.Ask, queue: store, boosts: store, workerID: "w1", closeFn: func() error { return nil }, slots: make(chan struct{}, cfg.Foundry.Ask.Concurrency),
-		now:    func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
-		runner: &runner{db: store, dbs: store, boosts: store, agent: startAgent(t, agent), ai: resolver, cfg: &cfg, workerID: "w1", proxy: proxy, flushEvery: 5 * time.Millisecond},
+		now: func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
+		runner: &runner{db: store, dbs: store, people: emails{}, boosts: store, agent: startAgent(t, agent), ai: resolver, cfg: &cfg, workerID: "w1", proxy: proxy,
+			flushEvery: 5 * time.Millisecond},
 	}
 	return &harness{task: task, store: store, agent: agent, gateway: g, ai: resolver}
 }

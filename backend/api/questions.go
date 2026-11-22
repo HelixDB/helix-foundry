@@ -170,7 +170,7 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 			return nil, err
 		}
 		seen := part.Inputs()
-		q.Seen = &seen
+		q.Seen, q.SeenItems = &seen, part.Items
 	}
 	limits, err := s.foundryQuestionLimits(ctx, o.WorkspaceID, asker)
 	if err != nil {
@@ -361,11 +361,10 @@ func (s *Service) foundryQuestion(ctx context.Context, ontologyID, id string) (*
 // readableQuestions keeps, for a grantee, the questions on loads its grants
 // cover now: an answer says what its load held, so it reads only while that
 // load does, whichever load is current. One that read only part of its load
-// (Seen) reads while its grants keep that part (access.Grants.Keeps): Seen
-// names sets, so a set of a connector whose source shares only some items
-// with the grantee counts while the source shares any, as it did when it
-// was asked; requiring all would hide every such grantee's own answers. The
-// host's caller keeps them all.
+// (Seen) reads while its grants keep that part and every item of an
+// audienced source its documents were of (SeenItems) is still shared with
+// the grantee (access.Grants.Keeps): removed from the Slack channel it read,
+// they no longer read its answer. The host's caller keeps them all.
 func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymodel.FoundryQuestion) ([]*foundrymodel.FoundryQuestion, error) {
 	g, ok := access.GranteeFrom(ctx)
 	if !ok || len(questions) == 0 {
@@ -390,8 +389,9 @@ func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymod
 		case !held:
 			return true
 		case q.Seen != nil:
-			// It read only part of the load: that part is what it says.
-			return !grants.Keeps(*q.Seen)
+			// It read only part of the load: that part, and the channels its
+			// documents were of, are what it says.
+			return !grants.Keeps(*q.Seen, q.SeenItems)
 		default:
 			return !grants.Covers(l.Inputs)
 		}

@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	_ Pushed   = (*slackAppKind)(nil)
-	_ PassKind = (*slackAppKind)(nil)
+	_ Pushed    = (*slackAppKind)(nil)
+	_ PassKind  = (*slackAppKind)(nil)
+	_ Audienced = (*slackAppKind)(nil)
 )
 
 // SlackFeedStore is what a Slack connector read through Helix's Slack app
@@ -120,6 +121,21 @@ func (k *slackAppKind) Streams(src Source) []Stream {
 		"its earliest messages. People are named by their Slack real name, else their handle, and mentions read @Name and #channel. " +
 		"Helix Foundry's own messages show without their text."
 	return []Stream{s}
+}
+
+// Audiences reads who each channel the install can see is shared with, as
+// a token's (slackKind.Audiences), through the install's Web API calls.
+func (k *slackAppKind) Audiences(ctx context.Context, src Source) (Audiences, error) {
+	if src.SlackApp == nil {
+		return Audiences{}, errSlackAppUnopened
+	}
+	return slackAudiences(ctx, k.poll.appClient(src.SlackApp))
+}
+
+// ItemOfDocument is a token's: the app's days are keyed "<channel>:<day>"
+// as its are.
+func (k *slackAppKind) ItemOfDocument(stream, externalID string) (string, bool) {
+	return k.poll.ItemOfDocument(stream, externalID)
 }
 
 // Discover proves the install with auth.test and probes what it lists, as

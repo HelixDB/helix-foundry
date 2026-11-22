@@ -119,6 +119,26 @@ func TestSlackAudiences(t *testing.T) {
 			t.Fatalf("people = %s", people)
 		}
 	})
+	// Ada's second account is a guest's and is the one in #design: #design
+	// lists her email, and she reads no public channel.
+	t.Run("a private channel lists an email by whichever of its accounts is in it", func(t *testing.T) {
+		routes := with(slackAudienceRoutes(), map[string]string{"users.list": slackPage("members",
+			`{"id":"U1","profile":{"email":"ada@example.com"}}`, `{"id":"U7","is_restricted":true,"profile":{"email":"ADA@example.com"}}`)})
+		routes["conversations.members"] = func(r *http.Request) (int, string) {
+			if r.URL.Query().Get("channel") == "C2" {
+				return http.StatusOK, slackPage("members", `"U7"`)
+			}
+			return http.StatusOK, slackPage("members")
+		}
+		kind, _ := slackAt(t, routes)
+		a, err := kind.Audiences(ctx, slackSource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if items, people := audienceText(a); items != "C1=everyone C2=ada@example.com C3=everyone C4=" || people != "ada@example.com (guest)" {
+			t.Fatalf("items = %s; people = %s", items, people)
+		}
+	})
 	t.Run("follows every page of users, channels and members", func(t *testing.T) {
 		routes := slackAudienceRoutes()
 		routes["users.list"] = func(r *http.Request) (int, string) {

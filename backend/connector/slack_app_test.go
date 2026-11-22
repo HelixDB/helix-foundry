@@ -602,3 +602,29 @@ func TestSlackAppParity(t *testing.T) {
 		}
 	})
 }
+
+// A connection through Helix's Slack app reads who each channel is shared
+// with as a token's does, through the install, and tells a day's channel
+// alike; without its install it reads none.
+func TestSlackAppAudiences(t *testing.T) {
+	a := newSlackAppTest(t, slackAudienceRoutes())
+	got, err := a.app.Audiences(context.Background(), a.src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items, people := audienceText(got); items != "C1=everyone C2=ada@example.com,grace@example.com C3=everyone C4=bea@example.com" ||
+		people != "ada@example.com bea@example.com (guest) grace@example.com (guest)" {
+		t.Fatalf("items = %s; people = %s", items, people)
+	}
+	if calls := a.calls.of("conversations.members"); len(calls) != 2 {
+		t.Fatalf("members read through the install = %q", calls)
+	}
+	unopened := a.src
+	unopened.SlackApp = nil
+	if _, err := a.app.Audiences(context.Background(), unopened); !errors.Is(err, errSlackAppUnopened) {
+		t.Fatalf("without its install: %v", err)
+	}
+	if item, ok := a.app.ItemOfDocument("conversations", "C2:2026-11-01"); item != "C2" || !ok {
+		t.Fatalf("ItemOfDocument = %q, %v", item, ok)
+	}
+}

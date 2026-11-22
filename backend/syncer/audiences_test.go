@@ -102,6 +102,58 @@ func TestSyncerAudiences(t *testing.T) {
 			t.Fatalf("audiences = %v, problems = %q", f.store.audiences, f.store.problems)
 		}
 	})
+	// Within AudienceEvery of a read that worked a sync reads none; past it,
+	// or once a read since failed, it reads them again.
+	t.Run("read at most once an hour, and again after a failure", func(t *testing.T) {
+		account := slackPeopleAccount()
+		f, _ := newSlackFixture(t, account, `{"history_days":7,"tables":["channels"]}`, "free")
+		f.run(t, "sync-1")
+		first := f.store.audiencesAt["conn-1"]
+		account.mu.Lock()
+		account.users = account.users[:1] // Grace leaves the workspace
+		account.mu.Unlock()
+		f.run(t, "sync-2")
+		if _, people := audiencesText(f.store.audiences["conn-1"]); people != "ada@example.com grace@example.com (guest)" || !f.store.audiencesAt["conn-1"].Equal(first) {
+			t.Fatalf("read again within the hour: %s at %s", people, f.store.audiencesAt["conn-1"])
+		}
+		f.store.problemAt = map[string]time.Time{"conn-1": first.Add(time.Minute)}
+		f.run(t, "sync-3")
+		if _, people := audiencesText(f.store.audiences["conn-1"]); people != "ada@example.com" {
+			t.Fatalf("a failure since: people = %s", people)
+		}
+		delete(f.store.problemAt, "conn-1")
+		account.mu.Lock()
+		account.users = slackPeopleAccount().users
+		account.mu.Unlock()
+		f.store.audiencesAt["conn-1"] = time.Now().Add(-AudienceEvery - time.Minute)
+		f.run(t, "sync-4")
+		if _, people := audiencesText(f.store.audiences["conn-1"]); people != "ada@example.com grace@example.com (guest)" {
+			t.Fatalf("past the hour: people = %s", people)
+		}
+	})
+	// The refreshes a sync owes are owed before its source's permissions are
+	// read, so a sync that ends while reading them (its lease lost, its
+	// worker stopped) still owes them, succeeds, and records no problem.
+	t.Run("read after the refreshes are owed, and a sync ended meanwhile still succeeds", func(t *testing.T) {
+		f, _ := newSlackFixture(t, slackPeopleAccount(), `{"history_days":7,"tables":["channels"]}`, "free")
+		owed := &refreshes{}
+		f.syncer.Refresh = owed
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		f.store.onAudiences = func() {
+			if len(owed.syncs) != 1 {
+				t.Errorf("audiences read before the refresh was owed: %v", owed.syncs)
+			}
+			cancel()
+		}
+		f.store.failAudiences = context.Canceled
+		if _, err := f.syncer.Run(ctx, newSync("sync-1")); err != nil {
+			t.Fatalf("a sync that published failed: %v", err)
+		}
+		if len(owed.syncs) != 1 || len(f.store.problems) != 0 || len(f.store.audiences) != 0 {
+			t.Fatalf("owed %v, problems %q, audiences %v", owed.syncs, f.store.problems, f.store.audiences)
+		}
+	})
 	t.Run("a kind that reports no permissions reads none", func(t *testing.T) {
 		f := newFixture(t, stripeServer(t, 200), "stripe", `{"tables":["customers"]}`, plan{code: "free"})
 		f.run(t, "sync-1")

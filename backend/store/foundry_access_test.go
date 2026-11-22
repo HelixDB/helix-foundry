@@ -436,13 +436,22 @@ reserved_micros=?, charged_at=NOW(6) WHERE id=?`, 50, f.id(2))
 	assert.Contains(t, refusal.Reason, "the workspace has asked")
 
 	seen := access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}
-	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen))
+	items := []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}, {ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "c1"}}
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen, items))
 	stored, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
 	require.NoError(t, err)
 	assert.Equal(t, &seen, stored.Seen)
-	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), nil))
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}, {ConnectorID: "conn-slack", Item: "c1"}},
+		stored.SeenItems, "the channels it read, sorted, told apart by case")
+	// A later attempt's record replaces the items an earlier one recorded.
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen, items[:1]))
 	stored, err = f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
 	require.NoError(t, err)
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}, stored.SeenItems)
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), nil, nil))
+	stored, err = f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
+	require.NoError(t, err)
+	assert.Empty(t, stored.SeenItems)
 	assert.Nil(t, stored.Seen, "the whole load, after all")
 	notSeen, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(2))
 	require.NoError(t, err)

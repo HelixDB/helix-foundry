@@ -52,6 +52,7 @@ type store interface {
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
 	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
+	SourceAudienceRead(ctx context.Context, workspaceID, connectorID string) (model.FoundrySourceAudienceRead, error)
 	ReplaceSourceAudiences(ctx context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error
 	RecordSourceAudienceProblem(ctx context.Context, workspaceID, connectorID string, at time.Time, problem string) error
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
@@ -211,11 +212,12 @@ const releaseTimeout = 30 * time.Second
 //     new snapshot and a change batch, in one lease-guarded write.
 //  5. Once every table is in, empty the document sets of streams no longer
 //     written, drop the tables no longer selected or discovered, then store
-//     the cursor the next change read starts from. A connector.Audienced
-//     kind then reads and stores its source's permissions (storeAudiences),
-//     which fails nothing.
+//     the cursor the next change read starts from.
 //  6. Mark the ontologies that read a changed table as owing a refresh.
 //  7. For a Pushed kind, read what waits beyond the stored cursor.
+//  8. Last, a connector.Audienced kind reads and stores its source's
+//     permissions once they are due (storeAudiences), which fails nothing
+//     and delays nothing the sync owes.
 //
 // A provider that rejects a signed-in connector's token (connector.AuthError)
 // gets one fresh token and steps 3 to 7 again: the broker renews one that
@@ -420,9 +422,6 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 	if err := s.DB.UpdateConnectorCursor(ctx, c.ID, *res.AccountGeneration, cursor, sync.ID, leaseOwner(sync)); err != nil {
 		return r.result(res), published(err, "store the change cursor")
 	}
-	if audienced, ok := kind.(connector.Audienced); ok {
-		s.storeAudiences(ctx, c, audienced, *src)
-	}
 	res = r.result(res)
 	if len(res.Changed) > 0 && s.Refresh != nil {
 		if err := s.Refresh.OweFoundryRefreshes(ctx, c.WorkspaceID, c.ID, sync.ID, res.Changed, plan.Sync.RefreshEvery); err != nil {
@@ -438,17 +437,43 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 		}
 		res.Pushed = &PushedResult{Backlog: backlog, Rows: res.Rows}
 	}
+	if audienced, ok := kind.(connector.Audienced); ok {
+		s.storeAudiences(ctx, c, audienced, *src)
+	}
 	return res, nil
 }
 
+// AudienceEvery is how often a connector's syncs read its source's
+// permissions again: a sync within it of the last read that worked, with no
+// read failed since, reads none. Slack's users, channels and members lists
+// are paged at Tier 2 (a page every 3 s), so a large workspace's read takes
+// minutes, and a pushed connector syncs whenever rows arrive.
+const AudienceEvery = time.Hour
+
+// audienceTimeout bounds one read of a source's permissions and its write.
+const audienceTimeout = 10 * time.Minute
+
 // storeAudiences reads who the connector's source shares each item with
 // (connector.Audienced), in full, and stores it in place of what was, at the
-// time the read began. A read or a write that fails keeps what was stored,
-// records why for owners and admins, and fails nothing: the sync has
-// published, and a connector whose audiences are stale shows its content to
-// full readers only (plans/SOURCE_ACLS.md).
+// time the read began, once AudienceEvery has passed since the last read
+// that worked, or a read since failed. It runs after everything the sync
+// owes, bounded by audienceTimeout. A read or a write that fails keeps what
+// was stored, records why for owners and admins, and fails nothing: the sync
+// has published, and a connector whose audiences are stale shows its content
+// to full readers only (plans/SOURCE_ACLS.md). A sync whose context ended
+// records nothing: the next one reads them again.
 func (s *Syncer) storeAudiences(ctx context.Context, c *model.Connector, kind connector.Audienced, src connector.Source) {
+	ctx, cancel := context.WithTimeout(ctx, audienceTimeout)
+	defer cancel()
 	at := s.now()
+	last, err := s.DB.SourceAudienceRead(ctx, c.WorkspaceID, c.ID)
+	if err != nil {
+		log.From(ctx).Warn("a connector's audiences were not read", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind, "err", err)
+		return
+	}
+	if last.ReadAt != nil && at.Sub(*last.ReadAt) < AudienceEvery && (last.ProblemAt == nil || !last.ProblemAt.After(*last.ReadAt)) {
+		return
+	}
 	audiences, err := kind.Audiences(ctx, src)
 	var problem string
 	if err != nil {
@@ -462,6 +487,9 @@ func (s *Syncer) storeAudiences(ctx context.Context, c *model.Connector, kind co
 		return
 	}
 	log.From(ctx).Warn("a connector's audiences were not stored", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind, "err", err)
+	if ctx.Err() != nil {
+		return
+	}
 	if err := s.DB.RecordSourceAudienceProblem(ctx, c.WorkspaceID, c.ID, at, problem); err != nil {
 		log.From(ctx).Warn("a connector's audience problem was not recorded", "workspace", c.WorkspaceID, "connector", c.ID, "err", err)
 	}

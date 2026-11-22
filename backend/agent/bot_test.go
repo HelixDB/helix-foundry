@@ -87,8 +87,9 @@ func TestABotsTurnReadsAsItsKeyAndOnlyProposes(t *testing.T) {
 		call("toolu_2", toolPrepare, `{"operation":"create_dashboard","target":"workspace:ws1","payload":{"name":"Pipeline"}}`),
 		say("An owner or admin will review both."))
 	h.runner.ProposalTTL = 24 * time.Hour
-	// A bot's reach is its own: a read of a person's access would fail it.
-	h.backend.accessErr = errors.New("no person here")
+	// A bot's reach is its own: the API reading its key's access (for the
+	// channels it reads, threadReach) as the whole view changes nothing.
+	h.backend.grantee = false
 	turn := botMessage("Rename the revenue dashboard and make me a pipeline dashboard")
 	h.db.turns = []*model.FoundryAgentTurn{turn}
 	_, err := h.runner.Run(context.Background(), turn)

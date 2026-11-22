@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -50,10 +51,12 @@ type accessStore struct {
 	teams      []foundrymodel.FoundryTeam
 	// workflowsOff are the principals whose Workflows permission is off.
 	workflowsOff []access.Principal
-	// sharing is what sources share with each reader, by email, and
-	// audiences the sources' permissions as owners see them.
-	sharing   map[string][]foundrymodel.FoundrySourceSharing
-	audiences []foundrymodel.FoundrySourceAudience
+	// sharing is what sources share with each reader, by email ("agent" for
+	// no one), audiences the sources' permissions as owners see them, and
+	// sourcePeople the sources' accounts, by email.
+	sharing      map[string][]foundrymodel.FoundrySourceSharing
+	audiences    []foundrymodel.FoundrySourceAudience
+	sourcePeople map[string][]foundrymodel.FoundrySourcePerson
 	// slackBot is the service credential ws-1's Slack install acts as in
 	// bot mode (slack_bot_test.go); empty for none. slackBotErr fails its
 	// read.
@@ -61,8 +64,21 @@ type accessStore struct {
 	slackBotErr error
 }
 
-func (s *accessStore) SourceSharingFor(_ context.Context, _, email string) ([]foundrymodel.FoundrySourceSharing, error) {
-	return s.sharing[email], nil
+func (s *accessStore) SourceSharingFor(_ context.Context, _ string, reader *connector.Email) ([]foundrymodel.FoundrySourceSharing, error) {
+	if reader == nil {
+		return s.sharing["agent"], nil
+	}
+	return s.sharing[reader.String()], nil
+}
+
+func (s *accessStore) SourcePeopleByEmail(_ context.Context, _ string, emails []connector.Email) (map[connector.Email][]foundrymodel.FoundrySourcePerson, error) {
+	out := map[connector.Email][]foundrymodel.FoundrySourcePerson{}
+	for _, e := range emails {
+		if people, ok := s.sourcePeople[e.String()]; ok && e != (connector.Email{}) {
+			out[e] = people
+		}
+	}
+	return out, nil
 }
 
 func (s *accessStore) ListSourceAudiences(context.Context, string) ([]foundrymodel.FoundrySourceAudience, error) {

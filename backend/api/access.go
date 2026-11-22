@@ -522,6 +522,11 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 	}
 	resp := &foundryv1.GetMyFoundryAccessResponse{Grantee: grantee, HasGrants: !grants.Empty(), OntologyIds: slices.Sorted(maps.Keys(loads)),
 		Workflows: workflows}
+	if grantee {
+		for _, item := range grants.VisibleItems() {
+			resp.SourceItems = append(resp.SourceItems, &foundryv1.FoundrySourceItem{ConnectorId: item.ConnectorID, ItemKey: item.Item})
+		}
+	}
 	for _, id := range resp.OntologyIds {
 		if loads[id].Partial {
 			resp.PartialOntologyIds = append(resp.PartialOntologyIds, id)

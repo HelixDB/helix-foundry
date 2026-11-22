@@ -471,7 +471,12 @@ var _ Audienced = (*slackKind)(nil)
 // refused with the scope to add; without groups:read the private channels
 // stay unknown, so only full readers read them.
 func (k *slackKind) Audiences(ctx context.Context, src Source) (Audiences, error) {
-	c := k.client(src.Secret)
+	return slackAudiences(ctx, k.client(src.Secret))
+}
+
+// slackAudiences reads who each channel c can see is shared with, as
+// slackKind.Audiences says, through a token's client or an install's.
+func slackAudiences(ctx context.Context, c *slackClient) (Audiences, error) {
 	auth, err := c.auth(ctx)
 	if err != nil {
 		return Audiences{}, err

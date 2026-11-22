@@ -7938,7 +7938,7 @@
         "NULL_VALUE"
       ],
       "default": "NULL_VALUE",
-      "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
+      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
     },
     "rpcStatus": {
       "type": "object",
@@ -12873,7 +12873,7 @@
         },
         "stale": {
           "type": "boolean",
-          "description": "The items are unknown: never read, or last read more than 7 days ago. Its\ndocuments and tables then go to full readers only."
+          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, as its tables always do."
         },
         "problem": {
           "$ref": "#/definitions/v1FoundrySourceAudienceProblem",
@@ -12888,13 +12888,24 @@
           "type": "integer",
           "format": "int32"
         },
-        "people": {
+        "grantees": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The people the source narrows: restricted members and the members of\nteams with grants, each matched to the source's people by their verified\nemail."
+        },
+        "unmatchedUserIds": {
           "type": "array",
           "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1FoundrySourcePerson"
+            "type": "string"
           },
-          "description": "The source's people, by email, sorted."
+          "description": "Those of them the source has no account for by that email, or who have\nnone: they read none of its items."
+        },
+        "guestUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Those the source knows as a guest: they read only the items that list\nthem."
         }
       },
       "description": "FoundrySourceAudience is who one connection's source shares its items with,\nas Foundry last read it at the end of a sync."
@@ -12912,17 +12923,17 @@
       },
       "description": "FoundrySourceAudienceProblem is why a read of a source's permissions\nfailed, worded for the customer, and when."
     },
-    "v1FoundrySourcePerson": {
+    "v1FoundrySourceItem": {
       "type": "object",
       "properties": {
-        "email": {
+        "connectorId": {
           "type": "string"
         },
-        "guest": {
-          "type": "boolean"
+        "itemKey": {
+          "type": "string"
         }
       },
-      "description": "FoundrySourcePerson is one of a source's people: their email, trimmed and\nlowercased as members are matched by it, and whether the source knows them\nas a guest, who reads only the items that list them."
+      "description": "FoundrySourceItem is one item of a connection's source: a Slack channel,\nby its id."
     },
     "v1FoundrySyncRules": {
       "type": "object",
@@ -13736,6 +13747,14 @@
         "workflows": {
           "type": "boolean",
           "description": "The caller may use the workflows of the ontologies it reads: always, for\na caller that isn't a grantee; for a grantee, while its Workflows\npermission is on."
+        },
+        "sourceItems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySourceItem"
+          },
+          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under."
         }
       }
     },

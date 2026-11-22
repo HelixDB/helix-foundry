@@ -1038,7 +1038,7 @@ func (u Unimplemented) FoundryLoadHoldings(context.Context, string, string) (acc
 	return access.Holdings{}, nil
 }
 
-func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, *access.Inputs) error {
+func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, *access.Inputs, []access.ItemRef) error {
 	u.unimplemented("SetFoundryQuestionSeen")
 	return nil
 }
@@ -1725,9 +1725,19 @@ func (u Unimplemented) ChargeFoundryAutomationSuggestions(context.Context, strin
 	return nil
 }
 
-func (u Unimplemented) SourceSharingFor(context.Context, string, string) ([]model.FoundrySourceSharing, error) {
+func (u Unimplemented) SourceSharingFor(context.Context, string, *connector.Email) ([]model.FoundrySourceSharing, error) {
 	u.unimplemented("SourceSharingFor")
 	return nil, nil
+}
+
+func (u Unimplemented) SourcePeopleByEmail(context.Context, string, []connector.Email) (map[connector.Email][]model.FoundrySourcePerson, error) {
+	u.unimplemented("SourcePeopleByEmail")
+	return nil, nil
+}
+
+func (u Unimplemented) SourceAudienceRead(context.Context, string, string) (model.FoundrySourceAudienceRead, error) {
+	u.unimplemented("SourceAudienceRead")
+	return model.FoundrySourceAudienceRead{}, nil
 }
 
 func (u Unimplemented) ListSourceAudiences(context.Context, string) ([]model.FoundrySourceAudience, error) {
