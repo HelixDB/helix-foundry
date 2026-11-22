@@ -180,6 +180,7 @@ func (s *mysqlDB) DeleteWorkspaceConnectors(ctx context.Context, workspaceID str
 //   - an event source's live send tokens are revoked, so none outlives it,
 //     and its batches wait for the sync worker's purge of deleted sources
 //     (ListFoundryEventBatchPurges). No other kind has either;
+//   - its source's audiences go (foundry_source_*);
 //   - a signed-in connector's account waits for the sync worker's purge,
 //     which deletes it from the broker (ListConnectorAccountPurges), unless
 //     another live connector reads with it.
@@ -202,6 +203,12 @@ func (s *mysqlDB) deleteConnector(ctx context.Context, workspaceID, id string) (
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_event_source_tokens SET revoked_at=NOW(6)
 WHERE connector_id=? AND workspace_id=? AND revoked_at IS NULL`, id, workspaceID); err != nil {
 		return nil, nil, fmt.Errorf("revoke connector %s send tokens: %w", id, err)
+	}
+	// What its source shares with whom goes with it.
+	for _, table := range []string{"foundry_source_item_members", "foundry_source_items", "foundry_source_people", "foundry_source_audiences"} {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE connector_id=?`, id); err != nil {
+			return nil, nil, fmt.Errorf("delete connector %s %s: %w", id, table, err)
+		}
 	}
 	// Its grants, and its tables', go with it; its sets' go below.
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND connector_id=?`, workspaceID, id); err != nil {

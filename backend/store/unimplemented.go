@@ -8,6 +8,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -1711,5 +1712,25 @@ func (u Unimplemented) FinishFoundryAutomationSuggestions(context.Context, strin
 
 func (u Unimplemented) ChargeFoundryAutomationSuggestions(context.Context, string, int64) error {
 	u.unimplemented("ChargeFoundryAutomationSuggestions")
+	return nil
+}
+
+func (u Unimplemented) SourceSharingFor(context.Context, string, string) ([]model.FoundrySourceSharing, error) {
+	u.unimplemented("SourceSharingFor")
+	return nil, nil
+}
+
+func (u Unimplemented) ListSourceAudiences(context.Context, string) ([]model.FoundrySourceAudience, error) {
+	u.unimplemented("ListSourceAudiences")
+	return nil, nil
+}
+
+func (u Unimplemented) ReplaceSourceAudiences(context.Context, string, string, time.Time, connector.Audiences) error {
+	u.unimplemented("ReplaceSourceAudiences")
+	return nil
+}
+
+func (u Unimplemented) RecordSourceAudienceProblem(context.Context, string, string, time.Time, string) error {
+	u.unimplemented("RecordSourceAudienceProblem")
 	return nil
 }

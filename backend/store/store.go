@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -198,6 +199,11 @@ type ReadStore interface {
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
 	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
+	// SourceSharingFor is what a reader, by email, reads of each connector
+	// whose source's permissions are stored; ListSourceAudiences is those
+	// permissions as owners and admins see them.
+	SourceSharingFor(ctx context.Context, workspaceID, email string) ([]model.FoundrySourceSharing, error)
+	ListSourceAudiences(ctx context.Context, workspaceID string) ([]model.FoundrySourceAudience, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)
 	ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error)
@@ -405,6 +411,9 @@ type Store interface {
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
 	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
 	RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error
+	// A sync's read of its source's permissions (connector.Audienced).
+	ReplaceSourceAudiences(ctx context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error
+	RecordSourceAudienceProblem(ctx context.Context, workspaceID, connectorID string, at time.Time, problem string) error
 	// The host's directory sync: teams that follow a directory's groups.
 	SyncFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID, provider string, groups []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error)
 	ReleaseFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID string) error
