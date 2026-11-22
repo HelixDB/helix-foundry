@@ -85,6 +85,21 @@ test("an owner links a Foundry on someone's computer, finishes its Add to Slack,
   await expect(links).toContainText("Linked by Ada Lovelace");
   await expect(links).toContainText("Not in Slack yet.");
 
+  // Cancelled on Slack's page, nothing says whose install it was: the page
+  // tells the install's owner to go back to it, not to add it here.
+  const cancelled = (await post("/__mock/relay/slack-install", {
+    linkId,
+  })) as { authorizeUrl: string };
+  await page.goto(cancelled.authorizeUrl);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page).toHaveURL(/\/slack\/installed$/);
+  await expect(
+    page.getByText(
+      "Adding it for the Foundry on your computer? Go back there and add it again from its Settings › Slack.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+
   // Its Add to Slack, through the door, is finished here and sent back.
   const { authorizeUrl } = (await post("/__mock/relay/slack-install", {
     linkId,

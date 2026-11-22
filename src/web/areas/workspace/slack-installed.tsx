@@ -30,6 +30,10 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // Foundry workspace has the Slack workspace, Helix is still disconnecting
 // it, an org-wide install, a permission left out, an expired state. Slack's
 // own ?error= is said in fixed words (slackReturnCopy), never echoed.
+// Neither a cancel (Slack's ?error= carries nothing of the install) nor a
+// refusal says whose install it was, so a failure also tells someone who
+// started from a Foundry on their computer to go back to it: Settings ›
+// Slack here would add Helix Foundry to this Helix workspace instead.
 
 type Phase =
   | { kind: "finishing" }
@@ -38,6 +42,10 @@ type Phase =
   | { kind: "leaving" }
   // This tab holds nothing to finish: opened again, or in another tab.
   | { kind: "lost" };
+
+/** Said under every failure: the way back for a local install's owner. */
+const LOCAL_WAY_BACK =
+  "Adding it for the Foundry on your computer? Go back there and add it again from its Settings › Slack.";
 
 export function SlackInstalledPage() {
   const navigate = useNavigate(),
@@ -128,7 +136,7 @@ export function SlackInstalledPage() {
           <EmptyState
             icon={TriangleAlert}
             title={phase.title}
-            text={phase.text}
+            text={`${phase.text} ${LOCAL_WAY_BACK}`}
             action={back}
           />
         </div>
@@ -136,7 +144,7 @@ export function SlackInstalledPage() {
         <EmptyState
           icon={MessageSquare}
           title="Nothing to finish here"
-          text="This tab didn’t add Helix Foundry to Slack, or it was finished already. Add it from Settings › Slack."
+          text={`This tab didn’t add Helix Foundry to Slack, or it was finished already. Add it from Settings › Slack. ${LOCAL_WAY_BACK}`}
           action={back}
         />
       )}
