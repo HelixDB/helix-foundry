@@ -201,8 +201,9 @@ func TestFoundryRebuild(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, model.FoundryGraphJobCancelled, cancelled.Status)
 		f.finish(t, "w2", "u", model.FoundryGraphJobFailed)
-		require.Equal(t, current, *f.ontologyNow(t).CurrentLoadID, "the person's load failed")
-		require.Nil(t, f.liveJob(t))
+		// The person's load failed, and the cancelled rebuild's load is being
+		// deleted: the next rebuild preempts that delete.
+		require.Equal(t, current, *f.ontologyNow(t).CurrentLoadID)
 
 		for i := range store.MaxFoundryRebuilds {
 			done, err := f.db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(fmt.Sprint("f", i)))
