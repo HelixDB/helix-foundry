@@ -1,11 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import { Bot, UserRound } from "lucide-react";
 import type {
   FoundrySlackInstall,
   FoundrySlackLink,
 } from "../../../shared/wfe";
+import { LOCAL } from "../../../shared/deployment";
 import { sentence } from "../../api";
 import {
   Button,
@@ -24,6 +29,9 @@ import { useWorkspace } from "../../ui";
 import { connectorKindsQuery } from "../data/data-api";
 import { ChoiceCard } from "./choice-card";
 import { initials } from "./people";
+import { relayQuery, type RelayView } from "./relay-api";
+import { RelayLinks } from "./relay-links";
+import { AllowedPeople, ApproveFromSlack, RelayPanel } from "./slack-local";
 import {
   SLACK_NOTICE,
   deleteSlackLink,
@@ -36,9 +44,10 @@ import {
   startSlackInstall,
   updateSlackMode,
   type SlackMode,
+  type SlackView,
 } from "./slack-api";
 
-// Settings › Slack (hosted only): Helix's own Slack app, Helix Foundry,
+// Settings › Slack: Helix's own Slack app, Helix Foundry,
 // which answers people in a Slack workspace as Founder: each linked Slack
 // user as their own Foundry user, or, in bot mode, anyone there as one
 // shared bot, a workspace key whose sources Settings › Access chooses and
@@ -50,10 +59,22 @@ import {
 // (owners and admins add it again), and, where a Slack connection may read
 // through it (the Slack kind's setup), the connection that does or the way
 // to make one, that no Slack admin or owner added it, and when Slack held
-// back the team's events.
+// back the team's events. Owners and admins also see the Foundry installs
+// on people's computers linked to the workspace through Helix's relay, and
+// revoke them (./relay-links.tsx).
+//
+// A local build's (./slack-local.tsx) reaches Slack only through Helix's
+// relay: its owner links it to Helix first, then adds the app, links their
+// own Slack account as the owner, chooses whether it approves changes from
+// Slack, and allows Slack users who asked to read and ask as them. It has
+// no shared bot.
 
 const PURPOSE =
   "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from your Foundry data as you.";
+const LOCAL_PURPOSE =
+  "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from this Foundry’s data, through Helix.";
+const LOCAL_NOTICE =
+  "Links in its answers open on the computer running this Foundry.";
 const BOT_PURPOSE =
   "Ask Founder from Slack: anyone in your Slack workspace mentions @Helix Foundry in a channel or messages it directly, and the shared bot answers from the sources you give it.";
 
@@ -75,7 +96,33 @@ const MODES = {
 
 export function SlackTab() {
   const { id } = useWorkspace();
-  const query = useQuery(slackQuery(id));
+  // A local build's link to Helix, which its Slack goes through.
+  const relay = useQuery({ ...relayQuery(id), enabled: LOCAL }).data,
+    linked = relay?.kind === "linked" ? relay : null;
+  const query = useQuery({
+    ...slackQuery(id),
+    // A local install learns of an install Helix finished from Helix's
+    // next answer to it, within half a minute.
+    refetchInterval: (q) =>
+      LOCAL && linked && q.state.data?.kind === "not_installed" ? 5000 : false,
+  });
+  if (!LOCAL) return <SlackSettings view={query} />;
+  return (
+    <>
+      <RelayPanel />
+      <SlackSettings view={query} linked={linked} />
+    </>
+  );
+}
+
+/** The app's panels as the workspace's Slack has it. */
+function SlackSettings({
+  view: query,
+  linked,
+}: {
+  view: UseQueryResult<SlackView>;
+  linked?: Extract<RelayView, { kind: "linked" }> | null;
+}) {
   const view = query.data;
   if (query.isPending)
     return (
@@ -107,15 +154,23 @@ export function SlackTab() {
       );
     case "not_offered":
       return (
-        <Panel title="Slack" subtitle={PURPOSE}>
-          <p className="wk-note">
-            Helix offers Helix Foundry for Slack to a few workspaces while Slack
-            reviews the app. Ask Helix to add this one.
-          </p>
-        </Panel>
+        <>
+          <Panel title="Slack" subtitle={PURPOSE}>
+            <p className="wk-note">
+              Helix offers Helix Foundry for Slack to a few workspaces while
+              Slack reviews the app. Ask Helix to add this one.
+            </p>
+          </Panel>
+          {!LOCAL && view.canManage && <RelayLinks />}
+        </>
       );
     case "not_installed":
-      return <NotInstalled canManage={view.canManage} />;
+      return (
+        <>
+          <NotInstalled canManage={view.canManage} blocked={LOCAL && !linked} />
+          {!LOCAL && view.canManage && <RelayLinks />}
+        </>
+      );
     case "installed":
       return (
         <>
@@ -124,12 +179,14 @@ export function SlackTab() {
             mode={view.mode}
             canManage={view.canManage}
           />
-          <IdentityMode
-            install={view.install}
-            mode={view.mode}
-            canManage={view.canManage}
-          />
-          {view.mode.kind === "bot" && (
+          {!LOCAL && (
+            <IdentityMode
+              install={view.install}
+              mode={view.mode}
+              canManage={view.canManage}
+            />
+          )}
+          {!LOCAL && view.mode.kind === "bot" && (
             <SharedBot bot={view.mode} canManage={view.canManage} />
           )}
           <YourAccount
@@ -138,15 +195,30 @@ export function SlackTab() {
             canManage={view.canManage}
             link={view.myLink}
           />
-          {view.canManage && <LinkedPeople mode={view.mode} />}
-          <p className="wk-note">{SLACK_NOTICE}</p>
+          {linked && <ApproveFromSlack relay={linked} />}
+          {view.canManage &&
+            (LOCAL ? <AllowedPeople /> : <LinkedPeople mode={view.mode} />)}
+          {!LOCAL && view.canManage && <RelayLinks />}
+          <p className="wk-note">
+            {SLACK_NOTICE}
+            {LOCAL && ` ${LOCAL_NOTICE}`}
+          </p>
         </>
       );
   }
 }
 
-/** Add to Slack for owners and admins; who adds it, for members. */
-function NotInstalled({ canManage }: { canManage: boolean }) {
+/**
+ * Add to Slack for owners and admins; who adds it, for members. A local
+ * install adds it through Helix: `blocked` until linked to Helix.
+ */
+function NotInstalled({
+  canManage,
+  blocked = false,
+}: {
+  canManage: boolean;
+  blocked?: boolean;
+}) {
   const { id } = useWorkspace();
   const [pending, setPending] = useState(false),
     [error, setError] = useState("");
@@ -163,18 +235,21 @@ function NotInstalled({ canManage }: { canManage: boolean }) {
   };
   return (
     <>
-      <Panel title="Slack" subtitle={PURPOSE}>
+      <Panel title="Slack" subtitle={LOCAL ? LOCAL_PURPOSE : PURPOSE}>
         <div className="wk-pad">
           {canManage ? (
             <>
               <p className="wk-note">
-                Slack asks you to allow Helix Foundry in your Slack workspace,
-                then brings you back here. Each person then links their own
-                Slack account from a message the app sends them.
+                {blocked
+                  ? "Link this Foundry to Helix first: Slack reaches it through Helix."
+                  : LOCAL
+                    ? "Slack asks you to allow Helix Foundry in your Slack workspace, then Helix brings you back here. Then message it in Slack from that account: it sends you a link that makes it this Foundry’s owner there. Added it already? It shows here within half a minute of Helix passing it on."
+                    : "Slack asks you to allow Helix Foundry in your Slack workspace, then brings you back here. Each person then links their own Slack account from a message the app sends them."}
               </p>
               <Button
                 variant="primary"
                 pending={pending}
+                disabled={blocked}
                 onClick={() => void add()}
               >
                 Add to Slack
@@ -250,7 +325,9 @@ function Installed({
   return (
     <Panel
       title="Slack"
-      subtitle={mode.kind === "bot" ? BOT_PURPOSE : PURPOSE}
+      subtitle={
+        LOCAL ? LOCAL_PURPOSE : mode.kind === "bot" ? BOT_PURPOSE : PURPOSE
+      }
       actions={
         canManage && (
           <>
@@ -355,7 +432,7 @@ function Installed({
       {confirm && (
         <ConfirmDialog
           title={`Disconnect ${team}?`}
-          description={`Helix Foundry is removed from the Slack workspace and stops answering there. Everyone’s links are deleted, and so are the Slack threads it answered in Founder.${mode.kind === "bot" ? " The shared bot’s key is revoked." : ""}`}
+          description={`Helix Foundry is removed from the Slack workspace and stops answering there. ${LOCAL ? "Your link and the people you allowed are" : "Everyone’s links are"} deleted, and so are the Slack threads it answered in Founder.${mode.kind === "bot" ? " The shared bot’s key is revoked." : ""}`}
           confirmLabel="Disconnect"
           tone="danger"
           pending={pending}
@@ -567,7 +644,13 @@ function YourAccount({
             <p className="wk-note">
               Linked
               {link.createdAt ? ` on ${formatDate(link.createdAt, false)}` : ""}
-              {mode.kind === "per_person" ? (
+              {LOCAL ? (
+                <>
+                  : Helix Foundry answers your Slack account (
+                  <span className="hf-mono">{link.slackUserId}</span>) as this
+                  Foundry’s owner.
+                </>
+              ) : mode.kind === "per_person" ? (
                 <>
                   : Helix Foundry answers your Slack account (
                   <span className="hf-mono">{link.slackUserId}</span>) as you.
@@ -586,6 +669,12 @@ function YourAccount({
               Unlink
             </Button>
           </>
+        ) : LOCAL ? (
+          <p className="wk-note">
+            Not linked. Message @Helix Foundry in {team} from the Slack account
+            that added it: it sends you a link that makes that account this
+            Foundry’s owner in Slack.
+          </p>
         ) : mode.kind === "bot" && !canManage ? (
           <p className="wk-note">
             Not linked, and no need: the shared bot answers anyone in {team}.
@@ -675,7 +764,10 @@ function UnlinkDialog({
 /** Who is linked, for owners and admins, each with Unlink. */
 function LinkedPeople({ mode }: { mode: SlackMode }) {
   const { id, user } = useWorkspace();
-  const links = useQuery(slackLinksQuery(id));
+  const links = useQuery({
+    ...slackLinksQuery(id),
+    select: (r) => r.links,
+  });
   const [unlinking, setUnlinking] = useState<FoundrySlackLink | null>(null);
   return (
     <Panel

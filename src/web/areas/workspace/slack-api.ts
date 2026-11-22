@@ -1,5 +1,6 @@
 import type {
   FoundrySlack,
+  FoundrySlackAccessRequest,
   FoundrySlackInstall,
   FoundrySlackLink,
   FoundrySlackLinkRefusal,
@@ -14,11 +15,12 @@ import type {
 import { trackBeforeLeaving, trackEvent } from "../../analytics";
 import { api, ApiError } from "../../api";
 
-// Settings › Slack's WFE calls and words (hosted only): Helix's own Slack
-// app, Helix Foundry, which answers people in one Slack workspace as
-// Founder, each linked Slack user as their own Foundry user. Owners and
-// admins add it by Slack's OAuth and disconnect it; each person links their
-// own Slack account from the one-time link the app sends them.
+// Settings › Slack's WFE calls and words: Helix's own Slack app, Helix
+// Foundry, which answers people in one Slack workspace as Founder, each
+// linked Slack user as their own Foundry user. Owners and admins add it by
+// Slack's OAuth and disconnect it; each person links their own Slack
+// account from the one-time link the app sends them. A local install does
+// the same through Helix's relay (./relay-api.ts).
 
 const path = (ws: string) =>
   `/v1/workspaces/${encodeURIComponent(ws)}/foundry/slack`;
@@ -42,6 +44,13 @@ export const SLACK_REASONS = [
   "FOUNDRY_SLACK_LINK_EXPIRED",
   "FOUNDRY_SLACK_LINK_REFUSED",
   "FOUNDRY_SLACK_BOT_HOSTED_ONLY",
+  // A local install's Slack, through Helix's relay.
+  "FOUNDRY_SLACK_LOCAL_ONLY",
+  "FOUNDRY_SLACK_OWNER_LINK",
+  "FOUNDRY_RELAY_DISABLED",
+  "FOUNDRY_RELAY_LOCAL_ONLY",
+  "FOUNDRY_RELAY_LINK_EXPIRED",
+  "FOUNDRY_RELAY_NOT_LINKED",
 ] as const;
 export type SlackReason = (typeof SLACK_REASONS)[number];
 
@@ -169,11 +178,19 @@ export const slackQuery = (ws: string) => ({
   },
 });
 
-/** Who is linked, oldest first: owners and admins only. */
+/**
+ * Who is linked, oldest first, and, on a local install, the Slack users who
+ * asked to use it, oldest first: owners and admins only.
+ */
 export const slackLinksQuery = (ws: string) => ({
   queryKey: [...slackKey(ws), "links"],
-  queryFn: async () =>
-    (await api<ListFoundrySlackLinksResponse>(path(ws) + "/links")).links || [],
+  queryFn: async (): Promise<{
+    links: FoundrySlackLink[];
+    requests: FoundrySlackAccessRequest[];
+  }> => {
+    const r = await api<ListFoundrySlackLinksResponse>(path(ws) + "/links");
+    return { links: r.links || [], requests: r.requests || [] };
+  },
 });
 
 /**
@@ -309,16 +326,42 @@ export const installFailed = (reason: SlackInstallFailure) =>
   trackEvent("slack_install_failed", { reason });
 
 /**
+ * The origin of a local install's Settings › Slack on this computer, as
+ * Helix accepts it (backend model.ParseRelayRedirect):
+ * http://localhost[:port]/settings/slack or http://127.0.0.1[:port]/...,
+ * nothing else in it; null for anything else. Helix sends the browser back there from linking the install
+ * (./relay-api.ts) and from adding the app for it.
+ *
+ * @example
+ * relayRedirect("http://localhost:3000/settings/slack"); // "http://localhost:3000"
+ * relayRedirect("http://localhost.evil.example/settings/slack"); // null
+ */
+export function relayRedirect(uri: string | undefined): string | null {
+  const m =
+    /^http:\/\/(localhost|127\.0\.0\.1)(?::([1-9][0-9]{0,4}))?\/settings\/slack$/.exec(
+      uri || "",
+    );
+  if (!m || Number(m[2] ?? 1) > 65535) return null;
+  return uri!.slice(0, -"/settings/slack".length);
+}
+
+/**
  * Finishes adding the app with what Slack returned: the workspace's Slack
- * after it, which names the workspace the state was for, and where the
- * install was started from (slackReturnTo).
+ * after it, which names the workspace the state was for, where the install
+ * was started from (slackReturnTo), and, for one a linked local install
+ * started, that install's own Settings › Slack (relayRedirect) to send
+ * the browser to instead.
  */
 export async function finishSlackInstall(
   code: string,
   state: string,
-): Promise<{ slack: FoundrySlack; returnPath: string }> {
+): Promise<{
+  slack: FoundrySlack;
+  returnPath: string;
+  returnTo: string | null;
+}> {
   try {
-    const { slack, returnPath } = await api<FoundrySlackResponse>(
+    const { slack, returnPath, returnTo } = await api<FoundrySlackResponse>(
       "/v1/foundry/slack:finish-install",
       { code, state },
     );
@@ -326,6 +369,7 @@ export async function finishSlackInstall(
     return {
       slack: slack || {},
       returnPath: slackReturnTo(returnPath) || "/settings/slack",
+      returnTo: relayRedirect(returnTo) ? returnTo! : null,
     };
   } catch (e) {
     installFailed(installFailure(e));

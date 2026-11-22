@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Link2Off, MessageSquare } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import { sentence } from "../../api";
 import { tabStorage } from "../data/sign-ins";
 import {
@@ -31,7 +32,9 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // layout's SLACK_RETURN_BOOT), so a sign-in on the way keeps it and it never
 // reaches a server's logs or the tracker. The page says who would act as
 // whom, from a preview that spends nothing, and Link is offered only when
-// the Slack account's confirmed email is the caller's.
+// the Slack account's confirmed email is the caller's. On a local install
+// the link makes the Slack account that added the app this Foundry's owner
+// in Slack, with no email to compare (Helix keeps Slack's emails).
 
 export function SlackLinkPage() {
   const { id, name, user, notify } = useWorkspace(),
@@ -73,7 +76,11 @@ export function SlackLinkPage() {
     <EmptyState
       icon={CircleCheck}
       title="Your Slack account is linked"
-      text="Helix Foundry now answers you in Slack as you. Go back to Slack and ask again."
+      text={
+        LOCAL
+          ? "Helix Foundry now answers you in Slack as this Foundry’s owner. Go back to Slack and ask again."
+          : "Helix Foundry now answers you in Slack as you. Go back to Slack and ask again."
+      }
       action={settings}
     />
   ) : !token ? (
@@ -111,12 +118,20 @@ export function SlackLinkPage() {
             <p data-replay-block>
               Slack user <strong>{slackUser || p.slackUserId}</strong>
               {p.slackEmailMasked ? ` (${p.slackEmailMasked})` : ""} in{" "}
-              <strong>{p.teamName || "Slack"}</strong> will act as you (
-              <strong>{user.email}</strong>) in <strong>{name}</strong>.
+              <strong>{p.teamName || "Slack"}</strong> will act as{" "}
+              {LOCAL ? (
+                "this Foundry’s owner"
+              ) : (
+                <>
+                  you (<strong>{user.email}</strong>)
+                </>
+              )}{" "}
+              in <strong>{name}</strong>.
             </p>
             <p className="wk-note">
-              Helix Foundry then answers that Slack account as you, with what
-              you can see and do in Foundry.
+              {LOCAL
+                ? "Helix Foundry then answers that Slack account as you, and it may approve changes from Slack while Settings › Slack allows it."
+                : "Helix Foundry then answers that Slack account as you, with what you can see and do in Foundry."}
             </p>
             {refusal && (
               <p role="alert" className="hf-form-error">

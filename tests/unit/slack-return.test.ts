@@ -157,6 +157,127 @@ describe("Slack's return from adding the app", () => {
   });
 });
 
+const STATE = "s".repeat(16),
+  CHALLENGE = "c".repeat(43),
+  REDIRECT = "http://localhost:3000/settings/slack",
+  RELAY_QUERY = `?${new URLSearchParams({
+    state: STATE,
+    code_challenge: CHALLENGE,
+    redirect_uri: REDIRECT,
+    name: "Ada’s laptop",
+  })}`;
+
+describe("a local install's request to be linked", () => {
+  it("keeps the request, and bares the URL", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    expect(
+      captureSlackReturn(at("/relay/link", RELAY_QUERY), storage, replace, NOW),
+    ).toBe(true);
+    expect(replace).toHaveBeenCalledWith("/relay/link");
+    expect(readSlackReturn(storage, "relay_link", NOW)).toEqual({
+      kind: "relay_link",
+      state: STATE,
+      codeChallenge: CHALLENGE,
+      redirectUri: REDIRECT,
+      name: "Ada’s laptop",
+      at: NOW,
+    });
+  });
+  it("keeps nothing of one whose state or challenge no install makes", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    captureSlackReturn(at("/relay/link", RELAY_QUERY), storage, vi.fn(), NOW);
+    for (const [key, value] of [
+      ["state", "short"],
+      ["state", "s".repeat(257)],
+      ["state", "s".repeat(15) + "/"],
+      ["code_challenge", "c".repeat(42)],
+      ["code_challenge", "c".repeat(42) + "="],
+      ["redirect_uri", ""],
+      ["name", ""],
+      ["name", "n".repeat(513)],
+    ] as const) {
+      const q = new URLSearchParams(RELAY_QUERY);
+      q.set(key, value);
+      expect(
+        captureSlackReturn(at("/relay/link", `?${q}`), storage, replace, NOW),
+        `${key}=${value}`,
+      ).toBe(false);
+      expect(replace).toHaveBeenLastCalledWith("/relay/link");
+      expect(readSlackReturn(storage, "relay_link", NOW)).toBeNull();
+    }
+  });
+  it("is read back only as written", () => {
+    const good = {
+      kind: "relay_link",
+      state: STATE,
+      codeChallenge: CHALLENGE,
+      redirectUri: REDIRECT,
+      name: "n",
+      at: NOW,
+    };
+    for (const value of [
+      { ...good, state: "short" },
+      { ...good, codeChallenge: "c" },
+      { ...good, redirectUri: 1 },
+      { ...good, name: "" },
+    ]) {
+      const storage = new Memory();
+      storage.setItem("foundry.slack.return.v1", JSON.stringify(value));
+      expect(readSlackReturn(storage, "relay_link", NOW)).toBeNull();
+    }
+  });
+});
+
+describe("Helix's answer back on the local install", () => {
+  it("keeps the code and state, and bares Settings › Slack", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    expect(
+      captureSlackReturn(
+        at("/settings/slack", `?code=c1&state=${STATE}`),
+        storage,
+        replace,
+        NOW,
+      ),
+    ).toBe(true);
+    expect(replace).toHaveBeenCalledWith("/settings/slack");
+    expect(
+      readSlackReturn(storage, ["relay_return", "relay_error"], NOW),
+    ).toEqual({ kind: "relay_return", code: "c1", state: STATE, at: NOW });
+    // Slack's install return reads nothing of it.
+    expect(readSlackReturn(storage, "installed", NOW)).toBeNull();
+  });
+  it("keeps a cancel, and nothing of a malformed answer", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    expect(
+      captureSlackReturn(
+        at("/settings/slack", `?error=access_denied&state=${STATE}`),
+        storage,
+        replace,
+        NOW,
+      ),
+    ).toBe(true);
+    expect(readSlackReturn(storage, "relay_error", NOW)).toEqual({
+      kind: "relay_error",
+      error: "access_denied",
+      at: NOW,
+    });
+    for (const search of ["?code=c1", "?state=s", "?error=Not%20yours"]) {
+      expect(
+        captureSlackReturn(at("/settings/slack", search), storage, replace),
+        search,
+      ).toBe(false);
+      expect(replace).toHaveBeenLastCalledWith("/settings/slack");
+      expect(
+        readSlackReturn(storage, ["relay_return", "relay_error"], NOW),
+      ).toBeNull();
+    }
+  });
+});
+
 describe("Slack's error", () => {
   it("is kept only as one of Slack's codes: a forged sentence is nothing", () => {
     const storage = new Memory(),
@@ -235,6 +356,24 @@ describe("the boot script in <head>", () => {
       state: "s1",
     });
   });
+  it("moves a link request, and Helix's answer, out of the URL", () => {
+    const asked = boot(`/relay/link${RELAY_QUERY}`);
+    expect(asked.history.replaceState).toHaveBeenCalledWith(
+      { idx: 1 },
+      "",
+      "/relay/link",
+    );
+    expect(readSlackReturn(asked.storage, "relay_link")?.name).toBe(
+      "Ada’s laptop",
+    );
+    const back = boot(`/settings/slack?code=c1&state=${STATE}`);
+    expect(back.history.replaceState).toHaveBeenCalledWith(
+      { idx: 1 },
+      "",
+      "/settings/slack",
+    );
+    expect(readSlackReturn(back.storage, "relay_return")?.code).toBe("c1");
+  });
   it("leaves every other page alone, and never throws", () => {
     const { storage, history } = boot("/ask?code=c#t=x");
     expect(history.replaceState).not.toHaveBeenCalled();
@@ -248,9 +387,13 @@ describe("anything else", () => {
     const storage = new Memory(),
       replace = vi.fn();
     for (const url of [
-      at("/settings/slack", "?code=c&state=s", `#t=${TOKEN}`),
+      // Settings › Slack's own links: no code, state or error.
+      at("/settings/slack", "?workspace=ws_acme", `#t=${TOKEN}`),
+      at("/settings/slack"),
       at("/slack/linked", "", `#t=${TOKEN}`),
       at("/connect/callback", "?code=c&state=s"),
+      at("/relay/link"),
+      at("/relay/links", "?state=s"),
     ])
       expect(captureSlackReturn(url, storage, replace)).toBe(false);
     expect(replace).not.toHaveBeenCalled();

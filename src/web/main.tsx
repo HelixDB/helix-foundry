@@ -96,7 +96,9 @@ const data = () => import("./areas/data"),
   workspace = () => import("./areas/workspace");
 const SettingsRoutes = area(workspace, "SettingsRoutes"),
   // Slack's return from adding Helix Foundry, and its link to a person.
-  SlackRoutes = area(workspace, "SlackRoutes");
+  SlackRoutes = area(workspace, "SlackRoutes"),
+  // Helix's page that links a local install to a workspace (hosted).
+  RelayRoutes = area(workspace, "RelayRoutes");
 // Data, Ontology, Dashboards and Automations (Workflows, at /workflows) own
 // their whole URL prefix, and the
 // Ontology area also the Explorer's and Ask's: each *Routes component holds
@@ -201,7 +203,8 @@ function WorkspaceRoutes({
       <Route path="/workflows/*" element={offered(<AutomationsRoutes />)} />
       <Route path="/automations/*" element={<ToWorkflows />} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
-      {!LOCAL && <Route path="/slack/*" element={<SlackRoutes />} />}
+      <Route path="/slack/*" element={<SlackRoutes />} />
+      {!LOCAL && <Route path="/relay/*" element={<RelayRoutes />} />}
       <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="/connect/github" element={<ConnectGitHub />} />
       <Route path="*" element={offered(<NotFound />)} />

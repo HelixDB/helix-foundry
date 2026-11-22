@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   FinishFoundrySlackInstallRequest,
+  FoundrySlackAccessRequest,
+  FoundrySlackAccessResponse,
   FoundrySlack,
   FoundrySlackInstall,
   FoundrySlackLink,
@@ -11,6 +13,7 @@ import type {
   FoundrySlackResponse,
   ListFoundrySlackLinksResponse,
   PreviewFoundrySlackLinkResponse,
+  SetFoundrySlackAccessRequest,
   StartFoundrySlackInstallRequest,
   StartFoundrySlackInstallResponse,
   UpdateFoundrySlackRequest,
@@ -30,6 +33,7 @@ import {
 } from "../state";
 import { liveKey, makeBotKey, revokeKey } from "./access";
 import { foundryPrecondition } from "./ai";
+import { relayLinked } from "./relay";
 
 // Helix Foundry for Slack as the backend serves it (backend api/slack.go),
 // in memory: one install per workspace, the OAuth states an install is
@@ -51,7 +55,7 @@ import { foundryPrecondition } from "./ai";
 // `slackTeamTaken: true` has another Foundry workspace hold the Slack
 // workspace an install finishes in (FOUNDRY_SLACK_TEAM_TAKEN), and
 // `slackEmailMismatch: true` makes every Slack user's email someone else's
-// (EMAIL_MISMATCH). A local API refuses every route, as the backend does.
+// (EMAIL_MISMATCH). A local API serves them through Helix's relay (below).
 //
 // The Slack data connector on the app (foundry.slack.feed, on here, but on
 // prod's stamp, unless `slackFeedOff: true`; ./data.ts binds connections to the install): an
@@ -72,6 +76,21 @@ import { foundryPrecondition } from "./ai";
 // characters; PER_PERSON revokes it with its grants, as a disconnect does.
 // The bot is `broken` once its key is revoked in Access, or with
 // `slackBotBroken: true` (its last turn refused, as the backend reads it).
+//
+// A local API (MOCK_LOCAL_TOKEN) serves the same routes as a local install
+// does, through Helix's relay (./relay.ts): Start needs the install linked
+// to Helix (FOUNDRY_RELAY_NOT_LINKED), and the mock Slack page's Allow
+// stands for Helix finishing the install, going back to the install's
+// Settings › Slack (FOUNDRY_ORIGIN) with no /slack/installed of its own.
+// The Slack account that added it (U0ADA) is the owner: only it gets a
+// link, which links it as the owner with no email to compare (another Slack
+// user's link token is FOUNDRY_SLACK_LINK_EXPIRED, as the bot never sends
+// one). Anyone else who messages the app asks to use it: POST
+// /__mock/slack/access-request { slackUser, name, workspaceId? }, which the
+// owner allows read-only or drops (PUT .../links/{slackUserId}/access).
+// There is no bot mode (FOUNDRY_SLACK_BOT_HOSTED_ONLY). Unlinking from Helix
+// forgets the install, its links and requests (relayUnlinked). Hosted Helix
+// refuses PUT .../access with FOUNDRY_SLACK_LOCAL_ONLY.
 
 type Knobs = {
   slackAvailable?: boolean;
@@ -104,7 +123,15 @@ type Install = Required<
     | "updatedAt"
   >
 >;
-type Link = { slackUserId: string; userId: string; createdAt: string };
+type Link = {
+  slackUserId: string;
+  userId: string;
+  createdAt: string;
+  // A local install's Slack user the owner allowed: reads and asks as them.
+  readOnly?: boolean;
+};
+/** The Slack account that adds the app on a local install: its owner. */
+export const LOCAL_INSTALLER = "U0ADA";
 type LinkToken = {
   workspaceId: string;
   slackUserId: string;
@@ -129,6 +156,13 @@ const state = {
       returnPath: string;
       expires: number;
       used: boolean;
+      // A local install's, started through Helix's relay.
+      relayed?: boolean;
+      // Hosted: one a linked local install started through Foundry's door
+      // (startRelayedSlackInstall): Finish records the Slack team on the
+      // link, not the workspace, and sends the browser here.
+      returnTo?: string;
+      onInstalled?: (teamId: string, teamName: string) => void;
     }
   >(),
   // The Slack workspace each Foundry workspace was last disconnected from,
@@ -139,8 +173,12 @@ const state = {
   // Codes the mock Slack page gave, by code: the state they answer.
   codes: new Map<string, string>(),
   tokens: new Map<string, LinkToken>(),
+  // A local install's Slack users who asked to use it, by workspace,
+  // oldest first.
+  requests: new Map<string, Required<FoundrySlackAccessRequest>[]>(),
 };
 onReset(() => {
+  state.requests.clear();
   state.installs.clear();
   state.links.clear();
   state.states.clear();
@@ -244,11 +282,6 @@ function slackMember(
   workspaceId: string,
   userId: string,
 ): Membership | MockReply {
-  if (LOCAL_TOKEN)
-    return fail(
-      "FAILED_PRECONDITION",
-      "Slack reaches a local install through Helix's relay",
-    );
   if (knobs.slackAvailable === false)
     return foundryPrecondition(
       workspaceId,
@@ -265,6 +298,9 @@ const linkOf = (l: Link): FoundrySlackLink => {
     userId: l.userId,
     userName: user ? displayName(user) : l.userId,
     createdAt: l.createdAt,
+    access: l.readOnly
+      ? "FOUNDRY_SLACK_LINK_ACCESS_READ"
+      : "FOUNDRY_SLACK_LINK_ACCESS_FULL",
   };
 };
 
@@ -272,7 +308,7 @@ const linkOf = (l: Link): FoundrySlackLink => {
 function view(m: Membership): FoundrySlack {
   const install = state.installs.get(m.workspaceId),
     mine = (state.links.get(m.workspaceId) || []).find(
-      (l) => l.userId === m.userId,
+      (l) => l.userId === m.userId && !l.readOnly,
     );
   return {
     workspaceId: m.workspaceId,
@@ -281,6 +317,65 @@ function view(m: Membership): FoundrySlack {
     install: slackInstallOf(m.workspaceId) || null,
     myLink: install && mine ? linkOf(mine) : null,
   };
+}
+
+/**
+ * Records the workspace's install as `userId` finishes it: the same Slack
+ * workspace again is a reinstall, which keeps its links.
+ */
+function install(workspaceId: string, userId: string) {
+  const ws = db.workspaces.get(workspaceId),
+    user = db.users.get(userId),
+    at = now(),
+    was = state.installs.get(workspaceId);
+  state.installs.set(workspaceId, {
+    teamId: was?.teamId || "T0" + workspaceId.toUpperCase().slice(3, 9),
+    teamName: `${ws?.displayName || ws?.slug || "Mock"} Slack`,
+    botUserId: "U0HELIXBOT",
+    installedByUserId: userId,
+    installedByName: user ? displayName(user) : userId,
+    createdAt: was?.createdAt || at,
+    updatedAt: at,
+  });
+}
+
+/**
+ * Starts adding the app for a linked local install, as the door's
+ * /v1/relay/slack-install does for the link's creator: Slack's page, which
+ * returns to the site's /slack/installed; Finish then calls `installed`
+ * with the Slack team and sends the browser to `returnTo`.
+ */
+export function startRelayedSlackInstall(
+  workspaceId: string,
+  userId: string,
+  returnTo: string,
+  installed: (teamId: string, teamName: string) => void,
+): string {
+  const s = randomBytes(32).toString("base64url");
+  state.states.set(s, {
+    workspaceId,
+    userId,
+    returnPath: "",
+    expires: Date.now() + STATE_TTL_MS,
+    used: false,
+    returnTo,
+    onInstalled: installed,
+  });
+  const url = new URL("/mock/slack/authorize", process.env.MOCK_ORIGIN);
+  url.searchParams.set("state", s);
+  return url.toString();
+}
+
+/**
+ * Forgets a local install's Slack, as unlinking it from Helix does
+ * (./relay.ts): its installs, their links, requests, tokens and states.
+ */
+export function relayUnlinked() {
+  state.installs.clear();
+  state.links.clear();
+  state.requests.clear();
+  state.tokens.clear();
+  state.states.clear();
 }
 
 /** What may stop an install, for an owner or admin, now. */
@@ -304,6 +399,8 @@ function installRefusal(m: Membership): MockReply | null {
 /** Why the token's Slack user can't be linked to `email`, if they can't. */
 function refusalFor(t: LinkToken, email: string): FoundrySlackLinkRefusal {
   if (!t.member) return "FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER";
+  // A local install's owner, the app's installer: no email to compare.
+  if (LOCAL_TOKEN) return "FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED";
   if (
     knobs.slackEmailMismatch ||
     t.email.trim().toLowerCase() !== email.trim().toLowerCase()
@@ -334,7 +431,9 @@ function liveToken(
     !token ||
     token.workspaceId !== workspaceId ||
     token.used ||
-    token.expires < Date.now()
+    token.expires < Date.now() ||
+    // A local install links only the Slack account that added the app.
+    (LOCAL_TOKEN && token.slackUserId !== LOCAL_INSTALLER)
   )
     return foundryPrecondition(
       workspaceId,
@@ -397,6 +496,12 @@ export const slackRoutes: MockRoute[] = [
           "FOUNDRY_SLACK_INSTALLED",
           "this workspace is connected to Slack already; disconnect it first",
         );
+      if (LOCAL_TOKEN && !relayLinked())
+        return foundryPrecondition(
+          m.workspaceId,
+          "FOUNDRY_RELAY_NOT_LINKED",
+          "link this Foundry to Helix first: Slack reaches it through Helix",
+        );
       const s = randomBytes(32).toString("base64url");
       state.states.set(s, {
         workspaceId: m.workspaceId,
@@ -404,6 +509,7 @@ export const slackRoutes: MockRoute[] = [
         returnPath,
         expires: Date.now() + STATE_TTL_MS,
         used: false,
+        relayed: !!LOCAL_TOKEN,
       });
       const url = new URL("/mock/slack/authorize", process.env.MOCK_ORIGIN);
       url.searchParams.set("client_id", "mock-client");
@@ -464,19 +570,17 @@ export const slackRoutes: MockRoute[] = [
           "FOUNDRY_SLACK_TEAM_TAKEN",
           "this Slack workspace is connected to another Foundry workspace: disconnect it there, or a Slack admin can remove Helix Foundry in Slack's app settings",
         );
-      const ws = db.workspaces.get(m.workspaceId),
-        at = now(),
-        was = state.installs.get(m.workspaceId);
-      // The same Slack workspace again is a reinstall, which keeps its links.
-      state.installs.set(m.workspaceId, {
-        teamId: was?.teamId || "T0" + m.workspaceId.toUpperCase().slice(3, 9),
-        teamName: `${ws?.displayName || ws?.slug || "Mock"} Slack`,
-        botUserId: "U0HELIXBOT",
-        installedByUserId: user.id,
-        installedByName: displayName(user),
-        createdAt: was?.createdAt || at,
-        updatedAt: at,
-      });
+      if (s.returnTo) {
+        s.onInstalled?.(
+          "T0LOCAL" + req.state.slice(0, 4).toUpperCase(),
+          "Laptop Slack",
+        );
+        return ok({
+          slack: view(m),
+          returnTo: s.returnTo,
+        } satisfies FoundrySlackResponse);
+      }
+      install(m.workspaceId, user.id);
       return ok({
         slack: view(m),
         returnPath: s.returnPath,
@@ -500,6 +604,7 @@ export const slackRoutes: MockRoute[] = [
       });
       state.installs.delete(m.workspaceId);
       state.links.delete(m.workspaceId);
+      state.requests.delete(m.workspaceId);
       const bot = state.bots.get(m.workspaceId);
       if (bot) revokeKey(m.workspaceId, bot);
       state.bots.delete(m.workspaceId);
@@ -525,6 +630,12 @@ export const slackRoutes: MockRoute[] = [
       const install = state.installs.get(m.workspaceId);
       if (!install)
         return fail("NOT_FOUND", "this workspace isn't connected to Slack");
+      if (LOCAL_TOKEN && mode === "FOUNDRY_SLACK_IDENTITY_MODE_BOT")
+        return foundryPrecondition(
+          m.workspaceId,
+          "FOUNDRY_SLACK_BOT_HOSTED_ONLY",
+          "the shared bot is Helix's: a Foundry on your computer answers as its owner",
+        );
       const bot = state.bots.get(m.workspaceId);
       if (mode === "FOUNDRY_SLACK_IDENTITY_MODE_BOT" && !bot) {
         // service_credentials.name holds 64 characters.
@@ -555,6 +666,7 @@ export const slackRoutes: MockRoute[] = [
       if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
       return ok({
         links: (state.links.get(m.workspaceId) || []).map(linkOf),
+        requests: state.requests.get(m.workspaceId) || [],
       } satisfies ListFoundrySlackLinksResponse);
     },
   },
@@ -576,9 +688,12 @@ export const slackRoutes: MockRoute[] = [
         slackUserId: t.slackUserId,
         slackName: t.name,
         slackHandle: t.handle,
-        slackEmailMasked: maskEmail(
-          knobs.slackEmailMismatch ? "someone@elsewhere.example" : t.email,
-        ),
+        // Helix's relay keeps Slack's emails from a local install.
+        slackEmailMasked: LOCAL_TOKEN
+          ? ""
+          : maskEmail(
+              knobs.slackEmailMismatch ? "someone@elsewhere.example" : t.email,
+            ),
         matchesYou: refusal === "FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED",
         refusal,
       } satisfies PreviewFoundrySlackLinkResponse);
@@ -623,10 +738,18 @@ export const slackRoutes: MockRoute[] = [
       };
       state.links.set(m.workspaceId, [
         ...(state.links.get(m.workspaceId) || []).filter(
-          (l) => l.slackUserId !== t.slackUserId && l.userId !== user.id,
+          (l) =>
+            l.slackUserId !== t.slackUserId &&
+            (l.userId !== user.id || l.readOnly),
         ),
         link,
       ]);
+      state.requests.set(
+        m.workspaceId,
+        (state.requests.get(m.workspaceId) || []).filter(
+          (r) => r.slackUserId !== t.slackUserId,
+        ),
+      );
       return ok({ link: linkOf(link) } satisfies FoundrySlackLinkResponse);
     },
   },
@@ -649,7 +772,110 @@ export const slackRoutes: MockRoute[] = [
       return ok({});
     },
   },
+  {
+    method: "PUT",
+    path: `${BASE}/links/{slackUserId}/access`,
+    handle: ({ params, body, principal: { user } }) => {
+      const ws = params.workspaceId!,
+        slackUser = params.slackUserId!,
+        access = (body as Partial<SetFoundrySlackAccessRequest> | undefined)
+          ?.access;
+      if (!/^[UW][A-Z0-9]{2,31}$/.test(slackUser))
+        return fail(
+          "INVALID_ARGUMENT",
+          "workspace_id and slack_user_id are required",
+        );
+      if (
+        access !== "FOUNDRY_SLACK_LINK_ACCESS_READ" &&
+        access !== "FOUNDRY_SLACK_LINK_ACCESS_NONE"
+      )
+        return fail("INVALID_ARGUMENT", "access is READ or NONE");
+      const m = slackMember(ws, user.id);
+      if (isReply(m)) return m;
+      if (!LOCAL_TOKEN)
+        return foundryPrecondition(
+          ws,
+          "FOUNDRY_SLACK_LOCAL_ONLY",
+          "on Helix each person links their own Slack account",
+        );
+      if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
+      if (!state.installs.has(ws))
+        return fail("NOT_FOUND", "this workspace isn't connected to Slack");
+      const links = state.links.get(ws) || [],
+        link = links.find((l) => l.slackUserId === slackUser),
+        requests = state.requests.get(ws) || [];
+      if (link && !link.readOnly)
+        return foundryPrecondition(
+          ws,
+          "FOUNDRY_SLACK_OWNER_LINK",
+          "that is the owner's own Slack account, which unlinks from Settings › Slack",
+        );
+      if (!link && !requests.some((r) => r.slackUserId === slackUser))
+        return fail(
+          "NOT_FOUND",
+          "that Slack user hasn't asked to use this Foundry",
+        );
+      state.requests.set(
+        ws,
+        requests.filter((r) => r.slackUserId !== slackUser),
+      );
+      if (access === "FOUNDRY_SLACK_LINK_ACCESS_NONE") {
+        state.links.set(
+          ws,
+          links.filter((l) => l !== link),
+        );
+        return ok({} satisfies FoundrySlackAccessResponse);
+      }
+      const allowed: Link = link || {
+        slackUserId: slackUser,
+        userId: user.id,
+        createdAt: now(),
+        readOnly: true,
+      };
+      if (!link) state.links.set(ws, [...links, allowed]);
+      return ok({
+        link: linkOf(allowed),
+      } satisfies FoundrySlackAccessResponse);
+    },
+  },
 ];
+
+/**
+ * A Slack user asking to use a local install, as the app records them when
+ * they message it (POST /__mock/slack/access-request): neither the owner
+ * nor someone already allowed. Asking again keeps the first request.
+ */
+export function slackAccessRequest(body: {
+  slackUser?: string;
+  name?: string;
+  workspaceId?: string;
+}): MockReply {
+  const ws = body.workspaceId || "ws_acme";
+  if (
+    !LOCAL_TOKEN ||
+    !state.installs.has(ws) ||
+    !body.slackUser ||
+    !/^[UW][A-Z0-9]{2,31}$/.test(body.slackUser) ||
+    body.slackUser === LOCAL_INSTALLER
+  )
+    return fail(
+      "FAILED_PRECONDITION",
+      "a local install's Slack user, other than its owner, asks to use it",
+    );
+  const requests = state.requests.get(ws) || [];
+  if ((state.links.get(ws) || []).some((l) => l.slackUserId === body.slackUser))
+    return ok({ requested: false });
+  if (!requests.some((r) => r.slackUserId === body.slackUser))
+    state.requests.set(ws, [
+      ...requests,
+      {
+        slackUserId: body.slackUser,
+        slackName: body.name || body.slackUser,
+        createdAt: now(),
+      },
+    ]);
+  return ok({ requested: true });
+}
 
 /**
  * The app's message to a person in Slack: a link token of the workspace's
@@ -673,7 +899,9 @@ export function slackLinkToken(body: {
     );
   const token = TOKEN_PREFIX + randomBytes(32).toString("base64url"),
     handle = body.handle || body.email.split("@")[0]!;
-  const slackUserId = body.slackUser || "U0" + handle.toUpperCase().slice(0, 8);
+  const slackUserId =
+    body.slackUser ||
+    (LOCAL_TOKEN ? LOCAL_INSTALLER : "U0" + handle.toUpperCase().slice(0, 8));
   // At most one live token per Slack user.
   for (const [raw, t] of state.tokens)
     if (t.workspaceId === workspaceId && t.slackUserId === slackUserId)
@@ -726,7 +954,20 @@ export function handleSlackPage(
     return true;
   }
   const form = new URLSearchParams(raw),
-    s = form.get("state") || "";
+    s = form.get("state") || "",
+    relayed = state.states.get(s);
+  // A local install's: Helix finishes it and goes back to the install's
+  // Settings › Slack.
+  if (relayed?.relayed && !relayed.used) {
+    relayed.used = true;
+    if (form.get("choice") === "allow")
+      install(relayed.workspaceId, relayed.userId);
+    res.writeHead(303, {
+      Location: `${process.env.FOUNDRY_ORIGIN || "http://localhost:3000"}/settings/slack`,
+    });
+    res.end();
+    return true;
+  }
   back.searchParams.set("state", s);
   if (form.get("choice") === "allow") {
     const code = randomBytes(16).toString("hex");

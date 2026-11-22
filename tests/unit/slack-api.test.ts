@@ -14,6 +14,7 @@ import {
   linkRefusalText,
   previewSlackLink,
   refusalOfLink,
+  relayRedirect,
   slackLinksQuery,
   slackQuery,
   slackReason,
@@ -165,11 +166,45 @@ describe("the page's state", () => {
   it("lists who is linked, under the setting's key", async () => {
     const q = slackLinksQuery("ws");
     expect(q.queryKey).toEqual(["ws", "foundry-slack", "links"]);
-    call.mockResolvedValueOnce({ links: [{ slackUserId: "U1" }] });
-    await expect(q.queryFn()).resolves.toEqual([{ slackUserId: "U1" }]);
+    call.mockResolvedValueOnce({
+      links: [{ slackUserId: "U1" }],
+      requests: [{ slackUserId: "U2", slackName: "Bea" }],
+    });
+    await expect(q.queryFn()).resolves.toEqual({
+      links: [{ slackUserId: "U1" }],
+      requests: [{ slackUserId: "U2", slackName: "Bea" }],
+    });
     expect(call).toHaveBeenCalledWith("/v1/workspaces/ws/foundry/slack/links");
     call.mockResolvedValueOnce({});
-    await expect(q.queryFn()).resolves.toEqual([]);
+    await expect(q.queryFn()).resolves.toEqual({ links: [], requests: [] });
+  });
+});
+
+describe("a local install's Settings › Slack", () => {
+  it("is on this computer, by http, and nothing else", () => {
+    expect(relayRedirect("http://localhost:3000/settings/slack")).toBe(
+      "http://localhost:3000",
+    );
+    expect(relayRedirect("http://127.0.0.1:65535/settings/slack")).toBe(
+      "http://127.0.0.1:65535",
+    );
+    expect(relayRedirect("http://localhost/settings/slack")).toBe(
+      "http://localhost",
+    );
+    for (const uri of [
+      undefined,
+      "",
+      "http://localhost:65536/settings/slack",
+      "http://localhost:0/settings/slack",
+      "http://localhost:03000/settings/slack",
+      "http://localhost:3000/settings/slack/",
+      "http://localhost:3000/settings/slack#x",
+      "http://user@localhost:3000/settings/slack",
+      "http://[::1]:3000/settings/slack",
+      "http://localhost:3000/settings/ai",
+      "https://localhost:3000/settings/slack",
+    ])
+      expect(relayRedirect(uri), uri).toBeNull();
   });
 });
 
@@ -327,6 +362,7 @@ describe("adding the app", () => {
     await expect(finishSlackInstall("c", "s")).resolves.toEqual({
       slack: { workspaceId: "ws", install },
       returnPath: "/settings/slack",
+      returnTo: null,
     });
     expect(call).toHaveBeenCalledWith("/v1/foundry/slack:finish-install", {
       code: "c",
@@ -337,7 +373,23 @@ describe("adding the app", () => {
     await expect(finishSlackInstall("c", "s")).resolves.toEqual({
       slack: {},
       returnPath: "/settings/slack",
+      returnTo: null,
     });
+  });
+  it("sends a local install's back to its own Settings › Slack, and nowhere else", async () => {
+    for (const [returnTo, kept] of [
+      ["http://localhost:3000/settings/slack", true],
+      ["http://127.0.0.1/settings/slack", true],
+      ["https://localhost:3000/settings/slack", false],
+      ["http://localhost:3000/settings/slack?x=1", false],
+      ["http://localhost.evil.example/settings/slack", false],
+      ["", false],
+    ] as const) {
+      call.mockResolvedValueOnce({ slack: {}, returnTo });
+      expect((await finishSlackInstall("c", "s")).returnTo, returnTo).toBe(
+        kept ? returnTo : null,
+      );
+    }
   });
   it("returns where the install was started from, and only where the WFE would send it", async () => {
     call.mockResolvedValueOnce({ slack: {}, returnPath: "/data?add=slack" });

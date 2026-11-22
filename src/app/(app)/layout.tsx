@@ -2,7 +2,6 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { LOCAL } from "@/shared/deployment";
 import { THEME_BACKGROUNDS, THEME_BOOT } from "@/shared/theme";
 import { SLACK_RETURN_BOOT } from "@/web/areas/workspace/slack-return";
 import { Telemetry } from "@/web/telemetry";
@@ -46,11 +45,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
-        {/* Slack's returns (hosted) leave the URL before the tracker or the
-            app reads it. */}
-        {!LOCAL && (
-          <script dangerouslySetInnerHTML={{ __html: SLACK_RETURN_BOOT }} />
-        )}
+        {/* Slack's and Helix's returns leave the URL before the tracker or
+            the app reads it. */}
+        <script dangerouslySetInnerHTML={{ __html: SLACK_RETURN_BOOT }} />
       </head>
       <body>
         {children}

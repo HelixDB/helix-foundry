@@ -24,7 +24,9 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 // the state again), then the page goes where the install was started from
 // (Settings › Slack, the Data area's Slack form or a Slack connection's
 // page: the WFE's returnPath, read by slackReturnTo) in the workspace the
-// state was for. A refusal is said in place, in the WFE's words: another
+// state was for, or, for an install a linked local install started through
+// Helix's relay, that install's own Settings › Slack on this computer (the
+// WFE's returnTo, read by relayRedirect). A refusal is said in place, in the WFE's words: another
 // Foundry workspace has the Slack workspace, Helix is still disconnecting
 // it, an org-wide install, a permission left out, an expired state. Slack's
 // own ?error= is said in fixed words (slackReturnCopy), never echoed.
@@ -32,6 +34,8 @@ import { clearSlackReturn, readSlackReturn } from "./slack-return";
 type Phase =
   | { kind: "finishing" }
   | { kind: "failed"; title: string; text: string }
+  // Added for a local install: on the way back to its Settings › Slack.
+  | { kind: "leaving" }
   // This tab holds nothing to finish: opened again, or in another tab.
   | { kind: "lost" };
 
@@ -61,7 +65,12 @@ export function SlackInstalledPage() {
       return;
     }
     void finishSlackInstall(kept.code, kept.state).then(
-      async ({ slack, returnPath }) => {
+      async ({ slack, returnPath, returnTo }) => {
+        if (returnTo) {
+          setPhase({ kind: "leaving" });
+          window.location.assign(returnTo);
+          return;
+        }
         const ws = slack.workspaceId;
         // The connector kinds carry the install too (the Slack form's setup).
         if (ws)
@@ -102,7 +111,13 @@ export function SlackInstalledPage() {
   return (
     <Page width="narrow">
       <PageHeader title="Slack" />
-      {phase.kind === "finishing" ? (
+      {phase.kind === "leaving" ? (
+        <EmptyState
+          icon={LoaderCircle}
+          title="Helix Foundry is in Slack"
+          text="Going back to the Foundry on this computer…"
+        />
+      ) : phase.kind === "finishing" ? (
         <EmptyState
           icon={LoaderCircle}
           title="Adding Helix Foundry to Slack…"

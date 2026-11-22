@@ -33,6 +33,10 @@ import type {
   SlackInstallFailure,
   SlackLinkFailure,
 } from "./areas/workspace/slack-api";
+import type {
+  RelayLinkFailure,
+  RelayLinkRefusal,
+} from "./areas/workspace/relay-api";
 import type { FeedbackKind } from "./feedback";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
@@ -368,6 +372,21 @@ export type AnalyticsEvents = {
   slack_connector_mode_chosen: { mode: "app" | "token" };
   slack_backfill_shown: undefined;
   slack_switch_now: undefined;
+  // Helix's Slack relay (areas/workspace/relay-api.ts). On a local
+  // install: linking it to Helix started, finished or why not, unlinked,
+  // approving changes from Slack turned on or off, and a Slack user who
+  // asked allowed to read and ask, or removed. On the hosted site: a local
+  // install's link authorized (before leaving for it) or why not, and a
+  // linked install revoked.
+  relay_link_started: undefined;
+  relay_linked: undefined;
+  relay_link_failed: { reason: RelayLinkFailure };
+  relay_unlinked: undefined;
+  slack_approvals_changed: { approvals: "on" | "off" };
+  slack_access_changed: { access: "read" | "none" };
+  relay_link_authorized: undefined;
+  relay_link_refused: { reason: RelayLinkRefusal };
+  relay_link_revoked: undefined;
   signed_out: undefined;
 
   // The GitHub star prompt (src/web/shell/star-prompt.tsx): shown, with how
