@@ -7,7 +7,7 @@ docker compose up -d --wait  # from the repository's root, or from local/
 open http://localhost:3000   # that name: the site answers no other host
 ```
 
-It opens in your first workspace, **My workspace**, made as the install first starts.
+It opens in your first workspace, **My workspace**, made as the install first starts. Rather not run Docker? [Helix Cloud](https://foundry.helix-db.com/login?return_to=%2Fontology%2Fsample&utm_source=github&utm_medium=readme&utm_campaign=local-guide) runs the same build, hosted, with a sample company to try first.
 
 **Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
