@@ -5994,6 +5994,309 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/relay": {
+      "get": {
+        "summary": "Helix's Slack relay (foundry.slack.relay), from a standalone install:\nits owner links it to a Helix workspace, through which Slack reaches it.\nHosted Helix serves none of these: FAILED_PRECONDITION\nFOUNDRY_RELAY_LOCAL_ONLY.",
+        "description": "The install's link to Helix: unlinked, or linked, to whom, and when\nHelix last answered.",
+        "operationId": "FoundryService_GetFoundryRelay",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryRelayResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "patch": {
+        "summary": "Turns approving changes from Slack on or off, for the owner: off, the\nrelay only reads and asks. NOT_FOUND while unlinked.",
+        "operationId": "FoundryService_UpdateFoundryRelay",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryRelayResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryRelayBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/relay-links": {
+      "get": {
+        "summary": "The workspace's linked installs, newest first, with their Slack installs\nand today's counts.",
+        "operationId": "FoundryService_ListFoundryRelayLinks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryRelayLinksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/relay-links/{linkId}:revoke": {
+      "post": {
+        "summary": "Revokes a linked install: its token stops working, and its Slack\ninstalls leave Slack.",
+        "operationId": "FoundryService_RevokeFoundryRelayLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "linkId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceRevokeFoundryRelayLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/relay-links:authorize": {
+      "post": {
+        "summary": "Helix's side of the relay, for a workspace's owners and admins; a\nstandalone install serves none of these. Wherever foundry.slack or its\nrelay is off: FAILED_PRECONDITION FOUNDRY_RELAY_DISABLED.",
+        "description": "Authorizes linking a standalone install to the workspace: a one-time\ncode, live for ten minutes, bound to the install's PKCE challenge and\nits loopback Settings › Slack, which the site sends the browser back to\nwith the code and the install's state. FAILED_PRECONDITION\nFOUNDRY_SLACK_NOT_OFFERED off the install list.",
+        "operationId": "FoundryService_AuthorizeFoundryRelayLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1AuthorizeFoundryRelayLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAuthorizeFoundryRelayLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/relay:complete-link": {
+      "post": {
+        "summary": "Finishes linking with what Helix handed back: the state must be the\ninstall's, unexpired and unspent (FAILED_PRECONDITION\nFOUNDRY_RELAY_LINK_EXPIRED). It replaces any link the install had.",
+        "operationId": "FoundryService_CompleteFoundryRelayLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryRelayResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCompleteFoundryRelayLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/relay:start-link": {
+      "post": {
+        "summary": "Starts linking, for the owner: Helix's page that asks an owner or admin\nof a Helix workspace to link the install, which hands a code back to\nthis install's Settings › Slack within ten minutes.",
+        "operationId": "FoundryService_StartFoundryRelayLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartFoundryRelayLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceStartFoundryRelayLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/relay:unlink": {
+      "post": {
+        "summary": "Unlinks the install, for the owner: Helix revokes its link, and its\nSlack installs with it.",
+        "operationId": "FoundryService_UnlinkFoundryRelay",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryRelayResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUnlinkFoundryRelayBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/sign-ins": {
       "post": {
         "summary": "Connecting a connector by signing in at its provider: started by a user\nor their agent, authorized and finished in that user's browser. Only\nkinds whose ConnectorKind.sign_in is true.",
@@ -6332,6 +6635,51 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/slack/links/{slackUserId}/access": {
+      "put": {
+        "summary": "Sets what a Slack user may do with a standalone install, for its owner:\nREAD lets one who asked read and ask, as the owner, and drops their\nrequest; NONE removes their read-only link, or drops their request. The\nowner's own link (the app's installer) is never changed here\n(FAILED_PRECONDITION FOUNDRY_SLACK_OWNER_LINK). Hosted Helix links each\nperson to their own account instead: FAILED_PRECONDITION\nFOUNDRY_SLACK_LOCAL_ONLY.",
+        "operationId": "FoundryService_SetFoundrySlackAccess",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundrySlackAccessResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "slackUserId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSetFoundrySlackAccessBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/slack/links:preview": {
       "post": {
         "summary": "What linking the token's Slack user to the caller would do, before it\nis spent: the Slack user, and whether they may be linked to the caller.\nFAILED_PRECONDITION FOUNDRY_SLACK_LINK_EXPIRED for a token not live in\nthe workspace's install.",
@@ -6631,6 +6979,27 @@
         }
       }
     },
+    "FoundryServiceAuthorizeFoundryRelayLinkBody": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "The install's own state, handed back as it is: 16 to 256 URL-safe\ncharacters."
+        },
+        "codeChallenge": {
+          "type": "string",
+          "description": "The S256 challenge of the install's PKCE verifier: 43 base64url\ncharacters."
+        },
+        "redirectUri": {
+          "type": "string",
+          "description": "The install's Settings › Slack: http://localhost[:port]/settings/slack\nor http://127.0.0.1[:port]/settings/slack, nothing else."
+        },
+        "name": {
+          "type": "string",
+          "description": "The install's name, as its owner calls it: 1 to 128 bytes of text."
+        }
+      }
+    },
     "FoundryServiceCancelFoundryAgentTurnBody": {
       "type": "object",
       "description": "CancelFoundryAgentTurnRequest ends the caller's queued or running turn. One\nthat ended otherwise is FAILED_PRECONDITION."
@@ -6657,6 +7026,18 @@
         "workflowRunId": {
           "type": "string",
           "description": "An open run of a workflow of this ontology to record the upload under;\nempty for none. Completing it again records it once."
+        }
+      }
+    },
+    "FoundryServiceCompleteFoundryRelayLinkBody": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "What Helix's site handed back to Settings › Slack."
+        },
+        "state": {
+          "type": "string"
         }
       }
     },
@@ -7106,6 +7487,9 @@
     "FoundryServiceRevokeFoundryEventSourceTokenBody": {
       "type": "object"
     },
+    "FoundryServiceRevokeFoundryRelayLinkBody": {
+      "type": "object"
+    },
     "FoundryServiceRunFoundryAutomationBody": {
       "type": "object",
       "properties": {
@@ -7141,6 +7525,10 @@
         "surface": {
           "$ref": "#/definitions/v1FoundryAgentSurface",
           "description": "Where its person reads the turn: Foundry's site (UNSPECIFIED) or Slack.\nIt only narrows the turn (no dashboard runs by itself in Slack), so\nany caller may set it."
+        },
+        "readOnly": {
+          "type": "boolean",
+          "description": "The turn only reads and asks, whatever its person may do: a standalone\ninstall's Slack users the owner allowed read-only, and the owner's own\nwhile approving from Slack is off. It only narrows the turn, so any\ncaller may set it."
         }
       },
       "description": "SendFoundryAgentMessageRequest queues a person's message in their thread,\nor in a new one when thread_id is empty, or their answers to the\nquestions their thread's newest turn asked them. The same client_token\nreturns the turn it queued. A thread with a live turn, or an action\nrunning, is FAILED_PRECONDITION (reason FOUNDRY_AGENT_THREAD_BUSY); the\nuser's hourly messages and answers RESOURCE_EXHAUSTED; the month's budget\nFAILED_PRECONDITION."
@@ -7189,6 +7577,15 @@
         }
       },
       "description": "SetFoundryMemberRestrictedRequest restricts user_id, or lifts it."
+    },
+    "FoundryServiceSetFoundrySlackAccessBody": {
+      "type": "object",
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/v1FoundrySlackLinkAccess",
+          "description": "READ or NONE; FULL and UNSPECIFIED are INVALID_ARGUMENT."
+        }
+      }
     },
     "FoundryServiceSettleFoundryReviewBody": {
       "type": "object",
@@ -7252,6 +7649,9 @@
         }
       }
     },
+    "FoundryServiceStartFoundryRelayLinkBody": {
+      "type": "object"
+    },
     "FoundryServiceStartFoundrySlackInstallBody": {
       "type": "object",
       "properties": {
@@ -7294,6 +7694,9 @@
           "$ref": "#/definitions/v1ConnectorConfig"
         }
       }
+    },
+    "FoundryServiceUnlinkFoundryRelayBody": {
+      "type": "object"
     },
     "FoundryServiceUnpublishFoundryDashboardBody": {
       "type": "object",
@@ -7457,6 +7860,15 @@
         }
       }
     },
+    "FoundryServiceUpdateFoundryRelayBody": {
+      "type": "object",
+      "properties": {
+        "slackApprovals": {
+          "type": "boolean",
+          "description": "Approving changes from Slack: off, Slack only reads and asks."
+        }
+      }
+    },
     "FoundryServiceUpdateFoundrySlackBody": {
       "type": "object",
       "properties": {
@@ -7588,6 +8000,15 @@
         "url": {
           "type": "string",
           "description": "The provider's authorization page, for the user's browser."
+        }
+      }
+    },
+    "v1AuthorizeFoundryRelayLinkResponse": {
+      "type": "object",
+      "properties": {
+        "redirectUrl": {
+          "type": "string",
+          "description": "redirect_uri with the code and the state, where the site sends the\nbrowser."
         }
       }
     },
@@ -11746,6 +12167,115 @@
       },
       "description": "A rejection of the statement a person read: a review that reads otherwise\nnow is refused, as an approval of it would be."
     },
+    "v1FoundryRelay": {
+      "type": "object",
+      "properties": {
+        "linked": {
+          "type": "boolean",
+          "description": "Linked to a Helix workspace; the rest is unset while not."
+        },
+        "hostedOrigin": {
+          "type": "string",
+          "description": "Helix's origin, such as https://ingest.helix-db.com."
+        },
+        "accountEmail": {
+          "type": "string",
+          "description": "The email of the Helix member who linked it."
+        },
+        "linkedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastOkAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When Helix last answered its claim; unset until it has."
+        },
+        "slackApprovals": {
+          "type": "boolean",
+          "description": "The owner's Slack account may approve changes through Slack: off, the\nrelay only reads and asks."
+        }
+      },
+      "description": "FoundryRelay is a standalone install's link to Helix's Slack relay."
+    },
+    "v1FoundryRelayLink": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "The install's name, as its owner calls it."
+        },
+        "createdByUserId": {
+          "type": "string",
+          "description": "Who linked it, and their name."
+        },
+        "createdByName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Its last claim or call, written at most once a minute; unset until then."
+        },
+        "installs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryRelayLinkInstall"
+          },
+          "description": "Its Slack installs, one per local workspace."
+        },
+        "deliveriesToday": {
+          "type": "string",
+          "format": "int64",
+          "description": "What it did today (UTC): Slack's requests held for it, its calls to\nSlack made and refused, and channel messages held."
+        },
+        "callsToday": {
+          "type": "string",
+          "format": "int64"
+        },
+        "refusedToday": {
+          "type": "string",
+          "format": "int64"
+        },
+        "feedRowsToday": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryRelayLink is a standalone install linked to a Helix workspace."
+    },
+    "v1FoundryRelayLinkInstall": {
+      "type": "object",
+      "properties": {
+        "teamId": {
+          "type": "string"
+        },
+        "teamName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryRelayLinkInstall is a Slack workspace a linked install serves."
+    },
+    "v1FoundryRelayResponse": {
+      "type": "object",
+      "properties": {
+        "relay": {
+          "$ref": "#/definitions/v1FoundryRelay"
+        }
+      }
+    },
     "v1FoundryReleaseChoice": {
       "type": "object",
       "properties": {
@@ -12108,6 +12638,32 @@
       },
       "description": "FoundrySlack is a workspace's Slack: Helix's own Slack app, Helix Foundry,\nwhich answers people in a Slack workspace as Founder, each linked Slack\nuser as their own Foundry user."
     },
+    "v1FoundrySlackAccessRequest": {
+      "type": "object",
+      "properties": {
+        "slackUserId": {
+          "type": "string"
+        },
+        "slackName": {
+          "type": "string",
+          "description": "Their name in Slack."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundrySlackAccessRequest is a Slack user who asked to use a standalone\ninstall, until its owner allows them or drops the request."
+    },
+    "v1FoundrySlackAccessResponse": {
+      "type": "object",
+      "properties": {
+        "link": {
+          "$ref": "#/definitions/v1FoundrySlackLink",
+          "description": "The Slack user's link once READ; unset once NONE."
+        }
+      }
+    },
     "v1FoundrySlackBot": {
       "type": "object",
       "properties": {
@@ -12212,9 +12768,24 @@
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "access": {
+          "$ref": "#/definitions/v1FoundrySlackLinkAccess",
+          "description": "FULL on hosted Helix, and for a standalone install's owner (the app's\ninstaller); READ for a Slack user the owner allowed."
         }
       },
       "description": "FoundrySlackLink is a Slack user who acts as a Foundry user: the bot\nanswers them, in Slack, as that user."
+    },
+    "v1FoundrySlackLinkAccess": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_SLACK_LINK_ACCESS_UNSPECIFIED",
+        "FOUNDRY_SLACK_LINK_ACCESS_FULL",
+        "FOUNDRY_SLACK_LINK_ACCESS_READ",
+        "FOUNDRY_SLACK_LINK_ACCESS_NONE"
+      ],
+      "default": "FOUNDRY_SLACK_LINK_ACCESS_UNSPECIFIED",
+      "description": "FoundrySlackLinkAccess is what a linked Slack user may do.\n\n - FOUNDRY_SLACK_LINK_ACCESS_FULL: Acts as its Foundry user in full.\n - FOUNDRY_SLACK_LINK_ACCESS_READ: Reads and asks as a standalone install's owner, changing nothing.\n - FOUNDRY_SLACK_LINK_ACCESS_NONE: No access: SetFoundrySlackAccess removes it."
     },
     "v1FoundrySlackLinkRefusal": {
       "type": "string",
@@ -12244,6 +12815,10 @@
         "returnPath": {
           "type": "string",
           "description": "FinishFoundrySlackInstall's: the site path the install was started from\n(StartFoundrySlackInstallRequest.return_path); empty for Settings › Slack."
+        },
+        "returnTo": {
+          "type": "string",
+          "description": "FinishFoundrySlackInstall's, for an install a linked standalone install\nstarted: its own Settings › Slack, an http://localhost or 127.0.0.1\norigin, which the site sends the browser to instead."
         }
       }
     },
@@ -13519,6 +14094,18 @@
         }
       }
     },
+    "v1ListFoundryRelayLinksResponse": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryRelayLink"
+          }
+        }
+      }
+    },
     "v1ListFoundryReviewDecisionsResponse": {
       "type": "object",
       "properties": {
@@ -13579,6 +14166,14 @@
             "$ref": "#/definitions/v1FoundrySlackLink"
           },
           "description": "Oldest first."
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySlackAccessRequest"
+          },
+          "description": "A standalone install's: Slack users who asked to use it, oldest first."
         }
       }
     },
@@ -14326,6 +14921,15 @@
       ],
       "default": "SLACK_FEED_STATE_UNSPECIFIED",
       "description": "SlackFeedState is whether a Slack connection through Helix's Slack app\ncan read.\n\n - SLACK_FEED_STATE_LIVE: It reads.\n - SLACK_FEED_STATE_NEEDS_REINSTALL: The install lacks permissions it needs: an owner or admin adds the app\nagain.\n - SLACK_FEED_STATE_INSTALL_GONE: The app was removed from the Slack workspace: its data is frozen, and\ndeleted at deleted_at unless the app is added again.\n - SLACK_FEED_STATE_TEAM_CHANGED: The workspace's install is of another Slack workspace: edit the\nconnection to read it, or delete it."
+    },
+    "v1StartFoundryRelayLinkResponse": {
+      "type": "object",
+      "properties": {
+        "authorizeUrl": {
+          "type": "string",
+          "description": "Helix's /relay/link page, with the state, the PKCE challenge, this\ninstall's Settings › Slack and its name."
+        }
+      }
     },
     "v1StartFoundrySlackInstallResponse": {
       "type": "object",

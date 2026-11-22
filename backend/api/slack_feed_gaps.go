@@ -95,7 +95,20 @@ func (s *Service) RecordFoundrySlackFeedGaps(ctx context.Context, req *foundryv1
 			log.From(ctx).Error("find the install of a Slack team's feed gaps failed", "err", err)
 			return nil, status.Error(codes.Unavailable, "Foundry couldn't record the gaps just now")
 		}
-		appended, err := s.deps.DB.AppendFoundrySlackFeedGaps(ctx, install.ID, gaps[t], cfg.Feed.Spacing)
+		var appended model.SlackFeedAppended
+		if _, relayed := install.Destination.(model.SlackServesRelay); relayed {
+			// A relayed install's gaps are its local install's to read again.
+			if !cfg.Relay.Enabled || !install.FeedOn {
+				slackFeedGapsTaken.WithLabelValues("unbound").Add(float64(len(gaps[t])))
+				continue
+			}
+			var held model.RelayFeedAppended
+			held, err = s.deps.DB.AppendFoundryRelayFeed(ctx, install.ID, model.RelayFeedAppend{Gaps: gaps[t], At: time.Now()},
+				model.RelayFeedLimits{TTL: cfg.Relay.FeedTTL, MaxRows: int64(cfg.Relay.FeedMaxRows)})
+			appended.Outcome = held.Outcome
+		} else {
+			appended, err = s.deps.DB.AppendFoundrySlackFeedGaps(ctx, install.ID, gaps[t], cfg.Feed.Spacing)
+		}
 		if err != nil {
 			log.From(ctx).Error("record a Slack team's feed gaps failed", "err", err)
 			return nil, status.Error(codes.Unavailable, "Foundry couldn't record the gaps just now")

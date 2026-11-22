@@ -132,6 +132,9 @@ func (s *Service) receiveSlackFeed(ctx context.Context, eventID string, e slack.
 		slackFeedTaken.WithLabelValues("dropped_unknown_team").Inc()
 		return slackOK(), "feed", nil
 	}
+	if _, relayed := install.Destination.(model.SlackServesRelay); relayed {
+		return s.receiveRelayFeed(ctx, eventID, e, install)
+	}
 	if limited, ok := e.(slack.RateLimited); ok {
 		if _, err := s.deps.DB.RecordFoundrySlackEventsLimited(ctx, install.ID, limited.Minute, cfg.Feed.Spacing); err != nil &&
 			!errors.Is(err, foundrystore.ErrNotFound) {
@@ -354,4 +357,56 @@ func (s *Service) followSlackReply(ctx context.Context, eventID string, install 
 	}
 	slackFeedTaken.WithLabelValues("followed").Inc()
 	return nil
+}
+
+// receiveRelayFeed holds a channel event of a relayed install's team for its
+// local install, which owns the data connector and the bot's follow-ups:
+// only while hosted's relay is on and the install's feed is, a channel
+// message only while hosted's foundry.slack.feed is, but a reply in a
+// thread while its follow-ups are too, past relay.feed_max_rows held a gap
+// instead. Slack's app_rate_limited is a gap of every channel's minute.
+func (s *Service) receiveRelayFeed(ctx context.Context, eventID string, e slack.FeedEvent, install *model.SlackInstall) (
+	*foundryv1.ReceiveSlackRequestResponse, string, error) {
+	cfg := s.deps.Cfg.Foundry.Slack
+	if !cfg.Relay.Enabled || !install.FeedOn {
+		slackFeedTaken.WithLabelValues(string(model.SlackAppendUnbound)).Inc()
+		return slackOK(), "feed", nil
+	}
+	limits := model.RelayFeedLimits{TTL: cfg.Relay.FeedTTL, MaxRows: int64(cfg.Relay.FeedMaxRows)}
+	var feed model.RelayFeedAppend
+	switch e := e.(type) {
+	case slack.RateLimited:
+		if _, err := s.deps.DB.RecordFoundrySlackEventsLimited(ctx, install.ID, e.Minute, cfg.Feed.Spacing); err != nil &&
+			!errors.Is(err, foundrystore.ErrNotFound) {
+			return nil, "", err
+		}
+		log.From(ctx).Warn("slack dropped a relayed team's events past its hourly limit", "install_id", install.ID, "minute", e.Minute)
+		slackFeedTaken.WithLabelValues("rate_limited").Inc()
+		if !cfg.Feed.Enabled {
+			return slackOK(), "feed", nil
+		}
+		feed = model.RelayFeedAppend{Gaps: []model.SlackFeedGap{model.SlackMinuteGap("", e.Minute)}, At: time.Now()}
+	default:
+		if !model.ValidSlackID(eventID) {
+			return &foundryv1.ReceiveSlackRequestResponse{HttpStatus: http.StatusBadRequest}, "malformed", nil
+		}
+		m, message := e.(slack.ChannelMessage)
+		reply := message && m.Message.ThreadTS != "" && m.Message.ThreadTS != m.Message.TS
+		if !cfg.Feed.Enabled && !reply {
+			slackFeedTaken.WithLabelValues("dropped_unread").Inc()
+			return slackOK(), "feed", nil
+		}
+		rows := slackFeedRows(e, eventID, install, cfg.AppID, s.deps.Cfg.Foundry.Documents.MaxBytes)
+		if len(rows) == 0 {
+			slackFeedTaken.WithLabelValues("dropped_not_ours").Inc()
+			return slackOK(), "feed", nil
+		}
+		feed = model.RelayFeedAppend{Rows: rows, At: time.Now()}
+	}
+	appended, err := s.deps.DB.AppendFoundryRelayFeed(ctx, install.ID, feed, limits)
+	if err != nil {
+		return nil, "", err
+	}
+	slackFeedTaken.WithLabelValues(string(appended.Outcome)).Inc()
+	return slackOK(), "feed", nil
 }

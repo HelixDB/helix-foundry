@@ -5780,6 +5780,28 @@ export type FoundrySlackLink = {
   // The Foundry user's name, as Foundry shows it.
   userName?: string;
   createdAt?: string;
+  // FULL on Helix, and for a local install's owner (the app's installer);
+  // READ for a Slack user the owner allowed to read and ask as them.
+  access?: FoundrySlackLinkAccess;
+};
+
+/**
+ * v1FoundrySlackLinkAccess: what a linked Slack user may do. FULL: act as
+ * their Foundry user. READ: read and ask as a local install's owner,
+ * changing nothing. NONE: only SetFoundrySlackAccess's, removing them.
+ */
+export type FoundrySlackLinkAccess =
+  | "FOUNDRY_SLACK_LINK_ACCESS_UNSPECIFIED"
+  | "FOUNDRY_SLACK_LINK_ACCESS_FULL"
+  | "FOUNDRY_SLACK_LINK_ACCESS_READ"
+  | "FOUNDRY_SLACK_LINK_ACCESS_NONE";
+
+/** v1FoundrySlackAccessRequest: a Slack user who asked to use a local install. */
+export type FoundrySlackAccessRequest = {
+  slackUserId?: string;
+  // Their name in Slack.
+  slackName?: string;
+  createdAt?: string;
 };
 
 /** v1FoundrySlack: a workspace's Slack. */
@@ -5807,6 +5829,10 @@ export type FoundrySlackResponse = {
   // :finish-install's: the site path the install was started from
   // (StartFoundrySlackInstallRequest.returnPath); empty for Settings › Slack.
   returnPath?: string;
+  // :finish-install's, for an install a linked local install started: its
+  // own Settings › Slack, an http://localhost or 127.0.0.1 URL, where the
+  // site sends the browser instead.
+  returnTo?: string;
 };
 
 /**
@@ -5855,8 +5881,15 @@ export type UpdateFoundrySlackRequest = {
   >;
 };
 
-/** v1ListFoundrySlackLinksResponse: GET .../foundry/slack/links, owners and admins; oldest first. */
-export type ListFoundrySlackLinksResponse = { links?: FoundrySlackLink[] };
+/**
+ * v1ListFoundrySlackLinksResponse: GET .../foundry/slack/links, owners and
+ * admins; oldest first. requests: a local install's Slack users who asked
+ * to use it.
+ */
+export type ListFoundrySlackLinksResponse = {
+  links?: FoundrySlackLink[];
+  requests?: FoundrySlackAccessRequest[];
+};
 
 /**
  * FoundryServicePreviewFoundrySlackLinkBody and
@@ -5906,3 +5939,119 @@ export type PreviewFoundrySlackLinkResponse = {
  * unlinks the caller's own, or, for an owner or admin, anyone's.
  */
 export type FoundrySlackLinkResponse = { link?: FoundrySlackLink };
+
+// ---------------------------------------------------------------- Slack relay
+// Helix's Slack relay (foundry.slack.relay): a local Foundry install linked
+// to a Helix workspace, through which Slack reaches it. Helix's side
+// (owners and admins; a local install refuses it): POST
+// .../foundry/relay-links:authorize, GET .../foundry/relay-links and POST
+// .../foundry/relay-links/{linkId}:revoke; where the relay is off,
+// FAILED_PRECONDITION FOUNDRY_RELAY_DISABLED. The local install's side (its
+// owner; Helix refuses it, FOUNDRY_RELAY_LOCAL_ONLY): GET, PATCH
+// .../foundry/relay, POST .../foundry/relay:start-link, :complete-link and
+// :unlink, and PUT .../foundry/slack/links/{slackUserId}/access (Helix:
+// FOUNDRY_SLACK_LOCAL_ONLY).
+
+/**
+ * FoundryServiceAuthorizeFoundryRelayLinkBody: POST
+ * .../foundry/relay-links:authorize, from Helix's /relay/link page. state is
+ * the install's own (16 to 256 URL-safe characters), codeChallenge its PKCE
+ * S256 challenge, redirectUri its Settings › Slack
+ * (http://localhost[:port]/settings/slack or http://127.0.0.1[:port]/...),
+ * name its name (1 to 128 bytes). FAILED_PRECONDITION
+ * FOUNDRY_SLACK_NOT_OFFERED off the install list.
+ */
+export type AuthorizeFoundryRelayLinkRequest = {
+  state: string;
+  codeChallenge: string;
+  redirectUri: string;
+  name: string;
+};
+
+/**
+ * v1AuthorizeFoundryRelayLinkResponse: redirectUri with the one-time code
+ * (ten minutes) and the state, where the site sends the browser.
+ */
+export type AuthorizeFoundryRelayLinkResponse = { redirectUrl?: string };
+
+/** v1FoundryRelayLinkInstall: a Slack workspace a linked install serves. */
+export type FoundryRelayLinkInstall = {
+  teamId?: string;
+  teamName?: string;
+  createdAt?: string;
+};
+
+/**
+ * v1FoundryRelayLink: a local install linked to the workspace, with today's
+ * counts (UTC; int64 strings): Slack's requests held for it, its calls to
+ * Slack made and refused, and channel messages held.
+ */
+export type FoundryRelayLink = {
+  id?: string;
+  name?: string;
+  createdByUserId?: string;
+  createdByName?: string;
+  createdAt?: string;
+  // Its last claim or call, written at most once a minute.
+  lastSeenAt?: string;
+  installs?: FoundryRelayLinkInstall[];
+  deliveriesToday?: string;
+  callsToday?: string;
+  refusedToday?: string;
+  feedRowsToday?: string;
+};
+
+/** v1ListFoundryRelayLinksResponse: GET .../foundry/relay-links, newest first. */
+export type ListFoundryRelayLinksResponse = { links?: FoundryRelayLink[] };
+
+/**
+ * v1FoundryRelay: a local install's link to Helix; the rest is unset while
+ * not linked. slackApprovals: its owner's Slack account may approve changes
+ * through Slack (off: the relay only reads and asks).
+ */
+export type FoundryRelay = {
+  linked?: boolean;
+  hostedOrigin?: string;
+  accountEmail?: string;
+  linkedAt?: string;
+  // When Helix last answered its claim.
+  lastOkAt?: string;
+  slackApprovals?: boolean;
+};
+
+/**
+ * v1FoundryRelayResponse: GET and PATCH .../foundry/relay, and the answer of
+ * :complete-link and :unlink.
+ */
+export type FoundryRelayResponse = { relay?: FoundryRelay };
+
+/** v1StartFoundryRelayLinkResponse: POST .../foundry/relay:start-link: Helix's /relay/link page. */
+export type StartFoundryRelayLinkResponse = { authorizeUrl?: string };
+
+/**
+ * FoundryServiceCompleteFoundryRelayLinkBody: what Helix handed back to
+ * Settings › Slack. FAILED_PRECONDITION FOUNDRY_RELAY_LINK_EXPIRED for a
+ * state unknown, spent or expired.
+ */
+export type CompleteFoundryRelayLinkRequest = { code: string; state: string };
+
+/** FoundryServiceUpdateFoundryRelayBody: PATCH .../foundry/relay. NOT_FOUND while unlinked. */
+export type UpdateFoundryRelayRequest = { slackApprovals: boolean };
+
+/**
+ * FoundryServiceSetFoundrySlackAccessBody: PUT
+ * .../foundry/slack/links/{slackUserId}/access, a local install's owner.
+ * READ lets a Slack user who asked read and ask as the owner; NONE removes
+ * them or drops their request. The owner's own link is
+ * FAILED_PRECONDITION FOUNDRY_SLACK_OWNER_LINK; a Slack user who never asked
+ * is NOT_FOUND.
+ */
+export type SetFoundrySlackAccessRequest = {
+  access: Extract<
+    FoundrySlackLinkAccess,
+    "FOUNDRY_SLACK_LINK_ACCESS_READ" | "FOUNDRY_SLACK_LINK_ACCESS_NONE"
+  >;
+};
+
+/** v1FoundrySlackAccessResponse: the Slack user's link once READ; unset once NONE. */
+export type FoundrySlackAccessResponse = { link?: FoundrySlackLink | null };

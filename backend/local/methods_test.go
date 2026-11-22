@@ -85,6 +85,23 @@ var refused = map[string]string{
 	foundry("DeleteFoundrySlackLink"):                                   noSlack,
 	"/helix.foundry.v1.FoundryEventsService/ReceiveSlackRequest":        noDoor,
 	"/helix.foundry.v1.FoundryEventsService/RecordFoundrySlackFeedGaps": noDoor,
+	// The install's own relay methods are served once it runs the relay.
+	foundry("SetFoundrySlackAccess"):    noSlack,
+	foundry("GetFoundryRelay"):          noSlack,
+	foundry("StartFoundryRelayLink"):    noSlack,
+	foundry("CompleteFoundryRelayLink"): noSlack,
+	foundry("UpdateFoundryRelay"):       noSlack,
+	foundry("UnlinkFoundryRelay"):       noSlack,
+	// Helix's side of the relay.
+	foundry("AuthorizeFoundryRelayLink"):                                   noRelayLinks,
+	foundry("ListFoundryRelayLinks"):                                       noRelayLinks,
+	foundry("RevokeFoundryRelayLink"):                                      noRelayLinks,
+	"/helix.foundry.v1.FoundryEventsService/ValidateFoundryRelayToken":     noDoor,
+	"/helix.foundry.v1.FoundryEventsService/RedeemFoundryRelayCode":        noDoor,
+	"/helix.foundry.v1.FoundryEventsService/ClaimFoundryRelayDeliveries":   noDoor,
+	"/helix.foundry.v1.FoundryEventsService/CallSlackForRelay":             noDoor,
+	"/helix.foundry.v1.FoundryEventsService/StartFoundryRelaySlackInstall": noDoor,
+	"/helix.foundry.v1.FoundryEventsService/RevokeFoundryRelayToken":       noDoor,
 
 	foundry("DeleteFoundryOntologyDocument"):    noOntologySets,
 	foundry("ListFoundryOntologyDocumentSets"):  noOntologySets,
@@ -102,4 +119,5 @@ const (
 	noOntologySets = "documents are the workspace's: the site calls the workspace's routes"
 	noSlack        = "Slack reaches a local install through Helix's relay"
 	noDoor         = "Helix receives Slack for a local install"
+	noRelayLinks   = "Helix keeps the links of the installs it relays Slack to"
 )

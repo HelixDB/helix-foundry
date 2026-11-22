@@ -51,7 +51,212 @@ service FoundryEventsService {
   // verify, so a forged one only spends its team's gap budget. A store
   // failure is UNAVAILABLE, and the door sends them again.
   rpc RecordFoundrySlackFeedGaps(RecordFoundrySlackFeedGapsRequest) returns (RecordFoundrySlackFeedGapsResponse);
+
+  // Helix's Slack relay (foundry.slack.relay): a standalone Foundry install
+  // linked to a Helix workspace takes Slack's requests for its Slack teams,
+  // and calls Slack as their installs, through the door, bearing its link's
+  // hx_rl_ token; the door passes the token's SHA-256, never the token, and
+  // checks it first with ValidateFoundryRelayToken. Each method refuses a
+  // token of no live link UNAUTHENTICATED; wherever foundry.slack or its
+  // relay is off, every method is FAILED_PRECONDITION, reason
+  // FOUNDRY_RELAY_DISABLED.
+  //
+  // The live link a token's hash names, for the door's admission.
+  rpc ValidateFoundryRelayToken(ValidateFoundryRelayTokenRequest) returns (ValidateFoundryRelayTokenResponse);
+  // Spends the one-time code the site gave the owner's browser
+  // (FoundryService.AuthorizeFoundryRelayLink) with its PKCE verifier, once,
+  // within ten minutes, and links the install: its token, shown only here.
+  // NOT_FOUND for a code absent, expired, spent or another verifier's;
+  // PERMISSION_DENIED once the member who authorized it is no longer an
+  // owner or admin of the workspace.
+  rpc RedeemFoundryRelayCode(RedeemFoundryRelayCodeRequest) returns (RedeemFoundryRelayCodeResponse);
+  // Acks what the install took, then waits up to wait_ms for what Slack
+  // sent its installs, and leases it: the bot's requests first, then its
+  // channel messages (while hosted's foundry.slack.feed or follow is on and
+  // the install's feed is). Always answers the link's live installs.
+  rpc ClaimFoundryRelayDeliveries(ClaimFoundryRelayDeliveriesRequest) returns (ClaimFoundryRelayDeliveriesResponse);
+  // Calls a Slack Web API method as the link's install serving
+  // local_workspace_id, within the relay's allowlist and scopes, rewritten
+  // as the bot's own calls are; Slack's answer, rid of tokens and of
+  // users.info's email and phone. PERMISSION_DENIED for a method, channel or
+  // user the relay doesn't allow; RESOURCE_EXHAUSTED never: a call that may
+  // not go yet answers retry_after_s.
+  rpc CallSlackForRelay(CallSlackForRelayRequest) returns (CallSlackForRelayResponse);
+  // Starts adding Helix's Slack app for the install's local workspace: the
+  // Slack page to send its owner to, whose answer Helix's site finishes and
+  // sends back to return_to, the link's own Settings › Slack.
+  rpc StartFoundryRelaySlackInstall(StartFoundryRelaySlackInstallRequest) returns (StartFoundryRelaySlackInstallResponse);
+  // Revokes the token's link, from the install's side (its owner unlinked
+  // it): its installs leave Slack.
+  rpc RevokeFoundryRelayToken(RevokeFoundryRelayTokenRequest) returns (RevokeFoundryRelayTokenResponse);
 }
+
+message ValidateFoundryRelayTokenRequest {
+  // Lowercase hex SHA-256 of the whole token.
+  string token_sha256 = 1;
+}
+message ValidateFoundryRelayTokenResponse {
+  bool valid = 1;
+  string link_id = 2;
+  string workspace_id = 3;
+}
+
+message RedeemFoundryRelayCodeRequest {
+  // The code Helix's site handed back to the install's Settings › Slack.
+  string code = 1;
+  // The PKCE verifier whose S256 challenge the code was authorized for.
+  string code_verifier = 2;
+}
+message RedeemFoundryRelayCodeResponse {
+  // The link's hx_rl_ token: Helix keeps only its SHA-256.
+  string token = 1;
+  string link_id = 2;
+  // The Helix workspace the install is linked to, and the email of the
+  // member who linked it.
+  string workspace_id = 3;
+  string account_email = 4;
+}
+
+// FoundryRelayFeedOn says whether a local workspace's Slack data connector
+// reads its relayed install.
+message FoundryRelayFeedOn {
+  string local_workspace_id = 1;
+  bool on = 2;
+}
+
+message ClaimFoundryRelayDeliveriesRequest {
+  string token_sha256 = 1;
+  // Ids of deliveries and feed items the install took since its last claim:
+  // at most 2,048.
+  repeated string acks = 2;
+  // How long to wait for something: 0 to 20,000, within
+  // foundry.slack.relay.claim_wait.
+  int32 wait_ms = 3;
+  // The most deliveries to lease: 1 to 10; 0 is 10.
+  int32 max = 4;
+  // Whether each local workspace's Slack data connector reads its install;
+  // hosted turns one on only while its own foundry.slack.feed or follow is.
+  // Workspaces left out keep what they had.
+  repeated FoundryRelayFeedOn feeds = 5;
+  // The install's address, as the door's load balancer saw it: kept as the
+  // link's last contact.
+  string client_address = 6;
+}
+
+// FoundryRelayDelivery is a request Slack sent a relayed install, which its
+// local install queues as an intake row of the same id and dedupe key.
+message FoundryRelayDelivery {
+  string id = 1;
+  string install_id = 2;
+  string local_workspace_id = 3;
+  // "event" or "interaction", as the intake's kind.
+  string kind = 4;
+  string dedupe_key = 5;
+  string conversation = 6;
+  string slack_user_id = 7;
+  // The parsed event or click, as the intake keeps it.
+  string payload_json = 8;
+}
+
+// FoundryRelayFeedRow is a channel message's buffer row for a relayed
+// install's Slack data connector, which its local install appends as it is.
+message FoundryRelayFeedRow {
+  string id = 1;
+  string install_id = 2;
+  string local_workspace_id = 3;
+  string dedupe_key = 4;
+  string channel_id = 5;
+  // Its day, midnight UTC.
+  google.protobuf.Timestamp day = 6;
+  // The buffer row's kind (message, changed, deleted, replied, channel,
+  // joined, left, span or complete).
+  string kind = 7;
+  string payload_json = 8;
+}
+
+// FoundryRelayFeedGap is a span of a channel's messages (every channel's,
+// for channel_id "") a relayed install may never get: its local install
+// records it as a gap of its feed.
+message FoundryRelayFeedGap {
+  string id = 1;
+  string install_id = 2;
+  string local_workspace_id = 3;
+  string channel_id = 4;
+  google.protobuf.Timestamp from = 5;
+  google.protobuf.Timestamp to = 6;
+}
+
+// FoundryRelayInstall is a live install of Helix's Slack app serving one of
+// the link's local workspaces, which its local install mirrors (no token:
+// its calls go through the relay).
+message FoundryRelayInstall {
+  string install_id = 1;
+  string local_workspace_id = 2;
+  string team_id = 3;
+  string enterprise_id = 4;
+  string team_name = 5;
+  string app_id = 6;
+  string bot_user_id = 7;
+  string bot_id = 8;
+  bool installer_admin = 9;
+  repeated string scopes = 10;
+  // Who in Slack installed it: the local owner's own Slack account.
+  string installed_by_slack_user_id = 11;
+  google.protobuf.Timestamp created_at = 12;
+  // Hosted holds its channel messages for its local install.
+  bool feed_on = 13;
+}
+
+message ClaimFoundryRelayDeliveriesResponse {
+  // Oldest first, leased for a minute: a delivery not acked by then is
+  // claimed again.
+  repeated FoundryRelayDelivery deliveries = 1;
+  // Channel messages and gaps, oldest first, leased as deliveries are.
+  repeated FoundryRelayFeedRow feed = 2;
+  repeated FoundryRelayFeedGap feed_gaps = 3;
+  // The link's live installs: any other the local install has is gone.
+  repeated FoundryRelayInstall installs = 4;
+  // How many of acks were taken.
+  int32 acked = 5;
+  // Hosted's foundry.slack.feed and follow: a local install's own can only
+  // narrow them.
+  bool hosted_feed = 6;
+  bool hosted_follow = 7;
+}
+
+message CallSlackForRelayRequest {
+  string token_sha256 = 1;
+  // The local workspace whose install the call acts as.
+  string local_workspace_id = 2;
+  // The Web API method, such as chat.postMessage.
+  string method = 3;
+  // Its arguments, a JSON object: a method Slack takes as a form gets each
+  // as a string.
+  string body_json = 4;
+}
+message CallSlackForRelayResponse {
+  // Slack's answer, as a JSON object; empty when the call may not go yet.
+  string body_json = 1;
+  // Set when the call may not go yet (Slack's 429, or the relay's limits):
+  // try it again after as many seconds.
+  int32 retry_after_s = 2;
+}
+
+message StartFoundryRelaySlackInstallRequest {
+  string token_sha256 = 1;
+  string local_workspace_id = 2;
+  // The link's own Settings › Slack, <redirect origin>/settings/slack:
+  // anything else is INVALID_ARGUMENT.
+  string return_to = 3;
+}
+message StartFoundryRelaySlackInstallResponse {
+  string authorize_url = 1;
+}
+
+message RevokeFoundryRelayTokenRequest {
+  string token_sha256 = 1;
+}
+message RevokeFoundryRelayTokenResponse {}
 
 // FoundrySlackFeedGap is one minute of one channel's events Slack dropped.
 message FoundrySlackFeedGap {

@@ -960,6 +960,93 @@ service FoundryService {
   rpc DeleteFoundrySlackLink(DeleteFoundrySlackLinkRequest) returns (google.protobuf.Empty) {
     option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/slack/links/{slack_user_id}"};
   }
+  // Sets what a Slack user may do with a standalone install, for its owner:
+  // READ lets one who asked read and ask, as the owner, and drops their
+  // request; NONE removes their read-only link, or drops their request. The
+  // owner's own link (the app's installer) is never changed here
+  // (FAILED_PRECONDITION FOUNDRY_SLACK_OWNER_LINK). Hosted Helix links each
+  // person to their own account instead: FAILED_PRECONDITION
+  // FOUNDRY_SLACK_LOCAL_ONLY.
+  rpc SetFoundrySlackAccess(SetFoundrySlackAccessRequest) returns (FoundrySlackAccessResponse) {
+    option (google.api.http) = {
+      put: "/v1/workspaces/{workspace_id}/foundry/slack/links/{slack_user_id}/access"
+      body: "*"
+    };
+  }
+
+  // Helix's Slack relay (foundry.slack.relay), from a standalone install:
+  // its owner links it to a Helix workspace, through which Slack reaches it.
+  // Hosted Helix serves none of these: FAILED_PRECONDITION
+  // FOUNDRY_RELAY_LOCAL_ONLY.
+  //
+  // The install's link to Helix: unlinked, or linked, to whom, and when
+  // Helix last answered.
+  rpc GetFoundryRelay(GetFoundryRelayRequest) returns (FoundryRelayResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/relay"};
+  }
+  // Starts linking, for the owner: Helix's page that asks an owner or admin
+  // of a Helix workspace to link the install, which hands a code back to
+  // this install's Settings › Slack within ten minutes.
+  rpc StartFoundryRelayLink(StartFoundryRelayLinkRequest) returns (StartFoundryRelayLinkResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/relay:start-link"
+      body: "*"
+    };
+  }
+  // Finishes linking with what Helix handed back: the state must be the
+  // install's, unexpired and unspent (FAILED_PRECONDITION
+  // FOUNDRY_RELAY_LINK_EXPIRED). It replaces any link the install had.
+  rpc CompleteFoundryRelayLink(CompleteFoundryRelayLinkRequest) returns (FoundryRelayResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/relay:complete-link"
+      body: "*"
+    };
+  }
+  // Turns approving changes from Slack on or off, for the owner: off, the
+  // relay only reads and asks. NOT_FOUND while unlinked.
+  rpc UpdateFoundryRelay(UpdateFoundryRelayRequest) returns (FoundryRelayResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/relay"
+      body: "*"
+    };
+  }
+  // Unlinks the install, for the owner: Helix revokes its link, and its
+  // Slack installs with it.
+  rpc UnlinkFoundryRelay(UnlinkFoundryRelayRequest) returns (FoundryRelayResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/relay:unlink"
+      body: "*"
+    };
+  }
+
+  // Helix's side of the relay, for a workspace's owners and admins; a
+  // standalone install serves none of these. Wherever foundry.slack or its
+  // relay is off: FAILED_PRECONDITION FOUNDRY_RELAY_DISABLED.
+  //
+  // Authorizes linking a standalone install to the workspace: a one-time
+  // code, live for ten minutes, bound to the install's PKCE challenge and
+  // its loopback Settings › Slack, which the site sends the browser back to
+  // with the code and the install's state. FAILED_PRECONDITION
+  // FOUNDRY_SLACK_NOT_OFFERED off the install list.
+  rpc AuthorizeFoundryRelayLink(AuthorizeFoundryRelayLinkRequest) returns (AuthorizeFoundryRelayLinkResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/relay-links:authorize"
+      body: "*"
+    };
+  }
+  // The workspace's linked installs, newest first, with their Slack installs
+  // and today's counts.
+  rpc ListFoundryRelayLinks(ListFoundryRelayLinksRequest) returns (ListFoundryRelayLinksResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/relay-links"};
+  }
+  // Revokes a linked install: its token stops working, and its Slack
+  // installs leave Slack.
+  rpc RevokeFoundryRelayLink(RevokeFoundryRelayLinkRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/relay-links/{link_id}:revoke"
+      body: "*"
+    };
+  }
 }
 
 // GetFoundryUsageRequest reads the workspace's AI spend this calendar month
@@ -2311,6 +2398,11 @@ message SendFoundryAgentMessageRequest {
   // It only narrows the turn (no dashboard runs by itself in Slack), so
   // any caller may set it.
   FoundryAgentSurface surface = 7;
+  // The turn only reads and asks, whatever its person may do: a standalone
+  // install's Slack users the owner allowed read-only, and the owner's own
+  // while approving from Slack is off. It only narrows the turn, so any
+  // caller may set it.
+  bool read_only = 8;
 }
 message FoundryAgentTurnResponse {
   FoundryAgentTurn turn = 1;
@@ -2732,6 +2824,10 @@ message FoundrySlackResponse {
   // FinishFoundrySlackInstall's: the site path the install was started from
   // (StartFoundrySlackInstallRequest.return_path); empty for Settings › Slack.
   string return_path = 2;
+  // FinishFoundrySlackInstall's, for an install a linked standalone install
+  // started: its own Settings › Slack, an http://localhost or 127.0.0.1
+  // origin, which the site sends the browser to instead.
+  string return_to = 3;
 }
 message StartFoundrySlackInstallRequest {
   string workspace_id = 1;
@@ -2762,6 +2858,8 @@ message ListFoundrySlackLinksRequest {
 message ListFoundrySlackLinksResponse {
   // Oldest first.
   repeated FoundrySlackLink links = 1;
+  // A standalone install's: Slack users who asked to use it, oldest first.
+  repeated FoundrySlackAccessRequest requests = 2;
 }
 message PreviewFoundrySlackLinkRequest {
   string workspace_id = 1;
@@ -2791,4 +2889,72 @@ message FoundrySlackLinkResponse {
 message DeleteFoundrySlackLinkRequest {
   string workspace_id = 1;
   string slack_user_id = 2;
+}
+message SetFoundrySlackAccessRequest {
+  string workspace_id = 1;
+  string slack_user_id = 2;
+  // READ or NONE; FULL and UNSPECIFIED are INVALID_ARGUMENT.
+  FoundrySlackLinkAccess access = 3;
+}
+message FoundrySlackAccessResponse {
+  // The Slack user's link once READ; unset once NONE.
+  FoundrySlackLink link = 1;
+}
+
+message GetFoundryRelayRequest {
+  string workspace_id = 1;
+}
+message FoundryRelayResponse {
+  FoundryRelay relay = 1;
+}
+message StartFoundryRelayLinkRequest {
+  string workspace_id = 1;
+}
+message StartFoundryRelayLinkResponse {
+  // Helix's /relay/link page, with the state, the PKCE challenge, this
+  // install's Settings › Slack and its name.
+  string authorize_url = 1;
+}
+message CompleteFoundryRelayLinkRequest {
+  string workspace_id = 1;
+  // What Helix's site handed back to Settings › Slack.
+  string code = 2;
+  string state = 3;
+}
+message UpdateFoundryRelayRequest {
+  string workspace_id = 1;
+  // Approving changes from Slack: off, Slack only reads and asks.
+  bool slack_approvals = 2;
+}
+message UnlinkFoundryRelayRequest {
+  string workspace_id = 1;
+}
+message AuthorizeFoundryRelayLinkRequest {
+  string workspace_id = 1;
+  // The install's own state, handed back as it is: 16 to 256 URL-safe
+  // characters.
+  string state = 2;
+  // The S256 challenge of the install's PKCE verifier: 43 base64url
+  // characters.
+  string code_challenge = 3;
+  // The install's Settings › Slack: http://localhost[:port]/settings/slack
+  // or http://127.0.0.1[:port]/settings/slack, nothing else.
+  string redirect_uri = 4;
+  // The install's name, as its owner calls it: 1 to 128 bytes of text.
+  string name = 5;
+}
+message AuthorizeFoundryRelayLinkResponse {
+  // redirect_uri with the code and the state, where the site sends the
+  // browser.
+  string redirect_url = 1;
+}
+message ListFoundryRelayLinksRequest {
+  string workspace_id = 1;
+}
+message ListFoundryRelayLinksResponse {
+  repeated FoundryRelayLink links = 1;
+}
+message RevokeFoundryRelayLinkRequest {
+  string workspace_id = 1;
+  string link_id = 2;
 }

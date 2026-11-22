@@ -38,6 +38,8 @@ type Service struct {
 	loadDocuments loadDocumentSets
 	// slackFeed holds the slots and installs of Slack's channel events.
 	slackFeed slackFeedIntake
+	// relay paces the calls linked installs make to Slack through it.
+	relay relayLimits
 }
 
 var (
@@ -100,6 +102,9 @@ type runtimeDeps struct {
 	Emails UserEmails
 	// BotCredentials is nil where bot mode is refused (a standalone install).
 	BotCredentials ports.BotCredentials
+	// Relay is nil hosted, where a standalone install's relay methods are
+	// refused.
+	Relay RelayLinker
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
@@ -151,7 +156,7 @@ func New(d Deps) (*Service, error) {
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
 		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
 		LocalAI: d.LocalAI, AgentSessions: d.AgentSessions, AgentHosts: d.AgentHosts, AgentHostURL: d.AgentHostURL,
-		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails, BotCredentials: d.BotCredentials,
+		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails, BotCredentials: d.BotCredentials, Relay: d.Relay,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

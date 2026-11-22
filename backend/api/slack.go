@@ -198,9 +198,28 @@ func (s *Service) receiveSlackEvent(ctx context.Context, body []byte) (*foundryv
 		}
 		conversation = model.SlackConversation(install.ID, at.ChannelID, at.ThreadTS, person)
 	}
-	return s.queueSlackIntake(ctx, &model.SlackIntake{
+	in := &model.SlackIntake{
 		ID: id.New(), InstallID: install.ID, DedupeKey: key, Kind: model.SlackIntakeEvent, Conversation: conversation, SlackUserID: user, Payload: payload,
-	})
+	}
+	// A relayed install's requests wait for its local install, but one from a
+	// channel shared with another organisation, which Helix's worker refuses.
+	if _, relayed := install.Destination.(model.SlackServesRelay); relayed {
+		switch e := cb.Event.(type) {
+		case slack.Mention:
+			if !e.At.ExtShared {
+				return s.queueRelayDelivery(ctx, in, relaySeen(e.At, e.UserID, e.Text))
+			}
+		case slack.DirectMessage:
+			if !e.At.ExtShared {
+				return s.queueRelayDelivery(ctx, in, relaySeen(e.At, e.UserID, e.Text))
+			}
+		case slack.SessionStopped:
+			if !e.At.ExtShared {
+				return s.queueRelayDelivery(ctx, in, relaySeen(e.At, e.UserID, ""))
+			}
+		}
+	}
+	return s.queueSlackIntake(ctx, in)
 }
 
 // uninstallSlackTeam takes Slack's word that the app left team at
@@ -272,9 +291,15 @@ func (s *Service) receiveSlackClick(ctx context.Context, body []byte) (*foundryv
 	if err != nil {
 		return nil, "", err
 	}
-	return s.queueSlackIntake(ctx, &model.SlackIntake{
+	intake := &model.SlackIntake{
 		ID: id.New(), InstallID: install.ID, DedupeKey: slack.InteractionKey(in), Kind: model.SlackIntakeInteraction, SlackUserID: c.UserID, Payload: payload,
-	})
+	}
+	// A click on a relayed install's message is its local install's: the
+	// message's channel is one it was sent something from already.
+	if _, relayed := install.Destination.(model.SlackServesRelay); relayed {
+		return s.queueRelayDelivery(ctx, intake, model.RelaySeen{UserIDs: []string{c.UserID}})
+	}
+	return s.queueSlackIntake(ctx, intake)
 }
 
 // queueSlackIntake records in, once: a retry of it is a duplicate.
@@ -396,8 +421,12 @@ func (s *Service) slackUserName(ctx context.Context, userID string) string {
 }
 
 func (s *Service) slackLinkToProto(ctx context.Context, l *model.SlackLink) *foundryv1.FoundrySlackLink {
+	access := foundryv1.FoundrySlackLinkAccess_FOUNDRY_SLACK_LINK_ACCESS_FULL
+	if _, read := l.Access.(model.SlackReadAccess); read {
+		access = foundryv1.FoundrySlackLinkAccess_FOUNDRY_SLACK_LINK_ACCESS_READ
+	}
 	return &foundryv1.FoundrySlackLink{SlackUserId: l.SlackUserID, UserId: l.UserID, UserName: s.slackUserName(ctx, l.UserID),
-		CreatedAt: timestamppb.New(l.CreatedAt)}
+		CreatedAt: timestamppb.New(l.CreatedAt), Access: access}
 }
 
 // StartFoundrySlackInstall starts an owner's or admin's install of the app:
@@ -506,8 +535,24 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 		return nil, status.Errorf(codes.Internal, "read the install's state: %v", err)
 	}
 	ws := st.WorkspaceID
-	if err := s.requireSlackInstall(ctx, ws, userID); err != nil {
-		return nil, err
+	_, relayed := st.Destination.(model.SlackServesRelay)
+	switch {
+	case relayed:
+		// A linked install runs its own Founder: its member must still
+		// manage the workspace, which must still be offered the app.
+		if err := s.relayOn(ws); err != nil {
+			return nil, err
+		}
+		if err := s.requireSlackManager(ctx, ws, userID); err != nil {
+			return nil, err
+		}
+		if !s.deps.Cfg.Foundry.Slack.InstallAllowed(ws) {
+			return nil, foundryPrecondition(ws, "FOUNDRY_SLACK_NOT_OFFERED", "Helix Foundry for Slack isn't offered to this workspace yet")
+		}
+	default:
+		if err := s.requireSlackInstall(ctx, ws, userID); err != nil {
+			return nil, err
+		}
 	}
 	cfg := s.deps.Cfg.Foundry.Slack
 	callCtx, cancel := context.WithTimeout(ctx, slackCallTimeout)
@@ -539,6 +584,7 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 	install := &model.SlackInstall{
 		ID: id.New(), WorkspaceID: ws, TeamID: grant.TeamID, EnterpriseID: grant.EnterpriseID, TeamName: grant.TeamName, AppID: grant.AppID,
 		BotUserID: grant.BotUserID, Scopes: grant.Scopes, InstalledByUserID: userID, InstalledBySlackUserID: grant.InstallerID,
+		Destination: st.Destination,
 	}
 	stored, reinstalled, err := s.deps.DB.InstallFoundrySlack(ctx, install, func(installID string) (model.SlackSealedToken, error) {
 		sealed, keyID, err := s.deps.ConnectorKeys.Seal([]byte(grant.BotToken), installID)
@@ -557,6 +603,8 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 			return nil, status.Errorf(codes.Internal, "record the install: %v", err)
 		}
 		return nil, foundryPrecondition(ws, said[0], said[1])
+	case errors.Is(err, foundrystore.ErrNotFound) && relayed:
+		return nil, foundryPrecondition(ws, "FOUNDRY_RELAY_LINK_REVOKED", "the Foundry that started this install was unlinked from Helix meanwhile")
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "workspace not found")
 	case err != nil:
@@ -568,7 +616,7 @@ func (s *Service) FinishFoundrySlackInstall(ctx context.Context, req *foundryv1.
 	if err != nil {
 		return nil, err
 	}
-	resp.ReturnPath = st.ReturnPath
+	resp.ReturnPath, resp.ReturnTo = st.ReturnPath, st.ReturnTo
 	return resp, nil
 }
 
@@ -773,8 +821,9 @@ func (s *Service) slackBot(ctx context.Context, installID string) (slack.Bot, er
 	return slack.Bot{InstallID: installID, Token: string(token)}, nil
 }
 
-// ListFoundrySlackLinks lists who is linked, for owners and admins: none
-// while the workspace has no install.
+// ListFoundrySlackLinks lists who is linked, for owners and admins, and on a
+// standalone install who asked to use it: none while the workspace has no
+// install.
 func (s *Service) ListFoundrySlackLinks(ctx context.Context, req *foundryv1.ListFoundrySlackLinksRequest) (*foundryv1.ListFoundrySlackLinksResponse, error) {
 	ws := req.GetWorkspaceId()
 	if ws == "" {
@@ -801,6 +850,18 @@ func (s *Service) ListFoundrySlackLinks(ctx context.Context, req *foundryv1.List
 	out := &foundryv1.ListFoundrySlackLinksResponse{Links: make([]*foundryv1.FoundrySlackLink, 0, len(links))}
 	for _, l := range links {
 		out.Links = append(out.Links, s.slackLinkToProto(ctx, l))
+	}
+	// Only a standalone install's owner allows people who ask.
+	if !s.deps.Cfg.Host.Local {
+		return out, nil
+	}
+	requests, err := s.deps.DB.ListFoundrySlackAccessRequests(ctx, install.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the Slack access requests: %v", err)
+	}
+	for _, r := range requests {
+		out.Requests = append(out.Requests, &foundryv1.FoundrySlackAccessRequest{SlackUserId: r.SlackUserID, SlackName: r.SlackName,
+			CreatedAt: timestamppb.New(r.CreatedAt)})
 	}
 	return out, nil
 }

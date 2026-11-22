@@ -45,6 +45,68 @@
         }
       }
     },
+    "v1CallSlackForRelayResponse": {
+      "type": "object",
+      "properties": {
+        "bodyJson": {
+          "type": "string",
+          "description": "Slack's answer, as a JSON object; empty when the call may not go yet."
+        },
+        "retryAfterS": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Set when the call may not go yet (Slack's 429, or the relay's limits):\ntry it again after as many seconds."
+        }
+      }
+    },
+    "v1ClaimFoundryRelayDeliveriesResponse": {
+      "type": "object",
+      "properties": {
+        "deliveries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryRelayDelivery"
+          },
+          "description": "Oldest first, leased for a minute: a delivery not acked by then is\nclaimed again."
+        },
+        "feed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryRelayFeedRow"
+          },
+          "description": "Channel messages and gaps, oldest first, leased as deliveries are."
+        },
+        "feedGaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryRelayFeedGap"
+          }
+        },
+        "installs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryRelayInstall"
+          },
+          "description": "The link's live installs: any other the local install has is gone."
+        },
+        "acked": {
+          "type": "integer",
+          "format": "int32",
+          "description": "How many of acks were taken."
+        },
+        "hostedFeed": {
+          "type": "boolean",
+          "description": "Hosted's foundry.slack.feed and follow: a local install's own can only\nnarrow them."
+        },
+        "hostedFollow": {
+          "type": "boolean"
+        }
+      }
+    },
     "v1CreateFoundryReminderResponse": {
       "type": "object",
       "properties": {
@@ -152,6 +214,160 @@
       },
       "description": "FoundryEventPiece is one piece sent to an event source."
     },
+    "v1FoundryRelayDelivery": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "installId": {
+          "type": "string"
+        },
+        "localWorkspaceId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "\"event\" or \"interaction\", as the intake's kind."
+        },
+        "dedupeKey": {
+          "type": "string"
+        },
+        "conversation": {
+          "type": "string"
+        },
+        "slackUserId": {
+          "type": "string"
+        },
+        "payloadJson": {
+          "type": "string",
+          "description": "The parsed event or click, as the intake keeps it."
+        }
+      },
+      "description": "FoundryRelayDelivery is a request Slack sent a relayed install, which its\nlocal install queues as an intake row of the same id and dedupe key."
+    },
+    "v1FoundryRelayFeedGap": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "installId": {
+          "type": "string"
+        },
+        "localWorkspaceId": {
+          "type": "string"
+        },
+        "channelId": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryRelayFeedGap is a span of a channel's messages (every channel's,\nfor channel_id \"\") a relayed install may never get: its local install\nrecords it as a gap of its feed."
+    },
+    "v1FoundryRelayFeedOn": {
+      "type": "object",
+      "properties": {
+        "localWorkspaceId": {
+          "type": "string"
+        },
+        "on": {
+          "type": "boolean"
+        }
+      },
+      "description": "FoundryRelayFeedOn says whether a local workspace's Slack data connector\nreads its relayed install."
+    },
+    "v1FoundryRelayFeedRow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "installId": {
+          "type": "string"
+        },
+        "localWorkspaceId": {
+          "type": "string"
+        },
+        "dedupeKey": {
+          "type": "string"
+        },
+        "channelId": {
+          "type": "string"
+        },
+        "day": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Its day, midnight UTC."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The buffer row's kind (message, changed, deleted, replied, channel,\njoined, left, span or complete)."
+        },
+        "payloadJson": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryRelayFeedRow is a channel message's buffer row for a relayed\ninstall's Slack data connector, which its local install appends as it is."
+    },
+    "v1FoundryRelayInstall": {
+      "type": "object",
+      "properties": {
+        "installId": {
+          "type": "string"
+        },
+        "localWorkspaceId": {
+          "type": "string"
+        },
+        "teamId": {
+          "type": "string"
+        },
+        "enterpriseId": {
+          "type": "string"
+        },
+        "teamName": {
+          "type": "string"
+        },
+        "appId": {
+          "type": "string"
+        },
+        "botUserId": {
+          "type": "string"
+        },
+        "botId": {
+          "type": "string"
+        },
+        "installerAdmin": {
+          "type": "boolean"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "installedBySlackUserId": {
+          "type": "string",
+          "description": "Who in Slack installed it: the local owner's own Slack account."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "feedOn": {
+          "type": "boolean",
+          "description": "Hosted holds its channel messages for its local install."
+        }
+      },
+      "description": "FoundryRelayInstall is a live install of Helix's Slack app serving one of\nthe link's local workspaces, which its local install mirrors (no token:\nits calls go through the relay)."
+    },
     "v1FoundrySlackFeedGap": {
       "type": "object",
       "properties": {
@@ -206,6 +422,28 @@
     "v1RecordFoundrySlackFeedGapsResponse": {
       "type": "object"
     },
+    "v1RedeemFoundryRelayCodeResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "The link's hx_rl_ token: Helix keeps only its SHA-256."
+        },
+        "linkId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "The Helix workspace the install is linked to, and the email of the\nmember who linked it."
+        },
+        "accountEmail": {
+          "type": "string"
+        }
+      }
+    },
+    "v1RevokeFoundryRelayTokenResponse": {
+      "type": "object"
+    },
     "v1SendFoundryEventsResponse": {
       "type": "object",
       "properties": {
@@ -242,6 +480,14 @@
       "default": "SLACK_ROUTE_UNSPECIFIED",
       "description": "SlackRoute is the door's route a Slack request came to.\n\n - SLACK_ROUTE_EVENTS: POST /v1/slack/events: the Events API, a JSON body.\n - SLACK_ROUTE_INTERACTIVITY: POST /v1/slack/interactivity: clicks, a form whose payload is JSON."
     },
+    "v1StartFoundryRelaySlackInstallResponse": {
+      "type": "object",
+      "properties": {
+        "authorizeUrl": {
+          "type": "string"
+        }
+      }
+    },
     "v1StopFoundryRemindersResponse": {
       "type": "object"
     },
@@ -258,6 +504,20 @@
           "type": "string"
         },
         "connectorId": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ValidateFoundryRelayTokenResponse": {
+      "type": "object",
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "linkId": {
+          "type": "string"
+        },
+        "workspaceId": {
           "type": "string"
         }
       }

@@ -3441,6 +3441,73 @@ message FoundrySlackLink {
   // The Foundry user's name, as Foundry shows it.
   string user_name = 3;
   google.protobuf.Timestamp created_at = 4;
+  // FULL on hosted Helix, and for a standalone install's owner (the app's
+  // installer); READ for a Slack user the owner allowed.
+  FoundrySlackLinkAccess access = 5;
+}
+
+// FoundrySlackLinkAccess is what a linked Slack user may do.
+enum FoundrySlackLinkAccess {
+  FOUNDRY_SLACK_LINK_ACCESS_UNSPECIFIED = 0;
+  // Acts as its Foundry user in full.
+  FOUNDRY_SLACK_LINK_ACCESS_FULL = 1;
+  // Reads and asks as a standalone install's owner, changing nothing.
+  FOUNDRY_SLACK_LINK_ACCESS_READ = 2;
+  // No access: SetFoundrySlackAccess removes it.
+  FOUNDRY_SLACK_LINK_ACCESS_NONE = 3;
+}
+
+// FoundrySlackAccessRequest is a Slack user who asked to use a standalone
+// install, until its owner allows them or drops the request.
+message FoundrySlackAccessRequest {
+  string slack_user_id = 1;
+  // Their name in Slack.
+  string slack_name = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// FoundryRelay is a standalone install's link to Helix's Slack relay.
+message FoundryRelay {
+  // Linked to a Helix workspace; the rest is unset while not.
+  bool linked = 1;
+  // Helix's origin, such as https://ingest.helix-db.com.
+  string hosted_origin = 2;
+  // The email of the Helix member who linked it.
+  string account_email = 3;
+  google.protobuf.Timestamp linked_at = 4;
+  // When Helix last answered its claim; unset until it has.
+  google.protobuf.Timestamp last_ok_at = 5;
+  // The owner's Slack account may approve changes through Slack: off, the
+  // relay only reads and asks.
+  bool slack_approvals = 6;
+}
+
+// FoundryRelayLink is a standalone install linked to a Helix workspace.
+message FoundryRelayLink {
+  string id = 1;
+  // The install's name, as its owner calls it.
+  string name = 2;
+  // Who linked it, and their name.
+  string created_by_user_id = 3;
+  string created_by_name = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // Its last claim or call, written at most once a minute; unset until then.
+  google.protobuf.Timestamp last_seen_at = 6;
+  // Its Slack installs, one per local workspace.
+  repeated FoundryRelayLinkInstall installs = 7;
+  // What it did today (UTC): Slack's requests held for it, its calls to
+  // Slack made and refused, and channel messages held.
+  int64 deliveries_today = 8;
+  int64 calls_today = 9;
+  int64 refused_today = 10;
+  int64 feed_rows_today = 11;
+}
+
+// FoundryRelayLinkInstall is a Slack workspace a linked install serves.
+message FoundryRelayLinkInstall {
+  string team_id = 1;
+  string team_name = 2;
+  google.protobuf.Timestamp created_at = 3;
 }
 
 // FoundrySlackLinkRefusal is why a Slack user can't be linked to the caller.

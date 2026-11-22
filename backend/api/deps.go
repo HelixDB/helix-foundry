@@ -67,6 +67,10 @@ type Deps struct {
 	// install of the Slack app starts at its /oauth/v2/authorize, and the
 	// Web API is under its /api. Tests point it at a fake Slack.
 	SlackURL string
+	// Relay is a standalone install's link to Helix's Slack relay (package
+	// local/relay); nil hosted, where the install's relay methods are
+	// refused (FOUNDRY_RELAY_LOCAL_ONLY).
+	Relay RelayLinker
 	// Emails reads users' email addresses: linking a Slack account needs its
 	// Slack email to be its Foundry user's. A hosted API with foundry.slack
 	// enabled needs it (New refuses to start without it); a standalone
