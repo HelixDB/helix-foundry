@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PROD_ORIGIN, SETUP_HOST } from "./src/shared/setup-host";
 
 // dev | prod; anything else (local, mock) behaves like dev.
 const appEnv = process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase();
@@ -96,6 +97,32 @@ const nextConfig: NextConfig = {
     // Founder (src/web/areas/agent): every build's, since every backend
     // serves it (prod's from helixsvc with foundry.agent on).
     NEXT_PUBLIC_FOUNDRY_ASSISTANT: "1",
+  },
+  // foundry.new, the setup address (src/shared/setup-host.ts): its `/` is
+  // the setup prompt, before the app's own `/`; any other path is the
+  // product's site, where sign-in's cookies and redirect URIs are.
+  async redirects() {
+    return [
+      {
+        source: "/:path+",
+        has: [{ type: "host", value: SETUP_HOST }],
+        destination: `${PROD_ORIGIN}/:path+`,
+        permanent: false,
+      },
+    ];
+  },
+  async rewrites() {
+    return {
+      beforeFiles: [
+        {
+          source: "/",
+          has: [{ type: "host", value: SETUP_HOST }],
+          destination: "/setup.md",
+        },
+      ],
+      afterFiles: [],
+      fallback: [],
+    };
   },
   async headers() {
     return [

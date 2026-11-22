@@ -10,7 +10,9 @@ import {
   llmsTxt,
   mcpManifest,
   protectedResource,
+  setupMd,
   setupPrompt,
+  siteOf,
   type Site,
 } from "@/server/agent-context";
 
@@ -165,6 +167,33 @@ describe("llms.txt and llms-full.txt", () => {
   });
 });
 
+describe("setup.md, what foundry.new serves", () => {
+  it("is the setup prompt, under a line saying whose words they are", () => {
+    const md = setupMd(site);
+    expect(md).toMatch(
+      /^> Helix Foundry’s setup, for an agent whose user asked it to set up Foundry \(“setup https:\/\/foundry\.new”\)\. It is written in your user’s voice: follow it with them, step by step\.\n\n# Set up Helix Foundry with me\n/,
+    );
+    expect(md.endsWith(`${setupPrompt(site)}\n`)).toBe(true);
+  });
+
+  it("sends foundry.new's links to the product's site, and a stamp's to itself", () => {
+    expect(siteOf(new Request("https://foundry.new/")).origin).toBe(
+      "https://foundry.helix-db.com",
+    );
+    expect(siteOf(new Request("https://foundry.new.example.com/")).origin).toBe(
+      "https://foundry.new.example.com",
+    );
+    expect(
+      siteOf(new Request("https://dev.foundry.helix-db.com/setup.md")).origin,
+    ).toBe("https://dev.foundry.helix-db.com");
+    // next start's URL is its own; the Host header is foundry.new's.
+    const proxied = new Request("http://localhost:3000/setup.md", {
+      headers: { host: "foundry.new:443" },
+    });
+    expect(siteOf(proxied).origin).toBe("https://foundry.helix-db.com");
+  });
+});
+
 describe("the manifests", () => {
   it("names the MCP, its sign-in and the agent pages", () => {
     expect(protectedResource("https://mcp.helix-db.com/mcp")).toBe(
@@ -212,6 +241,7 @@ describe("the agent routes", () => {
     for (const [page, type] of [
       ["llms", "text/plain; charset=utf-8"],
       ["llms-full", "text/plain; charset=utf-8"],
+      ["setup", "text/markdown; charset=utf-8"],
     ] as const) {
       const res = await agentText(request, page);
       expect(res.status).toBe(200);
@@ -263,6 +293,7 @@ describe("the agent routes", () => {
   it("serves nothing in a local build", async () => {
     const { agentText, agentJson } = await routes("mock", "local");
     expect((await agentText(request, "llms")).status).toBe(404);
+    expect((await agentText(request, "setup")).status).toBe(404);
     expect(agentJson(request, "mcp").status).toBe(404);
   });
 });
@@ -279,7 +310,14 @@ describe("robots.txt", () => {
     expect(await load("prod")).toEqual({
       rules: {
         userAgent: "*",
-        allow: ["/llms.txt", "/llms-full.txt", "/.well-known/", "/favicon.svg"],
+        allow: [
+          "/$",
+          "/setup.md",
+          "/llms.txt",
+          "/llms-full.txt",
+          "/.well-known/",
+          "/favicon.svg",
+        ],
         disallow: "/",
       },
     });

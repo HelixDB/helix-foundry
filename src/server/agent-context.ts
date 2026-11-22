@@ -3,6 +3,7 @@ import {
   addHelixMcp,
   onboardingPrompt,
 } from "@/web/areas/ontology/onboarding-prompt";
+import { PROD_ORIGIN, SETUP_HOST } from "@/shared/setup-host";
 import {
   PLAN_FEATURES,
   PLAN_PRICE,
@@ -24,8 +25,6 @@ import {
 export const DOCS = "https://docs.helix-db.com";
 /** Foundry's repository, which a local install clones. */
 export const SOURCE = "https://github.com/helixdb/helix-foundry";
-/** Where the hosted site is when it is the product, not a stamp of it. */
-export const PROD_ORIGIN = "https://foundry.helix-db.com";
 
 /** The stamp the site was built for: dev | prod; else a local build or the mock. */
 const appEnv = process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase();
@@ -42,9 +41,19 @@ export type Site = {
   eventsUrl: string;
 };
 
-/** The stamp that answers `request`, with its build's Helix MCP. */
+/**
+ * The stamp that answers `request`, with its build's Helix MCP. The setup
+ * address (foundry.new) serves no sign-in, so its links go to the product's
+ * site. It is told by the URL or, since `next start` builds a route's URL
+ * from its own hostname, the Host header.
+ */
 export const siteOf = (request: Request): Site => ({
-  origin: new URL(request.url).origin,
+  origin: [
+    new URL(request.url).hostname,
+    request.headers.get("host")?.split(":")[0],
+  ].includes(SETUP_HOST)
+    ? PROD_ORIGIN
+    : new URL(request.url).origin,
   mcpUrl:
     process.env.NEXT_PUBLIC_HELIX_MCP_URL || "https://mcp.helix-db.com/mcp",
   eventsUrl: process.env.NEXT_PUBLIC_HELIX_EVENTS_URL || "",
@@ -234,6 +243,16 @@ ${pages ? `## Docs\n\n${pages}` : docsSection(index)}
 /** The setup prompt for someone without a workspace yet. */
 export const setupPrompt = ({ origin, mcpUrl, eventsUrl }: Site): string =>
   onboardingPrompt({ origin, mcpUrl, eventsUrl, workspace: null }).trim();
+
+/**
+ * /setup.md, what https://foundry.new serves: the setup prompt, under a line
+ * that tells the agent reading it whose words they are.
+ */
+export const setupMd = (site: Site): string =>
+  `> Helix Foundry’s setup, for an agent whose user asked it to set up Foundry (“setup https://${SETUP_HOST}”). It is written in your user’s voice: follow it with them, step by step.
+
+${setupPrompt(site)}
+`;
 
 /**
  * The Helix MCP as /.well-known/mcp.json describes it to scanners: where it

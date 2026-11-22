@@ -184,4 +184,24 @@ describe("next.config.ts", () => {
       .NEXT_PUBLIC_HELIX_EVENTS_URL!;
     expect(new URL(url).origin).toBe(url);
   });
+
+  // foundry.new (src/shared/setup-host.ts): `/` is the setup prompt, the
+  // rest is the product's site; no other host is touched.
+  it("serves the setup prompt on foundry.new, and sends the rest to the site", async () => {
+    const next = await config({});
+    const host = [{ type: "host", value: "foundry.new" }];
+    expect(await next.redirects?.()).toEqual([
+      {
+        source: "/:path+",
+        has: host,
+        destination: "https://foundry.helix-db.com/:path+",
+        permanent: false,
+      },
+    ]);
+    expect(await next.rewrites?.()).toEqual({
+      beforeFiles: [{ source: "/", has: host, destination: "/setup.md" }],
+      afterFiles: [],
+      fallback: [],
+    });
+  });
 });
