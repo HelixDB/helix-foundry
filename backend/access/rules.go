@@ -221,14 +221,15 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_ResumeFoundryPro_FullMethodName:         Deny,
 	foundryv1.FoundryService_GetFoundryUsage_FullMethodName:          Deny,
 
-	// Helix Foundry for Slack: owners and admins add, disconnect and list;
-	// a grantee sees the install and links, and unlinks, its own Slack
-	// account, whose turns are then its own narrowed Founder turns. Slack's
-	// requests are the door's.
+	// Helix Foundry for Slack: owners and admins add, disconnect, set the
+	// bot's mode and list; a grantee sees the install and links, and
+	// unlinks, its own Slack account, whose turns are then its own narrowed
+	// Founder turns. Slack's requests are the door's.
 	foundryv1.FoundryService_GetFoundrySlack_FullMethodName:                  Workspace,
 	foundryv1.FoundryService_StartFoundrySlackInstall_FullMethodName:         Deny,
 	foundryv1.FoundryService_FinishFoundrySlackInstall_FullMethodName:        Deny,
 	foundryv1.FoundryService_DisconnectFoundrySlack_FullMethodName:           Deny,
+	foundryv1.FoundryService_UpdateFoundrySlack_FullMethodName:               Deny,
 	foundryv1.FoundryService_ListFoundrySlackLinks_FullMethodName:            Deny,
 	foundryv1.FoundryService_PreviewFoundrySlackLink_FullMethodName:          Workspace,
 	foundryv1.FoundryService_CreateFoundrySlackLink_FullMethodName:           Workspace,

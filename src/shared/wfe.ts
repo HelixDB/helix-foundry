@@ -5740,6 +5740,34 @@ export type FoundrySlackInstall = {
   // When Slack last dropped the team's events, past its 30,000 an hour;
   // set only within the last 24 hours.
   eventsLimitedAt?: string;
+  // Whom its bot acts as; the shared bot is set in BOT mode only.
+  identityMode?: FoundrySlackIdentityMode;
+  bot?: FoundrySlackBot | null;
+};
+
+/**
+ * v1FoundrySlackIdentityMode: whom an install's bot acts as. PER_PERSON:
+ * each linked Slack user as their own Foundry user. BOT: one shared bot,
+ * which anyone in the Slack workspace may ask, reading only the sources its
+ * key is given; owners and admins run what it proposes as themselves.
+ */
+export type FoundrySlackIdentityMode =
+  | "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED"
+  | "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON"
+  | "FOUNDRY_SLACK_IDENTITY_MODE_BOT";
+
+/**
+ * v1FoundrySlackBot: an install's shared bot, the workspace service
+ * credential it acts as. Settings › Access chooses its sources, as principal
+ * service_credential:<credentialId>. credentialName is empty when Helix
+ * can't read it. broken: the key was revoked, deleted, expired or given
+ * database permissions, and the bot's turns fail until bot mode is turned
+ * off and on again.
+ */
+export type FoundrySlackBot = {
+  credentialId?: string;
+  credentialName?: string;
+  broken?: boolean;
 };
 
 /**
@@ -5772,7 +5800,7 @@ export type FoundrySlack = {
 
 /**
  * v1FoundrySlackResponse: GET .../foundry/slack, and the answer of
- * :finish-install and :disconnect.
+ * :finish-install, :disconnect and PATCH .../foundry/slack.
  */
 export type FoundrySlackResponse = {
   slack?: FoundrySlack;
@@ -5812,6 +5840,20 @@ export type StartFoundrySlackInstallResponse = { authorizeUrl?: string };
  * workspace again is a reinstall, which keeps its links.
  */
 export type FinishFoundrySlackInstallRequest = { code: string; state: string };
+
+/**
+ * FoundryServiceUpdateFoundrySlackBody: PATCH .../foundry/slack, owners and
+ * admins (answers FoundrySlackResponse). BOT makes the shared bot's key;
+ * PER_PERSON revokes it and deletes the bot's threads; the mode the install
+ * has changes nothing. NOT_FOUND without an install; FAILED_PRECONDITION
+ * FOUNDRY_SLACK_BOT_HOSTED_ONLY where the host makes no bot keys.
+ */
+export type UpdateFoundrySlackRequest = {
+  identityMode: Exclude<
+    FoundrySlackIdentityMode,
+    "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED"
+  >;
+};
 
 /** v1ListFoundrySlackLinksResponse: GET .../foundry/slack/links, owners and admins; oldest first. */
 export type ListFoundrySlackLinksResponse = { links?: FoundrySlackLink[] };

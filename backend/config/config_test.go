@@ -849,6 +849,55 @@ func TestSlackLocal(t *testing.T) {
 	}
 }
 
+// The shared bot's bounds default to 120 messages an hour, 20 of them one
+// Slack user's, and a day for a proposal; hosted, the API, the agent worker
+// and the Slack worker check them, each at its edge; off, or on a
+// standalone install, where bot mode is refused, nothing does.
+func TestSlackBot(t *testing.T) {
+	if b := Defaults().Foundry.Slack.Bot; b != (SlackBotConfig{PerHour: 120, PerUserPerHour: 20, ProposalTTL: 24 * time.Hour}) {
+		t.Fatalf("defaults = %+v", b)
+	}
+	readers := []Roles{{API: true}, {AgentWorker: true}, {SlackWorker: true}}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackBotConfig)
+		want   string // empty when valid
+	}{
+		"no turns an hour":       {func(b *SlackBotConfig) { b.PerHour = 0 }, "per_hour and per_user_per_hour must be positive"},
+		"no turns a user":        {func(b *SlackBotConfig) { b.PerUserPerHour = -1 }, "per_hour and per_user_per_hour must be positive"},
+		"one each":               {func(b *SlackBotConfig) { b.PerHour, b.PerUserPerHour = 1, 1 }, ""},
+		"proposals never wait":   {func(b *SlackBotConfig) { b.ProposalTTL = 0 }, "proposal_ttl is 0s"},
+		"proposals past threads": {func(b *SlackBotConfig) { b.ProposalTTL = MaxSlackThreadRetention + 1 }, "at most 720h0m0s"},
+		"proposals as threads":   {func(b *SlackBotConfig) { b.ProposalTTL = MaxSlackThreadRetention }, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, roles := range readers {
+				c := slackOn()
+				tc.mutate(&c.Foundry.Slack.Bot)
+				if err := c.Validate(roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+					t.Fatalf("Validate(%+v) = %v, want %q", roles, err, tc.want)
+				}
+				for _, other := range []Roles{{}, {Events: true}} {
+					if err := c.Validate(other); err != nil {
+						t.Fatalf("checked without its role (%+v): %v", other, err)
+					}
+				}
+				c.Foundry.Slack.Enabled = false
+				if err := c.Validate(roles); err != nil {
+					t.Fatalf("checked while off: %v", err)
+				}
+			}
+		})
+	}
+	// A standalone install has no bot mode: its bounds aren't read.
+	c := Defaults()
+	c.Host.Local = true
+	c.Foundry.Slack.Enabled = true
+	c.Foundry.Slack.Bot = SlackBotConfig{}
+	if err := c.Foundry.Slack.validate(Roles{API: true, AgentWorker: true}, true, c.Foundry.Agent); err != nil {
+		t.Fatalf("a standalone install's bot bounds were checked: %v", err)
+	}
+}
+
 // Slack's routes have a gate of their own on the door, wide for Slack's few
 // addresses, checked where the door runs whether or not the app is on: each
 // bound holds at its edge and refuses past it, as the send gate's do.

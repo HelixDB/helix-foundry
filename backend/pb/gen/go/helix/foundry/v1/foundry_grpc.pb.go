@@ -173,6 +173,7 @@ const (
 	FoundryService_StartFoundrySlackInstall_FullMethodName              = "/helix.foundry.v1.FoundryService/StartFoundrySlackInstall"
 	FoundryService_FinishFoundrySlackInstall_FullMethodName             = "/helix.foundry.v1.FoundryService/FinishFoundrySlackInstall"
 	FoundryService_DisconnectFoundrySlack_FullMethodName                = "/helix.foundry.v1.FoundryService/DisconnectFoundrySlack"
+	FoundryService_UpdateFoundrySlack_FullMethodName                    = "/helix.foundry.v1.FoundryService/UpdateFoundrySlack"
 	FoundryService_ListFoundrySlackLinks_FullMethodName                 = "/helix.foundry.v1.FoundryService/ListFoundrySlackLinks"
 	FoundryService_PreviewFoundrySlackLink_FullMethodName               = "/helix.foundry.v1.FoundryService/PreviewFoundrySlackLink"
 	FoundryService_CreateFoundrySlackLink_FullMethodName                = "/helix.foundry.v1.FoundryService/CreateFoundrySlackLink"
@@ -529,6 +530,16 @@ type FoundryServiceClient interface {
 	// removed from the Slack workspace (Helix tries again shortly when Slack
 	// can't be reached), and its links, and what Slack sent, are deleted.
 	DisconnectFoundrySlack(ctx context.Context, in *DisconnectFoundrySlackRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error)
+	// Sets whom the install's bot acts as, for an owner or admin. BOT makes
+	// one shared bot for the whole Slack workspace: Helix makes it a
+	// workspace service credential no one holds the token of, whose sources
+	// are chosen in Settings › Access, and owners and admins run what it
+	// proposes as themselves. PER_PERSON answers each linked Slack user as
+	// their own Foundry user: the bot's credential is revoked and its threads
+	// deleted. Setting the mode it has changes nothing. NOT_FOUND without an
+	// install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the
+	// host makes no such credentials.
+	UpdateFoundrySlack(ctx context.Context, in *UpdateFoundrySlackRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error)
 	// Who is linked, for owners and admins.
 	ListFoundrySlackLinks(ctx context.Context, in *ListFoundrySlackLinksRequest, opts ...grpc.CallOption) (*ListFoundrySlackLinksResponse, error)
 	// What linking the token's Slack user to the caller would do, before it
@@ -2086,6 +2097,16 @@ func (c *foundryServiceClient) DisconnectFoundrySlack(ctx context.Context, in *D
 	return out, nil
 }
 
+func (c *foundryServiceClient) UpdateFoundrySlack(ctx context.Context, in *UpdateFoundrySlackRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundrySlackResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UpdateFoundrySlack_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundrySlackLinks(ctx context.Context, in *ListFoundrySlackLinksRequest, opts ...grpc.CallOption) (*ListFoundrySlackLinksResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundrySlackLinksResponse)
@@ -2476,6 +2497,16 @@ type FoundryServiceServer interface {
 	// removed from the Slack workspace (Helix tries again shortly when Slack
 	// can't be reached), and its links, and what Slack sent, are deleted.
 	DisconnectFoundrySlack(context.Context, *DisconnectFoundrySlackRequest) (*FoundrySlackResponse, error)
+	// Sets whom the install's bot acts as, for an owner or admin. BOT makes
+	// one shared bot for the whole Slack workspace: Helix makes it a
+	// workspace service credential no one holds the token of, whose sources
+	// are chosen in Settings › Access, and owners and admins run what it
+	// proposes as themselves. PER_PERSON answers each linked Slack user as
+	// their own Foundry user: the bot's credential is revoked and its threads
+	// deleted. Setting the mode it has changes nothing. NOT_FOUND without an
+	// install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the
+	// host makes no such credentials.
+	UpdateFoundrySlack(context.Context, *UpdateFoundrySlackRequest) (*FoundrySlackResponse, error)
 	// Who is linked, for owners and admins.
 	ListFoundrySlackLinks(context.Context, *ListFoundrySlackLinksRequest) (*ListFoundrySlackLinksResponse, error)
 	// What linking the token's Slack user to the caller would do, before it
@@ -2960,6 +2991,9 @@ func (UnimplementedFoundryServiceServer) FinishFoundrySlackInstall(context.Conte
 }
 func (UnimplementedFoundryServiceServer) DisconnectFoundrySlack(context.Context, *DisconnectFoundrySlackRequest) (*FoundrySlackResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DisconnectFoundrySlack not implemented")
+}
+func (UnimplementedFoundryServiceServer) UpdateFoundrySlack(context.Context, *UpdateFoundrySlackRequest) (*FoundrySlackResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundrySlack not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundrySlackLinks(context.Context, *ListFoundrySlackLinksRequest) (*ListFoundrySlackLinksResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundrySlackLinks not implemented")
@@ -5747,6 +5781,24 @@ func _FoundryService_DisconnectFoundrySlack_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_UpdateFoundrySlack_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFoundrySlackRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UpdateFoundrySlack(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UpdateFoundrySlack_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UpdateFoundrySlack(ctx, req.(*UpdateFoundrySlackRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundrySlackLinks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundrySlackLinksRequest)
 	if err := dec(in); err != nil {
@@ -6437,6 +6489,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DisconnectFoundrySlack",
 			Handler:    _FoundryService_DisconnectFoundrySlack_Handler,
+		},
+		{
+			MethodName: "UpdateFoundrySlack",
+			Handler:    _FoundryService_UpdateFoundrySlack_Handler,
 		},
 		{
 			MethodName: "ListFoundrySlackLinks",

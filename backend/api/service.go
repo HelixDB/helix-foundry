@@ -98,6 +98,8 @@ type runtimeDeps struct {
 	// Emails is nil only where Slack accounts aren't linked: foundry.slack
 	// off, or a standalone install (New).
 	Emails UserEmails
+	// BotCredentials is nil where bot mode is refused (a standalone install).
+	BotCredentials ports.BotCredentials
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
@@ -149,7 +151,7 @@ func New(d Deps) (*Service, error) {
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
 		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
 		LocalAI: d.LocalAI, AgentSessions: d.AgentSessions, AgentHosts: d.AgentHosts, AgentHostURL: d.AgentHostURL,
-		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails,
+		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails, BotCredentials: d.BotCredentials,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

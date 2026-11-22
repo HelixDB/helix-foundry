@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -359,6 +360,19 @@ func (s *Service) slackResponse(ctx context.Context, workspaceID, userID string)
 		return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
 	}
 	out.Install = s.slackInstallToProto(ctx, install)
+	// The bot's key as the host holds it now, which sessions as it need
+	// (bot.broken); no session is opened to tell.
+	if bot, on := install.Mode.(model.SlackSharedBot); on && s.deps.BotCredentials != nil {
+		cred, err := s.deps.BotCredentials.Get(ctx, workspaceID, bot.CredentialID)
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			out.Install.Bot.Broken = true
+		case err != nil:
+			log.From(ctx).Warn("read the Slack bot's key failed", "workspace_id", workspaceID, "credential_id", bot.CredentialID, "err", err)
+		default:
+			out.Install.Bot.CredentialName, out.Install.Bot.Broken = cred.Name, !cred.Usable
+		}
+	}
 	links, err := s.deps.DB.ListFoundrySlackLinks(ctx, install.ID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read the Slack links: %v", err)
@@ -618,7 +632,109 @@ func (s *Service) DisconnectFoundrySlack(ctx context.Context, req *foundryv1.Dis
 		return nil, status.Errorf(codes.Internal, "disconnect the Slack install: %v", err)
 	}
 	log.From(ctx).Info("foundry slack disconnected", "workspace_id", ws, "install_id", install.ID, "uninstalled", uninstalled)
+	// The bot's key goes with it; one the host keeps meanwhile acts as no
+	// one's bot (IsFoundrySlackBot needs a live install), and stays locked.
+	if bot, on := install.Mode.(model.SlackSharedBot); on {
+		if err := s.revokeSlackBot(ctx, ws, bot.CredentialID); err != nil {
+			log.From(ctx).Warn("revoke the disconnected Slack bot's key failed", "workspace_id", ws, "credential_id", bot.CredentialID, "err", err)
+		}
+	}
 	return s.slackResponse(ctx, ws, userID)
+}
+
+// UpdateFoundrySlack sets whom the workspace's install acts as, for an owner
+// or admin. BOT makes the bot a workspace service credential no one holds
+// the token of (ports.BotCredentials, hosted only:
+// FOUNDRY_SLACK_BOT_HOSTED_ONLY elsewhere), whose sources Settings › Access
+// chooses. PER_PERSON revokes it first, so a failure leaves bot mode on to
+// try again, then the store clears it and retires the bot's threads. The
+// mode the install has already changes nothing.
+func (s *Service) UpdateFoundrySlack(ctx context.Context, req *foundryv1.UpdateFoundrySlackRequest) (*foundryv1.FoundrySlackResponse, error) {
+	ws := req.GetWorkspaceId()
+	if ws == "" {
+		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
+	}
+	userID, err := s.slackPerson(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	mode := req.GetIdentityMode()
+	if mode != foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON &&
+		mode != foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT {
+		return nil, status.Error(codes.InvalidArgument, "identity_mode is PER_PERSON or BOT")
+	}
+	if err := s.requireSlackManager(ctx, ws, userID); err != nil {
+		return nil, err
+	}
+	install, err := s.deps.DB.GetFoundrySlackInstall(ctx, ws)
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return nil, status.Error(codes.NotFound, "this workspace isn't connected to Slack")
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
+	}
+	bot, isBot := install.Mode.(model.SlackSharedBot)
+	switch {
+	case isBot == (mode == foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT):
+		// The mode it has.
+	case !isBot && s.deps.BotCredentials == nil:
+		return nil, foundryPrecondition(ws, "FOUNDRY_SLACK_BOT_HOSTED_ONLY", "a shared Slack bot is offered on Helix's hosted Foundry only")
+	case !isBot:
+		// service_credentials.name holds 64 characters.
+		name := []rune("Slack bot (" + install.TeamName + ")")
+		if len(name) > 64 {
+			name = append(name[:62], []rune("…)")...)
+		}
+		credentialID, err := s.deps.BotCredentials.Create(ctx, ws, string(name), userID)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "make the bot's key: %v", err)
+		}
+		_, err = s.deps.DB.SetFoundrySlackMode(ctx, ws, install.ID, model.SlackSharedBot{CredentialID: credentialID})
+		if err != nil {
+			// Unused: another click made the bot first (ErrConflict), the
+			// install went, or the write failed.
+			if revokeErr := s.revokeSlackBot(ctx, ws, credentialID); revokeErr != nil {
+				log.From(ctx).Error("revoke an unused Slack bot key failed", "workspace_id", ws, "credential_id", credentialID, "err", revokeErr)
+			}
+		}
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "this workspace isn't connected to Slack")
+		case err != nil && !errors.Is(err, foundrystore.ErrConflict):
+			return nil, status.Errorf(codes.Internal, "turn bot mode on: %v", err)
+		}
+		log.From(ctx).Info("foundry slack bot mode on", "workspace_id", ws, "install_id", install.ID, "credential_id", credentialID)
+	default:
+		if err := s.revokeSlackBot(ctx, ws, bot.CredentialID); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "revoke the bot's key: %v; try again", err)
+		}
+		was, err := s.deps.DB.SetFoundrySlackMode(ctx, ws, install.ID, model.SlackPerPerson{})
+		switch {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "this workspace isn't connected to Slack")
+		case err != nil:
+			return nil, status.Errorf(codes.Internal, "turn bot mode off: %v", err)
+		}
+		// Another click turned it off and on again meanwhile: its key goes too.
+		if other, ok := was.(model.SlackSharedBot); ok && other != bot {
+			if err := s.revokeSlackBot(ctx, ws, other.CredentialID); err != nil {
+				log.From(ctx).Error("revoke a retired Slack bot's key failed", "workspace_id", ws, "credential_id", other.CredentialID, "err", err)
+			}
+		}
+		log.From(ctx).Info("foundry slack bot mode off", "workspace_id", ws, "install_id", install.ID, "credential_id", bot.CredentialID)
+	}
+	return s.slackResponse(ctx, ws, userID)
+}
+
+// revokeSlackBot revokes a Slack bot's key where the host makes them, and
+// drops its source grants, which no one holds then.
+func (s *Service) revokeSlackBot(ctx context.Context, workspaceID, credentialID string) error {
+	if s.deps.BotCredentials != nil {
+		if err := s.deps.BotCredentials.Revoke(ctx, workspaceID, credentialID); err != nil {
+			return err
+		}
+	}
+	return s.deps.DB.DeleteFoundryAccessPrincipal(ctx, workspaceID, access.Principal{Kind: access.PrincipalServiceCredential, ID: credentialID})
 }
 
 // uninstallSlackApp asks Slack to remove the app from install's workspace,

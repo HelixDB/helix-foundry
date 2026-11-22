@@ -6187,6 +6187,43 @@
         "tags": [
           "FoundryService"
         ]
+      },
+      "patch": {
+        "summary": "Sets whom the install's bot acts as, for an owner or admin. BOT makes\none shared bot for the whole Slack workspace: Helix makes it a\nworkspace service credential no one holds the token of, whose sources\nare chosen in Settings › Access, and owners and admins run what it\nproposes as themselves. PER_PERSON answers each linked Slack user as\ntheir own Foundry user: the bot's credential is revoked and its threads\ndeleted. Setting the mode it has changes nothing. NOT_FOUND without an\ninstall; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the\nhost makes no such credentials.",
+        "operationId": "FoundryService_UpdateFoundrySlack",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundrySlackResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundrySlackBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
       }
     },
     "/v1/workspaces/{workspaceId}/foundry/slack/links": {
@@ -7417,6 +7454,15 @@
         },
         "description": {
           "type": "string"
+        }
+      }
+    },
+    "FoundryServiceUpdateFoundrySlackBody": {
+      "type": "object",
+      "properties": {
+        "identityMode": {
+          "$ref": "#/definitions/v1FoundrySlackIdentityMode",
+          "description": "PER_PERSON or BOT; UNSPECIFIED is INVALID_ARGUMENT."
         }
       }
     },
@@ -12062,6 +12108,34 @@
       },
       "description": "FoundrySlack is a workspace's Slack: Helix's own Slack app, Helix Foundry,\nwhich answers people in a Slack workspace as Founder, each linked Slack\nuser as their own Foundry user."
     },
+    "v1FoundrySlackBot": {
+      "type": "object",
+      "properties": {
+        "credentialId": {
+          "type": "string",
+          "description": "Settings › Access chooses its sources, as principal\nservice_credential:\u003ccredential_id\u003e."
+        },
+        "credentialName": {
+          "type": "string",
+          "description": "Its name in the workspace's keys; empty when Helix can't read it."
+        },
+        "broken": {
+          "type": "boolean",
+          "description": "The credential was revoked, deleted, expired or given database\npermissions: the bot's turns fail until bot mode is turned off and on\nagain."
+        }
+      },
+      "description": "FoundrySlackBot is an install's shared bot: the workspace service\ncredential it acts as."
+    },
+    "v1FoundrySlackIdentityMode": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED",
+        "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+        "FOUNDRY_SLACK_IDENTITY_MODE_BOT"
+      ],
+      "default": "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED",
+      "description": "FoundrySlackIdentityMode is whom an install's bot acts as.\n\n - FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON: Each linked Slack user as their own Foundry user.\n - FOUNDRY_SLACK_IDENTITY_MODE_BOT: One shared bot: anyone in the Slack workspace may ask it, it reads only\nthe sources its credential is given, and owners and admins run what it\nproposes as themselves."
+    },
     "v1FoundrySlackInstall": {
       "type": "object",
       "properties": {
@@ -12110,6 +12184,14 @@
           "type": "string",
           "format": "date-time",
           "description": "When Slack last dropped the team's events, past its 30,000 an hour;\nset only within the last 24 hours."
+        },
+        "identityMode": {
+          "$ref": "#/definitions/v1FoundrySlackIdentityMode",
+          "description": "Whom its bot acts as: PER_PERSON or BOT."
+        },
+        "bot": {
+          "$ref": "#/definitions/v1FoundrySlackBot",
+          "description": "The shared bot; set in BOT mode only."
         }
       },
       "description": "FoundrySlackInstall is a Slack workspace's install of the app."

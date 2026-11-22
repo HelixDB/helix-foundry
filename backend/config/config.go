@@ -884,6 +884,22 @@ type SlackConfig struct {
 	// Relay bounds what hosted holds of a relayed install's feed until the
 	// install takes it.
 	Relay SlackRelayConfig `koanf:"relay"`
+	// Bot bounds an install's shared bot (bot mode).
+	Bot SlackBotConfig `koanf:"bot"`
+}
+
+// SlackBotConfig bounds an install's shared bot, which a whole Slack
+// workspace talks to as one principal (foundry.slack.bot).
+type SlackBotConfig struct {
+	// PerHour is how many messages the bot may send Founder in an hour, in
+	// place of foundry.agent.per_hour, which bounds one person.
+	PerHour int `koanf:"per_hour"`
+	// PerUserPerHour is how many of them one Slack user may ask in an hour.
+	PerUserPerHour int `koanf:"per_user_per_hour"`
+	// ProposalTTL is how long an action the bot proposes waits for an owner
+	// or admin to run it: at most MaxSlackThreadRetention, the longest its
+	// thread is kept.
+	ProposalTTL time.Duration `koanf:"proposal_ttl"`
 }
 
 // ReadsHistory reports whether the app reads channel messages, as the
@@ -1092,6 +1108,17 @@ func (s SlackConfig) validate(roles Roles, local bool, agent AssistantConfig) er
 			case slices.Contains(s.InstallAllowlist[:i], id):
 				return fmt.Errorf("foundry.slack.install_allowlist lists %q twice", id)
 			}
+		}
+	}
+	// Bot mode is hosted only: the API bounds its turns, the agent worker
+	// its proposals, the Slack worker its people.
+	if (roles.API || roles.AgentWorker || roles.SlackWorker) && !local {
+		switch b := s.Bot; {
+		case b.PerHour < 1 || b.PerUserPerHour < 1:
+			return fmt.Errorf("foundry.slack.bot per_hour and per_user_per_hour must be positive")
+		case b.ProposalTTL <= 0 || b.ProposalTTL > MaxSlackThreadRetention:
+			return fmt.Errorf("foundry.slack.bot.proposal_ttl is %s; it must be above 0 and at most %s, while its thread may be kept",
+				b.ProposalTTL, MaxSlackThreadRetention)
 		}
 	}
 	// Channel messages reach the API, the sync worker folds them and the
@@ -2630,6 +2657,7 @@ func Defaults() Config {
 			PollInterval:     5 * time.Second,
 		},
 		Relay: SlackRelayConfig{FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000},
+		Bot:   SlackBotConfig{PerHour: 120, PerUserPerHour: 20, ProposalTTL: 24 * time.Hour},
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,

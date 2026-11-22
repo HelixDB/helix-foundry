@@ -85,6 +85,13 @@ func (s *Service) slackInstallToProto(ctx context.Context, install *model.SlackI
 	if at := install.EventsLimitedAt; at != nil && time.Since(*at) < slackEventsLimitedShown {
 		out.EventsLimitedAt = timestamppb.New(*at)
 	}
+	switch m := install.Mode.(type) {
+	case model.SlackPerPerson:
+		out.IdentityMode = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON
+	case model.SlackSharedBot:
+		out.IdentityMode = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT
+		out.Bot = &foundryv1.FoundrySlackBot{CredentialId: m.CredentialID}
+	}
 	return out
 }
 

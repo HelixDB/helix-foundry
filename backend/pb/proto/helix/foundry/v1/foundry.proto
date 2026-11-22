@@ -914,6 +914,21 @@ service FoundryService {
       body: "*"
     };
   }
+  // Sets whom the install's bot acts as, for an owner or admin. BOT makes
+  // one shared bot for the whole Slack workspace: Helix makes it a
+  // workspace service credential no one holds the token of, whose sources
+  // are chosen in Settings › Access, and owners and admins run what it
+  // proposes as themselves. PER_PERSON answers each linked Slack user as
+  // their own Foundry user: the bot's credential is revoked and its threads
+  // deleted. Setting the mode it has changes nothing. NOT_FOUND without an
+  // install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the
+  // host makes no such credentials.
+  rpc UpdateFoundrySlack(UpdateFoundrySlackRequest) returns (FoundrySlackResponse) {
+    option (google.api.http) = {
+      patch: "/v1/workspaces/{workspace_id}/foundry/slack"
+      body: "*"
+    };
+  }
   // Who is linked, for owners and admins.
   rpc ListFoundrySlackLinks(ListFoundrySlackLinksRequest) returns (ListFoundrySlackLinksResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/slack/links"};
@@ -2735,6 +2750,11 @@ message FinishFoundrySlackInstallRequest {
 }
 message DisconnectFoundrySlackRequest {
   string workspace_id = 1;
+}
+message UpdateFoundrySlackRequest {
+  string workspace_id = 1;
+  // PER_PERSON or BOT; UNSPECIFIED is INVALID_ARGUMENT.
+  FoundrySlackIdentityMode identity_mode = 2;
 }
 message ListFoundrySlackLinksRequest {
   string workspace_id = 1;

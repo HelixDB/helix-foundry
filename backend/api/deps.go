@@ -59,6 +59,10 @@ type Deps struct {
 	// install's integration listener, when not at the helper's default
 	// (agent.DefaultHelperFoundry): the pair command names it.
 	AgentHostURL string
+	// BotCredentials makes the service credentials a Slack install's bot
+	// mode acts as; nil where the host has none (a standalone install), and
+	// bot mode is then refused.
+	BotCredentials ports.BotCredentials
 	// SlackURL is Slack's web origin, https://slack.com when empty: an
 	// install of the Slack app starts at its /oauth/v2/authorize, and the
 	// Web API is under its /api. Tests point it at a fake Slack.

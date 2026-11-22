@@ -78,6 +78,7 @@ var refused = map[string]string{
 	foundry("StartFoundrySlackInstall"):                                 noSlack,
 	foundry("FinishFoundrySlackInstall"):                                noSlack,
 	foundry("DisconnectFoundrySlack"):                                   noSlack,
+	foundry("UpdateFoundrySlack"):                                       noSlack,
 	foundry("ListFoundrySlackLinks"):                                    noSlack,
 	foundry("PreviewFoundrySlackLink"):                                  noSlack,
 	foundry("CreateFoundrySlackLink"):                                   noSlack,
