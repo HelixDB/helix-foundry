@@ -24,10 +24,14 @@ import type {
   FoundryReviewChoice,
   FoundryReviewDecision,
 } from "../../../shared/wfe";
+import { ListFilter } from "lucide-react";
 import {
   Button,
   Dialog,
-  FilterSelect,
+  DropdownMenu,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
   Segmented,
   SkeletonText,
   cx,
@@ -43,7 +47,6 @@ import { useDocumentNames } from "../documents/documents-api";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import {
-  adviceContext,
   effectOf,
   founderSeed,
   settleOf,
@@ -57,7 +60,7 @@ import { choicesOf, type Choice } from "./choices";
 import { CoveredCards, FyiCards } from "./fyi";
 import type { ReviewQueue } from "./index";
 import { useWalkKeys, type KeyCommand } from "./keys";
-import { precision, type Queue, type QueueCard } from "./queue";
+import type { Queue, QueueCard } from "./queue";
 import { ReviewCard, cardLine } from "./review-card";
 import { settleAll } from "./settle-pool";
 import { SpotChecks } from "./spot-checks";
@@ -65,7 +68,9 @@ import {
   batchOf,
   batchTakes,
   current,
+  drawnLike,
   progress,
+  undecided,
   walkOrder,
   walkReducer,
   type How,
@@ -83,6 +88,12 @@ const FAILED_PRECONDITION = 9;
 const TOAST_MS = 6000;
 /** How many cards the rail lists: two before the one shown, and the rest after. */
 const RAIL = 12;
+/** What the Filter menu calls each choice of Founder's suggestion (`advice`). */
+const ADVICE_TEXT = {
+  any: "All cards",
+  suggested: "Suggested",
+  none: "Needs you",
+} as const;
 
 const START: Walk = {
   loadId: "",
@@ -380,9 +391,11 @@ const decidable = (c: QueueCard | undefined): Decidable | undefined =>
     : undefined;
 
 /**
- * The Facts tab's walk of the queue (`cards`) of the current load: progress,
- * filters (in the URL: `kind`, `advice`, `type`, `doc`) and lanes (`lane`),
- * the rail of next cards, then the card shown, or the finish.
+ * The Facts tab's walk of the queue (`cards`) of the current load: the
+ * lanes (`lane`, in the URL) and progress first, the filters behind one
+ * Filter menu (in the URL: `kind`, one kind; `advice`, `type`, `doc`), then
+ * the rail of next cards (the cards still to decide, at the finish) beside
+ * the card shown, or the finish.
  */
 export function ReviewWalkthrough({
   queue: q,
@@ -393,7 +406,7 @@ export function ReviewWalkthrough({
   load: FoundryLoad;
   cards: Queue;
 }) {
-  const { id: ws, role, user } = useWorkspace(),
+  const { id: ws, role } = useWorkspace(),
     { id: o } = useOntology();
   const shell = useShell();
   const docName = useDocumentNames(ws, "A document");
@@ -407,10 +420,10 @@ export function ReviewWalkthrough({
   const laneParam = params.get("lane");
   const lane: Lane =
     laneParam === "fyi" || laneParam === "covered" ? laneParam : "decide";
+  const kind = KINDS.find((k) => k === kindParam);
   const filter = useMemo((): WalkFilter => {
-    const asked = KINDS.filter((k) => kindParam.split(",").includes(k));
     return {
-      kinds: new Set(asked.length ? asked : KINDS),
+      kinds: new Set(kind ? [kind] : KINDS),
       advice:
         adviceParam === "suggested" || adviceParam === "none"
           ? adviceParam
@@ -418,7 +431,7 @@ export function ReviewWalkthrough({
       ...(type ? { type } : {}),
       ...(doc ? { documentId: doc } : {}),
     };
-  }, [kindParam, adviceParam, type, doc]);
+  }, [kind, adviceParam, type, doc]);
   const setParam = (name: string, value: string) =>
     setParams(
       (p) => {
@@ -429,20 +442,7 @@ export function ReviewWalkthrough({
       },
       { replace: true },
     );
-  const single = useMemo(
-    () => (link: string) => !naming.version || naming.oneValued.has(link),
-    [naming],
-  );
-  const ctx = useMemo(
-    () =>
-      adviceContext({
-        decisions: q.decisions.data ?? [],
-        precision: precision(q.labels.data ?? []),
-        single,
-        user: user.id,
-      }),
-    [q.decisions.data, q.labels.data, single, user.id],
-  );
+  const { single, ctx } = q;
   const order = useMemo(
     () => walkOrder(queue, ctx, filter),
     [queue, ctx, filter],
@@ -454,8 +454,8 @@ export function ReviewWalkthrough({
   const offered = useMemo(() => {
     const types = new Set<string>(),
       docs = new Set<string>();
-    for (const k of order.advice.keys()) {
-      const c = decidable(order.cards.get(k));
+    for (const k of q.all?.advice.keys() ?? []) {
+      const c = decidable(q.all?.cards.get(k));
       if (!c) continue;
       docs.add(c.review.documentId);
       if (c.kind === "claim") {
@@ -464,7 +464,7 @@ export function ReviewWalkthrough({
       } else types.add(settleOf(c).type);
     }
     return { types: [...types].sort(), docs: [...docs] };
-  }, [order]);
+  }, [q.all]);
 
   const synced = w.loadId === load.id;
   const key = synced ? current(w) : null;
@@ -661,8 +661,14 @@ export function ReviewWalkthrough({
   const elsewhere = [...w.outcomes.values()].filter(
     (x) => x.kind === "elsewhere",
   ).length;
+  // Around the card shown; past the last, only the cards still to decide
+  // (skipped ones too), none once every card is decided.
   const start = Math.max(0, w.at - 2);
-  const rail = w.order.slice(start, start + RAIL).flatMap((k) => {
+  const rail = (
+    key
+      ? w.order.slice(start, start + RAIL)
+      : w.order.filter((k) => undecided([k], w.outcomes) > 0).slice(0, RAIL)
+  ).flatMap((k) => {
     const c = cardOf(k);
     return c
       ? [{ key: k, card: c, state: w.outcomes.get(k)?.kind ?? "open" }]
@@ -672,8 +678,21 @@ export function ReviewWalkthrough({
     moved.current = true;
     api.dispatch({ type: "jump", key: k });
   };
+  // How many filters are on, and clearing them all.
+  const filters = [kind, filter.advice !== "any", type, doc].filter(
+    Boolean,
+  ).length;
+  const clearFilters = () =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        for (const k of ["kind", "advice", "type", "doc"]) next.delete(k);
+        return next;
+      },
+      { replace: true },
+    );
   const lanes: { value: Lane; label: string; count: number }[] = [
-    { value: "decide", label: "Decide", count: p.left },
+    { value: "decide", label: "Decide", count: undecided(w.order, w.outcomes) },
     { value: "fyi", label: "FYI", count: order.fyi.length },
     { value: "covered", label: "Covered", count: covered.length },
   ];
@@ -689,10 +708,100 @@ export function ReviewWalkthrough({
         />
       )}
       <div className="rv-walk-head">
+        <div className="rv-walk-bar">
+          <Segmented
+            label="Lane"
+            value={lane}
+            onChange={(v) => setParam("lane", v === "decide" ? "" : v)}
+            options={lanes}
+          />
+          <DropdownMenu
+            label={`Filter cards${filters ? `, ${plural(filters, "filter")} on` : ""}`}
+            align="end"
+            triggerClassName="hf-btn hf-btn--secondary hf-btn--sm"
+            trigger={
+              <>
+                <ListFilter size={14} aria-hidden /> Filter
+                {filters > 0 && (
+                  <span className="rv-filter-count">{filters}</span>
+                )}
+              </>
+            }
+          >
+            <MenuLabel>Kind</MenuLabel>
+            <MenuItem checked={!kind} onSelect={() => setParam("kind", "")}>
+              Every kind
+            </MenuItem>
+            {KINDS.map((k) => (
+              <MenuItem
+                key={k}
+                checked={kind === k}
+                onSelect={() => setParam("kind", k)}
+              >
+                {KIND_TEXT[k]}
+              </MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuLabel>Founder’s suggestion</MenuLabel>
+            {(["any", "suggested", "none"] as const).map((a) => (
+              <MenuItem
+                key={a}
+                checked={filter.advice === a}
+                onSelect={() => setParam("advice", a === "any" ? "" : a)}
+              >
+                {ADVICE_TEXT[a]}
+              </MenuItem>
+            ))}
+            {/* Each shows while it offers a choice, or while it filters (a
+                value the queue no longer has stays, to clear). */}
+            {(offered.types.length > 1 || type) && (
+              <>
+                <MenuSeparator />
+                <MenuLabel>Type</MenuLabel>
+                {[
+                  "",
+                  ...new Set([...offered.types, ...(type ? [type] : [])]),
+                ].map((t) => (
+                  <MenuItem
+                    key={t}
+                    checked={type === t}
+                    onSelect={() => setParam("type", t)}
+                  >
+                    {t || "Any type"}
+                  </MenuItem>
+                ))}
+              </>
+            )}
+            {(offered.docs.length > 1 || doc) && (
+              <>
+                <MenuSeparator />
+                <MenuLabel>Document</MenuLabel>
+                {["", ...new Set([...offered.docs, ...(doc ? [doc] : [])])].map(
+                  (d) => (
+                    <MenuItem
+                      key={d}
+                      checked={doc === d}
+                      onSelect={() => setParam("doc", d)}
+                    >
+                      {d ? docName(d) : "Any document"}
+                    </MenuItem>
+                  ),
+                )}
+              </>
+            )}
+            {filters > 0 && (
+              <>
+                <MenuSeparator />
+                <MenuItem onSelect={clearFilters}>Clear filters</MenuItem>
+              </>
+            )}
+          </DropdownMenu>
+        </div>
         <p role="status" className="rv-progress">
           {formatNumber(p.total - p.left)} of {formatNumber(p.total)} ·{" "}
           {formatNumber(p.accepted)} accepted · {formatNumber(p.chosen)} changed
           · {formatNumber(p.skipped)} skipped
+          {p.covered > 0 && ` · ${formatNumber(p.covered)} covered`}
           {elsewhere > 0 && ` · ${formatNumber(elsewhere)} decided elsewhere`}
         </p>
         <div className="rv-meter" aria-hidden>
@@ -703,78 +812,6 @@ export function ReviewWalkthrough({
           <span className="rv-meter-skipped" style={{ flexGrow: p.skipped }} />
           <span className="rv-meter-left" style={{ flexGrow: p.left }} />
         </div>
-        <div className="rv-filters">
-          <div className="rv-chips" role="group" aria-label="Kinds">
-            {KINDS.map((k) => {
-              const pressed = filter.kinds.has(k);
-              const next = KINDS.filter((x) =>
-                x === k ? !pressed : filter.kinds.has(x),
-              );
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  className="rv-chip"
-                  aria-pressed={pressed}
-                  // At least one kind stays on.
-                  disabled={pressed && filter.kinds.size === 1}
-                  onClick={() =>
-                    setParam(
-                      "kind",
-                      next.length === KINDS.length ? "" : next.join(","),
-                    )
-                  }
-                >
-                  {KIND_TEXT[k]}
-                </button>
-              );
-            })}
-          </div>
-          <Segmented
-            label="Founder’s suggestion"
-            value={filter.advice}
-            onChange={(v) => setParam("advice", v === "any" ? "" : v)}
-            options={[
-              { value: "any", label: "All" },
-              { value: "suggested", label: "Suggested" },
-              { value: "none", label: "Needs you" },
-            ]}
-          />
-          {/* Each shows while it offers a choice, or while it filters (a
-              value the queue no longer has stays, to clear). */}
-          {(offered.types.length > 1 || type) && (
-            <FilterSelect
-              label="Type"
-              value={type}
-              onChange={(v) => setParam("type", v)}
-              options={[
-                { value: "", label: "Any type" },
-                ...[
-                  ...new Set([...offered.types, ...(type ? [type] : [])]),
-                ].map((t) => ({ value: t, label: t })),
-              ]}
-            />
-          )}
-          {(offered.docs.length > 1 || doc) && (
-            <FilterSelect
-              label="Document"
-              value={doc}
-              onChange={(v) => setParam("doc", v)}
-              options={[
-                { value: "", label: "Any document" },
-                ...[...new Set([...offered.docs, ...(doc ? [doc] : [])])].map(
-                  (d) => ({ value: d, label: docName(d) }),
-                ),
-              ]}
-            />
-          )}
-        </div>
-        <Segmented
-          label="Lane"
-          value={lane}
-          onChange={(v) => setParam("lane", v === "decide" ? "" : v)}
-          options={lanes}
-        />
       </div>
       {!synced ? (
         <SkeletonText lines={6} />
@@ -794,7 +831,7 @@ export function ReviewWalkthrough({
           coveredBy={coveredBy}
         />
       ) : (
-        <div className="rv-walk-body">
+        <div className={cx("rv-walk-body", !rail.length && "is-solo")}>
           {rail.length > 0 && (
             <nav className="rv-rail" aria-label="Next cards">
               <ol>
@@ -818,19 +855,6 @@ export function ReviewWalkthrough({
             </nav>
           )}
           <div className="rv-walk-main">
-            {rail.length > 1 && (
-              <div className="rv-rail-select">
-                <FilterSelect
-                  label="Card"
-                  value={key ?? ""}
-                  onChange={jump}
-                  options={rail.map((r) => ({
-                    value: r.key,
-                    label: cardLine(r.card),
-                  }))}
-                />
-              </div>
-            )}
             {card && advice ? (
               <ReviewCard
                 key={card.key}
@@ -858,20 +882,7 @@ export function ReviewWalkthrough({
                 made={api.made}
                 notInPlace={notInPlace}
                 empty={!w.order.length}
-                onClearFilters={
-                  kindParam || adviceParam || type || doc
-                    ? () =>
-                        setParams(
-                          (p) => {
-                            const next = new URLSearchParams(p);
-                            for (const k of ["kind", "advice", "type", "doc"])
-                              next.delete(k);
-                            return next;
-                          },
-                          { replace: true },
-                        )
-                    : undefined
-                }
+                onClearFilters={filters ? clearFilters : undefined}
                 headingRef={heading}
                 onBack={() => on({ kind: "back" })}
                 onReopen={(keys) => {
@@ -914,6 +925,7 @@ export function ReviewWalkthrough({
           items={dialog.batch.items}
           cards={order.cards}
           advice={dialog.advice}
+          drawn={drawnLike(order.spot, order.cards, dialog.batch.batchKey)}
           run={async (keys, signal, onProgress) => {
             const chosen = new Set(keys);
             const items = dialog.batch.items.flatMap((it) => {

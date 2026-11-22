@@ -5,6 +5,7 @@ import type {
 import {
   advise,
   asks,
+  claimBatchKey,
   coveredBy,
   laneOf,
   settleOf,
@@ -181,6 +182,45 @@ export function walkOrder(
 
 /** Whether a card is still to decide: no outcome, or its choice refused. */
 const open = (o: Outcome | undefined) => !o || o.kind === "refused";
+
+/**
+ * How many of `keys` are still undecided by the walk's `outcomes`: no
+ * choice saved or sending (a choice refused, or the card skipped, is still
+ * undecided), not covered by a link, not decided elsewhere. Every count of
+ * what is left to decide (the Decide lane, the Facts tab, the Ontologies
+ * panel's Review) is this, over the walk's cards to decide.
+ *
+ * @example
+ * undecided(["a", "b", "c"], new Map([["a", { kind: "skipped" }], ["b", { kind: "covered", by: "x" }]])); // 2
+ */
+export function undecided(
+  keys: readonly string[],
+  outcomes: ReadonlyMap<string, Outcome>,
+): number {
+  return keys.filter((k) => {
+    const o = outcomes.get(k);
+    return open(o) || o?.kind === "skipped";
+  }).length;
+}
+
+/**
+ * How many held claims among the spot checks (`spot`) a batch of
+ * `batchKey` would take but leaves out: drawn at random to measure their
+ * score band, so a person decides each on its own, at the finish.
+ *
+ * @example
+ * drawnLike(order.spot, order.cards, 'claim:["signed_with","0.7"]'); // 1
+ */
+export function drawnLike(
+  spot: readonly string[],
+  cards: ReadonlyMap<string, QueueCard>,
+  batchKey: string,
+): number {
+  return spot.filter((k) => {
+    const c = cards.get(k);
+    return c?.kind === "claim" && claimBatchKey(c) === batchKey;
+  }).length;
+}
 
 /**
  * Whether a batch takes the card `key` now: in the walk's order and still to
@@ -412,18 +452,19 @@ export const current = (w: Walk): string | null => w.order[w.at] ?? null;
 
 /**
  * How far a walk is: its cards, those decided by accepting Founder's
- * suggestion (alone or in a batch) or by another choice, those skipped, and
- * those left to decide (a refused choice is still to decide; a card covered
- * or decided elsewhere isn't).
+ * suggestion (alone or in a batch) or by another choice, those skipped,
+ * those a link settled (covered), and those left to decide (a refused
+ * choice is still to decide; a card covered or decided elsewhere isn't).
  *
  * @example
- * progress(walk); // { total: 214, accepted: 30, chosen: 4, skipped: 3, left: 177 }
+ * progress(walk); // { total: 214, accepted: 30, chosen: 4, skipped: 3, covered: 2, left: 175 }
  */
 export function progress(w: Walk): {
   total: number;
   accepted: number;
   chosen: number;
   skipped: number;
+  covered: number;
   left: number;
 } {
   const outcomes = w.order.map((k) => w.outcomes.get(k));
@@ -436,6 +477,7 @@ export function progress(w: Walk): {
     accepted: decided((h) => h !== "chosen"),
     chosen: decided((h) => h === "chosen"),
     skipped: outcomes.filter((o) => o?.kind === "skipped").length,
+    covered: outcomes.filter((o) => o?.kind === "covered").length,
     left: outcomes.filter(open).length,
   };
 }

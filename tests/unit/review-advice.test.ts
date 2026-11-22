@@ -4,6 +4,8 @@ import {
   SEED_QUOTE,
   advise,
   asks,
+  cardName,
+  claimBatchKey,
   coveredBy,
   effectOf,
   founderSeed,
@@ -523,6 +525,42 @@ describe("effectOf", () => {
     expect(
       effectOf(heldCard(1), { resolve: { entityKey: "k" } }, 0, () => false),
     ).toEqual({ kind: "next_load" });
+  });
+});
+
+describe("cardName", () => {
+  const quoted = (quote: string) => {
+    const c = nameCard("umbrella holdings");
+    return { ...c, review: { ...c.review, quote } };
+  };
+  it("quotes the name without the stop of a sentence it ends", () => {
+    expect(cardName(quoted("Umbrella Holdings signed order form 3."))).toBe(
+      "Umbrella Holdings signed order form 3",
+    );
+    expect(cardName(quoted("  Umbrella Holdings?! … "))).toBe(
+      "Umbrella Holdings",
+    );
+    expect(cardName(quoted("Initech LLC"))).toBe("Initech LLC");
+    // A stop inside the name stays.
+    expect(cardName(quoted("Acme Co. Ltd"))).toBe("Acme Co. Ltd");
+  });
+  it("falls back to the normalized name for a quote of punctuation alone", () => {
+    expect(cardName(quoted(""))).toBe("umbrella holdings");
+    expect(cardName(quoted(" . "))).toBe("umbrella holdings");
+  });
+});
+
+describe("claimBatchKey", () => {
+  it("keys a held claim by its link and score band", () => {
+    expect(claimBatchKey(heldCard(1, { confidence: 0.72 }))).toBe(
+      'claim:["partner_of","0.7"]',
+    );
+    expect(claimBatchKey(heldCard(2, { confidence: 0.75 }))).toBe(
+      claimBatchKey(heldCard(1, { confidence: 0.72 })),
+    );
+    expect(claimBatchKey(heldCard(1, { link: "signed_with" }))).not.toBe(
+      claimBatchKey(heldCard(1)),
+    );
   });
 });
 

@@ -31,6 +31,11 @@ const tab = (page: Page, name: "Facts" | "Ontology") =>
       .getByRole("list", { name: "Pages" })
       .getByRole("link", { name: /^Review/ });
 
+const decideLane = (page: Page) =>
+  page
+    .getByRole("radiogroup", { name: "Lane" })
+    .getByRole("radio", { name: /^Decide/ });
+
 test("switches between Facts and Ontology, each with its open count, the tab in the URL", async ({
   page,
 }) => {
@@ -52,20 +57,25 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
     page.getByText(/^What the current load couldn’t settle on its own/),
   ).toBeVisible();
 
-  // Facts counts the queue's open cards, and one fewer once one is decided.
+  // Facts counts the cards to decide, as the walk's Decide lane does, and
+  // one fewer once one is decided.
   await expect(walkCard(page)).toBeVisible();
   await expect(countOf(page, "Facts")).toHaveText(/^\d+$/);
   const cards = Number(await countOf(page, "Facts").textContent());
-  // The panel's link counts what both tabs hold.
+  await expect(decideLane(page)).toHaveText(new RegExp(`^Decide\\s*${cards}$`));
+  // The panel's link counts what both tabs hold, and says each part.
   await expect(reviewLink(page)).toHaveAccessibleName(
-    `Review, ${cards + 4} open`,
+    `Review: ${cards} cards to decide, 4 ontology suggestions`,
   );
   await walkCard(page)
     .getByRole("button", { name: "Approve", exact: true })
     .click();
   await expect(countOf(page, "Facts")).toHaveText(String(cards - 1));
+  await expect(decideLane(page)).toHaveText(
+    new RegExp(`^Decide\\s*${cards - 1}$`),
+  );
   await expect(reviewLink(page)).toHaveAccessibleName(
-    `Review, ${cards + 3} open`,
+    `Review: ${cards - 1} cards to decide, 4 ontology suggestions`,
   );
 
   // Ontology: its own line under the heading, its suggestions, in the URL.

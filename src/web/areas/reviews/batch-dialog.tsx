@@ -39,6 +39,7 @@ export function BatchDialog({
   items,
   cards,
   advice,
+  drawn,
   run,
   undo,
   onClose,
@@ -47,6 +48,8 @@ export function BatchDialog({
   cards: ReadonlyMap<string, QueueCard>;
   // The shown card's suggestion, which every item shares.
   advice: Advice;
+  // How many cards like these are spot checks, which the batch leaves out.
+  drawn: number;
   // Sends the ticked cards the walk still takes: a result for each sent.
   run: (
     keys: readonly string[],
@@ -145,35 +148,46 @@ export function BatchDialog({
       }
     >
       {stage.kind === "choose" && (
-        <DataGrid
-          label="Cards to accept"
-          rows={rows}
-          getRowKey={(r) => r.key}
-          maxHeight={360}
-          columns={[
-            {
-              key: "tick",
-              label: "",
-              width: 44,
-              sortable: false,
-              render: (r) => (
-                <input
-                  type="checkbox"
-                  aria-label="Include this card"
-                  checked={!stage.off.has(r.key)}
-                  onChange={(e) => {
-                    const off = new Set(stage.off);
-                    if (e.target.checked) off.delete(r.key);
-                    else off.add(r.key);
-                    setStage({ kind: "choose", off });
-                  }}
-                />
-              ),
-            },
-            { key: "what", label: "Card", width: 360 },
-            { key: "document", label: "Document", width: 220 },
-          ]}
-        />
+        <div className="on-stack">
+          {drawn > 0 && (
+            <p role="note" className="on-muted">
+              {drawn === 1
+                ? "1 more like these is a spot check: drawn at random to measure how often claims scored like this are right, so you decide it on its own at the end."
+                : `${formatNumber(drawn)} more like these are spot checks: drawn at random to measure how often claims scored like this are right, so you decide each on its own at the end.`}
+            </p>
+          )}
+          <DataGrid
+            label="Cards to accept"
+            rows={rows}
+            getRowKey={(r) => r.key}
+            maxHeight={360}
+            columns={[
+              {
+                key: "tick",
+                label: "Include",
+                width: 84,
+                sortable: false,
+                // Ticks, not text: no type icon in its head.
+                className: "rv-tick",
+                render: (r) => (
+                  <input
+                    type="checkbox"
+                    aria-label="Include this card"
+                    checked={!stage.off.has(r.key)}
+                    onChange={(e) => {
+                      const off = new Set(stage.off);
+                      if (e.target.checked) off.delete(r.key);
+                      else off.add(r.key);
+                      setStage({ kind: "choose", off });
+                    }}
+                  />
+                ),
+              },
+              { key: "what", label: "Card", width: 360 },
+              { key: "document", label: "Document", width: 220 },
+            ]}
+          />
+        </div>
       )}
       {stage.kind === "sending" && (
         <div className="on-stack">

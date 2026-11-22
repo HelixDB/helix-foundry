@@ -9,6 +9,7 @@ import { formatNumber } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { liveRead } from "../documents/model";
+import { reviewQueries } from "../reviews/api";
 import {
   ProgressBar,
   useGenerationProgress,
@@ -239,6 +240,7 @@ function LoadCard({
   const o = job.ontologyId,
     read = useQuery(ontologyQueries.load(ws, o, job.id)),
     l = read.data?.load,
+    facts = useQuery(reviewQueries.openFacts(ws, o)).data,
     live = l?.jobs?.find(isLiveJob),
     name = useOntologyLabel(ws, o),
     progress = useLoadJobProgress(live);
@@ -253,7 +255,7 @@ function LoadCard({
       hidden={hidden}
       name={name}
       title={live?.status === "queued" ? "Load queued" : "Loading the database"}
-      ending={loadEnding(l, o)}
+      ending={loadEnding(l, o, facts?.loadId === l.id ? facts.open : undefined)}
     >
       {progress && (
         <ProgressBar progress={progress} label={`Progress of ${name}’s load`} />
@@ -263,8 +265,16 @@ function LoadCard({
 }
 
 // A load its documents left reviews in points at the Review page, else at
-// the Explorer.
-function loadEnding(l: FoundryLoad, o: string): Ending | null {
+// the Explorer. The count is the Review page's, the cards still to decide
+// (`toDecide`), once it has read this load; until then the load says only
+// how many reviews its documents left, which isn't that count (a name in
+// one document may hold several, and some decide nothing), so the link
+// names none.
+function loadEnding(
+  l: FoundryLoad,
+  o: string,
+  toDecide: number | undefined,
+): Ending | null {
   if (isBusyLoad(l)) return null;
   if (l.status !== "ready" && l.status !== "partial")
     return {
@@ -273,12 +283,15 @@ function loadEnding(l: FoundryLoad, o: string): Ending | null {
       go: paths.load(o, l.id),
       label: "See why",
     };
-  const reviews = loadDocumentTotals(l)?.reviews ?? 0;
+  const review =
+    toDecide === undefined
+      ? (loadDocumentTotals(l)?.reviews ?? 0) > 0 && "Review"
+      : toDecide > 0 && `Review ${formatNumber(toDecide)}`;
   return {
     tone: "done",
     title: l.status === "ready" ? "Data loaded" : "Data loaded, in part",
-    ...(reviews
-      ? { go: paths.review(o), label: `Review ${formatNumber(reviews)}` }
+    ...(review
+      ? { go: paths.review(o), label: review }
       : { go: paths.explore(o), label: "Explore it" }),
   };
 }

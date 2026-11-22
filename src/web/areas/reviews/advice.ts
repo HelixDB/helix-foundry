@@ -393,9 +393,33 @@ function adviseClaim(card: ClaimCard, ctx: AdviceContext): Advice {
     strength: { kind: "measured", right: band.right, total: band.total, lower },
     batchKey:
       lower >= BATCH_LOWER && band.total >= BATCH_LABELS
-        ? `claim:${JSON.stringify([s.link, card.band])}`
+        ? claimBatchKey(card)
         : null,
   };
+}
+
+/**
+ * The batch key a measured held claim's suggestion has: its link and score
+ * band, which every claim it may be accepted with shares.
+ *
+ * @example
+ * claimBatchKey(heldClaimAt072); // 'claim:["signed_with","0.7"]'
+ */
+export const claimBatchKey = (card: ClaimCard): string =>
+  `claim:${JSON.stringify([settleOf(card).link, card.band])}`;
+
+/**
+ * A name card's name as its document says it: the review's quote, else its
+ * normalized name, without the closing punctuation of a sentence the quote
+ * ends (a name quoted in a sentence of its own), so a line that goes on
+ * after it never doubles its stop.
+ *
+ * @example
+ * cardName(nameQuoted("Umbrella Holdings signed order form 3.")); // "Umbrella Holdings signed order form 3"
+ */
+export function cardName(card: NameCard): string {
+  const quoted = card.review.quote.trim().replace(/[\s.,;:!?…]+$/u, "");
+  return quoted || settleOf(card).normName;
 }
 
 function adviseValue(card: ValueCard): Advice {

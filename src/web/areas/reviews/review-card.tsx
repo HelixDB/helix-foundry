@@ -7,7 +7,13 @@
 import { useId, type ReactNode, type Ref } from "react";
 import { Link } from "react-router-dom";
 import type { DecisionApplied } from "../../../shared/wfe";
-import { ArrowLeft, ArrowRight, MessageCircle, Undo2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  CornerDownLeft,
+  MessageCircle,
+  Undo2,
+} from "lucide-react";
 import { Button, Tag, plural } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
@@ -16,7 +22,13 @@ import { evidenceShapeText, heldUnnamed, reviewCopy } from "../documents/model";
 import type { Span } from "../explore/model";
 import type { Naming } from "../explore/naming";
 import { useOntology } from "../ontology/scope";
-import { settleOf, type Advice, type Decidable, type Effect } from "./advice";
+import {
+  cardName,
+  settleOf,
+  type Advice,
+  type Decidable,
+  type Effect,
+} from "./advice";
 import type { Choice } from "./choices";
 import type { KeyCommand } from "./keys";
 import {
@@ -150,10 +162,8 @@ export function HeldHow({
  */
 export function cardLine(card: Decidable): string {
   switch (card.kind) {
-    case "name": {
-      const s = settleOf(card);
-      return `“${card.review.quote.trim() || s.normName}” · ${s.type}`;
-    }
+    case "name":
+      return `“${cardName(card)}” · ${settleOf(card).type}`;
     case "claim": {
       const { statement: st, link } = settleOf(card);
       return `${st.subject.name} → ${link} → ${st.object.name}`;
@@ -324,30 +334,13 @@ export function ReviewCard({
         </Tag>
         <h2 id={headingId} ref={headingRef} tabIndex={-1}>
           {card.kind === "name"
-            ? `${docName(card.review.documentId)} names “${card.review.quote.trim() || settleOf(card).normName}”. Which ${settleOf(card).type} is it?`
+            ? `${docName(card.review.documentId)} names “${cardName(card)}”. Which ${settleOf(card).type} is it?`
             : card.kind === "claim"
               ? `Is this right: ${cardLine(card)}?`
               : `Which ${settleOf(card).prop} of ${card.review.candidates[0]?.entity?.name ?? `this ${settleOf(card).type}`} is right?`}
         </h2>
       </header>
       <Evidence at={card.review} quote={card.review.quote} />
-      {card.kind === "claim" && (
-        <div className="rv-card-body">
-          <ClaimWritten
-            settle={settleOf(card)}
-            single={
-              !naming.version || naming.oneValued.has(settleOf(card).link)
-            }
-            holding={holdingEnds(
-              settleOf(card).unsettled,
-              !naming.version || naming.oneValued.has(settleOf(card).link),
-            )}
-            link={(path) => path}
-          />
-          <Score confidence={card.review.confidence} />
-          <HeldHow review={card.review} />
-        </div>
-      )}
       {card.kind === "name" && (card.blocked > 0 || card.held.length > 0) && (
         <p className="rv-card-body">
           {card.blocked > 0 &&
@@ -397,7 +390,10 @@ export function ReviewCard({
                 aria-keyshortcuts="Enter"
                 onClick={() => onCommand({ kind: "accept" })}
               >
-                Accept <Kbd>⏎</Kbd>
+                Accept{" "}
+                <Kbd>
+                  <CornerDownLeft size={12} />
+                </Kbd>
               </Button>
             )}
             <ul className="rv-choices" aria-label="Choices">
@@ -414,6 +410,26 @@ export function ReviewCard({
             </ul>
           </div>
         )
+      )}
+      {/* What a held claim's approval writes, its score and how it's
+          stated, after its choices: the suggestion says why already, and a
+          phone shows the choice without scrolling. */}
+      {card.kind === "claim" && (
+        <div className="rv-card-body rv-card-detail">
+          <ClaimWritten
+            settle={settleOf(card)}
+            single={
+              !naming.version || naming.oneValued.has(settleOf(card).link)
+            }
+            holding={holdingEnds(
+              settleOf(card).unsettled,
+              !naming.version || naming.oneValued.has(settleOf(card).link),
+            )}
+            link={(path) => path}
+          />
+          <Score confidence={card.review.confidence} />
+          <HeldHow review={card.review} />
+        </div>
       )}
       <div className="rv-nav">
         <Button

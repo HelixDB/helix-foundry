@@ -113,9 +113,10 @@
   padding-top: 0;
 }
 
-/* The review walkthrough (walkthrough.tsx): progress, filters and lanes,
-   then one card at a time in a 760px column, the rail of next cards beside
-   it (a select where the walk is narrower than 800px). */
+/* The review walkthrough (walkthrough.tsx): the lanes and the Filter menu
+   on one row, the progress under them, then one card at a time in a 760px
+   column, the rail of next cards beside it (none where the walk is
+   narrower than 800px, so a phone opens on the card). */
 .rv-walk {
   display: grid;
   gap: 16px;
@@ -150,47 +151,33 @@
 .rv-meter-left {
   background: var(--hf-border);
 }
-.rv-filters {
+.rv-walk-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
-.rv-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.rv-chip {
-  padding: 3px 10px;
-  border: 1px solid var(--hf-border);
+.rv-filter-count {
+  min-width: 18px;
+  padding: 0 5px;
   border-radius: var(--hf-radius-pill);
-  background: var(--hf-surface);
-  color: var(--hf-text-2);
-  font: inherit;
-  font-size: var(--hf-text-sm);
-  cursor: pointer;
-}
-.rv-chip:hover {
-  background: var(--hf-hover);
-}
-.rv-chip[aria-pressed="true"] {
-  border-color: var(--hf-accent-border);
-  background: var(--hf-accent-soft);
-  color: var(--hf-accent-text);
-}
-.rv-chip:disabled {
-  cursor: default;
-}
-.rv-chip:focus-visible {
-  outline: 2px solid var(--hf-focus);
-  outline-offset: 1px;
+  background: var(--hf-accent);
+  color: var(--hf-on-accent);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
 }
 .rv-walk-body {
   display: grid;
   grid-template-columns: 200px minmax(0, 760px);
   align-items: start;
   gap: 24px;
+}
+/* No rail: every card decided, or none to decide. */
+.rv-walk-body.is-solo {
+  grid-template-columns: minmax(0, 760px);
 }
 .rv-walk-main {
   display: grid;
@@ -270,18 +257,13 @@
   border-color: var(--hf-muted);
   background: var(--hf-muted);
 }
-.rv-rail-select {
-  display: none;
-}
 @container (max-width: 799px) {
-  .rv-walk-body {
+  .rv-walk-body,
+  .rv-walk-body.is-solo {
     grid-template-columns: minmax(0, 1fr);
   }
   .rv-rail {
     display: none;
-  }
-  .rv-rail-select {
-    display: block;
   }
 }
 .rv-card {
@@ -303,12 +285,11 @@
   font-weight: 600;
   line-height: 1.35;
 }
-.rv-card-head h2:focus {
+/* The card's and the finish's headings take the focus by script when the
+   walk moves, so a screen reader reads the next question: no ring, as for
+   a page's heading (shell.css), since nothing there answers a key. */
+.rv-walk [tabindex="-1"]:focus {
   outline: none;
-}
-.rv-card-head h2:focus-visible {
-  outline: 2px solid var(--hf-focus);
-  outline-offset: 2px;
 }
 .rv-card-body {
   display: grid;
@@ -371,15 +352,23 @@
 }
 .rv-walk kbd,
 .rv-keys kbd {
-  display: inline-block;
-  min-width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
   padding: 0 4px;
   border: 1px solid var(--hf-border-strong);
   border-radius: var(--hf-radius-sm);
+  color: inherit;
   font-family: var(--hf-font-mono);
   font-size: var(--hf-text-xs);
-  line-height: 16px;
-  text-align: center;
+  line-height: 1;
+}
+/* On a primary button the hint takes the button's own text color, which
+   the theme sets against its fill, in both themes. */
+.rv-walk .hf-btn--primary kbd {
+  border-color: currentColor;
 }
 .rv-keys {
   display: grid;
@@ -435,6 +424,11 @@
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
 }
+.rv-done .rv-done-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 0;
+}
 .rv-spot {
   display: grid;
   gap: 12px;
@@ -466,6 +460,10 @@
   padding: 8px 12px;
   border: 1px solid var(--hf-border);
   background: var(--hf-surface);
+}
+/* The batch's tick column: ticks, so no type icon in its head. */
+.hf-grid-th.rv-tick .hf-grid-type {
+  display: none;
 }
 .rv-failed {
   margin: 0;

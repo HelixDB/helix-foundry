@@ -11,7 +11,9 @@ import {
   batchOf,
   batchTakes,
   current,
+  drawnLike,
   progress,
+  undecided,
   walkOrder,
   walkReducer,
   type How,
@@ -539,8 +541,65 @@ describe("progress", () => {
       accepted: 2,
       chosen: 1,
       skipped: 1,
+      covered: 1,
       left: 2,
     });
+  });
+});
+
+describe("undecided", () => {
+  it("counts the cards no choice settles yet: skipped and refused ones too, not covered or elsewhere", () => {
+    const outcomes = new Map<string, Outcome>([
+      ["a", { kind: "sending", choice: approve, how: "accepted" }],
+      ["b", { kind: "saved", decision: decision("b"), how: "batch" }],
+      ["c", { kind: "skipped" }],
+      [
+        "d",
+        {
+          kind: "refused",
+          choice: approve,
+          how: "chosen",
+          message: "m",
+          retry: true,
+        },
+      ],
+      ["e", { kind: "covered", by: "a" }],
+      ["f", { kind: "elsewhere" }],
+    ]);
+    expect(undecided(["a", "b", "c", "d", "e", "f", "g"], outcomes)).toBe(3);
+    expect(undecided([], outcomes)).toBe(0);
+    expect(undecided(["g", "h"], new Map())).toBe(2);
+  });
+  it("is the Facts tab's count, the walk's Decide lane without a filter", () => {
+    const cards = [heldCard(1), heldCard(2), nameCard("acme")];
+    const order = walkOrder(queueOf(cards), ctxOf(), all);
+    const w = walkOf(order.decide, {}, [
+      [
+        "held-1",
+        { kind: "saved", decision: decision("held-1"), how: "accepted" },
+      ],
+    ]);
+    expect(undecided(order.decide, w.outcomes)).toBe(2);
+    expect(undecided(w.order, w.outcomes)).toBe(2);
+  });
+});
+
+describe("drawnLike", () => {
+  it("counts the spot checks' held claims a batch of the same link and band would take", () => {
+    const spot = [
+      { ...heldCard(1, { confidence: 0.72 }), drawn: "random" as const },
+      { ...heldCard(2, { confidence: 0.95 }), drawn: "random" as const },
+      {
+        ...heldCard(3, { confidence: 0.75 }),
+        kind: "decided" as const,
+        drawn: "random" as const,
+      },
+    ];
+    const cards = new Map<string, QueueCard>(spot.map((c) => [c.key, c]));
+    const keys = [...cards.keys(), "quote-0.7-0"];
+    expect(drawnLike(keys, cards, 'claim:["partner_of","0.7"]')).toBe(1);
+    expect(drawnLike(keys, cards, 'claim:["partner_of","0.9"]')).toBe(1);
+    expect(drawnLike(keys, cards, 'claim:["signed_with","0.7"]')).toBe(0);
   });
 });
 

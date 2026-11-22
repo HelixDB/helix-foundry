@@ -13,6 +13,7 @@ import {
   StatusDot,
   cx,
   formatNumber,
+  plural,
 } from "../../kit";
 import { paths } from "../../paths";
 import { childActive } from "../../shell/nav";
@@ -55,19 +56,26 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       ...ontologyQueries.ontology(ws, open),
       enabled: !!open,
     }).data?.ontology;
-  // Review counts what is open on both its tabs: Facts as the Review page
-  // last counted it on the current load (reading the load's reviews is the
-  // page's, not every page's), and Ontology's suggestions where audits run.
-  // A total waits for Facts' part; no grantee reaches Review.
+  // Review counts what is open on both its tabs, and says each part: Facts'
+  // cards to decide as the Review page last counted them on the current
+  // load (reading the load's reviews is the page's, not every page's), and
+  // Ontology's suggestions where audits run. A total waits for Facts' part;
+  // no grantee reaches Review.
   const heal = useQuery({
       ...suggestionQueries.list(ws, open),
       enabled: !!open && !grantee,
     }),
     facts = useQuery(reviewQueries.openFacts(ws, open)).data;
-  const reviewOpen =
-    facts && own?.currentLoad?.id === facts.loadId
-      ? facts.open + (heal.data?.enabled ? heal.data.findings?.length || 0 : 0)
-      : 0;
+  const factsOpen =
+      facts && own?.currentLoad?.id === facts.loadId ? facts.open : undefined,
+    suggestionsOpen = heal.data?.enabled ? heal.data.findings?.length || 0 : 0;
+  const reviewOpen = factsOpen === undefined ? 0 : factsOpen + suggestionsOpen;
+  const reviewParts = [
+    factsOpen && `${plural(factsOpen, "card")} to decide`,
+    suggestionsOpen && plural(suggestionsOpen, "ontology suggestion"),
+  ]
+    .filter(Boolean)
+    .join(", ");
   // The open ontology's row, until the list names it (made in another tab).
   const listed = list.data?.ontologies || [],
     ontologies =
@@ -225,9 +233,10 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           aria-current={onReview ? "page" : undefined}
                           aria-label={
                             reviewOpen > 0
-                              ? `Review, ${formatNumber(reviewOpen)} open`
+                              ? `Review: ${reviewParts}`
                               : undefined
                           }
+                          title={reviewOpen > 0 ? reviewParts : undefined}
                         >
                           <span>Review</span>
                           {reviewOpen > 0 && (

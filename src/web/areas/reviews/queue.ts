@@ -387,7 +387,13 @@ function waitsOn(
  * person has said anything of), the load's id (`seed`), the keys of the
  * cards decided on this page (`keep`) and of those labelled on it
  * (`labelledHere`), which keep their places and their kinds until the page
- * is read again so their cards can say what became of them.
+ * is read again so their cards can say what became of them, and what an
+ * earlier read of the same load on this page drew and ranked (`pins`,
+ * queuePins), so a card stays where it was while the page is open: a card
+ * drawn then is drawn again first (while its pool still has it), and one
+ * ranked then is never drawn. Without them a read after decisions draws
+ * afresh, and a card the walk counted could leave it for the spot checks,
+ * or one drawn come back to it, as the number of ranked cards changes.
  */
 export function buildQueue({
   reviews,
@@ -398,6 +404,7 @@ export function buildQueue({
   seed,
   keep = new Set(),
   labelledHere = new Set(),
+  pins,
 }: {
   reviews: readonly QueueReview[];
   decisions: readonly ReviewDecision[];
@@ -407,6 +414,7 @@ export function buildQueue({
   seed: string;
   keep?: ReadonlySet<string>;
   labelledHere?: ReadonlySet<string>;
+  pins?: QueuePins;
 }): Queue {
   const decided = decidedIndex(decisions);
   const orders = new Map<string, number>();
@@ -533,14 +541,16 @@ export function buildQueue({
     labelledHere.has(keyOf(r));
   type Drawable = ClaimCard | DecidedCard;
   const pools = new Map<Band, Drawable[]>(BANDS.map((b) => [b, []]));
+  // A card ranked by an earlier read stays ranked.
+  const drawable = (r: QueueReview) => open(r) && !pins?.ranked.has(keyOf(r));
   for (const c of [...own, ...[...held.values()].flat()])
-    if (open(c.review)) pools.get(c.band)!.push(c);
+    if (drawable(c.review)) pools.get(c.band)!.push(c);
   for (const [list, isBlocked] of [
     [done, false],
     [blocked, true],
   ] as const)
     for (const r of list)
-      if (open(r))
+      if (drawable(r))
         pools.get(bandOf(r.confidence))!.push({
           kind: "decided",
           key: (r.settle as Release).reviewId,
@@ -562,6 +572,34 @@ export function buildQueue({
   const randoms = Math.ceil(ranked().length / RANKED_PER_RANDOM);
   const drawn: (Drawable | QuoteCard)[] = [];
   const draws = new Map<Band, number>();
+  // Out of its rank, or off its name's card.
+  const take = (card: Drawable) => {
+    drawn.push(card.kind === "claim" ? { ...card, drawn: "random" } : card);
+    const i = own.indexOf(card as ClaimCard);
+    if (i >= 0) own.splice(i, 1);
+    for (const n of nameCards) n.held = n.held.filter((c) => c !== card);
+  };
+  // An earlier read's draws first, in its order: a claim while its pool
+  // still has it, a fact while its band still has quotes.
+  for (const k of pins?.drawn ?? []) {
+    const quote = QUOTE_KEY.exec(k);
+    const band = quote?.[1] as Band | undefined;
+    if (quote && band && BANDS.includes(band)) {
+      const n = Number(quote[2]);
+      if (!quotesLeft.get(band)) continue;
+      drawn.push({ kind: "quote", key: k, band, draw: n, drawn: "random" });
+      draws.set(band, Math.max(draws.get(band) ?? 0, n + 1));
+      quotesLeft.set(band, quotesLeft.get(band)! - 1);
+      continue;
+    }
+    for (const inBand of pools.values()) {
+      const i = inBand.findIndex((c) => c.key === k);
+      if (i >= 0) {
+        take(inBand.splice(i, 1)[0]!);
+        break;
+      }
+    }
+  }
   // The bands in turn, from the top, passing over one with nothing left.
   let next = 0;
   while (drawn.length < randoms) {
@@ -593,12 +631,7 @@ export function buildQueue({
       quotesLeft.set(band, quotesIn - 1);
       continue;
     }
-    const card = inBand.shift()!;
-    drawn.push(card.kind === "claim" ? { ...card, drawn: "random" } : card);
-    // Out of its rank, or off its name's card.
-    const i = own.indexOf(card as ClaimCard);
-    if (i >= 0) own.splice(i, 1);
-    for (const n of nameCards) n.held = n.held.filter((c) => c !== card);
+    take(inBand.shift()!);
   }
   // One random card after every RANKED_PER_RANDOM ranked, the rest at the end.
   const cards: QueueCard[] = [];
@@ -612,6 +645,43 @@ export function buildQueue({
 }
 
 const KIND_ORDER = { claim: 0, name: 1, value: 2 } as const;
+
+/** A fact's draw's key: its band and its draw. */
+const QUOTE_KEY = /^quote-(.+)-(\d+)$/;
+
+/**
+ * What a page's reads of one load drew at random (`drawn`, by key, in
+ * order) and ranked (`ranked`: the keys of held claims, on their own or on
+ * a name's card), which buildQueue keeps as they were.
+ */
+export type QueuePins = {
+  drawn: readonly string[];
+  ranked: ReadonlySet<string>;
+};
+
+/**
+ * The pins of `queue`, added to `pins`, an earlier read's of the same load
+ * (none for another load): what a later read keeps as it was.
+ *
+ * @example
+ * queuePins(buildQueue({ reviews, decisions: [], single, seed: "L" })).drawn; // the random draws' keys
+ */
+export function queuePins(queue: Queue, pins?: QueuePins): QueuePins {
+  const drawn = queue.cards.flatMap((c) =>
+    c.drawn === "random" ? [c.key] : [],
+  );
+  const ranked = queue.cards.flatMap((c) =>
+    c.kind === "claim" && c.drawn === "ranked"
+      ? [c.key]
+      : c.kind === "name"
+        ? c.held.map((h) => h.key)
+        : [],
+  );
+  return {
+    drawn: [...new Set([...(pins?.drawn ?? []), ...drawn])],
+    ranked: new Set([...(pins?.ranked ?? []), ...ranked]),
+  };
+}
 
 /**
  * The facts a card's decisions write: one for a held claim; a name's

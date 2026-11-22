@@ -29,15 +29,26 @@ import { useTenantReads } from "../explore/tenant-reads";
 import { useNaming } from "../explore/use-naming";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
+import { adviceContext } from "./advice";
 import { labelQueries, reviewQueries } from "./api";
 import {
   BAND_RANGE,
   bandOf,
   buildQueue,
   labelPlace,
+  precision,
+  queuePins,
+  type QueuePins,
   type QueueReview,
 } from "./queue";
+import { undecided, walkOrder, type WalkFilter } from "./walk";
 import { ReviewWalkthrough, useWalk } from "./walkthrough";
+
+/** The walk's filter that takes every card. */
+const EVERY: WalkFilter = {
+  kinds: new Set(["name", "claim", "value"]),
+  advice: "any",
+};
 
 /**
  * A review once, wherever pages read at different times put it: its key,
@@ -85,8 +96,12 @@ const combinePages = (results: UseQueryResult<QueueReview[]>[]) => {
 /**
  * The Facts tab's reads of the current load and its queue. The Review page
  * holds them, so the tab's count shows on either tab and what was decided
- * here keeps its place across a switch. `open` is the cards not decided or
- * labelled here yet; unset until the queue is read.
+ * here keeps its place across a switch. The queue keeps its random draws
+ * and ranked cards for the visit (queuePins), so the walk's cards stay
+ * the same while decisions are read. `open` is the cards still to decide:
+ * the walk's Decide lane without a filter (names, held claims and values;
+ * not those for information, names a link covers or the spot checks),
+ * less those decided in this walk; unset until the queue is read.
  */
 export function useReviewQueue() {
   const { id: ws, user } = useWorkspace(),
@@ -168,32 +183,63 @@ export function useReviewQueue() {
   // The quote counts are waited for unless they failed: then the random
   // slice draws from held claims alone, and the page says so.
   const quotesSettled = !!quotes.data || !!quotes.error;
-  const queue = useMemo(
-    () =>
-      reviews && decisions.data && labels.data && quotesSettled && loadId
-        ? buildQueue({
-            reviews,
-            decisions: decisions.data,
-            single: (link) => !naming.version || naming.oneValued.has(link),
-            quotes: unlabelled,
-            labelled,
-            seed: loadId,
-            keep,
-            labelledHere,
-          })
-        : undefined,
-    [
+  const single = useMemo(
+    () => (link: string) => !naming.version || naming.oneValued.has(link),
+    [naming],
+  );
+  // What this visit's reads of the load drew and ranked. Each read adds its
+  // own, which a read of the same inputs would draw and rank again.
+  const pins = useRef<{ load: string; pins: QueuePins }>(undefined);
+  const queue = useMemo(() => {
+    if (
+      !reviews ||
+      !decisions.data ||
+      !labels.data ||
+      !quotesSettled ||
+      !loadId
+    )
+      return undefined;
+    const earlier =
+      pins.current?.load === loadId ? pins.current.pins : undefined;
+    const built = buildQueue({
       reviews,
-      decisions.data,
-      labels.data,
+      decisions: decisions.data,
+      single,
+      quotes: unlabelled,
       labelled,
-      unlabelled,
-      quotesSettled,
-      loadId,
+      seed: loadId,
       keep,
       labelledHere,
-      naming,
-    ],
+      pins: earlier,
+    });
+    pins.current = { load: loadId, pins: queuePins(built, earlier) };
+    return built;
+  }, [
+    reviews,
+    decisions.data,
+    labels.data,
+    labelled,
+    unlabelled,
+    quotesSettled,
+    loadId,
+    keep,
+    labelledHere,
+    single,
+  ]);
+  // What Founder's rules read, and the walk of every card.
+  const ctx = useMemo(
+    () =>
+      adviceContext({
+        decisions: decisions.data ?? [],
+        precision: precision(labels.data ?? []),
+        single,
+        user: user.id,
+      }),
+    [decisions.data, labels.data, single, user.id],
+  );
+  const all = useMemo(
+    () => (queue ? walkOrder(queue, ctx, EVERY) : undefined),
+    [queue, ctx],
   );
   const refreshLabels = () =>
     void qc.invalidateQueries({ queryKey: labelQueries.list(ws, o).queryKey });
@@ -218,10 +264,13 @@ export function useReviewQueue() {
     void decisions.refetch();
     void labels.refetch();
   };
-  const open = queue?.cards.filter(
-    (c) => !keep.has(c.key) && !labelledHere.has(c.key),
-  ).length;
   const walk = useWalk();
+  const open =
+    all &&
+    undecided(
+      all.decide,
+      walk.state.loadId === loadId ? walk.state.outcomes : new Map(),
+    );
   return {
     access,
     loads,
@@ -238,6 +287,9 @@ export function useReviewQueue() {
     labelled,
     unlabelled,
     queue,
+    single,
+    ctx,
+    all,
     keepCards,
     settled,
     labelledOn,

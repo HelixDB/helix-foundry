@@ -34,6 +34,7 @@ import {
   labelPlace,
   perDecision,
   precision,
+  queuePins,
   quoteOffsets,
   rechecks,
   scoreText,
@@ -622,6 +623,66 @@ describe("buildQueue", () => {
     expect(
       queue.cards.find((c): c is NameCard => c.kind === "name")?.held,
     ).toEqual([]);
+  });
+
+  it("keeps what an earlier read of the load drew and ranked, as the ranked cards change", () => {
+    // Four held claims at 0.72 and six documents asking about one name: ten
+    // ranked, so two drawn, both claims (the only pool).
+    const claims = [1, 2, 3, 4].map((n) => held(n, { confidence: 0.72 }));
+    const names = Array.from({ length: 6 }, (_, i) =>
+      name(`n-${i}`, "umbrella", { doc: `doc-${i}` }),
+    );
+    const first = build([...claims, ...names]);
+    const drawnKeys = (q: ReturnType<typeof build>) =>
+      q.cards.flatMap((c) => (c.drawn === "random" ? [c.key] : []));
+    const rankedClaims = (q: ReturnType<typeof build>) =>
+      q.cards.flatMap((c) =>
+        c.kind === "claim" && c.drawn === "ranked" ? [c.key] : [],
+      );
+    expect(drawnKeys(first)).toHaveLength(2);
+    const pins = queuePins(first);
+    expect(pins.drawn).toEqual(drawnKeys(first));
+    expect([...pins.ranked].sort()).toEqual(rankedClaims(first).sort());
+    // The same read again draws the same.
+    expect(keys(build([...claims, ...names], { pins }).cards)).toEqual(
+      keys(first.cards),
+    );
+    // A link settles five of the names in place: five ranked, so one draw,
+    // which without the pins would put a drawn claim back in the ranks.
+    const after = [...claims, names[0]!];
+    expect(rankedClaims(build(after))).toHaveLength(3);
+    const kept = build(after, { pins });
+    expect(drawnKeys(kept)).toEqual(pins.drawn);
+    expect(rankedClaims(kept).sort()).toEqual(rankedClaims(first).sort());
+    // More ranked (new names) draws more, never a claim ranked before.
+    const more = Array.from({ length: 12 }, (_, i) =>
+      name(`m-${i}`, "initech", { doc: `doc-m${i}` }),
+    );
+    const grown = build([...claims, ...names, ...more], { pins });
+    expect(drawnKeys(grown)).toEqual(pins.drawn);
+    expect(rankedClaims(grown).sort()).toEqual(rankedClaims(first).sort());
+    // The pins only grow, and leave a read of another load alone.
+    expect(queuePins(grown, pins).drawn).toEqual(pins.drawn);
+  });
+
+  it("keeps an earlier read's draws of facts while their band has quotes", () => {
+    const claims = Array.from({ length: 9 }, (_, n) =>
+      held(n, { confidence: 0.72 }),
+    );
+    const first = build(claims, { quotes: { "0.9": 40 } });
+    const quote = first.cards.find((c) => c.kind === "quote");
+    expect(quote).toMatchObject({ band: "0.9", draw: 0 });
+    const pins = queuePins(first);
+    // More quotes since (approvals written) draws the same fact again.
+    const again = build(claims, { quotes: { "0.9": 43 }, pins });
+    expect(again.cards.filter((c) => c.drawn === "random")).toEqual([quote]);
+    // A band with no quotes left draws none of it, and no claim ranked
+    // before is drawn in its place.
+    const gone = build(claims, { quotes: {}, pins });
+    expect(gone.cards.filter((c) => c.drawn === "random")).toEqual([]);
+    expect(
+      build(claims, { quotes: {} }).cards.filter((c) => c.drawn === "random"),
+    ).toHaveLength(1);
   });
 
   it("draws nothing where there is nothing ranked, or no pool", () => {
