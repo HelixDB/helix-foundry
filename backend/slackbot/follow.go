@@ -371,7 +371,7 @@ func (f *follower) write(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("count the install's follows: %w", err)
 	}
-	gap := updateGap * time.Duration(max(live, 1))
+	gap := b.updateGap * time.Duration(max(live, 1))
 	f.nextUpdate = b.now().Add(gap)
 	return f.update(ctx, model.SlackReplyUpdate{UpdateAfter: &gap})
 }

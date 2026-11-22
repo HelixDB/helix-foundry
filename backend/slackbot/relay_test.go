@@ -462,7 +462,7 @@ func TestRelaySweepGoesOnPastFailures(t *testing.T) {
 	assert.Equal(t, "error", w.bot.relayNotice(w.ctx, d, say, &budget))
 	other, err := secretbox.NewKeyring("k2", map[string][]byte{"k2": bytes.Repeat([]byte{9}, 32)})
 	require.NoError(t, err)
-	w.bot.keys = other
+	w.bot.transport = Direct{DB: w.db, Keys: other}
 	w.bot.db = w.db
 	assert.Equal(t, "error", w.bot.relayNotice(w.ctx, d, say, &budget))
 	assert.Empty(t, w.slack.calls)

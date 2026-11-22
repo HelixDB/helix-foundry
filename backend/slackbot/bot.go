@@ -35,6 +35,13 @@
 //     removed past their retention, flips staged switches to the app once
 //     their history is read, and closes yesterday's days once a day.
 //
+// On a standalone install (package local/relay), Helix holds the installs
+// and relays what Slack sent them into this install's intake; the bot runs
+// as hosted's does, but reaches Slack through Helix's relay (Relayed,
+// transport.go), answers as the install's one owner (the app's installer
+// in full; anyone they allow, read-only), and acts on cards only while the
+// owner approves changes from Slack.
+//
 // Every Web API call goes through the slack.Client's Limiter. A rate limit,
 // Slack's or the Limiter's, never makes a worker sleep: the row or the reply
 // is deferred by its Retry-After. Posting is at-least-once: a worker killed
@@ -100,8 +107,11 @@ const (
 	// an Analyst question to end before it posts that it is still answering.
 	questionWait = 10 * time.Minute
 	// updateGap is the least time between two updates of one reply message,
-	// multiplied by the install's live follows.
-	updateGap = 1500 * time.Millisecond
+	// multiplied by the install's live follows; relayedUpdateGap a relayed
+	// install's, whose link calls Slack at most
+	// foundry.slack.relay.calls_per_minute times (60 by default).
+	updateGap        = 1500 * time.Millisecond
+	relayedUpdateGap = 6 * time.Second
 	// eventsPage is how many of a turn's events one read returns.
 	eventsPage = 200
 )
@@ -152,6 +162,9 @@ type Store interface {
 	CountFoundrySlackUserMessages(ctx context.Context, installID, slackUserID, intakeID string, window time.Duration) (int, error)
 	DismissFoundryAgentProposal(ctx context.Context, workspaceID, id, deciderID string) (*model.FoundryAgentAction, error)
 
+	// A standalone install's Slack users who asked its owner to use it.
+	RequestFoundrySlackAccess(ctx context.Context, r *model.SlackAccessRequest) (bool, error)
+
 	// The Slack data connector's backfill and sweeps (backfill.go), and
 	// the fold's own (connector.SlackFeedStore).
 	connector.SlackFeedStore
@@ -200,10 +213,16 @@ type Options struct {
 	// Sessions opens a linked person's Session, whose Founder the bot calls
 	// as them.
 	Sessions integration.SessionHost
-	// Slack calls the Web API, through its Limiter.
+	// Slack calls the Web API, through its Limiter: a standalone install's
+	// through Relayed (its Client).
 	Slack *slack.Client
-	// Keys opens installs' bot tokens (the connectors' keyring).
+	// Keys is the connectors' keyring: it opens hosted installs' bot tokens
+	// (Direct), and seals a flipped connector's empty secret.
 	Keys *secretbox.Keyring
+	// Relayed reaches Slack through Helix's relay: a standalone install's,
+	// whose Slack users its owner chooses (the spec's §10.5); nil hosted,
+	// where each install's own token reaches it (Direct).
+	Relayed *Relayed
 	// Cfg is foundry.slack: its site, lease, poll interval, attempts,
 	// back-off, busy wait and retention; the follow-ups', and the feed's
 	// and its backfill's.
@@ -212,7 +231,7 @@ type Options struct {
 	// backfill, the daily close and the staged switches' flips off, as
 	// does foundry.slack.feed off.
 	Objects snapshot.Store
-	// WebAPI is Slack's Web API the backfill reads history from:
+	// WebAPI is Slack's Web API the backfill reads history from, hosted:
 	// https://slack.com/api when empty.
 	WebAPI string
 	// People says who owns or administers a workspace, and their names:
@@ -232,9 +251,16 @@ type Bot struct {
 	sessions integration.SessionHost
 	slack    *slack.Client
 	keys     *secretbox.Keyring
-	site     slack.Site
-	cfg      config.SlackConfig
-	now      func() time.Time
+	// transport opens installs' bots and the backfill's callers; relayed is
+	// it on a standalone install, nil hosted.
+	transport Transport
+	relayed   *Relayed
+	// updateGap is the least time between two updates of one reply
+	// message, before the install's live follows multiply it.
+	updateGap time.Duration
+	site      slack.Site
+	cfg       config.SlackConfig
+	now       func() time.Time
 	// people and proposals are bot mode's approvals; nil refuses them.
 	people    ports.People
 	proposals Approver
@@ -246,9 +272,8 @@ type Bot struct {
 	agentOff map[string]time.Time
 
 	// feed folds the data connector's feeds and reads their mirror; nil
-	// while the feed is off. webAPI is Slack's Web API the backfill calls.
-	feed   *connector.SlackFeedOptions
-	webAPI string
+	// while the feed is off.
+	feed *connector.SlackFeedOptions
 	// closed is the last day whose days the sweep closed (feeds).
 	closed time.Time
 }
@@ -263,6 +288,8 @@ func New(o Options) (*Bot, error) {
 	switch {
 	case o.DB == nil || o.Sessions == nil || o.Slack == nil || o.Keys == nil:
 		return nil, errors.New("slackbot: a store, a session host, a Slack client and a keyring are required")
+	case o.Relayed != nil && (o.Relayed.DB == nil || o.Relayed.Access == nil):
+		return nil, errors.New("slackbot: a relayed bot reads its installs and its link")
 	case o.Cfg.Lease <= 0 || o.Cfg.PollInterval <= 0 || o.Cfg.MaxAttempts < 1 || o.Cfg.RetryBackoff <= 0 || o.Cfg.BusyWait <= 0 ||
 		o.Cfg.Retention.Threads <= 0:
 		return nil, errors.New("slackbot: foundry.slack's lease, poll interval, attempts, back-off, busy wait and thread retention are positive")
@@ -276,7 +303,13 @@ func New(o Options) (*Bot, error) {
 		now = time.Now
 	}
 	b := &Bot{db: o.DB, sessions: o.Sessions, slack: o.Slack, keys: o.Keys, site: site, cfg: o.Cfg, now: now, people: o.People, proposals: o.Proposals,
-		users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}, webAPI: o.WebAPI}
+		users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}, transport: Direct{DB: o.DB, Keys: o.Keys, WebAPI: o.WebAPI},
+		updateGap: updateGap}
+	if o.Relayed != nil {
+		// Every call of a relayed install shares its link's calls a minute:
+		// a reply is updated a quarter as often.
+		b.transport, b.relayed, b.updateGap = *o.Relayed, o.Relayed, relayedUpdateGap
+	}
 	if o.Objects != nil && o.Cfg.Feed.Enabled {
 		f, bf := o.Cfg.Feed, o.Cfg.Backfill
 		if f.Spacing <= 0 || f.ReadBudget.Rows < 1 || f.ReadBudget.Bytes < 1 || bf.HistoryPerMinute < 1 || bf.RepliesPerMinute < 1 ||
@@ -290,18 +323,10 @@ func New(o Options) (*Bot, error) {
 	return b, nil
 }
 
-// token is an install's bot, its token opened: store.ErrNotFound once Slack
-// was told of its uninstall.
+// token is an install's bot as its transport opens it: store.ErrNotFound
+// once it has none.
 func (b *Bot) token(ctx context.Context, installID string) (slack.Bot, error) {
-	sealed, err := b.db.GetFoundrySlackInstallToken(ctx, installID)
-	if err != nil {
-		return slack.Bot{}, err
-	}
-	token, err := b.keys.Open(sealed.Sealed, sealed.KeyID, installID)
-	if err != nil {
-		return slack.Bot{}, fmt.Errorf("open the install's token: %w", err)
-	}
-	return slack.Bot{InstallID: installID, Token: string(token)}, nil
+	return b.transport.Bot(ctx, installID)
 }
 
 // user is what users.info says of userID in bot's install, from the cache
@@ -392,9 +417,14 @@ func rateLimited(err error) (time.Duration, bool) {
 }
 
 // slackGone reports a Web API answer that says the bot can't act there any
-// more: its token was revoked, or the channel or message is gone or closed
-// to it. Trying again changes nothing.
+// more: its token was revoked, the channel or message is gone or closed to
+// it, or Helix's relay refused the call. Trying again changes nothing.
 func slackGone(err error) bool {
+	var api *slack.APIError
+	if errors.As(err, &api) && strings.HasPrefix(api.Code, relayRefusal) {
+		// Helix's relay refused it for good (Relayed).
+		return true
+	}
 	return slack.IsCode(err, "invalid_auth", "account_inactive", "token_revoked", "token_expired", "not_authed", "channel_not_found",
 		"not_in_channel", "is_archived", "message_not_found", "cant_update_message", "user_not_in_channel", "no_permission")
 }

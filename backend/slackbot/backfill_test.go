@@ -867,6 +867,9 @@ func (f *faultyStore) MarkFoundrySlackThreadBot(ctx context.Context, installID, 
 func (w *feedWorld) faulty(fail map[string]error) {
 	w.bot.db = &faultyStore{Store: w.db, fail: fail}
 	w.bot.feed.Feed = w.bot.db
+	direct := w.bot.transport.(Direct)
+	direct.DB = w.bot.db
+	w.bot.transport = direct
 }
 
 // counted is how many times outcome was counted for method's backfill.

@@ -135,9 +135,11 @@ func refreshCall(ctx context.Context, s integration.Session, ws, id string) (*fo
 // thread; dismissed; prepared again; or, for a click the action's state
 // refused, as it stands. An expired confirmation offers Prepare again.
 //
-// Outside a direct message it first asks Slack whether the channel is
-// shared with another organisation (conversations.info), where nothing
-// runs and nothing is posted. A run (run true) of a card that runs only in
+// On a standalone install, where every link acts as its owner, only the
+// owner's own Slack account clicks, and only while they approve changes
+// from Slack. Outside a direct message it first asks Slack whether the
+// channel is shared with another organisation (conversations.info), where
+// nothing runs and nothing is posted; a relayed install's never is. A run (run true) of a card that runs only in
 // Foundry (slack.RunsInFoundry) runs nothing: the clicker is sent to
 // Foundry, and the card redrawn with its link.
 //
@@ -153,6 +155,22 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 		return b.clickTell(ctx, c, k, notYours)
 	case err != nil:
 		return nil, fmt.Errorf("read the link: %w", err)
+	}
+	// On a standalone install every link acts as its owner: only the
+	// owner's own Slack account acts on their cards, and only while they
+	// approve changes from Slack (the spec's §10.5).
+	if b.relayed != nil {
+		if _, full := link.Access.(model.SlackFullAccess); !full {
+			return b.clickTell(ctx, c, k, notYours)
+		}
+		approvals, err := b.relayed.SlackApprovals(ctx)
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("read whether changes are approved from Slack: %w", err)
+		case !approvals:
+			return b.clickTell(ctx, c, k, "Approving changes from Slack is off for this Foundry: act on this in Foundry, "+
+				"or turn Approve changes from Slack on in Settings › Slack.")
+		}
 	}
 	action, err := b.db.GetFoundryAgentAction(ctx, c.install.WorkspaceID, actionID)
 	switch {
@@ -254,7 +272,9 @@ func (b *Bot) cardClick(ctx context.Context, c claim, k slack.Clicked, actionID 
 // with another organisation (conversations.info), where Helix Foundry acts
 // on nothing, or can't tell (an install without the scope).
 func (b *Bot) sharedChannel(ctx context.Context, c claim, k slack.Clicked) (string, error) {
-	if inDM(k.ChannelID) {
+	// Helix's relay takes nothing from a channel shared with another
+	// organisation, and a relayed install's calls may name none.
+	if inDM(k.ChannelID) || b.relayed != nil {
 		return "", nil
 	}
 	shared, err := b.slack.ExtShared(ctx, c.bot, k.ChannelID)

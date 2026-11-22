@@ -19,7 +19,6 @@ import (
 	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
-	"github.com/helixdb/helix-foundry/backend/syncer"
 )
 
 // The Slack data connector's backfill (foundry.slack.feed, the connector
@@ -113,7 +112,7 @@ func (b *Bot) backfill(ctx context.Context, method model.SlackSlotMethod, work m
 		return "error"
 	}
 	app := b.appOf(install)
-	app.Caller = syncer.SlackBotCaller{BaseURL: b.webAPI, Token: bot.Token}
+	app.Caller = b.transport.Caller(bot)
 	var outcome string
 	switch item := work.Item.(type) {
 	case *model.SlackBackfillWindow:

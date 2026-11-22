@@ -237,7 +237,11 @@ func memberOf(u slack.User, install *model.SlackInstall, userTeam string) bool {
 // checks who wrote it and where, renders its text once, then sends it to
 // Founder in the Founder thread its Slack thread continues, and posts the
 // reply the follower takes over. per_person, it goes as the sender's linked
-// person, in their own thread (someone not linked gets a link prompt); in
+// person, in their own thread (someone not linked gets a link prompt); on a
+// standalone install (the spec's §10.5) every link is the owner's, and only
+// the install's installer is offered one: anyone else asks the owner once
+// (localAccess), and their turns, as the owner's own while approving
+// changes from Slack is off, only read and ask; in
 // bot mode (§9.5), as the install's bot, in the Slack thread's one thread,
 // for anyone in the Slack workspace within
 // foundry.slack.bot.per_user_per_hour, its text saying who wrote it, and the
@@ -311,12 +315,14 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	// principal is whom the turn is for, person the Slack user whose
 	// Founder thread the Slack thread continues ("" for the bot's).
 	var principal model.FoundryAgentPrincipal = model.AgentBot(shared)
-	person := ""
+	person, readOnly := "", false
 	if !isBot {
 		link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, m.user)
 		switch {
 		case errors.Is(err, store.ErrNotFound) && m.unmentioned:
 			return model.SlackIntakeEnded{}, nil
+		case errors.Is(err, store.ErrNotFound) && b.relayed != nil && m.user != c.install.InstalledBySlackUserID:
+			return b.localAccess(ctx, c, m, u)
 		case errors.Is(err, store.ErrNotFound):
 			if err := b.linkPrompt(ctx, c, m.at.ChannelID, m.at.ThreadTS, m.user, linkToAsk); err != nil {
 				return nil, err
@@ -326,6 +332,14 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 			return nil, fmt.Errorf("read the link: %w", err)
 		}
 		principal, person = model.AgentPerson{UserID: link.UserID}, m.user
+		if b.relayed != nil {
+			approvals, err := b.relayed.SlackApprovals(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("read whether changes are approved from Slack: %w", err)
+			}
+			_, read := link.Access.(model.SlackReadAccess)
+			readOnly = read || !approvals
+		}
 	}
 	session, done, err := b.session(ctx, c, principal, m.user, m.at.ChannelID, m.at.ThreadTS)
 	if done || err != nil {
@@ -339,7 +353,7 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	req := &foundryv1.SendFoundryAgentMessageRequest{
 		WorkspaceId: c.install.WorkspaceID, Input: &foundryv1.SendFoundryAgentMessageRequest_Text{Text: input},
 		ClientToken: hex.EncodeToString(sum[:]), Surface: foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK,
-		PageContext: &foundryv1.FoundryAgentPageContext{TimeZone: u.TZ},
+		PageContext: &foundryv1.FoundryAgentPageContext{TimeZone: u.TZ}, ReadOnly: readOnly,
 	}
 	if thread != nil {
 		req.ThreadId = thread.AgentThreadID
@@ -399,6 +413,25 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		}
 	}
 	if err := b.startReply(ctx, c, turn.ID, m.at.ChannelID, m.at.ThreadTS, m.user); err != nil {
+		return nil, err
+	}
+	return model.SlackIntakeEnded{}, nil
+}
+
+// localAccess answers a Slack user of a standalone install who isn't linked
+// and didn't install it: their wish to use it is recorded for the owner,
+// who allows them in Settings › Slack, and they are told so once.
+func (b *Bot) localAccess(ctx context.Context, c claim, m said, u slack.User) (model.SlackIntakeOutcome, error) {
+	requested, err := b.db.RequestFoundrySlackAccess(ctx, &model.SlackAccessRequest{InstallID: c.install.ID, SlackUserID: m.user, SlackName: speaker(u)})
+	switch {
+	case errors.Is(err, store.ErrNotFound) || err == nil && !requested:
+		// The install went meanwhile, or they asked already.
+		return model.SlackIntakeEnded{}, nil
+	case err != nil:
+		return nil, fmt.Errorf("record the access request: %w", err)
+	}
+	text := "The owner of this Foundry hasn't let you use it yet. I've asked them: they can allow you in Settings › Slack."
+	if err := b.tell(ctx, c.bot, m.at.ChannelID, m.at.ThreadTS, m.user, b.say(text)); err != nil {
 		return nil, err
 	}
 	return model.SlackIntakeEnded{}, nil
