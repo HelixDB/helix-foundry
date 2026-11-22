@@ -124,6 +124,36 @@ describe("sign-in", () => {
     expect(sent()).toEqual([]);
   });
 
+  it("carries the first touch on the sign-up funnel's events", async () => {
+    const a = await load();
+    const ft = await import("@/web/first-touch");
+    vi.stubGlobal("location", {
+      origin: "https://foundry.helix-db.com",
+      pathname: "/login",
+    });
+    ft.noteFirstTouch({
+      search: "?utm_source=www&utm_medium=hero&utm_campaign=foundry",
+      pathname: "/login",
+      host: "foundry.helix-db.com",
+      referrer: "https://www.helix-db.com/",
+    });
+    const touch = {
+      first_source: "www",
+      first_medium: "hero",
+      first_campaign: "foundry",
+      first_referrer: "www.helix-db.com",
+      first_landing: "/login",
+    };
+    await a.signInStarted("github");
+    a.signedIn("onboarding");
+    a.trackEvent("workspace_created", a.firstTouch());
+    expect(sent()).toEqual([
+      ["sign_in_started", { method: "github", ...touch }],
+      ["login_completed", { destination: "onboarding", ...touch }],
+      ["workspace_created", touch],
+    ]);
+  });
+
   it("still reports the start when storage is blocked", async () => {
     const a = await load("client-test", true);
     await a.signInStarted("microsoft");
