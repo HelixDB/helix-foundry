@@ -186,6 +186,7 @@ const SIGN_IN_KINDS: readonly ConnectorKindName[] = PROD_STAMP
       "calcom",
       "stripe",
       "google",
+      "attio",
     ];
 
 /**

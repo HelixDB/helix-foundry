@@ -1334,8 +1334,10 @@ describe("credential forms", () => {
     expect(hasCredential({ kind: "attio", apiKey: " " })).toBe(false);
     expect(hasCredential({ kind: "attio", apiKey: token })).toBe(true);
     expect(suggestedName({ kind: "attio", apiKey: token })).toBe("Attio");
-    // Attio connects with a token only.
-    expect(signInConfig(emptyForm("attio"))).toBeUndefined();
+    // Signed in, Attio sends no settings.
+    expect(signInConfig({ kind: "attio", apiKey: token })).toEqual({
+      attio: {},
+    });
     // Where it reads from is the token's hint.
     expect(
       sourceSummary(
@@ -2416,7 +2418,7 @@ describe("signInConfig", () => {
         eventDays: "30",
       }),
     ).toEqual({ google: { eventDays: 30 } });
-    for (const kind of ["linear", "calcom", "stripe"] as const)
+    for (const kind of ["linear", "calcom", "stripe", "attio"] as const)
       expect(signInConfig({ kind, apiKey: "secret" })).toEqual({ [kind]: {} });
     expect(signInConfig({ kind: "notion", token: "ntn_1" })).toEqual({
       notion: {},

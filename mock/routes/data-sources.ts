@@ -3332,6 +3332,7 @@ export function prepare(
       };
     }
     case "attio": {
+      if (signIn) return signedIn(kind, { attio: {} }, workspaceId);
       // attio.go's check: Attio's tokens are 64 characters (bytes, as Go
       // counts them), with no space or control character.
       const token = String(raw.apiKey || "").trim();

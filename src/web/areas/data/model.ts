@@ -1216,7 +1216,7 @@ export function toConfig(
  * Slack's history, PostHog's project and event history (US Cloud only: EU
  * Cloud and self-hosted keep their key), Google's event history (it reads as the
  * person who signs in, with no service account or subject); nothing for
- * Linear, Notion, Cal.com and Stripe. Undefined for a kind that can't.
+ * Linear, Notion, Cal.com, Stripe and Attio. Undefined for a kind that can't.
  *
  * @example
  * signInConfig({ kind: "slack", credential: "token", botToken: "", historyDays: "30", noticeVersion: 0 }); // { slack: { historyDays: 30 } }
@@ -1257,6 +1257,8 @@ export function signInConfig(
       return { calcom: {} };
     case "stripe":
       return { stripe: {} };
+    case "attio":
+      return { attio: {} };
     default:
       return undefined;
   }

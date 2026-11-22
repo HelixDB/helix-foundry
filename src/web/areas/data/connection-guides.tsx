@@ -580,6 +580,17 @@ const signInGuides: Record<SignInKind, (installUrl?: string) => ReactNode> = {
       <KeptBy provider="Google" instead="A service account key" />
     </ol>
   ),
+  attio: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Attio</strong>, choose your Attio workspace
+        and authorize Helix Foundry to read it: records of every object, lists
+        and their entries, notes, tasks and workspace members. It changes
+        nothing.
+      </li>
+      <KeptBy provider="Attio" instead="An access token" />
+    </ol>
+  ),
 };
 
 /**

@@ -628,6 +628,7 @@ describe("the kinds that sign in", () => {
         "calcom",
         "stripe",
         "google",
+        "attio",
       ].map((k) => isSignInKind(k) && [providerName(k), keyInstead(k)]),
     ).toEqual([
       ["GitHub", "Use a personal access token instead"],
@@ -638,6 +639,7 @@ describe("the kinds that sign in", () => {
       ["Cal.com", "Use an API key instead"],
       ["Stripe", "Use a restricted key instead"],
       ["Google", "Use a service account key instead"],
+      ["Attio", "Use an access token instead"],
     ]);
     for (const k of [
       "granola",

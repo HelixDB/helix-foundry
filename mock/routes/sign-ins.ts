@@ -53,7 +53,7 @@ import { discover, kinds, prepare } from "./data-sources";
 // connector deleted under its sign-in ends it: Authorize is SIGN_IN_ENDED,
 // and Finish fails it unavailable. Every kind Pipes signs in to does
 // (GitHub, Linear, Slack, Notion, PostHog, Cal.com, Stripe, Google
-// Workspace), with only the settings a sign-in has: a PostHog anywhere but
+// Workspace, Attio), with only the settings a sign-in has: a PostHog anywhere but
 // US Cloud is refused, and so is a Google subject. Signed in, GitHub reads where
 // Helix Foundry is installed: a named repository whose name ends in
 // /missing is one it can't see, which connects anyway with a discovery
@@ -107,6 +107,11 @@ const PROVIDERS = {
     name: "Google",
     reads: "read your Drive and Calendar",
     identity: (w: Who) => w.email,
+  },
+  attio: {
+    name: "Attio",
+    reads: "read your workspace's records, lists, notes, tasks and members",
+    identity: (w: Who) => w.team,
   },
 };
 type SignInKind = keyof typeof PROVIDERS;

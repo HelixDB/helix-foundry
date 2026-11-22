@@ -403,6 +403,11 @@ test("connects Attio with an access token and says which scopes a token lacks", 
   await signIn(page);
   await page.goto("/data?add=attio");
   await expect(dialog(page)).toHaveAttribute("aria-label", "Attio");
+  // Attio signs in where the stamp offers it; its token is the way back.
+  await expect(
+    dialog(page).getByRole("button", { name: "Connect with Attio" }),
+  ).toBeVisible();
+  await chooseKeyForm(dialog(page));
   const guide = dialog(page).locator(".connection-guide");
   await expect(guide).toContainText("Workspace settings → Developers");
   await expect(guide).toContainText("User management");
