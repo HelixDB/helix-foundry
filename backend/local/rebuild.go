@@ -21,7 +21,7 @@ type owedRebuild struct {
 // RebuildOwedLoads queues the rebuilds this install owes, as hosted runs
 // store.RebuildFoundryLoads once per stamp: for each row of
 // foundry_local_rebuilds not yet done (a directory migration adds one for a
-// release whose engine writes the graph differently, such as 00004's typed
+// release whose engine writes the graph differently, such as 00005's typed
 // DateTime, at the time it ran), a full reload of every live ontology's
 // current load created before then. A row is marked done once none was held
 // back by another live job or failed to queue (one whose rebuild an earlier
