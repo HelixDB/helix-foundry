@@ -441,6 +441,11 @@ type ConnectorDocumentsPublish struct {
 	Update []ConnectorDocumentUpdate
 	// Remove are documents of the set replaced or gone at the source.
 	Remove []string
+	// Expire are documents of the set that left their source's retention
+	// window (a Slack app connector's days past its history): removed as
+	// Remove's are, but they leave every load of every ontology, whatever
+	// its refresh setting. No id is in both Remove and Expire.
+	Expire []string
 	// Grace is how long the purge sweep leaves a purge row
 	// (ListFoundryDocumentPurges' before is now less Grace). A reservation
 	// older than Grace/2 is refused, so the sweep never deletes the bytes

@@ -143,4 +143,43 @@ func TestService(t *testing.T) {
 		_, err = send(origin)
 		assert.Error(t, err, "a stopped pod takes no request")
 	})
+
+	// A pod stopping sends the gaps of Slack's events it holds, which no later flush would.
+	t.Run("sends Slack's gaps as it stops", func(t *testing.T) {
+		backend := &fakeBackend{}
+		cfg := config.Defaults()
+		cfg.Foundry.Slack.Enabled = true
+		cfg.Foundry.Events.Endpoint.GRPC.Listen = availableAddress(t)
+		cfg.Foundry.Events.Endpoint.HTTP.Listen = availableAddress(t)
+		svc, err := New(Deps{Cfg: &cfg, Logger: discard(), Health: testHealth{grpc: health.NewServer()}, Backend: dial(t, backend)})
+		require.NoError(t, err)
+		require.NotNil(t, svc.slack)
+		ctx, cancel := context.WithCancel(context.Background())
+		served := make(chan error, 1)
+		go func() { served <- svc.Start(ctx) }()
+		svc.slack.gaps.add(t0Minute)
+		cancel()
+		require.ErrorIs(t, <-served, context.Canceled)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		require.NoError(t, svc.Stop(stopCtx))
+		sent := backend.gaps().sent()
+		require.Len(t, sent, 1)
+		assert.Equal(t, "C1", sent[0][0].GetChannelId())
+	})
+
+	t.Run("stops within its context while flushes run on", func(t *testing.T) {
+		cfg := config.Defaults()
+		cfg.Foundry.Slack.Enabled = true
+		cfg.Foundry.Events.Endpoint.GRPC.Listen = availableAddress(t)
+		cfg.Foundry.Events.Endpoint.HTTP.Listen = availableAddress(t)
+		svc, err := New(Deps{Cfg: &cfg, Logger: discard(), Health: testHealth{grpc: health.NewServer()}, Backend: dial(t, &fakeBackend{})})
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _ = svc.Start(ctx) }()
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer stopCancel()
+		require.NoError(t, svc.Stop(stopCtx))
+	})
 }

@@ -200,7 +200,7 @@ func TestTheGenerationToolPointsTheAssistantAtRelaying(t *testing.T) {
 func answering(h *harness, asked *model.FoundryAgentAsked, answers []agentquestion.Answer) *model.FoundryAgentTurn {
 	ask := message("Build me an ontology")
 	ask.ID, ask.Status, ask.Asked = "turn-ask", model.FoundryAgentTurnDone, asked
-	turn := &model.FoundryAgentTurn{ID: "turn-answers", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnAnswers,
+	turn := &model.FoundryAgentTurn{ID: "turn-answers", WorkspaceID: ws, ThreadID: "thread1", Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentTurnAnswers,
 		Input: ask.ID, Answers: answers, MaxUSDMicros: 500_000, Attempts: 1}
 	h.db.turns = []*model.FoundryAgentTurn{ask, turn}
 	return turn
@@ -378,7 +378,7 @@ func TestAHelpersTurnAsksThroughTheSameTool(t *testing.T) {
 
 	// Its answers turn, claimed again after its helper stopped, isn't work
 	// started: the answers event opens it.
-	answers := &model.FoundryAgentTurn{ID: "turn-answers", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnAnswers,
+	answers := &model.FoundryAgentTurn{ID: "turn-answers", WorkspaceID: ws, ThreadID: "thread1", Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentTurnAnswers,
 		Runtime: model.FoundryAgentRuntimeClaudeCode, Input: turn.ID, Answers: []agentquestion.Answer{{QuestionID: "q1", Options: []string{"Sales graph"}},
 			{QuestionID: "q2", Options: []string{}, Text: "Churn"}}, Attempts: 1}
 	db.turns = append(db.turns, answers)

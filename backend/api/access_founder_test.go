@@ -42,8 +42,9 @@ func (s *founderStore) CreateFoundryAgentTurn(ctx context.Context, t *foundrymod
 	return s.agent.CreateFoundryAgentTurn(ctx, t, thread, limits, first)
 }
 
-func (s *founderStore) GetFoundryAgentTurnByClientToken(ctx context.Context, ws, userID, token string) (*foundrymodel.FoundryAgentTurn, error) {
-	return s.agent.GetFoundryAgentTurnByClientToken(ctx, ws, userID, token)
+func (s *founderStore) GetFoundryAgentTurnByClientToken(ctx context.Context, ws string, principal foundrymodel.FoundryAgentPrincipal, token string) (
+	*foundrymodel.FoundryAgentTurn, error) {
+	return s.agent.GetFoundryAgentTurnByClientToken(ctx, ws, principal, token)
 }
 
 func (s *founderStore) GetFoundryAgentTurn(ctx context.Context, ws, id string) (*foundrymodel.FoundryAgentTurn, error) {
@@ -66,12 +67,12 @@ func (s *founderStore) ListFoundryAgentEvents(ctx context.Context, turnID string
 	return s.agent.ListFoundryAgentEvents(ctx, turnID, afterSeq, limit)
 }
 
-func (s *founderStore) ListFoundryAgentThreads(_ context.Context, ws, userID string, keep func(*foundrymodel.FoundryAgentThread) bool, _ string, _ int) (
+func (s *founderStore) ListFoundryAgentThreads(_ context.Context, ws string, principal foundrymodel.FoundryAgentPrincipal, keep func(*foundrymodel.FoundryAgentThread) bool, _ string, _ int) (
 	[]*foundrymodel.FoundryAgentThread, string, error) {
 	s.listedKept = keep != nil
 	var out []*foundrymodel.FoundryAgentThread
 	for _, t := range s.agent.threads {
-		if t.WorkspaceID == ws && t.UserID == userID && (keep == nil || t.Granted != nil && keep(t)) {
+		if t.WorkspaceID == ws && t.Principal == principal && (keep == nil || t.Granted != nil && keep(t)) {
 			out = append(out, t)
 		}
 	}
@@ -82,19 +83,19 @@ func (s *founderStore) RecordFoundryAgentThreadGrants(ctx context.Context, ws, i
 	return s.agent.RecordFoundryAgentThreadGrants(ctx, ws, id, granted)
 }
 
-func (s *founderStore) DeleteFoundryAgentThread(_ context.Context, ws, userID, id string) error {
+func (s *founderStore) DeleteFoundryAgentThread(_ context.Context, ws string, principal foundrymodel.FoundryAgentPrincipal, id string) error {
 	t, ok := s.agent.threads[id]
-	if !ok || t.WorkspaceID != ws || t.UserID != userID {
+	if !ok || t.WorkspaceID != ws || t.Principal != principal {
 		return foundrystore.ErrNotFound
 	}
 	delete(s.agent.threads, id)
 	return nil
 }
 
-func (s *founderStore) CancelFoundryAgentTurn(_ context.Context, ws, userID, id string) (*foundrymodel.FoundryAgentTurn, error) {
+func (s *founderStore) CancelFoundryAgentTurn(_ context.Context, ws string, principal foundrymodel.FoundryAgentPrincipal, id string) (*foundrymodel.FoundryAgentTurn, error) {
 	t, ok := s.agent.turns[id]
 	switch {
-	case !ok || t.WorkspaceID != ws || t.UserID != userID:
+	case !ok || t.WorkspaceID != ws || t.Principal != principal:
 		return nil, foundrystore.ErrNotFound
 	case !t.Status.Live():
 		return nil, foundrystore.ErrConflict
@@ -130,9 +131,9 @@ func TestRestrictedMembersTalkToFounder(t *testing.T) {
 	}}
 	s.deps.DB = store
 	// A thread, with its turn, made with the workspace's whole view.
-	store.agent.threads["th-old"] = &foundrymodel.FoundryAgentThread{ID: "th-old", WorkspaceID: "ws-1", UserID: "user-9", Kind: foundrymodel.FoundryAgentThreadChat,
+	store.agent.threads["th-old"] = &foundrymodel.FoundryAgentThread{ID: "th-old", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: "user-9"}, Kind: foundrymodel.FoundryAgentThreadChat,
 		Title: "Load Billing", CreatedAt: time.Now().Add(-time.Hour)}
-	store.agent.turns["turn-old"] = &foundrymodel.FoundryAgentTurn{ID: "turn-old", WorkspaceID: "ws-1", ThreadID: "th-old", UserID: "user-9",
+	store.agent.turns["turn-old"] = &foundrymodel.FoundryAgentTurn{ID: "turn-old", WorkspaceID: "ws-1", ThreadID: "th-old", Principal: foundrymodel.AgentPerson{UserID: "user-9"},
 		Kind: foundrymodel.FoundryAgentTurnMessage, Input: "Load Billing", Status: foundrymodel.FoundryAgentTurnQueued}
 
 	conn, as := served(t, s)
@@ -150,7 +151,7 @@ func TestRestrictedMembersTalkToFounder(t *testing.T) {
 		assert.Equal(t, "ont-1", page.GetOntologyId())
 		assert.Equal(t, "load-1", page.GetLoadId())
 		assert.Equal(t, "dash-pinned", page.GetDashboardId())
-		assert.Equal(t, "user-9", store.agent.turns[sent.GetTurn().GetId()].UserID)
+		assert.Equal(t, foundrymodel.AgentPerson{UserID: "user-9"}, store.agent.turns[sent.GetTurn().GetId()].Principal)
 		thread := store.agent.threads[sent.GetTurn().GetThreadId()]
 		require.NotNil(t, thread.Granted, "a restricted member's thread")
 		assert.Equal(t, []access.Target{access.DocumentSetTarget("set-general")}, thread.Granted.Targets, "holding what its grants give now")
@@ -210,9 +211,9 @@ func TestRestrictedMembersTalkToFounder(t *testing.T) {
 	})
 
 	t.Run("relays no draft's answers", func(t *testing.T) {
-		store.agent.threads["th-asked"] = &foundrymodel.FoundryAgentThread{ID: "th-asked", WorkspaceID: "ws-1", UserID: "user-9",
+		store.agent.threads["th-asked"] = &foundrymodel.FoundryAgentThread{ID: "th-asked", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: "user-9"},
 			Kind: foundrymodel.FoundryAgentThreadChat, CreatedAt: time.Now(), Granted: &foundrymodel.FoundryAgentThreadGrants{}}
-		store.agent.turns["turn-asked"] = &foundrymodel.FoundryAgentTurn{ID: "turn-asked", WorkspaceID: "ws-1", ThreadID: "th-asked", UserID: "user-9",
+		store.agent.turns["turn-asked"] = &foundrymodel.FoundryAgentTurn{ID: "turn-asked", WorkspaceID: "ws-1", ThreadID: "th-asked", Principal: foundrymodel.AgentPerson{UserID: "user-9"},
 			Kind: foundrymodel.FoundryAgentTurnMessage, Status: foundrymodel.FoundryAgentTurnDone, Asked: &foundrymodel.FoundryAgentAsked{
 				Questions:  []agentquestion.Question{{ID: "q1", Text: "Which plans count?", Blocking: true}},
 				Generation: &foundrymodel.FoundryAgentAskedGeneration{OntologyID: "ont-1", GenerationID: "gen-1", Round: 1}}}

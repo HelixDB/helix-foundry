@@ -1059,8 +1059,13 @@ func (s *mysqlDB) StartFoundryAutomationAssistant(ctx context.Context, runID, wo
 	case turn.Kind != model.FoundryAgentTurnAutomation || turn.AutomationRunID == nil || *turn.AutomationRunID != runID ||
 		turn.AutomationNodeID == nil || *turn.AutomationNodeID != nodeID || turn.MaxUSDMicros <= 0:
 		return fmt.Errorf("foundry automation %s: the turn is not its step's", runID)
-	case thread != nil && (thread.ID != turn.ThreadID || thread.Kind != model.FoundryAgentThreadAutomation):
+	case thread != nil && (thread.ID != turn.ThreadID || thread.Kind != model.FoundryAgentThreadAutomation || thread.Principal != turn.Principal):
 		return fmt.Errorf("foundry automation %s: the thread is not its turn's", runID)
+	}
+	// An automation runs as its owner, a person.
+	owner, ok := turn.Principal.(model.AgentPerson)
+	if !ok || owner.UserID == "" {
+		return fmt.Errorf("foundry automation %s: its turn is its owner's", runID)
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -1069,7 +1074,7 @@ func (s *mysqlDB) StartFoundryAutomationAssistant(ctx context.Context, runID, wo
 		}
 		if thread != nil {
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_threads (id, workspace_id, user_id, kind, title, runtime)
-VALUES (?, ?, ?, 'automation', ?, 'api')`, thread.ID, thread.WorkspaceID, thread.UserID, thread.Title); err != nil {
+VALUES (?, ?, ?, 'automation', ?, 'api')`, thread.ID, thread.WorkspaceID, owner.UserID, thread.Title); err != nil {
 				return err
 			}
 			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_automation_runs SET thread_id=? WHERE id=?`, thread.ID, runID); err != nil {
@@ -1086,7 +1091,7 @@ VALUES (?, ?, ?, 'automation', ?, 'api')`, thread.ID, thread.WorkspaceID, thread
 		}
 		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_turns
   (id, workspace_id, thread_id, user_id, runtime, kind, input, status, max_usd_micros, automation_run_id, automation_node_id)
-VALUES (?, ?, ?, ?, 'api', 'automation', ?, 'queued', ?, ?, ?)`, turn.ID, turn.WorkspaceID, turn.ThreadID, turn.UserID, turn.Input, turn.MaxUSDMicros,
+VALUES (?, ?, ?, ?, 'api', 'automation', ?, 'queued', ?, ?, ?)`, turn.ID, turn.WorkspaceID, turn.ThreadID, owner.UserID, turn.Input, turn.MaxUSDMicros,
 			runID, nodeID)
 		if isDuplicateKey(err) {
 			// The turn's id is new: only the thread's one live turn clashes.

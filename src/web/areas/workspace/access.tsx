@@ -4,6 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   Bot,
   Copy,
@@ -72,6 +73,7 @@ import {
   readings,
   readsText,
   holdsRawAccess,
+  keyParam,
   newlyRestricted,
   restrictable,
   restrictedHoldingNothing,
@@ -90,6 +92,7 @@ import {
 import { DirectoryPanel, NoSourcesNudge } from "./access-directory";
 import { membersQuery } from "./members";
 import { initials, roleLabel } from "./people";
+import { slackQuery } from "./slack-api";
 
 // Settings › Access (hosted, owners and admins): what agents, people and
 // teams may read through source grants. A grant gives a connection (its
@@ -708,15 +711,38 @@ function NewKeyDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AgentsPanel({ data }: { data: AccessData }) {
+function AgentsPanel({
+  data,
+  opening,
+  onOpened,
+}: {
+  data: AccessData;
+  // The key a link opens the sources of (?principal=), once the keys are read.
+  opening: string | null;
+  onOpened: () => void;
+}) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient();
   const keys = useQuery(keysQuery(id));
+  // Helix Foundry's Slack bot's key: turned off in Settings › Slack, not
+  // revoked here.
+  const slack = useQuery({ ...slackQuery(id), retry: false }).data;
+  const bot =
+    slack?.kind === "installed" && slack.mode.kind === "bot"
+      ? slack.mode.credentialId
+      : null;
   const [making, setMaking] = useState(false),
     [editing, setEditing] = useState<ServiceCredential>(),
     [revoking, setRevoking] = useState<ServiceCredential>(),
     [pending, setPending] = useState(false);
   const live = (keys.data || []).filter((k) => !k.revokedAt);
+  useEffect(() => {
+    if (!opening || !keys.data) return;
+    const k = live.find((k) => k.id === opening);
+    if (k) setEditing(k);
+    else notify("That agent key was revoked.", true);
+    onOpened();
+  }, [opening, keys.data]);
   const revoke = async (k: ServiceCredential) => {
     setPending(true);
     try {
@@ -774,6 +800,14 @@ function AgentsPanel({ data }: { data: AccessData }) {
                 key={k.id}
                 icon={<Bot size={15} />}
                 title={k.name || k.id}
+                tags={k.id === bot && <Tag>Slack bot</Tag>}
+                notes={
+                  k.id === bot
+                    ? [
+                        "Helix Foundry’s shared bot in Slack reads what this key is given. Turn bot mode off in Settings › Slack to retire it.",
+                      ]
+                    : undefined
+                }
                 lines={
                   <>
                     <span className="hf-mono">{k.tokenPrefix}…</span>
@@ -793,14 +827,24 @@ function AgentsPanel({ data }: { data: AccessData }) {
                     >
                       Sources
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Revoke ${k.name || k.id}`}
-                      onClick={() => setRevoking(k)}
-                    >
-                      Revoke
-                    </Button>
+                    {k.id === bot ? (
+                      <ButtonLink
+                        size="sm"
+                        variant="ghost"
+                        to={paths.settings("slack")}
+                      >
+                        Settings › Slack
+                      </ButtonLink>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Revoke ${k.name || k.id}`}
+                        onClick={() => setRevoking(k)}
+                      >
+                        Revoke
+                      </Button>
+                    )}
                   </>
                 }
               />
@@ -1554,16 +1598,26 @@ export function AccessTab() {
 function AccessTabs() {
   const [tab, setTab] = useTabParam(TABS.map((t) => t.id));
   const data = useAccessData();
+  // A link to a key's sources (paths.keySources) shows Agents and opens
+  // them, then leaves the address.
+  const [params, setParams] = useSearchParams(),
+    opening = keyParam(params.get("principal"));
+  const shown = opening ? "agents" : tab;
   return (
     <>
       <Tabs
         label="Access"
         idPrefix="access"
         items={TABS}
-        value={tab}
+        value={shown}
         onChange={setTab}
       />
-      <TabPanel id={tab} value={tab} idPrefix="access" className="wk-access">
+      <TabPanel
+        id={shown}
+        value={shown}
+        idPrefix="access"
+        className="wk-access"
+      >
         {data.loading ? (
           <SkeletonText lines={4} />
         ) : data.failed ? (
@@ -1575,11 +1629,25 @@ function AccessTabs() {
               Retry
             </Button>
           </div>
-        ) : tab === "agents" ? (
-          <AgentsPanel data={data} />
-        ) : tab === "people" ? (
+        ) : shown === "agents" ? (
+          <AgentsPanel
+            data={data}
+            opening={opening}
+            onOpened={() =>
+              setParams(
+                (p) => {
+                  const next = new URLSearchParams(p);
+                  next.delete("principal");
+                  next.delete("tab");
+                  return next;
+                },
+                { replace: true },
+              )
+            }
+          />
+        ) : shown === "people" ? (
           <PeoplePanel data={data} />
-        ) : tab === "ontologies" ? (
+        ) : shown === "ontologies" ? (
           <OntologiesPanel data={data} />
         ) : tab === "sources" ? (
           <SourcesPanel data={data} />

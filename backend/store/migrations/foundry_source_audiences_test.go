@@ -8,7 +8,7 @@ import (
 
 // foundrySourceAudiences adds the tables of what connectors' sources share
 // with whom.
-const foundrySourceAudiences = 20261213000000
+const foundrySourceAudiences = 20261217000000
 
 // The source audiences migration adds four tables and changes nothing that
 // exists, refuses a read with neither a time nor a problem, or a problem

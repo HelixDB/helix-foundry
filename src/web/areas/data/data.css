@@ -899,6 +899,17 @@
   align-items: center;
   gap: 12px;
 }
+/* Slack's choice of Helix's Slack app or a token, and the app's step
+   (add it, add it again, the connection that reads it). */
+.dc-slack-choice,
+.dc-slack-step {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+.dc-slack-step p {
+  margin: 0;
+}
 
 /* Connections whose account needs signing in again: a strip at the top of
    every page (the shell's), with Sign in again and Later. */

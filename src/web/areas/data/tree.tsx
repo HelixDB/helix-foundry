@@ -81,6 +81,8 @@ import {
 } from "./layout";
 import {
   connectorBadge,
+  readsThroughApp,
+  slackStatusLine,
   isEventSource,
   isLiveSync,
   lastSyncedAt,
@@ -467,7 +469,9 @@ function ConnectorItem({
   const [moving, setMoving] = useState(false);
   const badge = connectorBadge(c),
     live = isLiveSync(c.lastSync),
-    pushed = isEventSource(c.kind),
+    // An API source's pieces, and Slack's messages through Helix's Slack
+    // app, sync as they arrive: neither has Sync.
+    pushed = isEventSource(c.kind) || readsThroughApp(c),
     all = c.tables || [],
     refreshed = lastSyncedAt(c),
     error =
@@ -524,15 +528,17 @@ function ConnectorItem({
               ? `Needs signing in again: its data is frozen as of its last sync${refreshed ? `, ${relative(refreshed)}` : ""}`
               : error
                 ? `Last sync failed: ${error}`
-                : pushed
-                  ? all.length
-                    ? `${plural(rowTotal(c), "piece")}${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
-                    : "Pieces appear after their first sync"
-                  : all.length
-                    ? `${plural(all.length, "table")} · ${number(rowTotal(c))} records${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
-                    : live
-                      ? "Copying tables…"
-                      : "Tables appear after the first sync"
+                : readsThroughApp(c)
+                  ? `${slackStatusLine(c.slackStatus!)}${all.length ? ` · ${plural(all.length, "table")}` : ""}`
+                  : pushed
+                    ? all.length
+                      ? `${plural(rowTotal(c), "piece")}${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
+                      : "Pieces appear after their first sync"
+                    : all.length
+                      ? `${plural(all.length, "table")} · ${number(rowTotal(c))} records${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
+                      : live
+                        ? "Copying tables…"
+                        : "Tables appear after the first sync"
           }
           manage={manage}
           maxLength={120}

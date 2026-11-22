@@ -206,6 +206,11 @@ describe("mock source grants", () => {
       `DELETE ${F}/agent/threads/{id}`,
       `GET ${F}/agent/turns/{id}/events`,
       `POST ${F}/agent/turns/{id}:cancel`,
+      // Slack: the install, and its own link.
+      `GET ${F}/slack`,
+      `POST ${F}/slack/links:preview`,
+      `POST ${F}/slack/links`,
+      `DELETE ${F}/slack/links/{slackUserId}`,
     ]);
     const foundry = routes.filter((r) =>
       /^\/v1\/(foundry|workspaces\/\{workspaceId\}\/foundry)/.test(r.path),

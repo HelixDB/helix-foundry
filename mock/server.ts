@@ -12,6 +12,17 @@ import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
 import { handleConnectPage } from "./routes/sign-ins";
 import {
+  handleRelayPage,
+  redeemRelayCode,
+  relaySlackInstall,
+} from "./routes/relay";
+import {
+  handleSlackPage,
+  slackAccessRequest,
+  slackLinkToken,
+} from "./routes/slack";
+import { slackFeedPost } from "./routes/data";
+import {
   LOCAL_TOKEN,
   SEED_EMAIL,
   applyConfig,
@@ -47,10 +58,32 @@ import { handleWorkos } from "./workos";
 // assessMs, assessOutcome, automationClockMs, automationStepMs,
 // automationRunsPerDay, automationsDisabled, automationAnswer,
 // automationCount, automationSuggestionsMs, automationSuggestionsOutcome,
-// automationSuggestionsAi }.
+// automationSuggestionsAi, slackAvailable, slackInstallAllowed,
+// slackTeamTaken, slackEmailMismatch, slackFeedOff, slackScopesOld,
+// slackInstallerMember, slackEventsLimited, slackBackfillMs, slackLossyDays,
+// relayAvailable, relayLinked, relayOnline, relayLinkOutcome }.
 //
 // GET /__mock/password-resets lists the reset links WorkOS would have
 // emailed, oldest first: [{ email, token }] (./routes/auth.ts).
+//
+// POST /__mock/slack/link-token { email, slackUser?, name?, handle?,
+// workspaceId?, guest?, unconfirmed? } is Helix Foundry's message to a
+// person in Slack: a link token and the site's /slack/link URL
+// (./routes/slack.ts). /mock/slack/authorize is Slack's page that asks to
+// add the app.
+//
+// POST /__mock/slack/access-request { slackUser, name, workspaceId? } is a
+// Slack user asking to use a local install (./routes/slack.ts). POST
+// /__mock/relay/redeem { code, codeVerifier, teams? } is a local install
+// redeeming the code Helix handed back through Foundry's door, POST
+// /__mock/relay/slack-install { linkId } its Add to Slack through the door,
+// and /mock/relay/link Helix's page that asks to link a local install
+// (./routes/relay.ts).
+//
+// POST /__mock/slack/feed { channel, text, workspaceId? } is a message
+// posted in a channel the app is in (by id or name), which Slack sends the
+// app: the workspace's Slack connection through the app syncs it
+// (./routes/data.ts).
 //
 // GET /__mock/feedback lists the feedback POST /v1/feedback took
 // (./routes/feedback.ts), which the WFE would tell Helix's team of.
@@ -215,6 +248,38 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify(reply.body));
         return;
       }
+      if (
+        url.pathname === "/__mock/slack/link-token" &&
+        req.method === "POST"
+      ) {
+        const reply = slackLinkToken(JSON.parse(raw || "{}"));
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
+      if (
+        (url.pathname === "/__mock/slack/access-request" ||
+          url.pathname === "/__mock/relay/redeem" ||
+          url.pathname === "/__mock/relay/slack-install") &&
+        req.method === "POST"
+      ) {
+        const body = JSON.parse(raw || "{}");
+        const reply =
+          url.pathname === "/__mock/relay/redeem"
+            ? redeemRelayCode(body)
+            : url.pathname === "/__mock/relay/slack-install"
+              ? relaySlackInstall(body)
+              : slackAccessRequest(body);
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
+      if (url.pathname === "/__mock/slack/feed" && req.method === "POST") {
+        const reply = slackFeedPost(JSON.parse(raw || "{}"));
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
       if (url.pathname === "/__mock/feedback" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ feedback: mockFeedback() }));
@@ -252,6 +317,8 @@ const server = createServer(async (req, res) => {
     if (handleBillingPage(req, res, url, raw)) return;
     if (handleConnectPage(req, res, url, raw)) return;
     if (handleDirectoryPage(req, res, url)) return;
+    if (handleSlackPage(req, res, url, raw)) return;
+    if (handleRelayPage(req, res, url, raw)) return;
     // Foundry's door's (ingest.helix-db.com) public dashboard snapshots, not
     // the WFE's.
     if (handleSharedDashboard(req, res, url)) return;

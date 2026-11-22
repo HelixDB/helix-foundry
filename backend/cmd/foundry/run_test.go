@@ -17,6 +17,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/slackbot"
 	"github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -163,9 +164,12 @@ func TestBuildWorkers(t *testing.T) {
 	}
 	cfg.Foundry.Read.GRPC.Listen, cfg.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg.Foundry.Agent.HTTP.Listen = freeAddr(t)
+	cfg.Foundry.Agent.HTTP.Listen, cfg.Foundry.Slack.HTTP.Listen = freeAddr(t), freeAddr(t)
+	relayed := &slackbot.Relayed{DB: store.Unimplemented{}, Access: func(context.Context) (slackbot.RelayAccess, error) {
+		return slackbot.RelayAccess{}, store.ErrNotFound
+	}}
 	parts, err := buildWorkers(cfg.foundry(), logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
-		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{})
+		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{}, relayed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,19 +182,19 @@ func TestBuildWorkers(t *testing.T) {
 	}
 	slices.Sort(names)
 	want := []string{"foundry-agent-worker", "foundry-ask-worker", "foundry-automation-worker", "foundry-document-worker", "foundry-graph-worker",
-		"foundry-ontology-worker", "foundry-read", "foundry-sync-worker"}
+		"foundry-ontology-worker", "foundry-read", "foundry-slack-worker", "foundry-sync-worker"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("parts = %v, want %v", names, want)
 	}
 
 	// With foundry.heal.enabled, the heal worker runs too; off (above), it
-	// isn't built, and nor are the Assistant's and automations' off.
+	// isn't built, and nor are the Assistant's, automations' and Slack's off.
 	heal := cfg.foundry()
 	heal.Foundry.Heal.Enabled = true
 	heal.Foundry.Read.GRPC.Listen, heal.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
-	heal.Foundry.Agent.Enabled, heal.Foundry.Automations.Enabled = false, false
+	heal.Foundry.Agent.Enabled, heal.Foundry.Automations.Enabled, heal.Foundry.Slack.Enabled = false, false, false
 	parts, err = buildWorkers(heal, logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
-		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{})
+		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,6 +62,15 @@ func (s *Service) ListConnectorKinds(ctx context.Context, req *foundryv1.ListCon
 		if k.Name() == "github" && install != "" && s.deps.Accounts != nil {
 			kind.Setup = &foundryv1.ConnectorKind_Github{Github: &foundryv1.GitHubConnectorSetup{InstallUrl: install}}
 		}
+		if k.Name() == foundrymodel.ConnectorKindSlack {
+			setup, err := s.slackSetup(ctx, req.GetWorkspaceId())
+			if err != nil {
+				return nil, err
+			}
+			if setup != nil {
+				kind.Setup = &foundryv1.ConnectorKind_Slack{Slack: setup}
+			}
+		}
 		resp.Kinds = append(resp.Kinds, kind)
 	}
 	return resp, nil
@@ -75,6 +84,17 @@ func (s *Service) TestConnector(ctx context.Context, req *foundryv1.TestConnecto
 	kind, src, _, err := sourceFromProto(catalog, req.GetConfig())
 	if err != nil {
 		return nil, err
+	}
+	// Through Helix's Slack app, the workspace's install is tested.
+	if req.GetConfig().GetSlack().GetHelixApp() != nil {
+		install, app, err := s.slackAppInstall(ctx, req.GetWorkspaceId())
+		if err != nil {
+			return nil, err
+		}
+		settings := connector.SlackSettings{HistoryDays: int(req.GetConfig().GetSlack().GetHistoryDays()), Credential: connector.SlackCredentialApp,
+			TeamID: install.TeamID}
+		src.Settings, _ = json.Marshal(settings) // plain fields
+		src.SlackApp = app
 	}
 	settings, discovery, err := s.testSource(ctx, req.GetWorkspaceId(), kind, src)
 	if err != nil {
@@ -105,6 +125,10 @@ func (s *Service) CreateConnector(ctx context.Context, req *foundryv1.CreateConn
 	if err != nil {
 		return nil, err
 	}
+	if app := req.GetConfig().GetSlack().GetHelixApp(); app != nil {
+		return s.createSlackAppConnector(ctx, catalog, req.GetWorkspaceId(), name, int(req.GetConfig().GetSlack().GetHistoryDays()),
+			int(app.GetNoticeVersion()))
+	}
 	settings, discovery, err := s.testSource(ctx, req.GetWorkspaceId(), kind, src)
 	if err != nil {
 		return nil, err
@@ -114,8 +138,8 @@ func (s *Service) CreateConnector(ctx context.Context, req *foundryv1.CreateConn
 		Config: settings, SecretHint: kind.Hint(src.Secret),
 	}
 	// A new connector syncs at the scheduler's next tick, then on its plan's
-	// interval; an event source once its first pieces arrive.
-	if c.Kind != foundrymodel.ConnectorKindEvents {
+	// interval; a pushed one (an event source) once its first pieces arrive.
+	if _, pushed := kind.(connector.Pushed); !pushed {
 		now := time.Now()
 		c.NextSyncAt = &now
 	}
@@ -202,6 +226,17 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 	}
 	if current.Kind == foundrymodel.ConnectorKindEvents {
 		return s.updateEventSource(ctx, catalog, current, req)
+	}
+	// A Slack connection that reads, or is to read, through Helix's Slack
+	// app switches as updateSlackConnector says.
+	if current.Kind == foundrymodel.ConnectorKindSlack && req.GetConfig() != nil {
+		was, err := slackSettingsOf(current.Config)
+		if err != nil {
+			return nil, err
+		}
+		if was.Credential == connector.SlackCredentialApp || req.GetConfig().GetSlack().GetHelixApp() != nil {
+			return s.updateSlackConnector(ctx, catalog, keyring, current, req)
+		}
 	}
 	var update foundrymodel.ConnectorUpdate
 	if req.Name != nil {
@@ -505,7 +540,8 @@ func (s *Service) testSource(ctx context.Context, workspaceID string, kind conne
 	if err := s.requireLogCapture(ctx, workspaceID, settings); err != nil {
 		return nil, connector.Discovery{}, err
 	}
-	discovery, err := kind.Discover(ctx, connector.Source{Settings: settings, Secret: src.Secret, WorkspaceID: workspaceID, SignIn: src.SignIn})
+	discovery, err := kind.Discover(ctx, connector.Source{Settings: settings, Secret: src.Secret, WorkspaceID: workspaceID, SignIn: src.SignIn,
+		SlackApp: src.SlackApp})
 	var rejected *connector.AuthError
 	if src.SignIn && errors.As(err, &rejected) {
 		log.From(ctx).Info("a signed-in connector's token was rejected", "err", err)
@@ -544,10 +580,12 @@ func connectorName(raw string) (string, error) {
 	return name, nil
 }
 
-// sourceFromProto splits a config into the kind, its stored settings and the
-// credential. API keys are trimmed; a database password is kept byte for
-// byte. secretless is access that needs no credential: an S3 role, or an
-// event source, whose fields are its sends' and never a request's.
+// sourceFromProto splits a config into the kind its settings read with
+// (Catalog.KindFor), its stored settings and the credential. API keys are
+// trimmed; a database password is kept byte for byte. secretless is access
+// that needs no credential: an S3 role, an event source, whose fields are
+// its sends' and never a request's, or a Slack connection through Helix's
+// Slack app, whose install the caller opens.
 func sourceFromProto(catalog *connector.Catalog, cfg *foundryv1.ConnectorConfig) (_ connector.Kind, _ connector.Source, secretless bool, _ error) {
 	var (
 		name     string
@@ -584,7 +622,11 @@ func sourceFromProto(catalog *connector.Catalog, cfg *foundryv1.ConnectorConfig)
 		name, settings, secret = "granola", connector.GranolaSettings{Transcripts: g.GetTranscripts()}, strings.TrimSpace(g.GetApiKey())
 	case *foundryv1.ConnectorConfig_Slack:
 		sl := k.Slack
-		name, settings, secret = "slack", connector.SlackSettings{HistoryDays: int(sl.GetHistoryDays())}, strings.TrimSpace(sl.GetBotToken())
+		slack := connector.SlackSettings{HistoryDays: int(sl.GetHistoryDays())}
+		if sl.GetHelixApp() != nil {
+			slack.Credential, secretless = connector.SlackCredentialApp, true
+		}
+		name, settings, secret = foundrymodel.ConnectorKindSlack, slack, strings.TrimSpace(sl.GetBotToken())
 	case *foundryv1.ConnectorConfig_Notion:
 		name, settings, secret = "notion", struct{}{}, strings.TrimSpace(k.Notion.GetToken())
 	case *foundryv1.ConnectorConfig_Google:
@@ -617,13 +659,13 @@ func sourceFromProto(catalog *connector.Catalog, cfg *foundryv1.ConnectorConfig)
 	default:
 		return nil, connector.Source{}, false, status.Error(codes.InvalidArgument, "config is required")
 	}
-	kind, err := catalog.Kind(name)
-	if err != nil {
-		return nil, connector.Source{}, false, status.Errorf(codes.InvalidArgument, "connector kind %q is not available", name)
-	}
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		return nil, connector.Source{}, false, status.Errorf(codes.Internal, "encode connector settings: %v", err)
+	}
+	kind, err := catalog.KindFor(name, raw)
+	if err != nil {
+		return nil, connector.Source{}, false, status.Errorf(codes.InvalidArgument, "connector kind %q is not available", name)
 	}
 	return kind, connector.Source{Settings: raw, Secret: secret}, secretless, nil
 }
@@ -686,9 +728,11 @@ func configToProto(kind string, settings json.RawMessage) (*foundryv1.ConnectorC
 		if err := json.Unmarshal(settings, &sl); err != nil {
 			return nil, err
 		}
-		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{
-			HistoryDays: int32(sl.HistoryDays),
-		}}}, nil
+		out := &foundryv1.SlackConnectorConfig{HistoryDays: int32(sl.HistoryDays), Credential: &foundryv1.SlackConnectorConfig_BotToken{}}
+		if sl.Credential == connector.SlackCredentialApp {
+			out.Credential = &foundryv1.SlackConnectorConfig_HelixApp{HelixApp: &foundryv1.SlackAppCredential{}}
+		}
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: out}}, nil
 	case "notion":
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Notion{Notion: &foundryv1.NotionConnectorConfig{}}}, nil
 	case "google":
@@ -769,7 +813,7 @@ func (s *Service) connectorToProto(ctx context.Context, c *foundrymodel.Connecto
 	var floor time.Duration
 	var pushed bool
 	if catalog := s.deps.ConnectorCatalog; catalog != nil {
-		if kind, err := catalog.Kind(c.Kind); err == nil {
+		if kind, err := catalog.KindFor(c.Kind, c.Config); err == nil {
 			reader, _ = kind.(connector.ChangeReader)
 			_, pushed = kind.(connector.Pushed)
 			if f, ok := kind.(connector.IntervalFloor); ok {
@@ -780,6 +824,17 @@ func (s *Service) connectorToProto(ctx context.Context, c *foundrymodel.Connecto
 	out.Schedule, out.CdcStatus = scheduleToProto(c, plan, floor), cdcStatusToProto(c.ChangeCursor)
 	if pushed {
 		out.Schedule.EverySeconds, out.Schedule.EffectiveEverySeconds = 0, 0
+	}
+	if c.Kind == foundrymodel.ConnectorKindSlack {
+		settings, err := slackSettingsOf(c.Config)
+		if err != nil {
+			return nil, err
+		}
+		if settings.Credential == connector.SlackCredentialApp {
+			if out.SlackStatus, err = s.slackStatus(ctx, c, settings, out.GetConfig().GetSlack()); err != nil {
+				return nil, err
+			}
+		}
 	}
 	tables, err := s.deps.DB.ListConnectorTables(ctx, c.WorkspaceID, c.ID)
 	if err != nil {

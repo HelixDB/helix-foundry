@@ -20,7 +20,9 @@ import type {
   PostHogConnectorConfig,
   S3ConnectorConfig,
   S3ConnectorSetup,
+  ConnectorSlackStatus,
   SlackConnectorConfig,
+  SlackConnectorSetup,
   SyncedTable,
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
@@ -108,19 +110,196 @@ export function syncBadge(
 
 /**
  * A connector as a status badge: its newest sync's (syncBadge), unless its
- * account needs signing in again, which stops every sync until it is.
+ * account needs signing in again, which stops every sync until it is. A
+ * Slack connection through Helix's Slack app (not switching to it) says
+ * how it reads (slackBadge).
  *
  * @example
  * connectorBadge({ account: { state: "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN" } });
  * // { status: "stale", label: "Needs signing in again" }
  */
 export function connectorBadge(
-  c: Pick<Connector, "lastSync" | "account">,
+  c: Pick<Connector, "lastSync" | "account" | "slackStatus">,
   now = Date.now(),
 ): { status: Status; label: string } {
   return c.account?.state === "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN"
     ? { status: "stale", label: "Needs signing in again" }
-    : syncBadge(c.lastSync, now);
+    : readsThroughApp(c)
+      ? slackBadge(c.slackStatus!, c.lastSync, now)
+      : syncBadge(c.lastSync, now);
+}
+
+// ---------------------------------------------------------------- Slack through Helix's app
+
+/**
+ * What a Slack connection reads with: Helix's Slack app, through the
+ * workspace's install of it ("app"), or the customer's own app's bot token
+ * ("token").
+ */
+export type SlackCredential = "app" | "token";
+
+/** The most days of history a Slack connection through Helix's app keeps. */
+export const SLACK_APP_HISTORY_DAYS = 90;
+
+// The storage notices an owner or admin accepts to bind a Slack connection
+// to Helix's Slack app, by the version the WFE asks for
+// (SlackConnectorSetup.noticeVersion; backend api/slack_connector.go
+// slackFeedNotice): what Helix keeps, for how long, where, and when it is
+// deleted. A new wording takes the next version, here and there.
+const SLACK_NOTICES: Record<number, string> = {
+  1:
+    "Helix keeps a copy of the messages, thread replies and channel details of the channels Helix Foundry is in, public or private, " +
+    "for the days of history chosen (at most 90), in this workspace’s Foundry storage on Helix Cloud, and reads them into its ontologies. " +
+    "It never reads direct messages or channels shared with other organisations, and never trains AI models on them. " +
+    "If Helix Foundry is removed from Slack, the copy stops updating and is deleted 7 days later; deleting the connection deletes it at once.",
+};
+
+/**
+ * The storage notice of `version`, or null for one this build doesn't
+ * know (a newer WFE's): it can't be shown, so it can't be accepted.
+ *
+ * @example
+ * slackNotice(1)?.startsWith("Helix keeps a copy"); // true
+ * slackNotice(2); // null
+ */
+export const slackNotice = (version?: number): string | null =>
+  (version && SLACK_NOTICES[version]) || null;
+
+/**
+ * Whether a connector reads through Helix's Slack app now: a Slack
+ * connection with a Slack status that isn't switching to it (which syncs by
+ * its token until the flip). Such a connection is pushed: Slack sends its
+ * messages, so it has no schedule and no Sync.
+ *
+ * @example
+ * readsThroughApp({ slackStatus: { state: "SLACK_FEED_STATE_LIVE" } }); // true
+ * readsThroughApp({ slackStatus: { switching: true } }); // false
+ */
+export const readsThroughApp = (c: Pick<Connector, "slackStatus">) =>
+  !!c.slackStatus && !c.slackStatus.switching;
+
+/**
+ * What the app side of a Slack connection's form shows, from the kind's
+ * setup: add the app (an owner or admin may: `canInstall`), add it again
+ * for the permissions history needs (`scopes`) or because no Slack admin
+ * or owner added it (`admin`), the connection that reads the Slack
+ * workspace already (a Slack workspace is read by one), or its Slack
+ * workspace, ready to bind. `connectorId` is the connection being edited,
+ * which may read it.
+ *
+ * @example
+ * slackAppStep({ canInstall: true }); // { kind: "install", canInstall: true }
+ * slackAppStep({ install: { teamName: "Acme" }, installerAdmin: true }); // { kind: "ready", team: "Acme" }
+ */
+export function slackAppStep(
+  setup: SlackConnectorSetup,
+  connectorId?: string,
+):
+  | { kind: "install"; canInstall: boolean }
+  | { kind: "reinstall"; why: "scopes" | "admin"; canInstall: boolean }
+  | { kind: "in_use"; connectorId: string }
+  | { kind: "ready"; team: string } {
+  const canInstall = !!setup.canInstall,
+    install = setup.install;
+  if (!install) return { kind: "install", canInstall };
+  if (install.missingScopes?.length)
+    return { kind: "reinstall", why: "scopes", canInstall };
+  if (!setup.installerAdmin)
+    return { kind: "reinstall", why: "admin", canInstall };
+  const other = setup.inUseByConnectorId;
+  if (other && other !== connectorId)
+    return { kind: "in_use", connectorId: other };
+  return { kind: "ready", team: install.teamName || install.teamId || "Slack" };
+}
+
+/**
+ * About how long a backfill has left, from its ETA in seconds (an int64
+ * string): minutes under two hours, hours under two days, else days, each
+ * rounded up; null when it can't tell ("0", unset, not a number).
+ *
+ * @example
+ * slackEta("90"); // "about 2 minutes"
+ * slackEta("216000"); // "about 3 days"
+ * slackEta("0"); // null
+ */
+export function slackEta(seconds?: string): string | null {
+  const s = Number(seconds || 0);
+  if (!Number.isFinite(s) || s <= 0) return null;
+  const minutes = Math.ceil(s / 60);
+  return minutes < 120
+    ? `about ${plural(minutes, "minute")}`
+    : minutes < 48 * 60
+      ? `about ${plural(Math.ceil(minutes / 60), "hour")}`
+      : `about ${plural(Math.ceil(minutes / 1440), "day")}`;
+}
+
+/**
+ * How a Slack connection through Helix's Slack app reads, in a line: why it
+ * can't (permissions missing, the app removed, the workspace's Slack
+ * changed), Slack's pause on its history reads, how far a switch from its
+ * token has come, what its backfill has left, else Live. `timeZone` is for
+ * tests; the viewer's zone otherwise.
+ *
+ * @example
+ * slackStatusLine({ state: "SLACK_FEED_STATE_LIVE" }); // "Live"
+ * slackStatusLine({ state: "SLACK_FEED_STATE_LIVE", backfill: { channels: 4, channelsDone: 1, etaSeconds: "7200" } });
+ * // "Reading history: 1 of 4 channels, about 2 hours left"
+ * slackStatusLine({ switching: true, backfill: { channels: 4, channelsDone: 3 } });
+ * // "Switching from your token: 3 of 4 channels read"
+ */
+export function slackStatusLine(
+  s: ConnectorSlackStatus,
+  now = Date.now(),
+  timeZone?: "UTC",
+): string {
+  switch (s.state) {
+    case "SLACK_FEED_STATE_NEEDS_REINSTALL":
+      return "Needs new Slack permissions";
+    case "SLACK_FEED_STATE_INSTALL_GONE":
+      return "Helix Foundry was removed from Slack";
+    case "SLACK_FEED_STATE_TEAM_CHANGED":
+      return "Reads a Slack workspace no longer connected";
+  }
+  const b = s.backfill,
+    waiting = Date.parse(b?.waitingUntil || "");
+  if (b && waiting > now)
+    return `Waiting for Slack until ${new Date(waiting).toLocaleTimeString(
+      undefined,
+      { hour: "2-digit", minute: "2-digit", timeZone },
+    )}`;
+  if (!b) return s.switching ? "Switching from your token" : "Live";
+  const read = `${b.channelsDone || 0} of ${plural(b.channels || 0, "channel")}`;
+  if (s.switching) return `Switching from your token: ${read} read`;
+  const eta = slackEta(b.etaSeconds);
+  return `Reading history: ${read}${eta ? `, ${eta} left` : ""}`;
+}
+
+/**
+ * A Slack connection through Helix's Slack app as a status badge: why it
+ * can't read, else its newest sync's failure, else reading its history,
+ * else live.
+ *
+ * @example
+ * slackBadge({ state: "SLACK_FEED_STATE_LIVE" }, null); // { status: "healthy", label: "Live" }
+ */
+export function slackBadge(
+  s: ConnectorSlackStatus,
+  last: ConnectorSync | null | undefined,
+  now = Date.now(),
+): { status: Status; label: string } {
+  switch (s.state) {
+    case "SLACK_FEED_STATE_NEEDS_REINSTALL":
+      return { status: "stale", label: "Needs new Slack permissions" };
+    case "SLACK_FEED_STATE_INSTALL_GONE":
+      return { status: "paused", label: "Removed from Slack" };
+    case "SLACK_FEED_STATE_TEAM_CHANGED":
+      return { status: "stale", label: "Slack workspace changed" };
+  }
+  if (last?.status === "CONNECTOR_SYNC_STATUS_FAILED")
+    return syncBadge(last, now);
+  return s.backfill
+    ? { status: "syncing", label: "Reading history" }
+    : { status: "healthy", label: "Live" };
 }
 
 /** When the connector's tables were last refreshed: its newest table snapshot. */
@@ -631,8 +810,15 @@ export type ConnectionForm =
     }
   | {
       kind: "slack";
+      // What it reads with: Helix's Slack app, through the workspace's
+      // install of it, or the customer's own app's bot token.
+      credential: SlackCredential;
       botToken: string;
       historyDays: string;
+      // The storage notice accepted for the app
+      // (SlackConnectorSetup.noticeVersion); 0 while none is, which sends
+      // no credential and keeps the current one.
+      noticeVersion: number;
     }
   | {
       kind: "notion";
@@ -707,7 +893,13 @@ export function emptyForm(kind: CredentialKind): ConnectionForm {
     case "granola":
       return { kind, apiKey: "", transcripts: false };
     case "slack":
-      return { kind, botToken: "", historyDays: "90" };
+      return {
+        kind,
+        credential: "token",
+        botToken: "",
+        historyDays: "90",
+        noticeVersion: 0,
+      };
     case "notion":
       return { kind, token: "" };
     case "google":
@@ -813,13 +1005,14 @@ export function formFromConfig(
         transcripts: !!(config as { granola: GranolaConnectorConfig }).granola
           .transcripts,
       };
-    case "slack":
+    case "slack": {
+      const sl = (config as { slack: SlackConnectorConfig }).slack;
       return {
         ...form,
-        historyDays: String(
-          (config as { slack: SlackConnectorConfig }).slack.historyDays || 90,
-        ),
+        credential: sl.helixApp ? "app" : "token",
+        historyDays: String(sl.historyDays || 90),
       };
+    }
     case "google": {
       const g = (config as { google: GoogleWorkspaceConnectorConfig }).google;
       return {
@@ -919,13 +1112,19 @@ export function toConfig(
           transcripts: form.transcripts,
         },
       };
-    case "slack":
-      return {
-        slack: {
-          botToken: form.botToken.trim(),
-          historyDays: Number(form.historyDays) || 0,
-        },
-      };
+    case "slack": {
+      const historyDays = Number(form.historyDays) || 0;
+      return form.credential === "token"
+        ? { slack: { botToken: form.botToken.trim(), historyDays } }
+        : form.noticeVersion
+          ? {
+              slack: {
+                historyDays,
+                helixApp: { noticeVersion: form.noticeVersion },
+              },
+            }
+          : { slack: { historyDays } };
+    }
     case "notion":
       return { notion: { token: form.token.trim() } };
     case "google":
@@ -1016,7 +1215,7 @@ export function toConfig(
  * Linear, Notion, Cal.com and Stripe. Undefined for a kind that can't.
  *
  * @example
- * signInConfig({ kind: "slack", botToken: "", historyDays: "30" }); // { slack: { historyDays: 30 } }
+ * signInConfig({ kind: "slack", credential: "token", botToken: "", historyDays: "30", noticeVersion: 0 }); // { slack: { historyDays: 30 } }
  */
 export function signInConfig(
   form: ConnectionForm,
@@ -1076,7 +1275,8 @@ export function hasCredential(form: ConnectionForm) {
     case "notion":
       return !!form.token.trim();
     case "slack":
-      return !!form.botToken.trim();
+      // Through the app, the workspace's install is the credential.
+      return form.credential === "app" || !!form.botToken.trim();
     case "google":
       return !!form.serviceAccountKey.trim();
     default:

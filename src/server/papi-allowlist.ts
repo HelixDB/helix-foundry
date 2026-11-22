@@ -29,7 +29,8 @@ export type PapiArea =
   | "agent"
   | "dashboards"
   | "automations"
-  | "access";
+  | "access"
+  | "slack";
 export type PapiRoute = {
   area: PapiArea;
   method: HttpMethod;
@@ -847,6 +848,106 @@ export const papiRoutes = [
     area: "access",
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/service-credentials/{id}",
+  },
+
+  // Slack (Settings › Slack, /slack/installed, /slack/link): Helix's own
+  // Slack app. Owners and admins add it (start, then finish once Slack
+  // returns to the site), switch it between per person and the shared bot,
+  // see who is linked and disconnect it; each person previews and makes
+  // their own link from the token the app sent them, and unlinks it.
+  {
+    area: "slack",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack",
+  },
+  {
+    area: "slack",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack:start-install",
+  },
+  { area: "slack", method: "POST", path: "/v1/foundry/slack:finish-install" },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack:disconnect",
+  },
+  {
+    area: "slack",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links:preview",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links",
+  },
+  {
+    area: "slack",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links/{slackUserId}",
+  },
+  // A local install's Slack, through Helix's relay: its owner links it to
+  // Helix (start, then complete with what Helix handed back), turns
+  // approving changes from Slack on or off, unlinks it, and allows Slack
+  // users who asked to read and ask as them, or removes them. Helix refuses
+  // these.
+  {
+    area: "slack",
+    method: "PUT",
+    path: "/v1/workspaces/{workspaceId}/foundry/slack/links/{slackUserId}/access",
+  },
+  {
+    area: "slack",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay",
+  },
+  {
+    area: "slack",
+    method: "PATCH",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay:start-link",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay:complete-link",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay:unlink",
+  },
+  // Helix's side (/relay/link, Settings › Slack): owners and admins
+  // authorize a local install's link, list the workspace's linked installs
+  // and revoke them. A local install refuses these.
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay-links:authorize",
+  },
+  {
+    area: "slack",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay-links",
+  },
+  {
+    area: "slack",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/relay-links/{linkId}:revoke",
   },
 ] as const satisfies readonly PapiRoute[];
 

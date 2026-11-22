@@ -859,7 +859,7 @@ func TestSlackConnectorConfig(t *testing.T) {
 	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{})
 	config := func(token string, days int32) *foundryv1.ConnectorConfig {
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{
-			BotToken: token, HistoryDays: days,
+			Credential: &foundryv1.SlackConnectorConfig_BotToken{BotToken: token}, HistoryDays: days,
 		}}}
 	}
 	for _, tc := range []struct {

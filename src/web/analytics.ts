@@ -29,6 +29,14 @@ import type { AgentOperation } from "./areas/agent/model";
 import type { TemplateId } from "./areas/automations/model";
 import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
+import type {
+  SlackInstallFailure,
+  SlackLinkFailure,
+} from "./areas/workspace/slack-api";
+import type {
+  RelayLinkFailure,
+  RelayLinkRefusal,
+} from "./areas/workspace/relay-api";
 import type { FeedbackKind } from "./feedback";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
@@ -346,6 +354,39 @@ export type AnalyticsEvents = {
   workspace_member_invited: { role: "member" | "admin" };
   people_enrichment_enabled: undefined;
   people_enrichment_disabled: undefined;
+  // Slack (areas/workspace/slack-api.ts): adding Helix's Slack app (leaving
+  // for Slack, then back with it added or why not), a person linking their
+  // Slack account or why they couldn't, and disconnecting it.
+  slack_install_started: undefined;
+  slack_installed: undefined;
+  slack_install_failed: { reason: SlackInstallFailure };
+  slack_linked: undefined;
+  slack_link_refused: { reason: SlackLinkFailure };
+  slack_disconnected: undefined;
+  // Settings › Slack's mode: each linked person as themselves, or the
+  // shared bot (turned on or off by an owner or admin).
+  slack_mode_changed: { mode: "per_person" | "bot" };
+  // A Slack connection (areas/data): through Helix's Slack app or a bot
+  // token, chosen on its form; its history backfill shown on its page; and
+  // a switch from its token to the app made at once.
+  slack_connector_mode_chosen: { mode: "app" | "token" };
+  slack_backfill_shown: undefined;
+  slack_switch_now: undefined;
+  // Helix's Slack relay (areas/workspace/relay-api.ts). On a local
+  // install: linking it to Helix started, finished or why not, unlinked,
+  // approving changes from Slack turned on or off, and a Slack user who
+  // asked allowed to read and ask, or removed. On the hosted site: a local
+  // install's link authorized (before leaving for it) or why not, and a
+  // linked install revoked.
+  relay_link_started: undefined;
+  relay_linked: undefined;
+  relay_link_failed: { reason: RelayLinkFailure };
+  relay_unlinked: undefined;
+  slack_approvals_changed: { approvals: "on" | "off" };
+  slack_access_changed: { access: "read" | "none" };
+  relay_link_authorized: undefined;
+  relay_link_refused: { reason: RelayLinkRefusal };
+  relay_link_revoked: undefined;
   signed_out: undefined;
 
   // The GitHub star prompt (src/web/shell/star-prompt.tsx): shown, with how

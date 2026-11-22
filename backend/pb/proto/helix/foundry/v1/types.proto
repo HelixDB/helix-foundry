@@ -66,10 +66,13 @@ message ConnectorKind {
   // False when the workspace's plan does not include the kind.
   bool available = 4;
   // What a customer sets up for the kind: s3 where role access is configured,
-  // github where connectors sign in through Helix Foundry's GitHub App.
+  // github where connectors sign in through Helix Foundry's GitHub App,
+  // slack where a connection may read through Helix's Slack app
+  // (foundry.slack.feed).
   oneof setup {
     S3ConnectorSetup s3 = 5;
     GitHubConnectorSetup github = 8;
+    SlackConnectorSetup slack = 9;
   }
   // The lowest catalog plan that includes the kind.
   string plan_code = 6;
@@ -84,6 +87,26 @@ message S3ConnectorSetup {
   string principal_arn = 1;
   // This workspace's; the role's trust policy must require it.
   string external_id = 2;
+}
+
+// SlackConnectorSetup is what a Slack connection through Helix's Slack app
+// needs: the workspace's install of the app, made by a Slack admin or owner,
+// with the permissions channel history needs, and the storage notice the
+// owner or admin binding it accepts.
+message SlackConnectorSetup {
+  // The workspace's install; unset while it has none.
+  FoundrySlackInstall install = 1;
+  // The caller may add the app, or add it again for new permissions: an
+  // owner or admin of a workspace Helix offers it to.
+  bool can_install = 2;
+  // The connection that reads the install already; empty while none does.
+  // A Slack workspace is read by one connection.
+  string in_use_by_connector_id = 3;
+  // A Slack workspace admin or owner installed it; false: one must add it
+  // again before a connection can read through it.
+  bool installer_admin = 4;
+  // The storage notice to show, and to send back (SlackAppCredential).
+  int32 notice_version = 5;
 }
 
 // GitHubConnectorSetup is what a GitHub connector that signs in needs from
@@ -204,13 +227,36 @@ message GranolaConnectorConfig {
   bool transcripts = 2;
 }
 
-// SlackConnectorConfig reads the channels a Slack app was added to.
+// SlackConnectorConfig reads the channels a Slack app was added to: the
+// customer's own app, by its bot token, or Helix's Slack app, through the
+// workspace's install of it (Settings › Slack).
 message SlackConnectorConfig {
-  // Bot User OAuth token (xoxb-…) of an app installed in the Slack
-  // workspace; write-only.
-  string bot_token = 1;
-  // Days of channel history to keep, 1 to 365; 0 is 90.
+  // What it reads with. Unset on an update keeps the current credential; a
+  // response sets helix_app for a connection through Helix's Slack app, and
+  // an empty bot_token for one with a token.
+  oneof credential {
+    // Bot User OAuth token (xoxb-…) of an app installed in the Slack
+    // workspace; write-only. "" keeps the stored one.
+    string bot_token = 1;
+    // Read through the workspace's install of Helix's Slack app.
+    SlackAppCredential helix_app = 3;
+  }
+  // Days of channel history to keep: 1 to 365 with a token, 1 to 90
+  // through Helix's Slack app; 0 is 90.
   int32 history_days = 2;
+}
+
+// SlackAppCredential reads a Slack connection through the workspace's
+// install of Helix's Slack app.
+message SlackAppCredential {
+  // The storage notice the owner or admin binding it accepted
+  // (SlackConnectorSetup.notice_version); required to bind. A response
+  // carries the one accepted.
+  int32 notice_version = 1;
+  // On an update of a connection switching from its token (switching): read
+  // through the app at once, before the app has read the history, so the
+  // days it hasn't read yet lose their documents until it does.
+  bool now = 2;
 }
 
 // NotionConnectorConfig reads the pages and databases shared with a Notion
@@ -313,6 +359,64 @@ message Connector {
   // Set when the connector was connected by signing in at its provider: the
   // account it reads with, in place of a stored key.
   ConnectorAccount account = 13;
+  // Set for a Slack connection through Helix's Slack app, or switching to it.
+  ConnectorSlackStatus slack_status = 14;
+}
+
+// ConnectorSlackStatus is how a Slack connection through Helix's Slack app
+// reads its Slack workspace.
+message ConnectorSlackStatus {
+  // The Slack workspace (team) it reads, and its name.
+  string team_id = 1;
+  string team_name = 2;
+  SlackFeedState state = 3;
+  // The permissions the install lacks (NEEDS_REINSTALL).
+  repeated string missing_scopes = 4;
+  // What the app has left to read of the history; unset when nothing.
+  SlackBackfill backfill = 5;
+  // Reserved: when Slack last sent the connection a message. Not set yet.
+  google.protobuf.Timestamp last_event_at = 6;
+  // When Slack last dropped the team's events, past its 30,000 an hour;
+  // set only within the last 24 hours.
+  google.protobuf.Timestamp events_limited_at = 7;
+  // Days published with messages possibly missing.
+  int32 lossy_days = 8;
+  // Switching from its token: it syncs by its token until the app has read
+  // the history.
+  bool switching = 9;
+  // INSTALL_GONE: when the connection and its data are deleted.
+  google.protobuf.Timestamp deleted_at = 10;
+}
+
+// SlackFeedState is whether a Slack connection through Helix's Slack app
+// can read.
+enum SlackFeedState {
+  SLACK_FEED_STATE_UNSPECIFIED = 0;
+  // It reads.
+  SLACK_FEED_STATE_LIVE = 1;
+  // The install lacks permissions it needs: an owner or admin adds the app
+  // again.
+  SLACK_FEED_STATE_NEEDS_REINSTALL = 2;
+  // The app was removed from the Slack workspace: its data is frozen, and
+  // deleted at deleted_at unless the app is added again.
+  SLACK_FEED_STATE_INSTALL_GONE = 3;
+  // The workspace's install is of another Slack workspace: edit the
+  // connection to read it, or delete it.
+  SLACK_FEED_STATE_TEAM_CHANGED = 4;
+}
+
+// SlackBackfill is what Helix's Slack app has left to read of a
+// connection's history, which Slack allows it a page a minute.
+message SlackBackfill {
+  // The channels whose history it reads, and those done.
+  int32 channels = 1;
+  int32 channels_done = 2;
+  // Reserved: the channel it reads now. Not set yet.
+  string channel_name = 3;
+  // About how long it has left; 0 when it can't tell.
+  int64 eta_seconds = 4;
+  // Slack asked it to wait until then; unset when it doesn't wait.
+  google.protobuf.Timestamp waiting_until = 5;
 }
 
 // ConnectorAccount is the provider account a signed-in connector reads with.
@@ -2690,6 +2794,9 @@ message FoundryAgentThread {
   string runtime = 3;
   google.protobuf.Timestamp created_at = 4;
   google.protobuf.Timestamp updated_at = 5;
+  // Where it was started: Foundry's site (UNSPECIFIED) or Slack, by its
+  // first turn's surface.
+  FoundryAgentSurface surface = 6;
 }
 
 // FoundryAgentRuntime is where a local install's Assistant runs a
@@ -2789,6 +2896,19 @@ message FoundryAgentTurn {
   FoundryAgentAsked asked = 16;
   // An answers turn's: the turn it answers, and the person's answers.
   FoundryAgentAnswers answers = 17;
+  // Where its person reads it: Foundry's site (UNSPECIFIED) or Slack. A
+  // continuation turn (an action's result, answers) keeps its turn's.
+  FoundryAgentSurface surface = 18;
+}
+
+// FoundryAgentSurface is where a turn's person reads it, which changes how
+// Founder writes and what it runs by itself: a turn in Slack writes for a
+// Slack thread and opens nothing for its person (no dashboard runs at once).
+enum FoundryAgentSurface {
+  // Foundry's site.
+  FOUNDRY_AGENT_SURFACE_UNSPECIFIED = 0;
+  // A Slack thread, through Helix Foundry's Slack app.
+  FOUNDRY_AGENT_SURFACE_SLACK = 1;
 }
 
 // FoundryAgentAsked is what a turn asked its person: 1 to 4 questions of the
@@ -3238,4 +3358,168 @@ message FoundryAutomationRunNode {
   int64 usd_micros = 6;
   google.protobuf.Timestamp started_at = 7;
   google.protobuf.Timestamp finished_at = 8;
+}
+
+// FoundrySlack is a workspace's Slack: Helix's own Slack app, Helix Foundry,
+// which answers people in a Slack workspace as Founder, each linked Slack
+// user as their own Foundry user.
+message FoundrySlack {
+  string workspace_id = 1;
+  // The workspace may add the app: Helix offers it to every workspace, or
+  // this one is on the list Helix offers it to until Slack's Marketplace
+  // review (foundry.slack.install_allowlist).
+  bool install_allowed = 2;
+  // The caller is an owner or admin: they add and disconnect the app and
+  // see who is linked.
+  bool can_manage = 3;
+  // The workspace's install; unset while it has none.
+  FoundrySlackInstall install = 4;
+  // The caller's own Slack account in the install; unset while it has none.
+  FoundrySlackLink my_link = 5;
+}
+
+// FoundrySlackInstall is a Slack workspace's install of the app.
+message FoundrySlackInstall {
+  // The Slack workspace (team) and, inside an Enterprise Grid org, the org.
+  string team_id = 1;
+  string team_name = 2;
+  string enterprise_id = 3;
+  // The app's bot user there, which people message.
+  string bot_user_id = 4;
+  // Who installed it, last: the Foundry user and their name.
+  string installed_by_user_id = 5;
+  string installed_by_name = 6;
+  // When it was first installed, and last installed again.
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  // The permissions it lacks that what Helix offers here needs (a Slack
+  // connection through the app, follow-ups without a mention): adding the
+  // app again asks for them. Empty while those are off.
+  repeated string missing_scopes = 9;
+  // A Slack workspace admin or owner installed it, as Slack said when it
+  // was last installed: a connection reads through it only then.
+  bool installer_admin = 10;
+  // When Slack last dropped the team's events, past its 30,000 an hour;
+  // set only within the last 24 hours.
+  google.protobuf.Timestamp events_limited_at = 11;
+  // Whom its bot acts as: PER_PERSON or BOT.
+  FoundrySlackIdentityMode identity_mode = 12;
+  // The shared bot; set in BOT mode only.
+  FoundrySlackBot bot = 13;
+}
+
+// FoundrySlackIdentityMode is whom an install's bot acts as.
+enum FoundrySlackIdentityMode {
+  FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED = 0;
+  // Each linked Slack user as their own Foundry user.
+  FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON = 1;
+  // One shared bot: anyone in the Slack workspace may ask it, it reads only
+  // the sources its credential is given, and owners and admins run what it
+  // proposes as themselves.
+  FOUNDRY_SLACK_IDENTITY_MODE_BOT = 2;
+}
+
+// FoundrySlackBot is an install's shared bot: the workspace service
+// credential it acts as.
+message FoundrySlackBot {
+  // Settings › Access chooses its sources, as principal
+  // service_credential:<credential_id>.
+  string credential_id = 1;
+  // Its name in the workspace's keys; empty when Helix can't read it.
+  string credential_name = 2;
+  // The credential was revoked, deleted, expired or given database
+  // permissions: the bot's turns fail until bot mode is turned off and on
+  // again.
+  bool broken = 3;
+}
+
+// FoundrySlackLink is a Slack user who acts as a Foundry user: the bot
+// answers them, in Slack, as that user.
+message FoundrySlackLink {
+  string slack_user_id = 1;
+  string user_id = 2;
+  // The Foundry user's name, as Foundry shows it.
+  string user_name = 3;
+  google.protobuf.Timestamp created_at = 4;
+  // FULL on hosted Helix, and for a standalone install's owner (the app's
+  // installer); READ for a Slack user the owner allowed.
+  FoundrySlackLinkAccess access = 5;
+}
+
+// FoundrySlackLinkAccess is what a linked Slack user may do.
+enum FoundrySlackLinkAccess {
+  FOUNDRY_SLACK_LINK_ACCESS_UNSPECIFIED = 0;
+  // Acts as its Foundry user in full.
+  FOUNDRY_SLACK_LINK_ACCESS_FULL = 1;
+  // Reads and asks as a standalone install's owner, changing nothing.
+  FOUNDRY_SLACK_LINK_ACCESS_READ = 2;
+  // No access: SetFoundrySlackAccess removes it.
+  FOUNDRY_SLACK_LINK_ACCESS_NONE = 3;
+}
+
+// FoundrySlackAccessRequest is a Slack user who asked to use a standalone
+// install, until its owner allows them or drops the request.
+message FoundrySlackAccessRequest {
+  string slack_user_id = 1;
+  // Their name in Slack.
+  string slack_name = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// FoundryRelay is a standalone install's link to Helix's Slack relay.
+message FoundryRelay {
+  // Linked to a Helix workspace; the rest is unset while not.
+  bool linked = 1;
+  // Helix's origin, such as https://ingest.helix-db.com.
+  string hosted_origin = 2;
+  // The email of the Helix member who linked it.
+  string account_email = 3;
+  google.protobuf.Timestamp linked_at = 4;
+  // When Helix last answered its claim; unset until it has.
+  google.protobuf.Timestamp last_ok_at = 5;
+  // The owner's Slack account may approve changes through Slack: off, the
+  // relay only reads and asks.
+  bool slack_approvals = 6;
+}
+
+// FoundryRelayLink is a standalone install linked to a Helix workspace.
+message FoundryRelayLink {
+  string id = 1;
+  // The install's name, as its owner calls it.
+  string name = 2;
+  // Who linked it, and their name.
+  string created_by_user_id = 3;
+  string created_by_name = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // Its last claim or call, written at most once a minute; unset until then.
+  google.protobuf.Timestamp last_seen_at = 6;
+  // Its Slack installs, one per local workspace.
+  repeated FoundryRelayLinkInstall installs = 7;
+  // What it did today (UTC): Slack's requests held for it, its calls to
+  // Slack made and refused, and channel messages held.
+  int64 deliveries_today = 8;
+  int64 calls_today = 9;
+  int64 refused_today = 10;
+  int64 feed_rows_today = 11;
+}
+
+// FoundryRelayLinkInstall is a Slack workspace a linked install serves.
+message FoundryRelayLinkInstall {
+  string team_id = 1;
+  string team_name = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// FoundrySlackLinkRefusal is why a Slack user can't be linked to the caller.
+enum FoundrySlackLinkRefusal {
+  // None: they can be.
+  FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED = 0;
+  // The Slack user's email isn't the caller's, or Slack hides it.
+  FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH = 1;
+  // Slack hasn't confirmed the Slack user's email.
+  FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_UNCONFIRMED = 2;
+  // The Slack user isn't a full member of the installed Slack workspace: a
+  // guest, a bot, a deactivated account, or someone of another
+  // organisation or workspace.
+  FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER = 3;
 }

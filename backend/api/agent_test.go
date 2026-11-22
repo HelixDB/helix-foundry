@@ -137,7 +137,7 @@ func (s *agentStore) CreateFoundryAgentTurn(_ context.Context, t *foundrymodel.F
 	}
 	if thread != nil {
 		s.threads[thread.ID] = thread
-	} else if th, ok := s.threads[t.ThreadID]; !ok || th.UserID != t.UserID {
+	} else if th, ok := s.threads[t.ThreadID]; !ok || th.Principal != t.Principal {
 		return foundrystore.ErrNotFound
 	}
 	stored := *t
@@ -146,9 +146,10 @@ func (s *agentStore) CreateFoundryAgentTurn(_ context.Context, t *foundrymodel.F
 	return nil
 }
 
-func (s *agentStore) GetFoundryAgentTurnByClientToken(_ context.Context, ws, userID, token string) (*foundrymodel.FoundryAgentTurn, error) {
+func (s *agentStore) GetFoundryAgentTurnByClientToken(_ context.Context, ws string, principal foundrymodel.FoundryAgentPrincipal, token string) (
+	*foundrymodel.FoundryAgentTurn, error) {
 	for _, t := range s.turns {
-		if t.WorkspaceID == ws && t.UserID == userID && t.ClientToken != nil && *t.ClientToken == token {
+		if t.WorkspaceID == ws && t.Principal == principal && t.ClientToken != nil && *t.ClientToken == token {
 			return t, nil
 		}
 	}
@@ -232,7 +233,7 @@ func (s *agentStore) ClaimFoundryAgentAction(_ context.Context, ws, userID, id, 
 	}
 	a, ok := s.actions[id]
 	switch {
-	case !ok || a.WorkspaceID != ws || a.UserID != userID:
+	case !ok || a.WorkspaceID != ws || a.Principal != foundrymodel.AgentPerson{UserID: userID}:
 		return nil, foundrystore.ErrNotFound
 	case a.Status != foundrymodel.FoundryAgentActionPrepared:
 		return nil, foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentNotPrepared, Detail: "the action is " + string(a.Status)}
@@ -269,14 +270,14 @@ func (s *agentStore) RefreshFoundryAgentAction(_ context.Context, _, _, id, hash
 	if a.PayloadHash != hash {
 		return nil, foundrymodel.FoundryAgentRefusal{Reason: foundrymodel.FoundryAgentChanged, Detail: "changed"}
 	}
-	a.Status, a.Display, a.ConfirmationID, a.TokenSealed, a.KeyID, a.ExpiresAt = foundrymodel.FoundryAgentActionPrepared, display, confirmationID, sealed,
-		keyID, expires
+	a.Status, a.Display, a.ExpiresAt = foundrymodel.FoundryAgentActionPrepared, display, expires
+	a.Approval = foundrymodel.PersonApproval{ConfirmationID: confirmationID, TokenSealed: sealed, KeyID: keyID}
 	return a, nil
 }
 
 func (s *agentStore) DismissFoundryAgentAction(_ context.Context, _, userID, id string) (*foundrymodel.FoundryAgentAction, error) {
 	a, ok := s.actions[id]
-	if !ok || a.UserID != userID {
+	if !ok || a.Principal != (foundrymodel.AgentPerson{UserID: userID}) {
 		return nil, foundrystore.ErrNotFound
 	}
 	a.Status = foundrymodel.FoundryAgentActionDismissed
@@ -475,10 +476,10 @@ func (f agentFixture) preparedAs(t *testing.T, id string, input integration.Foun
 	require.NoError(t, err)
 	sealed, keyID, err := f.s.deps.ConnectorKeys.Seal([]byte(sink.got.Confirmation.Token), id)
 	require.NoError(t, err)
-	f.store.threads["th-1"] = &foundrymodel.FoundryAgentThread{ID: "th-1", WorkspaceID: "ws-1", UserID: person.UserID}
-	a := &foundrymodel.FoundryAgentAction{ID: id, TurnID: "turn-1", ThreadID: "th-1", WorkspaceID: "ws-1", UserID: person.UserID,
+	f.store.threads["th-1"] = &foundrymodel.FoundryAgentThread{ID: "th-1", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID}}
+	a := &foundrymodel.FoundryAgentAction{ID: id, TurnID: "turn-1", ThreadID: "th-1", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID},
 		Operation: input.Operation, Target: input.Target, Payload: sink.got.Payload, PayloadHash: sink.got.PayloadHash,
-		ConfirmationID: sink.got.Confirmation.ID, TokenSealed: sealed, KeyID: keyID, Status: foundrymodel.FoundryAgentActionPrepared,
+		Approval: foundrymodel.PersonApproval{ConfirmationID: sink.got.Confirmation.ID, TokenSealed: sealed, KeyID: keyID}, Status: foundrymodel.FoundryAgentActionPrepared,
 		ExpiresAt: sink.got.Confirmation.ExpiresAt}
 	f.store.actions[id] = a
 	return a
@@ -525,7 +526,7 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		assert.Equal(t, "Load the sales graph\nplease", resp.GetTurn().GetText())
 		assert.Equal(t, "load-1", resp.GetTurn().GetPageContext().GetLoadId())
 		stored := f.store.turns[resp.GetTurn().GetId()]
-		assert.Equal(t, person.UserID, stored.UserID)
+		assert.Equal(t, foundrymodel.AgentPerson{UserID: person.UserID}, stored.Principal)
 		assert.EqualValues(t, 500_000, stored.MaxUSDMicros)
 		// The same click is the same message.
 		again, err := send(f, nil)
@@ -533,6 +534,41 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 		assert.Equal(t, resp.GetTurn().GetId(), again.GetTurn().GetId())
 		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) { r.Input = textInput("something else") })
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	})
+	t.Run("where its person reads it", func(t *testing.T) {
+		f := newAgentFixture(t)
+		site, err := send(f, nil)
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_UNSPECIFIED, site.GetTurn().GetSurface())
+		assert.Equal(t, foundrymodel.FoundryAgentSurfaceSite, f.store.turns[site.GetTurn().GetId()].Surface)
+		slackTurn := func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.ClientToken, r.Surface = "c2", foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK
+		}
+		inSlack, err := send(f, slackTurn)
+		require.NoError(t, err)
+		assert.Equal(t, foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK, inSlack.GetTurn().GetSurface())
+		assert.Equal(t, foundrymodel.FoundryAgentSurfaceSlack, f.store.turns[inSlack.GetTurn().GetId()].Surface)
+		// The same token from another surface is another message.
+		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.Surface = foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		_, err = send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.ClientToken, r.Surface = "c3", foundryv1.FoundryAgentSurface(9)
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "a surface the API doesn't know")
+	})
+	t.Run("read-only", func(t *testing.T) {
+		f := newAgentFixture(t)
+		readOnly := func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ReadOnly = true }
+		resp, err := send(f, readOnly)
+		require.NoError(t, err)
+		assert.True(t, f.store.turns[resp.GetTurn().GetId()].ReadOnly, "any caller narrows its turn")
+		again, err := send(f, readOnly)
+		require.NoError(t, err)
+		assert.Equal(t, resp.GetTurn().GetId(), again.GetTurn().GetId())
+		_, err = send(f, nil)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), "the same token, not read-only, is another message")
 	})
 	t.Run("malformed", func(t *testing.T) {
 		f := newAgentFixture(t)
@@ -594,7 +630,7 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 	})
 	t.Run("another user's thread isn't found", func(t *testing.T) {
 		f := newAgentFixture(t)
-		f.store.threads["th-eve"] = &foundrymodel.FoundryAgentThread{ID: "th-eve", WorkspaceID: "ws-1", UserID: "user-eve"}
+		f.store.threads["th-eve"] = &foundrymodel.FoundryAgentThread{ID: "th-eve", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: "user-eve"}}
 		_, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) { r.ThreadId = "th-eve" })
 		assert.Equal(t, codes.NotFound, status.Code(err))
 		_, err = f.s.GetFoundryAgentThread(personCtx, &foundryv1.GetFoundryAgentThreadRequest{WorkspaceId: "ws-1", Id: "th-eve"})
@@ -629,8 +665,8 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 	// of one, a free one, and an optional choice of several.
 	asking := func(t *testing.T) agentFixture {
 		f := newAgentFixture(t)
-		f.store.threads["th-1"] = &foundrymodel.FoundryAgentThread{ID: "th-1", WorkspaceID: "ws-1", UserID: person.UserID, Runtime: foundrymodel.FoundryAgentRuntimeAPI}
-		f.store.turns["turn-ask"] = &foundrymodel.FoundryAgentTurn{ID: "turn-ask", WorkspaceID: "ws-1", ThreadID: "th-1", UserID: person.UserID,
+		f.store.threads["th-1"] = &foundrymodel.FoundryAgentThread{ID: "th-1", WorkspaceID: "ws-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID}, Runtime: foundrymodel.FoundryAgentRuntimeAPI}
+		f.store.turns["turn-ask"] = &foundrymodel.FoundryAgentTurn{ID: "turn-ask", WorkspaceID: "ws-1", ThreadID: "th-1", Principal: foundrymodel.AgentPerson{UserID: person.UserID},
 			Kind: foundrymodel.FoundryAgentTurnMessage, Input: "Build me an ontology", Status: foundrymodel.FoundryAgentTurnDone,
 			Asked: &foundrymodel.FoundryAgentAsked{Questions: []agentquestion.Question{
 				{ID: "q1", Header: "Ontology", Text: "Which ontology?", Blocking: true,
@@ -713,7 +749,7 @@ func TestSendFoundryAgentAnswers(t *testing.T) {
 
 	t.Run("another's turn, or another thread's, isn't found", func(t *testing.T) {
 		f := asking(t)
-		f.store.turns["turn-ask"].UserID = "user-eve"
+		f.store.turns["turn-ask"].Principal = foundrymodel.AgentPerson{UserID: "user-eve"}
 		_, err := f.s.SendFoundryAgentMessage(personCtx, answers("turn-ask", why, sales))
 		assert.Equal(t, codes.NotFound, status.Code(err))
 		f = asking(t)
@@ -884,7 +920,9 @@ func TestExecuteFoundryAgentAction(t *testing.T) {
 		f := newAgentFixture(t)
 		a := f.prepared(t, "act-1")
 		other := f.prepared(t, "act-2")
-		a.TokenSealed, a.KeyID = other.TokenSealed, other.KeyID
+		mine, theirs := a.Approval.(foundrymodel.PersonApproval), other.Approval.(foundrymodel.PersonApproval)
+		mine.TokenSealed, mine.KeyID = theirs.TokenSealed, theirs.KeyID
+		a.Approval = mine
 		resp, err := execute(f, personCtx, "act-1", a.PayloadHash)
 		require.NoError(t, err)
 		assert.Equal(t, "failed", resp.GetAction().GetStatus())
@@ -938,7 +976,8 @@ func TestRefreshAndDismissFoundryAgentAction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "prepared", resp.GetAction().GetStatus())
 	assert.Equal(t, before+1, f.confirm.prepared, "no model: the same payload, confirmed again")
-	token, err := f.s.deps.ConnectorKeys.Open(a.TokenSealed, a.KeyID, a.ID)
+	confirmation := a.Approval.(foundrymodel.PersonApproval)
+	token, err := f.s.deps.ConnectorKeys.Open(confirmation.TokenSealed, confirmation.KeyID, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "hlxc_new", string(token))
 	_, err = f.s.RefreshFoundryAgentAction(ports.WithActor(context.Background(), ports.Actor{Source: ports.SourceUser, UserID: "user-eve"}),

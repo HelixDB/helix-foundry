@@ -1,7 +1,7 @@
 // Package foundryevents is the foundry-events role: Foundry's public HTTP door, to its API
 // sources (connector kind events), beside the MCP's send tool, for the reminders people ask for
-// on the landing page, and for dashboards' public links. It serves three routes. The first is a
-// send's:
+// on the landing page, for dashboards' public links, and for Slack's requests to Helix Foundry's
+// Slack app. It serves four kinds of route. The first is a send's:
 //
 //	POST /v1/sources/{event_source_id}/pieces
 //	Authorization: Bearer hx_ev_…
@@ -30,18 +30,47 @@
 //	GET /v1/shared-dashboards/{token}
 //
 // It forwards the token's SHA-256 to FoundryEventsService.GetSharedFoundryDashboard and answers
-// the snapshot, readable by any page. Another method on a route is 405, and another path 404,
-// from the mux.
+// the snapshot, readable by any page.
+//
+// The fourth is Slack's, while foundry.slack is on (slack.go): the Events API and clicks, sent to
+// Helix Foundry's Slack app,
+//
+//	POST /v1/slack/events          (JSON)
+//	POST /v1/slack/interactivity   (a form: payload=…)
+//	X-Slack-Signature: v0=…
+//	X-Slack-Request-Timestamp: …
+//
+// behind gates of their own, one per class of request (slack.Classify: the bot's, replies in
+// threads, and the data connector's channel messages), so a flood of one never refuses another.
+// The door refuses headers no signed request carries, or a time outside Slack's five minutes, and
+// forwards the raw body and headers to FoundryEventsService.ReceiveSlackRequest, which verifies
+// the signature with the app's signing secret, and answers what it answers, url_verification's
+// challenge included. A channel's event Slack is about to drop on its last retry is answered 200,
+// and the minute of its channel sent, once a minute, to
+// FoundryEventsService.RecordFoundrySlackFeedGaps, for the data connector to read again.
+//
+// The fifth is Helix's Slack relay, while foundry.slack and its relay are on (relay.go): standalone
+// Foundry installs linked to a Helix workspace redeem their link's code, claim what Slack sent
+// their installs, call Slack as them, start installs and unlink, bearing their hx_rl_ token,
+//
+//	POST /v1/relay/token, /v1/relay/claim, /v1/relay/slack/{method}, /v1/relay/slack-install, /v1/relay/revoke
+//
+// behind a gate of their own, a claim waiting in a place of its own, and forwarded to
+// FoundryEventsService's relay methods with the token's SHA-256.
+//
+// Another method on a route is 405, and another path 404, from the mux.
 //
 // The role holds nothing: no Secret, database, AWS identity or service-account token; not even the
-// site's secret, only passing its hash on. It reaches only FoundryEventsService, and stores
-// nothing of its own: its buckets and token cache live in memory per pod.
+// site's secret or Slack's signing secret, only passing the site's hash and Slack's signature on. It reaches only FoundryEventsService, and stores
+// nothing of its own: its buckets, token cache and Slack's gaps live in memory per pod, the gaps
+// sent once more as it stops.
 package foundryevents
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"go.uber.org/dig"
@@ -78,6 +107,10 @@ type Deps struct {
 
 type Service struct {
 	ep *endpoint.Endpoint
+	// slack is Slack's door, nil while foundry.slack is off, whose gaps the service flushes.
+	slack *slackDoor
+	// flushing is the flush of Slack's gaps while the service runs.
+	flushing sync.WaitGroup
 }
 
 // New serves the route on foundry.events.endpoint's listeners, in front of the client of
@@ -96,13 +129,37 @@ func New(d Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	ep.RegisterHTTPHandler("/", newHandler(d.Backend, cfg, logger, time.Now).routes())
-	return &Service{ep: ep}, nil
+	h := newHandler(d.Backend, cfg, d.Cfg.Foundry.Slack, logger, time.Now)
+	ep.RegisterHTTPHandler("/", h.routes())
+	return &Service{ep: ep, slack: h.slack}, nil
 }
 
 func (s *Service) Name() string { return Name }
 
-func (s *Service) Start(ctx context.Context) error { return s.ep.Serve(ctx) }
+// Start serves until ctx ends, flushing Slack's gaps every gapFlushEvery meanwhile.
+func (s *Service) Start(ctx context.Context) error {
+	if s.slack != nil {
+		s.flushing.Go(func() { s.slack.flushGapsEvery(ctx, gapFlushEvery) })
+	}
+	return s.ep.Serve(ctx)
+}
 
-// Stop closes the listeners and waits, within ctx, for the requests in flight to be answered.
-func (s *Service) Stop(ctx context.Context) error { return s.ep.GracefulStop(ctx) }
+// Stop closes the listeners and waits, within ctx, for the requests in flight to be answered,
+// then for Start's flushes to end, and sends the gaps Slack's requests left once more.
+func (s *Service) Stop(ctx context.Context) error {
+	err := s.ep.GracefulStop(ctx)
+	if s.slack == nil {
+		return err
+	}
+	flushed := make(chan struct{})
+	go func() {
+		s.flushing.Wait()
+		close(flushed)
+	}()
+	select {
+	case <-flushed:
+	case <-ctx.Done():
+	}
+	s.slack.flushGaps(ctx)
+	return err
+}

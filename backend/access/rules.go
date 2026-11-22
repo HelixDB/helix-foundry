@@ -26,8 +26,8 @@ const (
 // rules names every method of FoundryService and FoundryEventsService, so a
 // method added without a rule fails the package's tests. A grantee only
 // reads, asks and cancels its own questions, talks to Founder in its own
-// threads, and starts and finishes its own workflow runs: it changes nothing
-// else.
+// threads, starts and finishes its own workflow runs, and links and unlinks
+// its own Slack account: it changes nothing else.
 var rules = map[string]Rule{
 	// Founder: a grantee talks to Founder in its own threads, from its
 	// restriction on; Founder only reads and asks for it (the turn's Reach),
@@ -221,6 +221,39 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_CancelFoundryPro_FullMethodName:         Deny,
 	foundryv1.FoundryService_ResumeFoundryPro_FullMethodName:         Deny,
 	foundryv1.FoundryService_GetFoundryUsage_FullMethodName:          Deny,
+
+	// Helix Foundry for Slack: owners and admins add, disconnect, set the
+	// bot's mode and list; a grantee sees the install and links, and
+	// unlinks, its own Slack account, whose turns are then its own narrowed
+	// Founder turns. Slack's requests are the door's.
+	foundryv1.FoundryService_GetFoundrySlack_FullMethodName:                  Workspace,
+	foundryv1.FoundryService_StartFoundrySlackInstall_FullMethodName:         Deny,
+	foundryv1.FoundryService_FinishFoundrySlackInstall_FullMethodName:        Deny,
+	foundryv1.FoundryService_DisconnectFoundrySlack_FullMethodName:           Deny,
+	foundryv1.FoundryService_UpdateFoundrySlack_FullMethodName:               Deny,
+	foundryv1.FoundryService_ListFoundrySlackLinks_FullMethodName:            Deny,
+	foundryv1.FoundryService_PreviewFoundrySlackLink_FullMethodName:          Workspace,
+	foundryv1.FoundryService_CreateFoundrySlackLink_FullMethodName:           Workspace,
+	foundryv1.FoundryService_DeleteFoundrySlackLink_FullMethodName:           Workspace,
+	foundryv1.FoundryEventsService_ReceiveSlackRequest_FullMethodName:        Deny,
+	foundryv1.FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName: Deny,
+	// The relay is the owner's and Helix's owners' and admins'; its calls
+	// from linked installs are the door's.
+	foundryv1.FoundryService_SetFoundrySlackAccess_FullMethodName:               Deny,
+	foundryv1.FoundryService_GetFoundryRelay_FullMethodName:                     Deny,
+	foundryv1.FoundryService_StartFoundryRelayLink_FullMethodName:               Deny,
+	foundryv1.FoundryService_CompleteFoundryRelayLink_FullMethodName:            Deny,
+	foundryv1.FoundryService_UpdateFoundryRelay_FullMethodName:                  Deny,
+	foundryv1.FoundryService_UnlinkFoundryRelay_FullMethodName:                  Deny,
+	foundryv1.FoundryService_AuthorizeFoundryRelayLink_FullMethodName:           Deny,
+	foundryv1.FoundryService_ListFoundryRelayLinks_FullMethodName:               Deny,
+	foundryv1.FoundryService_RevokeFoundryRelayLink_FullMethodName:              Deny,
+	foundryv1.FoundryEventsService_ValidateFoundryRelayToken_FullMethodName:     Deny,
+	foundryv1.FoundryEventsService_RedeemFoundryRelayCode_FullMethodName:        Deny,
+	foundryv1.FoundryEventsService_ClaimFoundryRelayDeliveries_FullMethodName:   Deny,
+	foundryv1.FoundryEventsService_CallSlackForRelay_FullMethodName:             Deny,
+	foundryv1.FoundryEventsService_StartFoundryRelaySlackInstall_FullMethodName: Deny,
+	foundryv1.FoundryEventsService_RevokeFoundryRelayToken_FullMethodName:       Deny,
 }
 
 // RuleOf is what method, a full gRPC method name, lets a grantee do: Deny

@@ -33,6 +33,10 @@ type Connector struct {
 	// reads with, in place of a key: its sealed secret is empty. Nil for a
 	// connector that holds a key.
 	Account *ConnectorAccount
+	// Pushed is a connector its source schedules (an event source, a Slack
+	// connector read through Helix's app): it syncs when something arrives,
+	// never on an interval. An event source always is.
+	Pushed bool
 }
 
 // ConnectorAccount is the provider account a signed-in connector reads
@@ -102,6 +106,10 @@ const (
 	// ConnectorSyncEvents is every sync of an event source, whatever queued
 	// it: a workspace runs one such sync at a time, beside its other syncs.
 	ConnectorSyncEvents ConnectorSyncOrigin = "events"
+	// ConnectorSyncPushed is the scheduler's sync of a pushed connector
+	// that isn't an event source (a Slack connector read through Helix's
+	// app): what arrived made it due.
+	ConnectorSyncPushed ConnectorSyncOrigin = "pushed"
 )
 
 // ConnectorSyncMode is how much a sync may read: changes reads only what

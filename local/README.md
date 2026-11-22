@@ -7,11 +7,13 @@ docker compose up -d --wait  # from the repository's root, or from local/
 open http://localhost:3000   # that name: the site answers no other host
 ```
 
-It opens in your first workspace, **My workspace**, made as the install first starts.
+It opens in your first workspace, **My workspace**, made as the install first starts. Rather not run Docker? [Helix Cloud](https://foundry.helix-db.com/login?return_to=%2Fontology%2Fsample&utm_source=github&utm_medium=readme&utm_campaign=local-guide) runs the same build, hosted, with a sample company to try first.
 
 **Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
 **Usage analytics.** The site and the bundled HelixDB tell Helix, anonymously, how Foundry is used, and send nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](#usage-analytics) says what is sent.
+
+**Slack.** Off until you link this install to Helix in Settings › Slack; nothing reaches Helix for it before. [Slack (through Helix)](#slack-through-helix) says what passes through Helix once you do.
 
 **An install set up with `setup.sh`** (before 0.1.1) keeps its `local/.env`: its first start of this version copies the `FOUNDRY_*` secrets there into the volume, so MySQL's password and the key that sealed its credentials still match. Keep running it from `local/` if its `.env` sets `COMPOSE_PROFILES` or `COMPOSE_FILE` (Ollama in Docker, the GPU file): Compose reads those from the project's own `.env` only.
 
@@ -151,6 +153,25 @@ The site tells Helix, anonymously, how Foundry is used, so we know what to fix: 
 The bundled HelixDB tells Helix how its queries run: each query's shape with every value taken out, how long it took and whether it failed, marked as Foundry's. It sends no data, parameters or results.
 
 To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing from the site either way.
+
+## Slack (through Helix)
+
+Founder answers in Slack through Helix's own Slack app, Helix Foundry. Slack can't reach a computer behind your router, so Helix holds the app's install and relays between Slack and this install. It needs a Helix account that owns or administers a Helix workspace, and images after `foundry` 0.1.4 and `foundry-site` 0.1.5. It is off until you link: unlinked, Foundry only checks its own database for a link, and nothing reaches Helix. `FOUNDRY_TELEMETRY` doesn't control it.
+
+1. **Link.** Settings › Slack, **Link to Helix**, opens Helix's site, where you sign in and link this install, by this machine's name, to a workspace you own or administer. Helix sends the link back to this computer only, at `http://localhost:3000/settings/slack`.
+2. **Add to Slack.** Slack's page adds the app to a Slack workspace; Helix finishes it and sends you back here. Each of this install's workspaces can have its own Slack workspace.
+3. **Your Slack account.** Message the bot from the Slack account that added it: it answers with a link that opens on this computer, and **Link** there makes that account yours. The bot answers it as you, the owner.
+4. **Other people.** Anyone else who messages the bot is told once that you haven't let them use it, and shows under Settings › Slack, where **Allow** lets them read and ask, as you, without changing anything, and **Remove** takes it back.
+
+Links in the bot's answers open this install's site, so they work on this computer only. Guests, people from other organisations and channels shared with them are refused, as on Helix. Slack-born threads are deleted 30 days after their last message.
+
+**What leaves this machine once linked:** this machine's name; the bot's replies, which are built from your data and the questions people ask it; and the Slack calls they need (posting and updating messages, looking up who wrote), through Helix to Slack. Each call names the Slack workspace and channel. While linked, this install keeps a request open to Helix for new messages, renewed every 20 seconds or so.
+
+**What Helix keeps:** the link (this machine's name, the Helix account that linked it, when this install last called and from which address), the Slack install and its bot token, which never reach this machine, the Slack ids of the channels and people it relayed in the last 30 days (the only ones this install may name), and daily counts. It keeps what people send the bot only until this install takes it, at most 10 minutes: while this install is offline, they are told so, and a message it never takes is dropped, saying it wasn't delivered. A Slack data connection through the app isn't offered yet; once it is, Helix holds your channels' new messages until this install takes them, at most 24 hours, and passes its history reads to Slack.
+
+**What Helix can do:** Helix's relay vouches for who clicked in Slack: a linked install runs what your Slack account approves through it. Turn off **Approve changes from Slack** in Settings › Slack to make the relay read and ask only: Founder's cards then run only in Foundry, and your own turns in Slack only read and ask too.
+
+**Unlink** in Settings › Slack: Helix revokes the link and removes the app from those Slack workspaces, and this install forgets its token. An owner or admin of the Helix workspace can do the same from Helix's Settings › Slack (**Revoke**). To turn Slack off altogether, add `HELIX_FOUNDRY__SLACK__ENABLED: "false"` to foundry's `environment` in `local/compose.yaml` and run `docker compose up -d`.
 
 ## Starring on GitHub
 

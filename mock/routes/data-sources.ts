@@ -1711,6 +1711,30 @@ function slackDays(src: Source, syncedAt: string) {
   const days = src.settings.slack.historyDays || 90,
     channels = slackChannelsIn(src),
     today = Date.parse(syncedAt.slice(0, 10));
+  // Through Helix's Slack app, the messages Slack sent today
+  // (POST /__mock/slack/feed): a day of their own per channel.
+  const fed = src.settings.slack.helixApp
+    ? slackChannels.flatMap((channel) => {
+        const messages = (slackFeed.get(src.workspaceId) || [])
+          .filter(
+            (m) =>
+              m.channel === channel.id &&
+              m.at >= today &&
+              m.at <= Date.parse(syncedAt),
+          )
+          .map((m) => ({ ...m, replies: [] }));
+        return messages.length
+          ? [
+              {
+                channel,
+                day: syncedAt.slice(0, 10),
+                messages,
+                active: Math.max(...messages.map((m) => m.at)),
+              },
+            ]
+          : [];
+      })
+    : [];
   return Array.from({ length: days }, (_, i) => today - (i + 1) * 86_400_000)
     .flatMap((midnight) => {
       const n = midnight / 86_400_000;
@@ -1751,11 +1775,40 @@ function slackDays(src: Source, syncedAt: string) {
         ];
       });
     })
+    .concat(fed)
     .sort(
       (a, b) =>
         b.active - a.active ||
         `${a.channel.id}:${a.day}`.localeCompare(`${b.channel.id}:${b.day}`),
     );
+}
+
+// Messages Slack sent Helix's Slack app, by Foundry workspace
+// (POST /__mock/slack/feed): a Slack connection through the app reads
+// them at its next sync, as the feed's change read does.
+const slackFeed = new Map<
+  string,
+  { channel: string; who: string; text: string; at: number }[]
+>();
+
+/**
+ * A message posted in a channel the app is in (by its id or name), which
+ * Slack sends the workspace's app: its id, or null for no such channel.
+ */
+export function addSlackFeedMessage(
+  workspaceId: string,
+  channel: string,
+  text: string,
+): string | null {
+  const found = slackChannels.find(
+    (c) => c.lines.length && (c.id === channel || c.name === channel),
+  );
+  if (!found) return null;
+  slackFeed.set(workspaceId, [
+    ...(slackFeed.get(workspaceId) || []),
+    { channel: found.id, who: PEOPLE_AT_WORK[0]!, text, at: Date.now() },
+  ]);
+  return found.id;
 }
 
 /**
@@ -2318,6 +2371,7 @@ const knobs = config as typeof config & {
 onReset(() => {
   delete knobs.s3RoleAccess;
   delete knobs.githubInstalled;
+  slackFeed.clear();
 });
 
 /** What a customer's role must trust; undefined where role access is off. */
@@ -2873,15 +2927,31 @@ export function prepare(
       };
     }
     case "slack": {
-      const token = signIn ? "" : String(raw.botToken || "").trim();
-      if (!signIn && !/^xoxb-[A-Za-z0-9-]+$/.test(token))
+      // Through Helix's Slack app (helixApp), the workspace's install reads
+      // it: no token, and at most 90 days. ./data.ts binds it.
+      const app = !!raw.helixApp && typeof raw.helixApp === "object";
+      const token = signIn || app ? "" : String(raw.botToken || "").trim();
+      if (!signIn && !app && !/^xoxb-[A-Za-z0-9-]+$/.test(token))
         return invalid("enter a Slack bot token (xoxb-…)");
       const historyDays = raw.historyDays || 90;
-      if (historyDays < 1 || historyDays > 365)
-        return invalid("keep 1 to 365 days of history");
+      if (historyDays < 1 || historyDays > (app ? 90 : 365))
+        return invalid(
+          app
+            ? "keep 1 to 90 days of history through Helix Foundry's Slack app"
+            : "keep 1 to 365 days of history",
+        );
       return {
         kind,
-        settings: { slack: { historyDays } },
+        settings: {
+          slack: {
+            historyDays,
+            ...(app && {
+              helixApp: {
+                noticeVersion: Number(raw.helixApp.noticeVersion) || 0,
+              },
+            }),
+          },
+        },
         secret: token,
         workspaceId,
         ...(signIn ? { signIn } : {}),
@@ -3294,14 +3364,15 @@ export function syncTables(src: Source): SyncedSnapshot[] | string {
           databuddy: databuddyObjects,
         } as Partial<Record<ConnectorKindName, ApiObject[]>>
       )[src.kind]!;
-  // Slack's history is what its days hold: two messages each, as history
-  // lists them (a thread's reply is no row), and none (nor members) where
+  // Slack's history is what its days hold: two messages each (a fed day
+  // its own), as history lists them (a thread's reply is no row), and none
+  // (nor members) where
   // the app is in no channel.
   const days = "slack" in s ? slackDays(src, new Date().toISOString()) : [],
     counted: Record<string, number> =
       "slack" in s
         ? {
-            messages: days.length * 2,
+            messages: days.reduce((n, d) => n + d.messages.length, 0),
             channel_days: days.length,
             ...(src.secret.includes("lonely") ? { channel_members: 0 } : {}),
           }

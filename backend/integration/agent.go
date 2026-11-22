@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc"
 
+	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
 )
 
@@ -28,8 +31,16 @@ type ConfirmByCaller struct{}
 // agent no token; Execute refuses, and complete_document_upload isn't offered.
 type ConfirmByPerson struct{ Sink ActionSink }
 
+// ConfirmByAdmin is a Slack install's bot's (bot mode): prepare checks
+// nothing as the bot and confirms nothing; it hands the action to Sink as a
+// proposal, which an owner or admin reviews and runs as themselves
+// (RunSlackApproved), or not. Execute refuses, and complete_document_upload
+// isn't offered.
+type ConfirmByAdmin struct{ Sink ProposalSink }
+
 func (ConfirmByCaller) confirmMode() {}
 func (ConfirmByPerson) confirmMode() {}
+func (ConfirmByAdmin) confirmMode()  {}
 
 // PreparedAction is an action prepare checked and confirmed, with its
 // one-time confirmation: Sink keeps the token from the agent.
@@ -78,6 +89,48 @@ type ActionSink interface {
 	// again in a turn returns what became of the action already kept.
 	Record(ctx context.Context, action PreparedAction) (Recorded, error)
 }
+
+// ProposedAction is an action a bot proposed: the operation, a target the bot
+// reads, and its payload as the model wrote it (keys sorted), unchecked and
+// unconfirmed: the owner or admin who runs it checks it as themselves.
+// PayloadHash binds the payload a click on the proposal names.
+type ProposedAction struct {
+	Operation, Target string
+	Payload           []byte
+	PayloadHash       string
+}
+
+// AwaitingAdmin is a proposal waiting for an owner or admin until ExpiresAt.
+type AwaitingAdmin struct {
+	ActionID  string
+	ExpiresAt time.Time
+}
+
+// ProposalSink keeps what a bot proposes, for an owner or admin.
+type ProposalSink interface {
+	// Allows reports whether the bot may propose operation at all, before
+	// anything is read.
+	Allows(operation string) bool
+	// Propose keeps the proposal. Proposing the same payload again in a turn
+	// returns the proposal already kept while it waits.
+	Propose(ctx context.Context, action ProposedAction) (AwaitingAdmin, error)
+}
+
+// ProposedForAdminOutput is what a bot's model learns of an action it
+// proposed: only that an owner or admin decides.
+type ProposedForAdminOutput struct {
+	ActionID  string `json:"action_id"`
+	Status    string `json:"status" jsonschema:"awaiting_admin: an owner or admin reviews the action in Slack and runs it as themselves, or not."`
+	ExpiresAt string `json:"expires_at"`
+	Next      string `json:"next"`
+}
+
+// awaitingAdminNext tells a bot's model what happens to its proposal.
+const awaitingAdminNext = "An owner or admin reviews this in Slack and runs it as themselves, or not; you're told the result. " +
+	"Say in a sentence what it will do and stop."
+
+// maxProposalBytes bounds a proposal's payload.
+const maxProposalBytes = 32 << 10
 
 // PreparedForPersonOutput is what the agent learns of an action it prepared:
 // no token, only that its person decides, or how it ran when they approved
@@ -131,15 +184,49 @@ func preparedForPerson(r Recorded) PreparedForPersonOutput {
 	panic(fmt.Sprintf("integration: no output of %T", r))
 }
 
+// FounderAPI is Founder's own RPCs, which Helix Foundry's Slack bot calls as
+// the person a session is of: it starts their turns, reads what a turn
+// showed, and runs, dismisses or prepares again the actions they click,
+// stops their turns, and approves the workflow a bot's proposal they ran
+// made, all through Foundry's API, so every check the site's
+// calls pass (membership, the turn's thread being theirs, the hour's turns,
+// the workspace's budget, a restricted member's reach) holds in Slack too.
+// Every call runs with its Session's Ctx.
+//
+// A host serves it from the same API as the site: hosted Helix with a
+// FoundryServiceClient on its backend connection that forwards the session's
+// user (ports.SourceUser), a standalone install with its own gRPC client
+// carrying the site token, which acts as the install's owner.
+type FounderAPI interface {
+	SendFoundryAgentMessage(context.Context, *foundryv1.SendFoundryAgentMessageRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentTurnResponse, error)
+	ListFoundryAgentTurnEvents(context.Context, *foundryv1.ListFoundryAgentTurnEventsRequest, ...grpc.CallOption) (
+		*foundryv1.ListFoundryAgentTurnEventsResponse, error)
+	ExecuteFoundryAgentAction(context.Context, *foundryv1.ExecuteFoundryAgentActionRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentActionResponse, error)
+	DismissFoundryAgentAction(context.Context, *foundryv1.DismissFoundryAgentActionRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentActionResponse, error)
+	RefreshFoundryAgentAction(context.Context, *foundryv1.RefreshFoundryAgentActionRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentActionResponse, error)
+	CancelFoundryAgentTurn(context.Context, *foundryv1.CancelFoundryAgentTurnRequest, ...grpc.CallOption) (*foundryv1.FoundryAgentTurnResponse, error)
+	// ApproveFoundryAutomation approves, as the owner or admin who ran a
+	// bot's create_workflow or update_workflow, the revision their run
+	// wrote: the steps they reviewed (agent.Proposals).
+	ApproveFoundryAutomation(context.Context, *foundryv1.ApproveFoundryAutomationRequest, ...grpc.CallOption) (*foundryv1.FoundryAutomationResponse, error)
+}
+
+// The backend's own client serves FounderAPI, on either host.
+var _ FounderAPI = foundryv1.FoundryServiceClient(nil)
+
 // Session is the tools one agent turn or one click acts with, as one user:
 // Service and Identity add Foundry's tools to a server, HostTools the host's
 // own (helix_list_projects and helix_list_databases), and every call runs
 // with Ctx, which carries what the host's calls and confirmations need.
+// Founder is Founder's own API as the same user, for a caller that talks to
+// Founder on their behalf (the Slack bot); nil where the host offers none,
+// which such a caller refuses.
 type Session struct {
 	Ctx       context.Context
 	Service   *Service
 	Identity  *Identity
 	HostTools func(*mcp.Server)
+	Founder   FounderAPI
 }
 
 // SessionHost opens a Session for actor, a user, confirming as confirm. It is
@@ -159,7 +246,8 @@ type Session struct {
 // "foundry-agent". It refuses an actor that isn't a user of actor.WorkspaceID,
 // and its Identity is bound to that workspace: Authorize refuses (not found)
 // every request naming another, and Allows allows none, though the user may
-// belong to it, so a turn reads and acts in its own workspace only.
+// belong to it, so a turn reads and acts in its own workspace only. Its
+// Founder (FounderAPI) calls Foundry's API as that same user, with Ctx.
 //
 // A restricted member (source grants) talks to Founder too, read-only, which
 // holds only while the host:
@@ -173,6 +261,13 @@ type Session struct {
 //  3. builds the Identity as the member's MCP identity: IsGrantee and
 //     AsGrantee set, and FoundryGrants while their grants give them
 //     something, so the read tools register for a member without query read.
+//
+// A Slack install's bot (bot mode) opens a grantee session: actor is
+// ports.SourceGrantee with its ServiceCredentialID and no UserID, and the
+// Identity is that key's MCP identity, narrowed by Foundry's source grants
+// alone; it confirms ConfirmByAdmin only. The host refuses a key that is
+// revoked, expired, of another workspace, or holds database grants (which
+// would read past Foundry's grants), with PermissionDenied.
 type SessionHost interface {
 	Session(ctx context.Context, actor ports.Actor, confirm ConfirmMode) (Session, error)
 }
@@ -294,6 +389,72 @@ func (s *Service) RunApproved(ctx context.Context, identity *Identity, input Fou
 // runs an action: their click on Send answers is their consent.
 func (s *Service) RunAnswers(ctx context.Context, identity *Identity, input FoundryOperationInput) Executed {
 	return s.runNow(ctx, identity, toolRunAnswers, input)
+}
+
+// toolRunSlackApproved is how the audit names a Slack bot's proposal an
+// owner or admin ran.
+const toolRunSlackApproved = "helix_foundry_slack_action"
+
+// RunSlackApproved runs a Slack bot's proposal as identity, the owner or
+// admin who reviewed and ran it (confirming as the caller), as RunApproved
+// runs a workflow's step: validated and authorized as them now, a
+// confirmation prepared and consumed at once, the backend called once,
+// under Run's audit. Their click on Run is their consent; nothing was
+// checked or confirmed as the bot.
+func (s *Service) RunSlackApproved(ctx context.Context, identity *Identity, input FoundryOperationInput) Executed {
+	return s.runNow(ctx, identity, toolRunSlackApproved, input)
+}
+
+// proposeForAdmin hands a bot's action to sink as a proposal, refusing an
+// operation sink doesn't allow, a target the bot can't read (only
+// workspace:<id>, or an ontology, dashboard or workflow a read as the bot
+// finds, which source grants narrow), and a payload over maxProposalBytes.
+// It checks nothing else as the bot and prepares no confirmation: the owner
+// or admin who runs it checks it as themselves (RunSlackApproved).
+func (s *Service) proposeForAdmin(ctx context.Context, identity *Identity, call *Call, input FoundryOperationInput, sink ProposalSink) (
+	AwaitingAdmin, error) {
+	call.ResourceKind, call.ResourceID = TargetKind(input.Target), input.Target
+	if !sink.Allows(input.Operation) {
+		return AwaitingAdmin{}, detailedToolError{code: errCodeInvalidArguments,
+			message: "the bot can't propose " + input.Operation + ": tell them how to do it in Foundry instead"}
+	}
+	payload, err := json.Marshal(input.Payload)
+	switch {
+	case input.Payload == nil || err != nil:
+		return AwaitingAdmin{}, detailedToolError{code: errCodeInvalidArguments, message: "operation, target and a payload object are required"}
+	case len(payload) > maxProposalBytes:
+		return AwaitingAdmin{}, detailedToolError{code: errCodeInvalidArguments, message: fmt.Sprintf("the payload is over %d bytes", maxProposalBytes)}
+	}
+	unseen := detailedToolError{code: errCodeFailedPrecondition,
+		message: "the bot can't see " + input.Target + ": it proposes only on the workspace (workspace:<id>) or what it reads, such as the ontologies helix_foundry_list_ontologies lists"}
+	kind, _, _ := strings.Cut(input.Target, ":")
+	if kind == "workspace" {
+		if _, ok := cutTarget(input.Target, "workspace"); !ok {
+			return AwaitingAdmin{}, unseen
+		}
+	} else {
+		workspaceID, id, ok := CutFoundryTarget(input.Target, kind)
+		if !ok {
+			return AwaitingAdmin{}, unseen
+		}
+		var read error
+		switch kind {
+		case "ontology":
+			_, _, read = s.GetFoundryOntology(ctx, identity, &Call{}, OntologyInput{WorkspaceID: workspaceID, OntologyID: id})
+		case "dashboard":
+			_, _, read = s.GetFoundryDashboard(ctx, identity, &Call{}, FoundryDashboardInput{WorkspaceID: workspaceID, DashboardID: id})
+		case "workflow":
+			_, _, read = s.GetFoundryAutomation(ctx, identity, &Call{}, FoundryAutomationInput{WorkspaceID: workspaceID, AutomationID: id})
+		default:
+			// A database or a connector: a grantee reads neither.
+			read = errCodeNotFound
+		}
+		if read != nil {
+			return AwaitingAdmin{}, unseen
+		}
+	}
+	return sink.Propose(ctx, ProposedAction{Operation: input.Operation, Target: input.Target, Payload: payload,
+		PayloadHash: confirmationPayloadHash(foundryOperationPrefix+input.Operation, input.Target, payload)})
 }
 
 // runNow is RunApproved and RunAnswers, under tool's name in the audit.

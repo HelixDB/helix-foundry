@@ -54,6 +54,11 @@ type accessStore struct {
 	// audiences the sources' permissions as owners see them.
 	sharing   map[string][]foundrymodel.FoundrySourceSharing
 	audiences []foundrymodel.FoundrySourceAudience
+	// slackBot is the service credential ws-1's Slack install acts as in
+	// bot mode (slack_bot_test.go); empty for none. slackBotErr fails its
+	// read.
+	slackBot    string
+	slackBotErr error
 }
 
 func (s *accessStore) SourceSharingFor(_ context.Context, _, email string) ([]foundrymodel.FoundrySourceSharing, error) {

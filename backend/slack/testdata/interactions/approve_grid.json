@@ -1,0 +1,55 @@
+{
+  "type": "block_actions",
+  "user": {
+    "id": "W0GRID0001",
+    "team_id": "T0GRIDWS01"
+  },
+  "api_app_id": "A0FOUNDRY",
+  "token": "legacy",
+  "container": {
+    "type": "message",
+    "message_ts": "1795000050.000100",
+    "channel_id": "C0GEN0001",
+    "is_ephemeral": false,
+    "thread_ts": "1795000000.000100"
+  },
+  "trigger_id": "123.456.abc",
+  "team": {
+    "id": "T0GRIDWS01",
+    "domain": "acme-eu",
+    "enterprise_id": "E0ACME001",
+    "enterprise_name": "Acme"
+  },
+  "enterprise": {
+    "id": "E0ACME001",
+    "name": "Acme"
+  },
+  "is_enterprise_install": false,
+  "channel": {
+    "id": "C0GEN0001",
+    "name": "general"
+  },
+  "message": {
+    "type": "message",
+    "ts": "1795000050.000100",
+    "text": "card"
+  },
+  "state": {
+    "values": {}
+  },
+  "response_url": "https://hooks.slack.com/actions/T0AAA1111/1/secret",
+  "actions": [
+    {
+      "action_id": "foundry.approve",
+      "block_id": "card",
+      "text": {
+        "type": "plain_text",
+        "text": "Run",
+        "emoji": true
+      },
+      "type": "button",
+      "action_ts": "1795000100.123456",
+      "value": "{\"a\": \"01JBACTXN00000000000000000\", \"h\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+    }
+  ]
+}

@@ -75,9 +75,11 @@ import {
   isLiveSync,
   keyLabel,
   lastSyncedAt,
+  readsThroughApp,
   sourceSummary,
   syncBadge,
 } from "./model";
+import { SlackNotices, SlackStatusLine } from "./slack-status";
 import { useAccessCheck } from "../workspace/access-guard";
 import {
   AccountNotices,
@@ -119,7 +121,12 @@ function details(
       { label: "Connector", value: connectorLabel(c.kind) },
       c.account
         ? { label: "Access", value: accountLine(c) }
-        : { label: "Credential", value: c.secretHint, mono: true },
+        : readsThroughApp(c)
+          ? {
+              label: "Access",
+              value: `Helix Foundry’s Slack app in ${c.slackStatus!.teamName || "Slack"}`,
+            }
+          : { label: "Credential", value: c.secretHint, mono: true },
     ];
   if (c.account && c.kind === "github")
     items.push({
@@ -292,7 +299,12 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
     arrival = (useLocation().state || {}) as SignedInArrival,
     signIn = useSignInStart(),
     manage = canManage(role);
-  const connector = useQuery(connectorQuery(id, connectorId)),
+  const connector = useQuery({
+      ...connectorQuery(id, connectorId),
+      // Through Helix's Slack app, its backfill moves on by itself.
+      refetchInterval: (q) =>
+        q.state.data?.connector.slackStatus?.backfill ? 15_000 : false,
+    }),
     syncs = useQuery(connectorSyncsQuery(id, connectorId)),
     kinds = useQuery(connectorKindsQuery(id)),
     sets = useQuery(documentSetQueries.list(id)),
@@ -382,7 +394,12 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
   const name = c.name || connectorLabel(c.kind),
     // Nothing syncs while its account needs signing in again.
     broken = needsSignIn(c),
-    badge = broken ? connectorBadge(c) : syncBadge(current),
+    // Through Helix's Slack app, Slack sends its messages: no Sync.
+    pushed = readsThroughApp(c),
+    badge =
+      broken || pushed
+        ? connectorBadge({ ...c, lastSync: current })
+        : syncBadge(current),
     refreshed = lastSyncedAt(c),
     tables = c.tables || [],
     own = (sets.data || []).filter((s) => s.connector?.connectorId === c.id),
@@ -421,6 +438,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
         meta={
           <>
             <StatusBadge status={badge.status} label={badge.label} />
+            <SlackStatusLine connector={c} />
             {refreshed && <span>Synced {formatRelative(refreshed)}</span>}
             {current?.status === "CONNECTOR_SYNC_STATUS_FAILED" &&
               current.finishedAt && (
@@ -431,19 +449,21 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
         actions={
           manage && (
             <>
-              <Button
-                icon={RefreshCw}
-                pending={action.pending}
-                disabled={live || gated || broken}
-                onClick={() =>
-                  action.run(
-                    () => syncConnector(id, c.id, "connection"),
-                    "Sync queued",
-                  )
-                }
-              >
-                {live ? "Syncing…" : "Sync now"}
-              </Button>
+              {!pushed && (
+                <Button
+                  icon={RefreshCw}
+                  pending={action.pending}
+                  disabled={live || gated || broken}
+                  onClick={() =>
+                    action.run(
+                      () => syncConnector(id, c.id, "connection"),
+                      "Sync queued",
+                    )
+                  }
+                >
+                  {live ? "Syncing…" : "Sync now"}
+                </Button>
+              )}
               <DropdownMenu
                 label="Connection actions"
                 align="end"
@@ -485,6 +505,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
         arrival={arrival}
         installUrl={kind?.github?.installUrl}
       />
+      <SlackNotices connector={c} current={current} setup={kind?.slack} />
       {gated && (
         <ProGate
           feature={`${connectorLabel(c.kind)} connections`}
@@ -501,7 +522,9 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
       {current?.status === "CONNECTOR_SYNC_STATUS_FAILED" &&
         current.error &&
         !broken &&
-        !installAfterSync && (
+        !installAfterSync &&
+        // What keeps Slack's app from reading says it already.
+        !(pushed && c.slackStatus?.state !== "SLACK_FEED_STATE_LIVE") && (
           <p role="alert" className="error-box dc-sync-error">
             <strong>The last sync failed.</strong> {current.error}
           </p>
@@ -676,13 +699,15 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
       {editing && isKnownKind(c.kind) && !isEventSource(c.kind) && (
         <Modal title={`Edit ${name}`} onClose={() => setEditing(false)}>
           <div className="pad connection-dialog">
-            {/* The kind's S3 setup decides the form's access choices, so
-                an S3 form waits for the kinds. */}
-            {c.kind !== "s3" || kinds.data ? (
+            {/* The kind's S3 setup decides the form's access choices, and
+                Slack's whether it may read through Helix's app, so those
+                forms wait for the kinds. */}
+            {(c.kind !== "s3" && c.kind !== "slack") || kinds.data ? (
               <ConnectionForm
                 kind={c.kind}
                 connector={c}
                 setup={kind?.s3}
+                slack={kind?.slack}
                 onDone={async (_, message) => {
                   await qc.invalidateQueries({ queryKey: [id, "connectors"] });
                   setEditing(false);

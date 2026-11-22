@@ -28,7 +28,7 @@ import { ontologyQueries, questionQueries } from "./queries";
 // screen, Founder's page itself until a chat is chosen). Where the build has
 // Founder: New chat, Founder's threads by recency (the dock's list: one list
 // wherever Founder is asked; a grantee's only those it made whose grants it
-// still holds), then the open ontology's Analyst threads from before Founder (a
+// still holds; those started in Slack tagged Slack), then the open ontology's Analyst threads from before Founder (a
 // grantee’s own questions), each marked Earlier question and opened read only.
 // Else, and where the WFE has Founder off, the Analyst's threads
 // (ask-threads.tsx). Rendered outside the ontology's scope: it reads the
@@ -109,7 +109,11 @@ export function FounderThreads({ onNavigate }: { onNavigate?: () => void }) {
                       title={t.title}
                     >
                       <span className="ak-thread-title">{t.title}</span>
-                      <small>{formatRelative(t.last, now)}</small>
+                      <small>
+                        {/* Started in Slack, through Helix Foundry's app. */}
+                        {t.slack && <Tag>Slack</Tag>}
+                        {formatRelative(t.last, now)}
+                      </small>
                     </Link>
                   </li>
                 ))}

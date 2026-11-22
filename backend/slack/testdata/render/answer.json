@@ -1,0 +1,963 @@
+{
+  "answered": [
+    {
+      "text": "There are 1234 invoices <https://foundry.helix-db.com/ask/ont_1?workspace=ws_1&amp;thread=q_1|[1]>, see the contract <https://foundry.helix-db.com/ontology/ont_1/documents/doc_1?load=load_1&amp;workspace=ws_1#s1-4-9|[2]> and `acme.com` .\n*Invoices &lt;all&gt;*: 1,234\n*Total billed*: 1,234,567.8912\n• Paid: 40 <https://foundry.helix-db.com/ask/ont_1?workspace=ws_1&amp;thread=q_1|[3]>\n• Open: &lt;b&gt;3&lt;/b&gt; <https://foundry.helix-db.com/ontology/ont_1/loads/load_1/rule-breaks?constraint=paid&amp;key=k1&amp;workspace=ws_1|[4]>\n• Ada's profile <https://foundry.helix-db.com/ontology/ont_1/loads/load_1?workspace=ws_1|[5]>\n<https://foundry.helix-db.com/ask/ont_1?workspace=ws_1&amp;thread=q_1|[6]>\nThe rest.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "There are 1234 invoices \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|[1]\u003e, see the contract \u003chttps://foundry.helix-db.com/ontology/ont_1/documents/doc_1?load=load_1\u0026amp;workspace=ws_1#s1-4-9|[2]\u003e and `acme.com` .",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Invoices \u0026lt;all\u0026gt;*: 1,234",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Total billed*: 1,234,567.8912",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Over 40 values · 2 without one, skipped",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "only the first 40",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "• Paid: 40 \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|[3]\u003e\n• Open: \u0026lt;b\u0026gt;3\u0026lt;/b\u0026gt; \u003chttps://foundry.helix-db.com/ontology/ont_1/loads/load_1/rule-breaks?constraint=paid\u0026amp;key=k1\u0026amp;workspace=ws_1|[4]\u003e\n• Ada's profile \u003chttps://foundry.helix-db.com/ontology/ont_1/loads/load_1?workspace=ws_1|[5]\u003e",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "*By status*: \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e for the bar chart.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "\u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|[6]\u003e",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The rest.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "\u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e for the table.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "answered without titles": [
+    {
+      "text": "Counts.\n*Count*: 7\n*Result*: none",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *your ontology* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Counts.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Count*: 7",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Result*: none",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Over 1 value",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "budget exhausted": [
+    {
+      "text": "The Analyst stopped at its spending cap before it could answer.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst stopped at its spending cap before it could answer.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "cancelled": [
+    {
+      "text": "The question was cancelled.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The question was cancelled.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "cannot answer": [
+    {
+      "text": "The Analyst can’t answer this from Sales: No renewal dates.\nWhat it would need: Contracts need a renewal date.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst can’t answer this from Sales: No renewal dates.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "What it would need: Contracts need a renewal date.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "cannot answer without a gap": [
+    {
+      "text": "The Analyst can’t answer this from Sales: No renewal dates.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst can’t answer this from Sales: No renewal dates.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "failed with a result": [
+    {
+      "text": "The Analyst couldn’t answer: model rate limited",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst couldn’t answer: model rate limited",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "failed with an error": [
+    {
+      "text": "The Analyst couldn’t answer: Helix's model account is out of credit",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst couldn’t answer: Helix's model account is out of credit",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "failed without a result": [
+    {
+      "text": "The Analyst couldn’t answer: the load was deleted",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst couldn’t answer: the load was deleted",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "failed without a word": [
+    {
+      "text": "The Analyst couldn’t answer.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst couldn’t answer.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "long": [
+    {
+      "text": "A paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        }
+      ]
+    },
+    {
+      "text": "A paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.\nA paragraph.",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A paragraph.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "queued": [
+    {
+      "text": "The Analyst is still answering. <https://foundry.helix-db.com/ask/ont_1?workspace=ws_1&amp;thread=q_1|Follow it in Foundry>.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst is still answering. \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Follow it in Foundry\u003e.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "still running": [
+    {
+      "text": "The Analyst is still answering. <https://foundry.helix-db.com/ask/ont_1?workspace=ws_1&amp;thread=q_1|Follow it in Foundry>.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The Analyst is still answering. \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Follow it in Foundry\u003e.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "unnamed ontology": [
+    {
+      "text": "The question was cancelled.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *your ontology* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "The question was cancelled.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "unreadable": [
+    {
+      "text": "This answer can’t be shown here: <https://foundry.helix-db.com/ask/ont_1?workspace=ws_1&amp;thread=q_1|open it in Foundry>.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Answer from *Sales* · \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|Open in Foundry\u003e",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "This answer can’t be shown here: \u003chttps://foundry.helix-db.com/ask/ont_1?workspace=ws_1\u0026amp;thread=q_1|open it in Foundry\u003e.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ]
+}

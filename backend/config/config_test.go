@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,7 +26,7 @@ func helixClaude() AIDefault {
 // every runs each of Foundry's roles but foundry-notify-worker, which needs
 // the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
-	AskWorker: true, EnrichmentWorker: true, HealWorker: true, AgentWorker: true}
+	AskWorker: true, EnrichmentWorker: true, HealWorker: true, AgentWorker: true, SlackWorker: true}
 
 // The defaults, with a model provider and the connectors' key, serve every
 // role; each role's own settings are checked only where it runs.
@@ -672,4 +673,666 @@ func TestFoundryRemindersValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// slackOn is the defaults with the Slack app on and complete, as a hosted
+// stamp sets it.
+func slackOn() Config {
+	c := Defaults()
+	c.Foundry.AI.Default = helixClaude()
+	c.Foundry.Slack.Enabled = true
+	c.Foundry.Slack.ClientID, c.Foundry.Slack.AppID = "1234.5678", "A0123"
+	c.Foundry.Slack.ClientSecret, c.Foundry.Slack.SigningSecret = "client-secret", "signing-secret"
+	c.Foundry.Slack.SiteURL = "https://foundry.helix-db.com"
+	return c
+}
+
+// The app is off by default, and its worker's defaults are the reviewed
+// ones: a second's poll, three minutes' lease, 16 at once, half of each of
+// Slack's limits, and what came from Slack kept 30 days at most.
+func TestSlackDefaults(t *testing.T) {
+	s := Defaults().Foundry.Slack
+	want := SlackConfig{
+		HTTP: ServiceHTTPConfig{Listen: ":8104"}, PollInterval: time.Second, Lease: 3 * time.Minute, Concurrency: 16, MaxAttempts: 5,
+		RetryBackoff: 10 * time.Second, APIShare: 0.5, BusyWait: 15 * time.Minute,
+		Retention: SlackRetentionConfig{Threads: 30 * 24 * time.Hour, Intake: 7 * 24 * time.Hour, Replies: 7 * 24 * time.Hour},
+	}
+	if s.Enabled || s.InstallAllowlist != nil || s.ClientSecret != "" || s.SigningSecret != "" {
+		t.Fatalf("defaults turn the app on or hold a secret: %+v", s)
+	}
+	if s.HTTP != want.HTTP || s.PollInterval != want.PollInterval || s.Lease != want.Lease || s.Concurrency != want.Concurrency ||
+		s.MaxAttempts != want.MaxAttempts || s.RetryBackoff != want.RetryBackoff || s.APIShare != want.APIShare || s.BusyWait != want.BusyWait ||
+		s.Retention != want.Retention {
+		t.Fatalf("defaults = %+v", s)
+	}
+	// Off, nothing of it is read, so the defaults serve every role.
+	off := slackOn()
+	off.Foundry.Slack = Defaults().Foundry.Slack
+	if err := off.Validate(Roles{SlackWorker: true, API: true, Events: true}); err != nil {
+		t.Fatalf("an off app was checked: %v", err)
+	}
+	// The worker's defaults outlast a default turn's attempt.
+	if d := Defaults().Foundry; d.Slack.BusyWait < d.Agent.AttemptTimeout() {
+		t.Fatalf("busy_wait %s is shorter than a turn's attempt %s", d.Slack.BusyWait, d.Agent.AttemptTimeout())
+	}
+}
+
+// On, the API and the worker need the app's identity, its secrets and the
+// site's origin; the worker its own settings; the door, which holds no
+// secret, nothing but its gate. Each bound holds at its edge and refuses past
+// it, and binds only the roles that read it.
+func TestSlackValidate(t *testing.T) {
+	worker, api := Roles{SlackWorker: true}, Roles{API: true}
+	for name, roles := range map[string]Roles{"the API": api, "the worker": worker, "both": {API: true, SlackWorker: true}} {
+		if c := slackOn(); c.Validate(roles) != nil {
+			t.Fatalf("%s, complete: %v", name, c.Validate(roles))
+		}
+	}
+	// The door reads only enabled and its gate: no secret, no site.
+	door := Defaults()
+	door.Foundry.Slack.Enabled = true
+	if err := door.Validate(Roles{Events: true}); err != nil {
+		t.Fatalf("the door with Slack on and no secrets: %v", err)
+	}
+	if err := door.Validate(Roles{}); err != nil {
+		t.Fatalf("a process of no role with Slack on: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackConfig)
+		roles  Roles
+		want   string // empty when valid
+	}{
+		"no client id":           {func(s *SlackConfig) { s.ClientID = "" }, api, "foundry.slack.client_id must be set"},
+		"a blank app id":         {func(s *SlackConfig) { s.AppID = " " }, worker, "foundry.slack.app_id must be set"},
+		"no client secret":       {func(s *SlackConfig) { s.ClientSecret = "" }, api, "foundry.slack.client_secret must be set"},
+		"no signing secret":      {func(s *SlackConfig) { s.SigningSecret = "\t" }, worker, "foundry.slack.signing_secret must be set"},
+		"no site":                {func(s *SlackConfig) { s.SiteURL = "" }, api, "foundry.slack.site_url must be set"},
+		"a site on plain HTTP":   {func(s *SlackConfig) { s.SiteURL = "http://foundry.helix-db.com" }, api, "HTTPS"},
+		"a site with a path":     {func(s *SlackConfig) { s.SiteURL = "https://foundry.helix-db.com/app" }, worker, "foundry.slack.site_url"},
+		"a site's trailing /":    {func(s *SlackConfig) { s.SiteURL = "https://foundry.helix-db.com/" }, api, "must be an origin"},
+		"a site not absolute":    {func(s *SlackConfig) { s.SiteURL = "foundry.helix-db.com" }, api, "not an absolute origin"},
+		"a local site":           {func(s *SlackConfig) { s.SiteURL = "http://localhost:3000" }, api, ""},
+		"a site with a port":     {func(s *SlackConfig) { s.SiteURL = "https://local.foundry.helix-db.com:3000" }, api, ""},
+		"an allowlist":           {func(s *SlackConfig) { s.InstallAllowlist = []string{"ws-1", "ws-2"} }, api, ""},
+		"a blank allowed id":     {func(s *SlackConfig) { s.InstallAllowlist = []string{"ws-1", ""} }, api, "install_allowlist[1]"},
+		"a spaced allowed id":    {func(s *SlackConfig) { s.InstallAllowlist = []string{" ws-1"} }, worker, "install_allowlist[0]"},
+		"an id allowed twice":    {func(s *SlackConfig) { s.InstallAllowlist = []string{"ws-1", "ws-2", "ws-1"} }, api, `lists "ws-1" twice`},
+		"no health listener":     {func(s *SlackConfig) { s.HTTP.Listen = "" }, worker, "foundry.slack.http.listen"},
+		"no poll":                {func(s *SlackConfig) { s.PollInterval = 0 }, worker, "poll_interval"},
+		"no concurrency":         {func(s *SlackConfig) { s.Concurrency = 0 }, worker, "concurrency"},
+		"no attempt":             {func(s *SlackConfig) { s.MaxAttempts = 0 }, worker, "max_attempts"},
+		"no backoff":             {func(s *SlackConfig) { s.RetryBackoff = 0 }, worker, "retry_backoff"},
+		"a lease short of a run": {func(s *SlackConfig) { s.Lease = 3*time.Minute - 1 }, worker, "foundry.slack.lease is 2m59.999999999s"},
+		"the old 2m lease":       {func(s *SlackConfig) { s.Lease = 2 * time.Minute }, worker, "it must be at least 3m0s"},
+		"a lease past a run":     {func(s *SlackConfig) { s.Lease = 3 * time.Minute }, worker, ""},
+		"no share":               {func(s *SlackConfig) { s.APIShare = 0 }, worker, "api_share is 0"},
+		"a negative share":       {func(s *SlackConfig) { s.APIShare = -0.5 }, worker, "api_share"},
+		"more than every limit":  {func(s *SlackConfig) { s.APIShare = 1.01 }, worker, "api_share is 1.01"},
+		"no share at all (NaN)":  {func(s *SlackConfig) { s.APIShare = math.NaN() }, worker, "api_share is NaN"},
+		"every limit, one":       {func(s *SlackConfig) { s.APIShare = 1 }, worker, ""},
+		"a wait short of a turn": {func(s *SlackConfig) { s.BusyWait = 5*time.Minute - 1 }, worker, "busy_wait 4m59.999999999s must be at least"},
+		"a wait of a turn":       {func(s *SlackConfig) { s.BusyWait = 5 * time.Minute }, worker, ""},
+		"threads kept no time":   {func(s *SlackConfig) { s.Retention.Threads = 0 }, worker, "retention.threads is 0s"},
+		"threads past 30 days":   {func(s *SlackConfig) { s.Retention.Threads = MaxSlackThreadRetention + 1 }, worker, "at most 720h0m0s"},
+		"threads kept a day":     {func(s *SlackConfig) { s.Retention.Threads = 24 * time.Hour }, worker, ""},
+		"intake gone in retries": {func(s *SlackConfig) { s.Retention.Intake = time.Hour - 1 }, worker, "retention.intake is 59m59.999999999s"},
+		"intake kept an hour":    {func(s *SlackConfig) { s.Retention.Intake = time.Hour }, worker, ""},
+		"replies kept no time":   {func(s *SlackConfig) { s.Retention.Replies = 0 }, worker, "retention.replies must be positive"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := slackOn()
+			tc.mutate(&c.Foundry.Slack)
+			if err := c.Validate(tc.roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			for _, other := range []Roles{{}, {Events: true}, {AgentWorker: true}} {
+				if err := c.Validate(other); err != nil {
+					t.Fatalf("checked without its role (%+v): %v", other, err)
+				}
+			}
+			// Off, nothing of it is read.
+			c.Foundry.Slack.Enabled = false
+			if err := c.Validate(tc.roles); err != nil {
+				t.Fatalf("checked while off: %v", err)
+			}
+		})
+	}
+	// The worker's settings are its own: the API never reads them.
+	c := slackOn()
+	c.Foundry.Slack.Lease, c.Foundry.Slack.Retention = 0, SlackRetentionConfig{}
+	if err := c.Validate(api); err != nil {
+		t.Fatalf("the API checked the worker's settings: %v", err)
+	}
+	// A turn allowed longer needs a longer wait.
+	c = slackOn()
+	c.Foundry.Agent.MaxWallSecs = 900
+	if err := c.Validate(worker); err == nil || !contains(err.Error(), "(16m0s)") {
+		t.Fatalf("a wait shorter than a longer turn = %v", err)
+	}
+}
+
+// A standalone install reaches Slack through Helix's relay: on, its API and
+// worker need no app of their own, and it refuses the app's secrets.
+func TestSlackLocal(t *testing.T) {
+	local := func() Config {
+		c := Defaults()
+		c.Host.Local = true
+		c.Foundry.Sync.DataBucket = "foundry-data"
+		c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "local", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+		c.Read.Address = "127.0.0.1:50068"
+		plans := DefaultPlans()
+		c.Billing.Plans = []PlanConfig{{Code: "local", DisplayName: "Local", Kinds: plans[len(plans)-1].Kinds, Sync: plans[len(plans)-1].Sync}}
+		c.Foundry.Slack.Enabled = true
+		return c
+	}
+	roles := Roles{API: true, SlackWorker: true}
+	if c := local(); c.Validate(roles) != nil {
+		t.Fatalf("an install with Slack on: %v", c.Validate(roles))
+	}
+	for name, mutate := range map[string]func(*SlackConfig){
+		"a client secret":  func(s *SlackConfig) { s.ClientSecret = "client-secret" },
+		"a signing secret": func(s *SlackConfig) { s.SigningSecret = "signing-secret" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := local()
+			mutate(&c.Foundry.Slack)
+			if err := c.Validate(Roles{}); err == nil || !contains(err.Error(), "no Slack app of its own") {
+				t.Fatalf("Validate = %v", err)
+			}
+		})
+	}
+	// Its worker's own settings still bind it.
+	c := local()
+	c.Foundry.Slack.Concurrency = 0
+	if err := c.Validate(roles); err == nil || !contains(err.Error(), "concurrency") {
+		t.Fatalf("Validate = %v", err)
+	}
+}
+
+// The shared bot's bounds default to 120 messages an hour, 20 of them one
+// Slack user's, and a day for a proposal; hosted, the API, the agent worker
+// and the Slack worker check them, each at its edge; off, or on a
+// standalone install, where bot mode is refused, nothing does.
+func TestSlackBot(t *testing.T) {
+	if b := Defaults().Foundry.Slack.Bot; b != (SlackBotConfig{PerHour: 120, PerUserPerHour: 20, ProposalTTL: 24 * time.Hour}) {
+		t.Fatalf("defaults = %+v", b)
+	}
+	readers := []Roles{{API: true}, {AgentWorker: true}, {SlackWorker: true}}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackBotConfig)
+		want   string // empty when valid
+	}{
+		"no turns an hour":       {func(b *SlackBotConfig) { b.PerHour = 0 }, "per_hour and per_user_per_hour must be positive"},
+		"no turns a user":        {func(b *SlackBotConfig) { b.PerUserPerHour = -1 }, "per_hour and per_user_per_hour must be positive"},
+		"one each":               {func(b *SlackBotConfig) { b.PerHour, b.PerUserPerHour = 1, 1 }, ""},
+		"proposals never wait":   {func(b *SlackBotConfig) { b.ProposalTTL = 0 }, "proposal_ttl is 0s"},
+		"proposals past threads": {func(b *SlackBotConfig) { b.ProposalTTL = MaxSlackThreadRetention + 1 }, "at most 720h0m0s"},
+		"proposals as threads":   {func(b *SlackBotConfig) { b.ProposalTTL = MaxSlackThreadRetention }, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, roles := range readers {
+				c := slackOn()
+				tc.mutate(&c.Foundry.Slack.Bot)
+				if err := c.Validate(roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+					t.Fatalf("Validate(%+v) = %v, want %q", roles, err, tc.want)
+				}
+				for _, other := range []Roles{{}, {Events: true}} {
+					if err := c.Validate(other); err != nil {
+						t.Fatalf("checked without its role (%+v): %v", other, err)
+					}
+				}
+				c.Foundry.Slack.Enabled = false
+				if err := c.Validate(roles); err != nil {
+					t.Fatalf("checked while off: %v", err)
+				}
+			}
+		})
+	}
+	// A standalone install has no bot mode: its bounds aren't read.
+	c := Defaults()
+	c.Host.Local = true
+	c.Foundry.Slack.Enabled = true
+	c.Foundry.Slack.Bot = SlackBotConfig{}
+	if err := c.Foundry.Slack.validate(Roles{API: true, AgentWorker: true}, true, c.Foundry.Agent); err != nil {
+		t.Fatalf("a standalone install's bot bounds were checked: %v", err)
+	}
+}
+
+// Slack's routes have a gate of their own on the door, wide for Slack's few
+// addresses, checked where the door runs whether or not the app is on: each
+// bound holds at its edge and refuses past it, as the send gate's do.
+func TestSlackDoorGate(t *testing.T) {
+	d := Defaults().Foundry.Events.Endpoint
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 100, AddressBurstRequests: 200, AddressMaxInFlight: 32, RequestsPerSecond: 200, BurstRequests: 400,
+		MaxInFlight: 64, MaxBytesInFlight: 64 << 20,
+	}); d.Slack != want {
+		t.Fatalf("defaults = %+v", d.Slack)
+	}
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 50, AddressBurstRequests: 100, AddressMaxInFlight: 8, RequestsPerSecond: 200, BurstRequests: 400,
+		MaxInFlight: 32, MaxBytesInFlight: 32 << 20,
+	}); d.SendGate() != want {
+		t.Fatalf("SendGate() = %+v", d.SendGate())
+	}
+	door := Roles{Events: true}
+	const body = SlackInteractivityBodyBytes
+	for name, tc := range map[string]struct {
+		mutate func(*DoorGateConfig)
+		want   string // empty when valid
+	}{
+		"no address rate":        {func(g *DoorGateConfig) { g.AddressRequestsPerSecond = 0 }, "foundry.events.endpoint.slack.address_requests_per_second must be positive"},
+		"a negative burst":       {func(g *DoorGateConfig) { g.AddressBurstRequests = -1 }, "foundry.events.endpoint.slack.address_burst_requests must be positive"},
+		"no address place":       {func(g *DoorGateConfig) { g.AddressMaxInFlight = 0 }, "foundry.events.endpoint.slack.address_max_in_flight must be positive"},
+		"no pod rate":            {func(g *DoorGateConfig) { g.RequestsPerSecond = 0 }, "foundry.events.endpoint.slack.requests_per_second must be positive"},
+		"no pod burst":           {func(g *DoorGateConfig) { g.BurstRequests = 0 }, "foundry.events.endpoint.slack.burst_requests must be positive"},
+		"no place":               {func(g *DoorGateConfig) { g.MaxInFlight = 0 }, "foundry.events.endpoint.slack.max_in_flight must be positive"},
+		"no bytes":               {func(g *DoorGateConfig) { g.MaxBytesInFlight = 0 }, "foundry.events.endpoint.slack.max_bytes_in_flight must be positive"},
+		"bytes short of a click": {func(g *DoorGateConfig) { g.MaxBytesInFlight = body - 1 }, "foundry.events.endpoint.slack.max_bytes_in_flight must be at least max_body_bytes"},
+		"an address as wide as the pod": {func(g *DoorGateConfig) { g.AddressMaxInFlight = g.MaxInFlight },
+			"foundry.events.endpoint.slack.address_max_in_flight is 64; it must be below max_in_flight (64)"},
+		"an address one place short": {func(g *DoorGateConfig) { g.AddressMaxInFlight = g.MaxInFlight - 1; g.MaxBytesInFlight = 63*body + 1 }, ""},
+		"an address's bodies filling the pod's bytes": {func(g *DoorGateConfig) { g.MaxBytesInFlight = 32 * body },
+			"foundry.events.endpoint.slack.address_max_in_flight is 32"},
+		"an address's bodies a byte short": {func(g *DoorGateConfig) { g.MaxBytesInFlight = 32*body + 1 }, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Defaults()
+			tc.mutate(&c.Foundry.Events.Endpoint.Slack)
+			if err := c.Validate(door); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			if err := c.Validate(Roles{SlackWorker: true}); err != nil {
+				t.Fatalf("checked without the door: %v", err)
+			}
+		})
+	}
+	// The send gate's bounds keep their own names and their order: the
+	// endpoint's own checks, then its gate's, then Slack's.
+	c := Defaults()
+	c.Foundry.Events.Endpoint.MaxInFlight, c.Foundry.Events.Endpoint.Slack.MaxInFlight = 0, 0
+	if err := c.Validate(door); err == nil || err.Error() != "foundry.events.endpoint.max_in_flight must be positive" {
+		t.Fatalf("Validate = %v", err)
+	}
+	c = Defaults()
+	c.Foundry.Events.Endpoint.MaxBodyBytes, c.Foundry.Events.Endpoint.AddressMaxInFlight = MaxEventSendBytes+1, 0
+	if err := c.Validate(door); err == nil || !contains(err.Error(), "foundry.events.endpoint.max_body_bytes is 4194305") {
+		t.Fatalf("Validate = %v", err)
+	}
+	for want, mutate := range map[string]func(*EventsEndpointConfig){
+		"grpc.listen and http.listen must be set": func(e *EventsEndpointConfig) { e.HTTP.Listen, e.Slack.MaxInFlight = "", 0 },
+		"validated_for is 0s":                     func(e *EventsEndpointConfig) { e.ValidatedFor, e.Slack.MaxInFlight = 0, 0 },
+	} {
+		c = Defaults()
+		mutate(&c.Foundry.Events.Endpoint)
+		if err := c.Validate(door); err == nil || !contains(err.Error(), want) {
+			t.Fatalf("Validate = %v, want %q", err, want)
+		}
+	}
+	c = Defaults()
+	c.Foundry.Events.Endpoint.MaxBytesInFlight = c.Foundry.Events.Endpoint.MaxBodyBytes - 1
+	if err := c.Validate(door); err == nil || err.Error() != "foundry.events.endpoint.max_bytes_in_flight must be at least max_body_bytes, or the largest body is always refused" {
+		t.Fatalf("Validate = %v", err)
+	}
+	c = Defaults()
+	c.Foundry.Events.Endpoint.AddressMaxInFlight = 16
+	if err := c.Validate(door); err == nil || err.Error() !=
+		"foundry.events.endpoint.address_max_in_flight is 16; it must be below max_in_flight (32), and that many bodies of max_body_bytes below max_bytes_in_flight (33554432), so one address never holds all of a pod's room" {
+		t.Fatalf("Validate = %v", err)
+	}
+}
+
+// The relay is off by default. On, each bound holds at its edge and refuses
+// past it, for the API and the Slack worker of a hosted deployment only:
+// a standalone install's relay settings are its own (cmd/foundry).
+func TestSlackRelayValidate(t *testing.T) {
+	if Defaults().Foundry.Slack.Relay.Enabled {
+		t.Fatal("the relay is on by default")
+	}
+	if MaxSlackRelayClaimWait != 20*time.Second || MinSlackRelayCallBytes != 16<<10 || MaxSlackRelayCallBytes != 1<<20 {
+		t.Fatalf("bounds = %s, %d, %d", MaxSlackRelayClaimWait, MinSlackRelayCallBytes, MaxSlackRelayCallBytes)
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackRelayConfig)
+		want   string // empty when valid
+	}{
+		"the defaults":           {func(*SlackRelayConfig) {}, ""},
+		"no wait":                {func(r *SlackRelayConfig) { r.ClaimWait = 0 }, "relay.claim_wait is 0s; it must be above 0 and at most 20s"},
+		"a wait past the call":   {func(r *SlackRelayConfig) { r.ClaimWait = 20*time.Second + 1 }, "relay.claim_wait is 20.000000001s"},
+		"no poll":                {func(r *SlackRelayConfig) { r.ClaimPoll = 0 }, "relay.claim_poll is 0s"},
+		"a poll past the wait":   {func(r *SlackRelayConfig) { r.ClaimPoll = r.ClaimWait + 1 }, "at most claim_wait (20s)"},
+		"a poll of the wait":     {func(r *SlackRelayConfig) { r.ClaimPoll = r.ClaimWait }, ""},
+		"no delivery":            {func(r *SlackRelayConfig) { r.DeliveryTTL = 0 }, "relay delivery_ttl and calls_per_minute must be positive"},
+		"no calls":               {func(r *SlackRelayConfig) { r.CallsPerMinute = 0 }, "calls_per_minute must be positive"},
+		"a body short of a post": {func(r *SlackRelayConfig) { r.MaxCallBytes = 16<<10 - 1 }, "relay.max_call_bytes is 16383; it must be from 16384 to 1048576"},
+		"the least body":         {func(r *SlackRelayConfig) { r.MaxCallBytes = 16 << 10 }, ""},
+		"the most body":          {func(r *SlackRelayConfig) { r.MaxCallBytes = 1 << 20 }, ""},
+		"a body past the door's": {func(r *SlackRelayConfig) { r.MaxCallBytes = 1<<20 + 1 }, "relay.max_call_bytes is 1048577"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := slackOn()
+			c.Foundry.Sync.DataBucket = "foundry-data"
+			c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "k1", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+			c.Foundry.Slack.Relay.Enabled = true
+			tc.mutate(&c.Foundry.Slack.Relay)
+			for _, roles := range []Roles{{API: true}, {SlackWorker: true}} {
+				if err := c.Validate(roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+					t.Fatalf("%+v: Validate = %v, want %q", roles, err, tc.want)
+				}
+			}
+			for _, other := range []Roles{{}, {Events: true}, {SyncWorker: true}} {
+				if err := c.Validate(other); err != nil {
+					t.Fatalf("checked without its role (%+v): %v", other, err)
+				}
+			}
+			off := c
+			off.Foundry.Slack.Relay.Enabled = false
+			if err := off.Validate(Roles{API: true, SlackWorker: true}); err != nil {
+				t.Fatalf("checked while off: %v", err)
+			}
+		})
+	}
+}
+
+// The relay's calls have a gate of their own at the door, and a bound on
+// the claims waiting: the reviewed defaults, checked where the door runs.
+func TestRelayGate(t *testing.T) {
+	d := Defaults().Foundry.Events.Endpoint
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 10, AddressBurstRequests: 20, AddressMaxInFlight: 4, RequestsPerSecond: 200, BurstRequests: 400,
+		MaxInFlight: 64, MaxBytesInFlight: 16 << 20,
+	}); d.Relay != want || d.RelayMaxWaiting != 512 {
+		t.Fatalf("relay defaults = %+v, %d", d.Relay, d.RelayMaxWaiting)
+	}
+	door := Roles{Events: true}
+	for name, tc := range map[string]struct {
+		mutate func(*EventsEndpointConfig)
+		want   string
+	}{
+		"no waiting claim":      {func(e *EventsEndpointConfig) { e.RelayMaxWaiting = 0 }, "foundry.events.endpoint.relay_max_waiting must be positive"},
+		"one waiting claim":     {func(e *EventsEndpointConfig) { e.RelayMaxWaiting = 1 }, ""},
+		"no place":              {func(e *EventsEndpointConfig) { e.Relay.MaxInFlight = 0 }, "foundry.events.endpoint.relay.max_in_flight must be positive"},
+		"bytes short of a call": {func(e *EventsEndpointConfig) { e.Relay.MaxBytesInFlight = 1<<20 - 1 }, "relay.max_bytes_in_flight must be at least"},
+		"an address as the pod": {func(e *EventsEndpointConfig) { e.Relay.AddressMaxInFlight = 64 }, "relay.address_max_in_flight is 64"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Defaults()
+			tc.mutate(&c.Foundry.Events.Endpoint)
+			if err := c.Validate(door); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Channel messages and replies in threads have gates of their own, apart
+// from the bot's: the reviewed defaults, checked by name where the door runs
+// whether or not the app is on, for event bodies only, after Slack's gate.
+func TestSlackClassGates(t *testing.T) {
+	d := Defaults().Foundry.Events.Endpoint
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 200, AddressBurstRequests: 400, AddressMaxInFlight: 8, RequestsPerSecond: 400, BurstRequests: 800,
+		MaxInFlight: 16, MaxBytesInFlight: 32 << 20,
+	}); d.SlackFeed != want {
+		t.Fatalf("feed defaults = %+v", d.SlackFeed)
+	}
+	if want := (DoorGateConfig{
+		AddressRequestsPerSecond: 50, AddressBurstRequests: 100, AddressMaxInFlight: 4, RequestsPerSecond: 100, BurstRequests: 200,
+		MaxInFlight: 8, MaxBytesInFlight: 4 << 20,
+	}); d.SlackReply != want {
+		t.Fatalf("reply defaults = %+v", d.SlackReply)
+	}
+	door := Roles{Events: true}
+	const body = SlackEventsBodyBytes
+	for name, gate := range map[string]func(*EventsEndpointConfig) *DoorGateConfig{
+		"slack_feed":  func(e *EventsEndpointConfig) *DoorGateConfig { return &e.SlackFeed },
+		"slack_reply": func(e *EventsEndpointConfig) *DoorGateConfig { return &e.SlackReply },
+	} {
+		prefix := "foundry.events.endpoint." + name
+		for what, tc := range map[string]struct {
+			mutate func(*DoorGateConfig)
+			want   string // empty when valid
+		}{
+			"no place":                 {func(g *DoorGateConfig) { g.MaxInFlight = 0 }, prefix + ".max_in_flight must be positive"},
+			"no pod rate":              {func(g *DoorGateConfig) { g.RequestsPerSecond = 0 }, prefix + ".requests_per_second must be positive"},
+			"bytes short of an event":  {func(g *DoorGateConfig) { g.MaxBytesInFlight = body - 1 }, prefix + ".max_bytes_in_flight must be at least"},
+			"an address as the pod":    {func(g *DoorGateConfig) { g.AddressMaxInFlight = g.MaxInFlight }, prefix + ".address_max_in_flight is"},
+			"one event's bytes":        {func(g *DoorGateConfig) { g.AddressMaxInFlight, g.MaxInFlight, g.MaxBytesInFlight = 1, 2, body+1 }, ""},
+			"a click's bytes not read": {func(g *DoorGateConfig) { g.AddressMaxInFlight, g.MaxBytesInFlight = 1, SlackInteractivityBodyBytes-1 }, ""},
+		} {
+			t.Run(name+"/"+what, func(t *testing.T) {
+				c := Defaults()
+				tc.mutate(gate(&c.Foundry.Events.Endpoint))
+				if err := c.Validate(door); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+					t.Fatalf("Validate = %v, want %q", err, tc.want)
+				}
+				if err := c.Validate(Roles{SlackWorker: true}); err != nil {
+					t.Fatalf("checked without the door: %v", err)
+				}
+			})
+		}
+	}
+	// Slack's gate first, then the feed's, then the replies'.
+	c := Defaults()
+	e := &c.Foundry.Events.Endpoint
+	e.Slack.MaxInFlight, e.SlackFeed.MaxInFlight, e.SlackReply.MaxInFlight = 0, 0, 0
+	for _, want := range []string{"slack.max_in_flight", "slack_feed.max_in_flight", "slack_reply.max_in_flight"} {
+		if err := c.Validate(door); err == nil || err.Error() != "foundry.events.endpoint."+want+" must be positive" {
+			t.Fatalf("Validate = %v, want %s", err, want)
+		}
+		switch want {
+		case "slack.max_in_flight":
+			e.Slack.MaxInFlight = Defaults().Foundry.Events.Endpoint.Slack.MaxInFlight
+		case "slack_feed.max_in_flight":
+			e.SlackFeed.MaxInFlight = Defaults().Foundry.Events.Endpoint.SlackFeed.MaxInFlight
+		}
+	}
+}
+
+// The feed and the follow-ups are off by default, hosted's stance until
+// Slack confirms, and their settings are the reviewed ones: Slack's pace for
+// apps outside its Marketplace, 30 days of replies, a feed's data deleted a
+// week after its install is gone, and a day of follow-ups.
+func TestSlackFeedDefaults(t *testing.T) {
+	s := Defaults().Foundry.Slack
+	if s.Feed.Enabled || s.Follow.Enabled || s.ReadsHistory() {
+		t.Fatalf("defaults read history: %+v %+v", s.Feed, s.Follow)
+	}
+	if want := (SlackFeedConfig{
+		Spacing: 2 * time.Minute, ReadBudget: SlackFeedReadBudget{Rows: 50_000, Bytes: 64 << 20}, MaxBufferedRows: 200_000, BackendInFlight: 8,
+		DirectoryEvery: time.Hour, RedocumentEvery: 24 * time.Hour, CloseAt: 10 * time.Minute, GapThreadLookback: 24 * time.Hour,
+		OrphanRetention: 168 * time.Hour,
+	}); s.Feed != want {
+		t.Fatalf("feed = %+v", s.Feed)
+	}
+	if s.Follow != (SlackFollowConfig{Window: 24 * time.Hour}) {
+		t.Fatalf("follow = %+v", s.Follow)
+	}
+	if want := (SlackBackfillConfig{
+		HistoryPerMinute: 1, RepliesPerMinute: 1, PageLimit: 15, RepliesDays: 30, GapCallsPerDay: 60, MaxAttempts: 5, RetryBackoff: time.Minute,
+		PollInterval: 5 * time.Second,
+	}); s.Backfill != want {
+		t.Fatalf("backfill = %+v", s.Backfill)
+	}
+	if want := (SlackRelayConfig{
+		ClaimWait: 20 * time.Second, ClaimPoll: 2 * time.Second, DeliveryTTL: 10 * time.Minute, CallsPerMinute: 60, MaxCallBytes: 64 << 10,
+		FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000,
+	}); s.Relay != want {
+		t.Fatalf("relay = %+v", s.Relay)
+	}
+	// Both on, the defaults pass every role.
+	c := slackOn()
+	c.Foundry.Sync.DataBucket = "foundry-data"
+	c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "k1", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+	c.Foundry.Slack.Feed.Enabled, c.Foundry.Slack.Follow.Enabled = true, true
+	if err := c.Validate(every); err != nil {
+		t.Fatalf("defaults with both on: %v", err)
+	}
+	if MaxSlackFeedBackendInFlight != 12 || MinSlackFeedCloseAt != 6*time.Minute || MaxSlackAppHistoryDays != 90 {
+		t.Fatalf("bounds = %d, %s, %d", MaxSlackFeedBackendInFlight, MinSlackFeedCloseAt, MaxSlackAppHistoryDays)
+	}
+}
+
+// The feed and the follow-ups need the app; on, each bound holds at its edge
+// and refuses past it, binds the API and the sync and Slack workers only, and
+// binds only while what reads it is on: the feed's own settings while the
+// feed is, the follow window while the follow-ups are, and the backend's
+// room and the relay's while either is.
+func TestSlackFeedValidate(t *testing.T) {
+	for name, mutate := range map[string]func(*SlackConfig){
+		"the feed":       func(s *SlackConfig) { s.Feed.Enabled = true },
+		"the follow-ups": func(s *SlackConfig) { s.Follow.Enabled = true },
+	} {
+		c := Defaults()
+		mutate(&c.Foundry.Slack)
+		for _, roles := range []Roles{{}, {Events: true}, {SlackWorker: true}} {
+			if err := c.Validate(roles); err == nil || err.Error() != "foundry.slack.feed.enabled and foundry.slack.follow.enabled need foundry.slack.enabled" {
+				t.Fatalf("%s without the app (%+v) = %v", name, roles, err)
+			}
+		}
+	}
+	type on struct{ feed, follow bool }
+	feed, follow, both := on{feed: true}, on{follow: true}, on{true, true}
+	for name, tc := range map[string]struct {
+		mutate func(*SlackConfig)
+		want   string // empty when valid
+		off    on     // a mode in which the bound isn't read: valid there
+	}{
+		"no backend room":            {func(s *SlackConfig) { s.Feed.BackendInFlight = 0 }, "feed.backend_in_flight is 0; it must be from 1 to 12", on{}},
+		"one backend place":          {func(s *SlackConfig) { s.Feed.BackendInFlight = 1 }, "", on{}},
+		"half the pool":              {func(s *SlackConfig) { s.Feed.BackendInFlight = 12 }, "", on{}},
+		"past half the pool":         {func(s *SlackConfig) { s.Feed.BackendInFlight = 13 }, "feed.backend_in_flight is 13", on{}},
+		"no follow window":           {func(s *SlackConfig) { s.Follow.Window = 0 }, "follow.window is 0s", feed},
+		"a window past the thread":   {func(s *SlackConfig) { s.Follow.Window = s.Retention.Threads + 1 }, "at most foundry.slack.retention.threads (720h0m0s)", feed},
+		"a window of the thread":     {func(s *SlackConfig) { s.Follow.Window = s.Retention.Threads }, "", on{}},
+		"a window past a short keep": {func(s *SlackConfig) { s.Retention.Threads = time.Hour }, "follow.window is 24h0m0s", feed},
+		"no relay ttl":               {func(s *SlackConfig) { s.Relay.FeedTTL = 0 }, "foundry.slack.relay feed_ttl", on{}},
+		"no relay batch":             {func(s *SlackConfig) { s.Relay.FeedBatch = 0 }, "feed_batch and feed_max_rows", on{}},
+		"no relay rows":              {func(s *SlackConfig) { s.Relay.FeedMaxRows = 0 }, "feed_max_rows must be positive", on{}},
+		"a relay batch short":        {func(s *SlackConfig) { s.Relay.FeedBatchBytes = SlackEventsBodyBytes - 1 }, "relay.feed_batch_bytes is 524287", on{}},
+		"a relay batch of one":       {func(s *SlackConfig) { s.Relay.FeedBatchBytes = SlackEventsBodyBytes }, "", on{}},
+		"no spacing":                 {func(s *SlackConfig) { s.Feed.Spacing = 0 }, "foundry.slack.feed spacing", follow},
+		"no fold rows":               {func(s *SlackConfig) { s.Feed.ReadBudget.Rows = 0 }, "read_budget.rows", follow},
+		"no buffer":                  {func(s *SlackConfig) { s.Feed.MaxBufferedRows = 0 }, "max_buffered_rows", follow},
+		"a lookback into the future": {func(s *SlackConfig) { s.Feed.GapThreadLookback = -1 }, "gap_thread_lookback not negative", follow},
+		"no lookback":                {func(s *SlackConfig) { s.Feed.GapThreadLookback = 0 }, "", on{}},
+		"orphans gone at once":       {func(s *SlackConfig) { s.Feed.OrphanRetention = 0 }, "orphan_retention", follow},
+		"a fold short of a row":      {func(s *SlackConfig) { s.Feed.ReadBudget.Bytes = SlackEventsBodyBytes - 1 }, "read_budget.bytes is 524287", follow},
+		"a fold of one row":          {func(s *SlackConfig) { s.Feed.ReadBudget.Bytes = SlackEventsBodyBytes }, "", on{}},
+		"a directory too often":      {func(s *SlackConfig) { s.Feed.DirectoryEvery = 5*time.Minute - 1 }, "directory_every is 4m59.999999999s", follow},
+		"a directory at 5m":          {func(s *SlackConfig) { s.Feed.DirectoryEvery = 5 * time.Minute }, "", on{}},
+		"documents too often":        {func(s *SlackConfig) { s.Feed.RedocumentEvery = time.Hour - 1 }, "redocument_every is 59m59.999999999s", follow},
+		"documents hourly":           {func(s *SlackConfig) { s.Feed.RedocumentEvery = time.Hour }, "", on{}},
+		"a close before retries":     {func(s *SlackConfig) { s.Feed.CloseAt = 6*time.Minute - 1 }, "close_at is 5m59.999999999s; it must be from 6m0s", follow},
+		"a close past them":          {func(s *SlackConfig) { s.Feed.CloseAt = 6 * time.Minute }, "", on{}},
+		"a close the next day":       {func(s *SlackConfig) { s.Feed.CloseAt = 24 * time.Hour }, "close_at is 24h0m0s", follow},
+		"a close just before":        {func(s *SlackConfig) { s.Feed.CloseAt = 24*time.Hour - 1 }, "", on{}},
+		"no history calls":           {func(s *SlackConfig) { s.Backfill.HistoryPerMinute = 0 }, "history_per_minute and replies_per_minute", follow},
+		"history past Slack's":       {func(s *SlackConfig) { s.Backfill.HistoryPerMinute = 51 }, "from 1 to 50", follow},
+		"history at Marketplace's":   {func(s *SlackConfig) { s.Backfill.HistoryPerMinute = 50 }, "", on{}},
+		"no replies calls":           {func(s *SlackConfig) { s.Backfill.RepliesPerMinute = 0 }, "replies_per_minute", follow},
+		"replies past Slack's":       {func(s *SlackConfig) { s.Backfill.RepliesPerMinute = 51 }, "replies_per_minute", follow},
+		"replies at Marketplace's":   {func(s *SlackConfig) { s.Backfill.RepliesPerMinute = 50 }, "", on{}},
+		"an empty page":              {func(s *SlackConfig) { s.Backfill.PageLimit = 0 }, "page_limit is 0", follow},
+		"a page past Slack's":        {func(s *SlackConfig) { s.Backfill.PageLimit = 1000 }, "page_limit is 1000; it must be from 1 to 999", follow},
+		"the largest page":           {func(s *SlackConfig) { s.Backfill.PageLimit = 999 }, "", on{}},
+		"no replies read":            {func(s *SlackConfig) { s.Backfill.RepliesDays = 0 }, "replies_days is 0", follow},
+		"replies past the window":    {func(s *SlackConfig) { s.Backfill.RepliesDays = 91 }, "replies_days is 91; it must be from 1 to 90", follow},
+		"replies for the window":     {func(s *SlackConfig) { s.Backfill.RepliesDays = 90 }, "", on{}},
+		"no gap repairs":             {func(s *SlackConfig) { s.Backfill.GapCallsPerDay = 0 }, "", on{}},
+		"a negative gap budget":      {func(s *SlackConfig) { s.Backfill.GapCallsPerDay = -1 }, "gap_calls_per_day not negative", follow},
+		"no backfill attempt":        {func(s *SlackConfig) { s.Backfill.MaxAttempts = 0 }, "foundry.slack.backfill max_attempts", follow},
+		"no backfill backoff":        {func(s *SlackConfig) { s.Backfill.RetryBackoff = 0 }, "retry_backoff and poll_interval", follow},
+		"no backfill poll":           {func(s *SlackConfig) { s.Backfill.PollInterval = 0 }, "poll_interval must be positive", follow},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, mode := range []on{feed, follow, both} {
+				c := slackOn()
+				c.Foundry.Sync.DataBucket = "foundry-data"
+				c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "k1", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+				c.Foundry.Slack.Feed.Enabled, c.Foundry.Slack.Follow.Enabled = mode.feed, mode.follow
+				tc.mutate(&c.Foundry.Slack)
+				want := tc.want
+				if mode == tc.off {
+					want = ""
+				}
+				for _, roles := range []Roles{{API: true}, {SyncWorker: true}, {SlackWorker: true}} {
+					if err := c.Validate(roles); want == "" && err != nil || want != "" && (err == nil || !contains(err.Error(), want)) {
+						t.Fatalf("%+v, %+v: Validate = %v, want %q", mode, roles, err, want)
+					}
+				}
+				for _, other := range []Roles{{}, {Events: true}, {AgentWorker: true}, {GraphWorker: true}} {
+					if err := c.Validate(other); err != nil {
+						t.Fatalf("%+v: checked without its role (%+v): %v", mode, other, err)
+					}
+				}
+				// Neither on, nothing of it is read.
+				c.Foundry.Slack.Feed.Enabled, c.Foundry.Slack.Follow.Enabled = false, false
+				if err := c.Validate(Roles{API: true, SyncWorker: true}); err != nil {
+					t.Fatalf("checked while off: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// The Slack worker folds the feeds' days into their mirror in the data
+// bucket, so with the feed on it needs one; the follow-ups alone write none,
+// and the other roles never touch the mirror.
+func TestSlackFeedNeedsTheDataBucket(t *testing.T) {
+	for name, tc := range map[string]struct {
+		feed, follow bool
+		roles        Roles
+		want         string // empty when valid
+	}{
+		"the worker with the feed":         {feed: true, roles: Roles{SlackWorker: true}, want: "foundry.sync.data_bucket must be set when 'foundry-slack-worker' is in tasks and foundry.slack.feed is on"},
+		"the worker with both":             {feed: true, follow: true, roles: Roles{SlackWorker: true}, want: "foundry.sync.data_bucket must be set when 'foundry-slack-worker'"},
+		"the worker with the follow-ups":   {follow: true, roles: Roles{SlackWorker: true}},
+		"the API with the feed":            {feed: true, roles: Roles{API: true}},
+		"the worker with neither (bot on)": {roles: Roles{SlackWorker: true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := slackOn()
+			c.Foundry.Connectors = ConnectorsConfig{CurrentKeyID: "k1", CurrentKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
+			c.Foundry.Slack.Feed.Enabled, c.Foundry.Slack.Follow.Enabled = tc.feed, tc.follow
+			c.Foundry.Sync.DataBucket = ""
+			if err := c.Validate(tc.roles); tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			c.Foundry.Sync.DataBucket = "foundry-data"
+			if err := c.Validate(tc.roles); err != nil {
+				t.Fatalf("with the bucket: %v", err)
+			}
+		})
+	}
+}
+
+// The app reads channel messages, and asks Slack for what that takes, while
+// either the feed or the follow-ups is on.
+func ExampleSlackConfig_ReadsHistory() {
+	for _, s := range []SlackConfig{
+		{},
+		{Feed: SlackFeedConfig{Enabled: true}},
+		{Follow: SlackFollowConfig{Enabled: true}},
+		{Feed: SlackFeedConfig{Enabled: true}, Follow: SlackFollowConfig{Enabled: true}},
+	} {
+		fmt.Println(s.ReadsHistory())
+	}
+	// Output:
+	// false
+	// true
+	// true
+	// true
+}
+
+// Before Slack authorizes the app's commercial distribution, a stamp lets
+// only its design partners' workspaces add it; with no list, every one.
+func ExampleSlackConfig_InstallAllowed() {
+	open := SlackConfig{}
+	partners := SlackConfig{InstallAllowlist: []string{"ws-acme"}}
+	fmt.Println(open.InstallAllowed("ws-acme"), open.InstallAllowed("ws-globex"))
+	fmt.Println(partners.InstallAllowed("ws-acme"), partners.InstallAllowed("ws-globex"), partners.InstallAllowed(""))
+	// Output:
+	// true true
+	// true false false
 }

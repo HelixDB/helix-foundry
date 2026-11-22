@@ -39,7 +39,7 @@ func (s *Service) SyncConnector(ctx context.Context, req *foundryv1.SyncConnecto
 	if err != nil {
 		return nil, err
 	}
-	kind, err := catalog.Kind(c.Kind)
+	kind, err := catalog.KindFor(c.Kind, c.Config)
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "connector kind %q is no longer supported", c.Kind)
 	}

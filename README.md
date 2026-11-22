@@ -10,13 +10,19 @@
 </p>
 
 <p align="center">
-  <a href="https://foundry.helix-db.com/?via=github">Helix Cloud</a> ·
+  <a href="https://foundry.helix-db.com/login?return_to=%2Fontology%2Fsample&utm_source=github&utm_medium=readme&utm_campaign=nav">Try it on Helix Cloud</a> ·
   <a href="https://docs.helix-db.com/foundry">Docs</a> ·
   <a href="#run-it-on-your-computer">Run it on your computer</a> ·
   <a href="LICENSE">Apache 2.0</a>
 </p>
 
-Connect your databases, tools and documents, let an agent draft an ontology over them, and load it into [HelixDB](https://docs.helix-db.com) as one connected graph. Explore it, follow every value back to the row or quote it came from, and ask questions with cited answers. Use it hosted at [foundry.helix-db.com](https://foundry.helix-db.com/?via=github), or run it on your own computer with one command.
+Connect your databases, tools and documents, let an agent draft an ontology over them, and load it into [HelixDB](https://docs.helix-db.com) as one connected graph. Explore it, follow every value back to the row or quote it came from, and ask questions with cited answers. Use it hosted at [foundry.helix-db.com](https://foundry.helix-db.com/login?utm_source=github&utm_medium=readme&utm_campaign=intro), or run it on your own computer with one command.
+
+<p align="center">
+  <a href="https://foundry.helix-db.com/login?return_to=%2Fontology%2Fsample&utm_source=github&utm_medium=readme&utm_campaign=button"><img src="https://img.shields.io/badge/Try_it_on_Helix_Cloud-no_install-FF5C01?style=for-the-badge" alt="Try it on Helix Cloud, no install"></a>
+</p>
+
+<p align="center"><sub>Opens a sample company's data, ontology and Analyst, free. Connect your own when you're ready.</sub></p>
 
 <p align="center">
   <img src=".github/assets/explorer.png" width="800" alt="The Helix Foundry Explorer: customers, invoices and contracts as one connected graph, with the selected customer's properties and relationships beside it">
@@ -24,7 +30,13 @@ Connect your databases, tools and documents, let an agent draft an ontology over
 
 ## Get started with your coding agent
 
-**On Helix Cloud.** Open [foundry.helix-db.com](https://foundry.helix-db.com/?via=github) and click **Set up with your agent**. It copies a prompt for Claude Code, Codex, Cursor or any agent that can run commands. The agent adds the Helix MCP, signs you up through it if you don't have an account yet, and builds your first ontology with you. You never need the Helix dashboard: the agent sends you a link only to sign in or to enter a password or key.
+**On Helix Cloud.** Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
+
+```text
+Set up Helix Foundry with me: https://foundry.new
+```
+
+The agent adds the Helix MCP, signs you up through it if you don't have an account yet, and builds your first ontology with you. You never need the Helix dashboard: the agent sends you a link only to sign in or to enter a password or key.
 
 **On your computer.** With [Docker](https://docs.docker.com/get-started/get-docker/) running, paste this into your agent:
 
@@ -42,7 +54,7 @@ Approve its `git` and `docker` commands one at a time rather than all `docker` c
 
 ## Run it on your computer
 
-You need Docker with Compose v2, ports 3000 and 8333 free, and room for a few GB of images on the first start.
+You need Docker with Compose v2, ports 3000 and 8333 free, and room for a few GB of images on the first start. Rather not install anything? [Helix Cloud](https://foundry.helix-db.com/login?return_to=%2Fontology%2Fsample&utm_source=github&utm_medium=readme&utm_campaign=local) runs the same build, with a sample company to try first.
 
 ```sh
 git clone https://github.com/helixdb/helix-foundry.git

@@ -23,10 +23,11 @@ func utcPtr(t *time.Time) any {
 const connectorColumns = `id, workspace_id, kind, name, config, secret_ciphertext, secret_key_id,
        secret_hint, created_by_user_id, created_at, updated_at, sync_every_seconds, next_sync_at, schedule_paused, change_cursor,
        account_id, account_user_id, account_label, account_generation, account_broken, account_broken_at, account_checked_at,
-       account_connected_at, account_identity`
+       account_connected_at, account_identity, pushed`
 
 // CreateConnector stores a new connector. One with an Account is a signed-in
-// connector's first sign-in: generation 1, connected and vended for now.
+// connector's first sign-in: generation 1, connected and vended for now. An
+// event source is pushed whatever c.Pushed says.
 func (s *mysqlDB) CreateConnector(ctx context.Context, c *model.Connector) error {
 	var accountID, accountUser, accountLabel, accountIdentity any
 	generation, connected := 0, "NULL"
@@ -38,11 +39,11 @@ func (s *mysqlDB) CreateConnector(ctx context.Context, c *model.Connector) error
 INSERT INTO connectors
   (id, workspace_id, kind, name, config, secret_ciphertext, secret_key_id, secret_hint, created_by_user_id,
    sync_every_seconds, next_sync_at, account_id, account_user_id, account_label, account_identity, account_generation,
-   account_checked_at, account_connected_at)
-VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+connected+`, `+connected+`)`,
+   account_checked_at, account_connected_at, pushed)
+VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+connected+`, `+connected+`, ?)`,
 		c.ID, c.WorkspaceID, c.Kind, c.Name, string(c.Config), c.SecretCiphertext, c.SecretKeyID,
 		c.SecretHint, c.CreatedByUserID, c.SyncEverySeconds, utcPtr(c.NextSyncAt), accountID, accountUser, accountLabel, accountIdentity,
-		generation,
+		generation, c.Pushed || c.Kind == model.ConnectorKindEvents,
 	)
 	return err
 }
@@ -62,6 +63,14 @@ FROM connectors WHERE workspace_id=? AND deleted_at IS NULL ORDER BY created_at,
 }
 
 func (s *mysqlDB) UpdateConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate) error {
+	return s.updateConnector(ctx, workspaceID, id, update, true, nil)
+}
+
+// updateConnector applies update to a live connector of the workspace
+// (ErrNotFound otherwise). New settings null the change cursor when
+// nullCursor says so; pushed, when set, is stored too.
+func (s *mysqlDB) updateConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate, nullCursor bool,
+	pushed *bool) error {
 	var assignments []string
 	var args []any
 	if update.Name != nil {
@@ -69,10 +78,16 @@ func (s *mysqlDB) UpdateConnector(ctx context.Context, workspaceID, id string, u
 		args = append(args, *update.Name)
 	}
 	if update.Config != nil {
-		// New settings may point elsewhere, so the change cursor no longer applies.
-		assignments = append(assignments, "config=CAST(? AS JSON)", "secret_ciphertext=?", "secret_key_id=?", "secret_hint=?",
-			"change_cursor=NULL")
+		assignments = append(assignments, "config=CAST(? AS JSON)", "secret_ciphertext=?", "secret_key_id=?", "secret_hint=?")
 		args = append(args, string(update.Config), update.SecretCiphertext, update.SecretKeyID, update.SecretHint)
+		if nullCursor {
+			// New settings may point elsewhere, so the change cursor no longer applies.
+			assignments = append(assignments, "change_cursor=NULL")
+		}
+	}
+	if pushed != nil {
+		assignments = append(assignments, "pushed=?")
+		args = append(args, *pushed)
 	}
 	if update.Schedule != nil {
 		assignments = append(assignments, "sync_every_seconds=?", "next_sync_at=?", "schedule_paused=NULL")
@@ -94,8 +109,11 @@ WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, args...)
 // refresh on whose current load reads one of its tables owes a refresh due
 // now (OweFoundryRefreshes), which leaves the tables out; one whose live or
 // current load holds one of its documents takes them out of the graph with
-// an extract (oweFoundryRemovals). ErrNotFound means the workspace has no
-// such live connector.
+// an extract (oweFoundryRemovals). A connector read through Helix's Slack
+// app (one with a feed) keeps nothing past its delete: its documents leave
+// every load, refresh on or off, and the other loads holding them are
+// deleted (expireFoundryLoads), as the app's days leaving the window do.
+// ErrNotFound means the workspace has no such live connector.
 func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -112,6 +130,10 @@ func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) e
 		if err != nil {
 			return fmt.Errorf("lock connector %s: %w", id, err)
 		}
+		var fed bool
+		if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_slack_feeds WHERE live_connector=?)`, id).Scan(&fed); err != nil {
+			return fmt.Errorf("read connector %s Slack feed: %w", id, err)
+		}
 		tables, sets, err := tx.deleteConnector(ctx, workspaceID, id)
 		if err != nil {
 			return err
@@ -121,10 +143,32 @@ func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) e
 				return err
 			}
 		}
-		if len(sets) == 0 {
+		switch {
+		case len(sets) == 0:
 			return nil
+		case !fed:
+			return tx.oweFoundryRemovals(ctx, ontologies, true)
 		}
-		return tx.oweFoundryRemovals(ctx, ontologies, true)
+		rows, err := tx.db.QueryContext(ctx, `SELECT set_id, MAX(source_at) FROM foundry_documents
+WHERE set_id IN (`+idPlaceholders(len(sets))+`) AND status='deleted' AND source_at IS NOT NULL GROUP BY set_id`, toAnySlice(sets)...)
+		if err != nil {
+			return fmt.Errorf("read connector %s deleted documents: %w", id, err)
+		}
+		expired := map[string]time.Time{}
+		for rows.Next() {
+			var set string
+			var newest time.Time
+			if err := rows.Scan(&set, &newest); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			expired[set] = newest
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return tx.expireFoundryLoads(ctx, ontologies, expired)
 	})
 }
 
@@ -183,7 +227,9 @@ func (s *mysqlDB) DeleteWorkspaceConnectors(ctx context.Context, workspaceID str
 //   - its source's audiences go (foundry_source_*);
 //   - a signed-in connector's account waits for the sync worker's purge,
 //     which deletes it from the broker (ListConnectorAccountPurges), unless
-//     another live connector reads with it.
+//     another live connector reads with it;
+//   - a Slack connector's feed is unbound (unbindFoundrySlackFeed): what it
+//     holds goes at the Slack sweep's next tick.
 func (s *mysqlDB) deleteConnector(ctx context.Context, workspaceID, id string) (tables, sets []string, err error) {
 	var kind string
 	var accountID, accountUser sql.NullString
@@ -203,6 +249,9 @@ func (s *mysqlDB) deleteConnector(ctx context.Context, workspaceID, id string) (
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_event_source_tokens SET revoked_at=NOW(6)
 WHERE connector_id=? AND workspace_id=? AND revoked_at IS NULL`, id, workspaceID); err != nil {
 		return nil, nil, fmt.Errorf("revoke connector %s send tokens: %w", id, err)
+	}
+	if err := s.unbindFoundrySlackFeed(ctx, id); err != nil {
+		return nil, nil, err
 	}
 	// What its source shares with whom goes with it.
 	for _, table := range []string{"foundry_source_item_members", "foundry_source_items", "foundry_source_people", "foundry_source_audiences"} {
@@ -281,10 +330,11 @@ WHERE connector_id=? AND workspace_id=? ORDER BY table_name FOR UPDATE`, id, wor
 // connector whose account needs signing in again is never due: signing it in
 // again schedules it.
 //
-// An event source's sync is queued with origin events. One with a live sync
-// is due again eventsAfter from now instead: the pieces that made it due may
-// have come after that sync read what waits (connector.Pushed), and nothing
-// else would schedule them, since a send schedules a sync only when none is.
+// An event source's sync is queued with origin events, another pushed
+// connector's with origin pushed. A pushed connector with a live sync is due
+// again eventsAfter from now instead: what made it due may have come after
+// that sync read what waits (connector.Pushed), and nothing else would
+// schedule it, since an arrival schedules a sync only when none is.
 func (s *mysqlDB) QueueDueConnectorSyncs(ctx context.Context, limit int, eventsAfter time.Duration) (_ int, err error) {
 	if s.root == nil {
 		return 0, fmt.Errorf("queue connector syncs requires a root database connection")
@@ -298,17 +348,20 @@ func (s *mysqlDB) QueueDueConnectorSyncs(ctx context.Context, limit int, eventsA
 			_ = tx.Rollback()
 		}
 	}()
-	rows, err := tx.QueryContext(ctx, `SELECT id, workspace_id, kind FROM connectors
+	rows, err := tx.QueryContext(ctx, `SELECT id, workspace_id, kind, pushed FROM connectors
 WHERE next_sync_at <= NOW(6) AND deleted_at IS NULL AND account_broken IS NULL
 ORDER BY next_sync_at, id LIMIT ? FOR UPDATE SKIP LOCKED`, limit)
 	if err != nil {
 		return 0, fmt.Errorf("select due connectors: %w", err)
 	}
-	type due struct{ id, workspaceID, kind string }
+	type due struct {
+		id, workspaceID, kind string
+		pushed                bool
+	}
 	var connectors []due
 	for rows.Next() {
 		var d due
-		if err := rows.Scan(&d.id, &d.workspaceID, &d.kind); err != nil {
+		if err := rows.Scan(&d.id, &d.workspaceID, &d.kind, &d.pushed); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("scan due connector: %w", err)
 		}
@@ -320,10 +373,12 @@ ORDER BY next_sync_at, id LIMIT ? FOR UPDATE SKIP LOCKED`, limit)
 	}
 	queued := 0
 	for _, c := range connectors {
-		events := c.kind == model.ConnectorKindEvents
 		origin := model.ConnectorSyncSchedule
-		if events {
+		switch {
+		case c.kind == model.ConnectorKindEvents:
 			origin = model.ConnectorSyncEvents
+		case c.pushed:
+			origin = model.ConnectorSyncPushed
 		}
 		res, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO connector_syncs (id, connector_id, workspace_id, status, active_key, origin, mode)
@@ -336,7 +391,7 @@ VALUES (?, ?, ?, 'queued', 1, ?, 'changes')`, id.New(), c.id, c.workspaceID, str
 			queued++
 		}
 		next, args := "NULL", []any{c.id}
-		if n == 0 && events {
+		if n == 0 && c.pushed {
 			next, args = "NOW(6) + INTERVAL ? MICROSECOND", []any{eventsAfter.Microseconds(), c.id}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE connectors SET next_sync_at=`+next+` WHERE id=?`, args...); err != nil {
@@ -431,6 +486,7 @@ func scanConnector(scanner rowScanner) (*model.Connector, error) {
 		&c.ID, &c.WorkspaceID, &c.Kind, &c.Name, &config, &c.SecretCiphertext, &c.SecretKeyID,
 		&c.SecretHint, &createdBy, &c.CreatedAt, &c.UpdatedAt, &every, &next, &paused, &cursor,
 		&accountID, &accountUser, &accountLabel, &generation, &broken, &brokenAt, &checkedAt, &connectedAt, &accountIdentity,
+		&c.Pushed,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound

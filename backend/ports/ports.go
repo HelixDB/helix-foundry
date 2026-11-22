@@ -192,6 +192,31 @@ type People interface {
 	Member(ctx context.Context, workspaceID, userID string) (Member, error)
 }
 
+// BotCredentials makes, reads and revokes the non-person principal a Slack
+// install's bot mode acts as: a workspace service credential whose token no
+// one holds and whose database grants stay empty, so it reads only what
+// Foundry's source grants give it. Hosted only: nil on a standalone
+// install, where bot mode is refused.
+type BotCredentials interface {
+	// Create makes a credential of workspaceID named name (at most 64
+	// characters), recorded as made by createdByUserID, and returns its id.
+	Create(ctx context.Context, workspaceID, name, createdByUserID string) (credentialID string, err error)
+	// Get is the credential as the host holds it now; store.ErrNotFound
+	// when workspaceID has no such credential.
+	Get(ctx context.Context, workspaceID, credentialID string) (BotCredential, error)
+	// Revoke revokes it; one already revoked or gone is no error.
+	Revoke(ctx context.Context, workspaceID, credentialID string) error
+}
+
+// BotCredential is a Slack bot's credential as its host holds it.
+type BotCredential struct {
+	Name string
+	// Usable is that a session can act as it: it is unrevoked, unexpired,
+	// and holds no database grants (the host refuses a session as one that
+	// does).
+	Usable bool
+}
+
 // Role is a member's role in a workspace.
 type Role uint8
 

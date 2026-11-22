@@ -32,7 +32,7 @@ func automationTurn(h *harness, allow string) *model.FoundryAgentTurn {
 	h.db.automations = []*model.FoundryAutomation{{ID: "auto1", WorkspaceID: ws, OwnerUserID: user, Name: "Nightly load"}}
 	h.db.runs = []*model.FoundryAutomationRun{{ID: "run1", AutomationID: "auto1", WorkspaceID: ws, Status: model.FoundryAutomationRunRunning, Spec: stepSpec(allow)}}
 	runID, node := "run1", "ask"
-	turn := &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnAutomation,
+	turn := &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentTurnAutomation,
 		Input: "Load the Sales graph\n\n<workflow_context>{}</workflow_context>", AutomationRunID: &runID, AutomationNodeID: &node, MaxUSDMicros: 500_000, Attempts: 1}
 	h.db.turns = []*model.FoundryAgentTurn{turn}
 	return turn
@@ -53,7 +53,7 @@ func TestAnAutomationRunsWhatItsOwnerApproved(t *testing.T) {
 	require.Len(t, h.db.actions, 1)
 	action := h.db.actions[0]
 	assert.Equal(t, model.FoundryAgentActionSucceeded, action.Status)
-	assert.Equal(t, &turn.UserID, action.DecidedBy, "decided by its owner's approval")
+	assert.Equal(t, new(turn.Principal.Access().ID), action.DecidedBy, "decided by its owner's approval")
 	assert.Equal(t, []string{"started", "tool_call", "action_card", "action_result", "tool_result", "tool_call", "automation_report", "tool_result", "text", "finished"},
 		h.db.eventTypes(), "the card, then how it ran")
 	assert.Equal(t, 2, len(h.host.actors), "a session for the turn, and one as its owner for the action")

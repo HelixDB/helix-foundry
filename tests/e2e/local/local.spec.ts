@@ -346,7 +346,9 @@ test("keeps only settings and the theme in the account menu", async ({
   await menu.getByRole("menuitem", { name: "Settings" }).click();
   await expect(page.getByRole("tab", { name: "General" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "AI models" })).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  // Slack, through Helix's relay (tests/e2e/local/slack.spec.ts).
+  await expect(page.getByRole("tab", { name: "Slack" })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(3);
   await expect(page.getByText("Helix dashboard")).toHaveCount(0);
   for (const path of ["/settings/members", "/settings/billing"]) {
     await page.goto(path);

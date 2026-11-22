@@ -51,6 +51,7 @@ describe("proxy", () => {
       "/login",
       "/llms.txt",
       "/llms-full.txt",
+      "/setup.md",
       "/robots.txt",
       "/.well-known/:path*",
     ]);

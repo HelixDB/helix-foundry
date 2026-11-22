@@ -298,6 +298,46 @@ test("every main page in both themes", async ({ page }, info) => {
   await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
   await shoot("access-sources");
   await page.keyboard.press("Escape");
+  await visit("slack", "/settings/slack");
+  // Helix's Slack app added, lacking new permissions, with a Slack
+  // connection through it, its callouts, and the form binding one.
+  await page.getByRole("button", { name: "Add to Slack" }).click();
+  await page.waitForURL(/\/mock\/slack\/authorize\?/);
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page).toHaveURL(/\/settings\/slack$/);
+  await visit("slack-data-form", "/data?add=slack");
+  const slackConnection = (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/connectors", {
+      name: "Acme Slack",
+      config: { slack: { historyDays: 30, helixApp: { noticeVersion: 1 } } },
+    })
+  ).connector.id;
+  await mock.configure({
+    slackScopesOld: true,
+    slackEventsLimited: true,
+    slackLossyDays: 2,
+  });
+  await visit("slack-installed", "/settings/slack");
+  // The shared bot, its key refused: the mode cards and its error.
+  await page.getByRole("radio", { name: "Shared bot" }).check();
+  await page
+    .getByRole("dialog", { name: /^Turn on the shared bot/ })
+    .getByRole("button", { name: "Turn on" })
+    .click();
+  await expect(page.getByRole("heading", { name: "Shared bot" })).toBeVisible();
+  await mock.configure({ slackBotBroken: true });
+  await visit("slack-bot", "/settings/slack");
+  await visit("slack-connection", `/data/connections/${slackConnection}`);
+  // A Foundry on someone's computer asking to be linked through Helix's relay.
+  await visit(
+    "relay-link",
+    `/relay/link?${new URLSearchParams({
+      state: "s".repeat(16),
+      code_challenge: "c".repeat(43),
+      redirect_uri: "http://localhost:3999/settings/slack",
+      name: "Ada’s laptop",
+    })}`,
+  );
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();
   await shoot("billing-switch");

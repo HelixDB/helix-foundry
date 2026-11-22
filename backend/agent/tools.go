@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 )
 
 // Tools is every tool the Assistant may offer its model: a closed list,
@@ -84,6 +85,16 @@ var GranteeTools = map[string]bool{
 	toolAskPerson:                   true,
 }
 
+// BotTools are the tools a Slack install's bot's turn offers (ReachBot):
+// GranteeTools, whose every call the API narrows to the bot's source grants,
+// and toolPrepare, which proposes an action for an owner or admin to run
+// (integration.ConfirmByAdmin).
+var BotTools = func() map[string]bool {
+	tools := maps.Clone(GranteeTools)
+	tools[toolPrepare] = true
+	return tools
+}()
+
 const (
 	toolPrepare     = "helix_foundry_prepare_operation"
 	toolAsk         = "helix_foundry_ask"
@@ -131,6 +142,16 @@ var Operations = map[string]bool{
 	"set_assistant_runtime":   true,
 	"revoke_assistant_helper": true,
 }
+
+// BotOperations are the actions a Slack install's bot may propose:
+// Operations but a local install's own (set_assistant_runtime,
+// revoke_assistant_helper), as bot mode is hosted only.
+var BotOperations = func() map[string]bool {
+	ops := maps.Clone(Operations)
+	delete(ops, "set_assistant_runtime")
+	delete(ops, "revoke_assistant_helper")
+	return ops
+}()
 
 // askClientToken is the client token every ask of a turn's tool call sends,
 // whatever the model wrote: a replayed attempt asks the same question again
