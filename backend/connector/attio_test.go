@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/config"
 )
 
 const attioTestToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -997,6 +999,26 @@ func TestAttioDocuments(t *testing.T) {
 		}
 		if !slices.Equal(asked, []string{"limit=50&offset=0", "limit=50&offset=50", "limit=50&offset=100"}) || len(sink.rows) != 120 || len(docs.puts) != 120 {
 			t.Fatalf("asked %v, rows = %d, puts = %d", asked, len(sink.rows), len(docs.puts))
+		}
+	})
+
+	t.Run("past the cap, offers the newest notes and writes every row", func(t *testing.T) {
+		start := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+		var notes []string
+		for i := range config.MaxDocumentsPerStream + 3 {
+			notes = append(notes, attioNoteJSON(fmt.Sprintf("not_%04d", i), "N", "body", start.Add(time.Duration(i)*time.Minute).Format(time.RFC3339), "people", "rec_ada"))
+		}
+		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{"/v2/notes": attioPaged(t, notes)}))
+		docs := &granolaDocs{want: map[string]bool{"notes": true}}
+		sink := &rowSink{}
+		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, sink, docs); err != nil {
+			t.Fatal(err)
+		}
+		names := docs.putNames()
+		newest := fmt.Sprintf("notes not_%04d", config.MaxDocumentsPerStream+2)
+		if len(sink.rows) != config.MaxDocumentsPerStream+3 || len(names) != config.MaxDocumentsPerStream || names[0] != newest ||
+			names[len(names)-1] != "notes not_0003" || slices.Contains(names, "notes not_0002") {
+			t.Fatalf("rows = %d, puts = %d, first %q, last %q", len(sink.rows), len(names), names[0], names[len(names)-1])
 		}
 	})
 
