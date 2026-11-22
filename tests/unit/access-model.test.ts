@@ -825,6 +825,19 @@ describe("source permissions", () => {
     ]);
   });
 
+  it("reads counts and people the WFE leaves out as none", () => {
+    expect(
+      sourcePermissions(
+        { kind: "slack", readAt: "2026-11-20T10:00:00Z" },
+        [],
+        name,
+        relative,
+      ).line,
+    ).toBe(
+      "Read at 2026-11-20T10:00:00Z · 0 public channels, 0 private · 0 of 0 members matched",
+    );
+  });
+
   it("says when a read is stale or never worked, and why the last one failed", () => {
     expect(
       sourcePermissions({ ...slack, stale: true }, [ada], name, relative).line,

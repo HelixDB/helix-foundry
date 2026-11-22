@@ -2,6 +2,7 @@ import type { Browser, Page } from "@playwright/test";
 import {
   expect,
   mock,
+  postToWfe,
   signIn,
   test,
   uploadAndLoadContract,
@@ -16,8 +17,10 @@ import {
 // who can't query databases reads the same way, and only what their sources
 // cover; someone whose sources hold part of an ontology reads that part,
 // told so; taking every source away takes the ontology away, and Founder's
-// composer with it; and a change that would cut someone off asks first. Eve
-// is a member of Acme restricted to the General set; Alan, a member who
+// composer with it; a change that would cut someone off asks first; and a
+// Slack connection follows channel membership: Eve, given it, reads only
+// the channels she is in, and Source permissions says whom Slack matches.
+// Eve is a member of Acme restricted to the General set; Alan, a member who
 // queries databases, can't be restricted.
 
 const O = "/ontology/ont_acme_contracts";
@@ -1395,4 +1398,89 @@ test("says who would keep part of what a change takes", async ({ page }) => {
     "Eve Adler: Customer contracts (keeps the part their sources hold)",
   );
   await warning.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("a grantee given Slack reads only the channels she's in, and Source permissions says whom Slack matches", async ({
+  page,
+  browser,
+}) => {
+  const ws = "/v1/workspaces/ws_acme/foundry";
+  await signIn(page);
+  const { connector } = await postToWfe(page, `${ws}/connectors`, {
+    name: "Acme Slack",
+    config: {
+      slack: { botToken: "xoxb-1234-5678-e2eAclTokenWXYZ", historyDays: 3 },
+    },
+  });
+  await postToWfe(page, `${ws}/connectors/${connector.id}:sync`, {});
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/papi${ws}/connectors/${connector.id}`)
+          ).json()
+        ).connector.lastSync?.status,
+      { timeout: 15_000 },
+    )
+    .toBe("CONNECTOR_SYNC_STATUS_SUCCEEDED");
+
+  // Its sync read who each channel is shared with: Slack knows all three of
+  // Acme's members by email.
+  await page.goto("/settings/access?tab=sources");
+  const row = page
+    .getByRole("list", { name: "Source permissions" })
+    .getByRole("listitem", { name: "Acme Slack" });
+  await expect(row).toContainText("Follows Slack channel membership");
+  await expect(row).toContainText("5 public channels, 1 private");
+  await expect(row).toContainText("3 of 3 members matched");
+  await expect(
+    row.getByRole("link", { name: "Open Acme Slack" }),
+  ).toHaveAttribute("href", `/data/connections/${connector.id}`);
+
+  // Given the connection, Eve gets only the channels she is in.
+  const sources = await openSources(page, "people", "Eve Adler");
+  const slack = sources.getByRole("checkbox", { name: /^Acme Slack ·/ });
+  await expect(slack).toHaveAccessibleName(
+    /only the channels each person is in, now and later/,
+  );
+  await slack.check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+
+  // The connection's page says what it follows.
+  await page.goto(`/data/connections/${connector.id}`);
+  await expect(
+    page.getByText("Follows channel membership in Slack"),
+  ).toBeVisible();
+
+  // Its Conversations, one per channel and day: #leadership is private,
+  // without Eve.
+  const set = (
+    (await (await page.request.get(`/papi${ws}/document-sets`)).json())
+      .sets as { id: string; connector?: { connectorId: string } }[]
+  ).find((x) => x.connector?.connectorId === connector.id)!;
+  const docs = (
+    await (
+      await page.request.get(`/papi${ws}/documents?setId=${set.id}`)
+    ).json()
+  ).documents as { id: string; source: { externalId: string } }[];
+  const channel = (d: { source: { externalId: string } }) =>
+    d.source.externalId.split(":")[0]!;
+  const channels = [...new Set(docs.map(channel))].sort();
+  expect(channels).toContain("C0MOCKLDR");
+  const query = docs.map((d) => `ids=${d.id}`).join("&");
+
+  const as = await asEve(browser);
+  const read = await as.request.get(`/papi${ws}/documents?${query}`);
+  expect(read.status()).toBe(200);
+  const hers = [
+    ...new Set(((await read.json()).documents as typeof docs).map(channel)),
+  ].sort();
+  expect(hers).toEqual(channels.filter((c) => c !== "C0MOCKLDR"));
+  // Source permissions is for owners and admins.
+  expect((await as.request.get(`/papi${ws}/access/sources`)).status()).toBe(
+    403,
+  );
 });
