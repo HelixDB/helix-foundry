@@ -259,7 +259,11 @@ export function SettleReview({
       isProp &&
       editable &&
       decided?.kind === "prop" &&
-      holdsDecided(decided.value, s.table);
+      holdsDecided(
+        decided.value,
+        s.table,
+        naming.types.get(s.type)?.props.find((p) => p.name === s.prop)?.type,
+      );
   const table = isProp && s.table !== undefined && !holds;
   const field = !isProp
     ? "Link this name to"

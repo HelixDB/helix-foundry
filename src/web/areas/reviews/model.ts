@@ -11,6 +11,7 @@ import { reviewCopy, type ReviewReason } from "../documents/model";
 import type { DocFact, EntityRow } from "../explore/model";
 import { normalizeName } from "../explore/naming";
 import { MAX_GOAL } from "../ontology/model";
+import { helixDateTime } from "../../../shared/datetime";
 
 // What a FoundryReview lets a person settle, read once
 // from the stored record, and the choice the backend's SettleFoundryReview takes. The
@@ -1203,17 +1204,27 @@ export function waitingText(
  * decision chose: the load holds the decision, so the stored value is no
  * table's to keep, and its card offers another choice rather than to replace
  * a table's value. An integer past 2^53 compares as the number it rounds to.
+ * `propType` is the prop's type as the version declares it: a `datetime`'s
+ * decision (the backend's text for it, `…00Z`) is read as Helix's DateTime
+ * of it, which is how a load stores it and a read renders it (`…00.000Z`).
  *
  * @example
- * holdsDecided({ integer: "36" }, 36); // true
- * holdsDecided({ text: "GBP" }, "usd"); // false
+ * holdsDecided({ integer: "36" }, 36, "integer"); // true
+ * holdsDecided({ text: "GBP" }, "usd", "string"); // false
+ * holdsDecided({ text: "2026-03-14T08:30:00Z" }, "2026-03-14T08:30:00.000Z", "datetime"); // true
+ * holdsDecided({ text: "2026-03-14T08:30:00Z" }, "2026-03-14T08:30:00.000Z", "string"); // false
  */
 export function holdsDecided(
   chosen: FoundryPropValue,
   stored: string | number | boolean | undefined,
+  propType: string | undefined,
 ): boolean {
   if (stored === undefined || chosen.null !== undefined) return false;
-  if (chosen.text !== undefined) return chosen.text === stored;
+  if (chosen.text !== undefined)
+    return (
+      (propType === "datetime" ? helixDateTime(chosen.text) : chosen.text) ===
+      stored
+    );
   if (chosen.boolean !== undefined) return chosen.boolean === stored;
   return Number(chosen.integer ?? chosen.number) === stored;
 }
