@@ -590,27 +590,44 @@ describe("testing and creating", () => {
     expect(links(all, "notes")).toEqual([]);
     expect(links(all, "deals")).toEqual([]);
     // An object's table: the record's id, time and page, then its
-    // attributes flattened as attio.go flattens them.
+    // attributes flattened as attio.go flattens them, a multiselect's
+    // array never null.
     const table = (name: string) =>
       all.discovery.tables.find((t: { name: string }) => t.name === name);
-    expect(
-      table("people").columns.map(
-        (c: { name: string; type: string }) => `${c.name}:${c.type}`,
-      ),
-    ).toEqual([
+    const typed = (name: string) =>
+      table(name).columns.map(
+        (c: { name: string; type: string; nullable?: boolean }) =>
+          `${c.name}:${c.type}${c.nullable ? "?" : ""}`,
+      );
+    expect(typed("people")).toEqual([
       "record_id:string",
-      "created_at:string",
-      "web_url:string",
-      "name:string",
-      "name_first_name:string",
-      "name_last_name:string",
+      "created_at:string?",
+      "web_url:string?",
+      "name:string?",
+      "name_first_name:string?",
+      "name_last_name:string?",
       "email_addresses:array",
-      "job_title:string",
-      "company:string",
-      "company_object:string",
-      "primary_location:object",
-      "last_interaction:string",
-      "last_interaction_type:string",
+      "job_title:string?",
+      "company:string?",
+      "company_object:string?",
+      "primary_location:object?",
+      "last_interaction:string?",
+      "last_interaction_type:string?",
+      "created_by:string?",
+    ]);
+    expect(typed("companies")).toEqual(
+      expect.arrayContaining([
+        "domains:array",
+        "categories:array",
+        "team:array",
+      ]),
+    );
+    expect(typed("deals")).toContain("associated_people:array");
+    // A note may be on no record.
+    expect(typed("notes").slice(0, 3)).toEqual([
+      "note_id:string",
+      "parent_object:string?",
+      "parent_record_id:string?",
     ]);
     // Each object's and list's table shows its first rows, every value in
     // a column of its own.

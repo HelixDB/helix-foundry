@@ -1754,16 +1754,19 @@ export function addSlackFeedMessage(
 // its api_slug in snake_case, a list's by "list_" and its api_slug, keyed by
 // record_id or entry_id, with record_id, created_at and web_url (a list's
 // entry_id, parent_object, parent_record_id and created_at), then a column
-// per attribute holding its active value flattened as attio.go flattens it:
-// a multiselect attribute a JSON array, a currency's code in
+// per attribute but created_at, which those hold (created_by, who made it,
+// is one), holding its active value flattened as attio.go flattens it:
+// a multiselect attribute a JSON array, never null, a currency's code in
 // <slug>_currency, a single record reference's object in <slug>_object, a
 // personal name's parts in <slug>_first_name and <slug>_last_name, an
 // interaction's type in <slug>_type and a location the JSON object of its
 // fields. Each table needs the scopes Attio's endpoints ask for; a token
 // without them can't read it, and the table says which it lacks. A test
 // shows the first rows of each object's and list's table. Each note with a
-// body is a document in Notes. Attio's API reads nothing changed since a
-// time, so every sync reads every table in full.
+// body is a document in Notes, linking its record's page at the path the
+// record's web_url gives its object (person, company, deal). Attio's API
+// reads nothing changed since a time, so every sync reads every table in
+// full.
 type AttioTable = {
   name: string;
   key: string[];
@@ -1880,13 +1883,14 @@ const attioTables: AttioTable[] = [
       ["name", "string", true],
       ["name_first_name", "string", true],
       ["name_last_name", "string", true],
-      ["email_addresses", "array", true],
+      ["email_addresses", "array"],
       ["job_title", "string", true],
       ["company", "string", true],
       ["company_object", "string", true],
       ["primary_location", "object", true],
       ["last_interaction", "string", true],
       ["last_interaction_type", "string", true],
+      ["created_by", "string", true],
     ],
     scopes: ATTIO_RECORDS,
     preview: ATTIO_PEOPLE.map(([first, last, title, company, met], i) =>
@@ -1906,6 +1910,7 @@ const attioTables: AttioTable[] = [
         },
         last_interaction: attioAt(220 - i * 3),
         last_interaction_type: met,
+        created_by: attioMember(i % ATTIO_MEMBERS.length),
       }),
     ),
     rows: 240,
@@ -1920,12 +1925,13 @@ const attioTables: AttioTable[] = [
     columns: [
       ...attioRecordColumns,
       ["name", "string", true],
-      ["domains", "array", true],
+      ["domains", "array"],
       ["description", "string", true],
-      ["categories", "array", true],
+      ["categories", "array"],
       ["employee_range", "string", true],
       ["primary_location", "object", true],
-      ["team", "array", true],
+      ["team", "array"],
+      ["created_by", "string", true],
     ],
     scopes: ATTIO_RECORDS,
     preview: ATTIO_COMPANIES.map(([name, domain, range, city, country], i) =>
@@ -1937,6 +1943,7 @@ const attioTables: AttioTable[] = [
         employee_range: range,
         primary_location: { locality: city, country_code: country },
         team: i === 4 ? [] : [attioPerson(i)],
+        created_by: attioMember(0),
       }),
     ),
     rows: 85,
@@ -1957,7 +1964,8 @@ const attioTables: AttioTable[] = [
       ["value_currency", "string", true],
       ["associated_company", "string", true],
       ["associated_company_object", "string", true],
-      ["associated_people", "array", true],
+      ["associated_people", "array"],
+      ["created_by", "string", true],
     ],
     scopes: ATTIO_RECORDS,
     preview: (
@@ -1978,6 +1986,7 @@ const attioTables: AttioTable[] = [
         associated_company: attioCompany(company),
         associated_company_object: "companies",
         associated_people: [attioPerson(company)],
+        created_by: attioMember(i % ATTIO_MEMBERS.length),
       }),
     ),
     rows: 64,
@@ -2010,6 +2019,7 @@ const attioTables: AttioTable[] = [
       ["deal_value", "number", true],
       ["deal_value_currency", "string", true],
       ["next_step", "string", true],
+      ["created_by", "string", true],
     ],
     scopes: ["list_entry:read", "list_configuration:read"],
     preview: (
@@ -2031,6 +2041,7 @@ const attioTables: AttioTable[] = [
       deal_value: value,
       deal_value_currency: value === null ? null : "USD",
       next_step: next,
+      created_by: attioMember((i + 1) % ATTIO_MEMBERS.length),
     })),
     rows: 48,
   },
@@ -2040,8 +2051,8 @@ const attioTables: AttioTable[] = [
     key: ["note_id"],
     columns: [
       ["note_id", "string"],
-      ["parent_object", "string"],
-      ["parent_record_id", "string"],
+      ["parent_object", "string", true],
+      ["parent_record_id", "string", true],
       ["title", "string", true],
       ["meeting_id", "string", true],
       ["created_by_type", "string", true],
@@ -2160,6 +2171,8 @@ const ATTIO_NOTES = [
   ],
 ] as const;
 const ATTIO_PARENTS = ["people", "companies", "deals"] as const;
+/** Each object's segment of its records' web_url paths. */
+const ATTIO_PATHS = { people: "person", companies: "company", deals: "deal" };
 // The workspace's notes, newest first: one on each object in turn, the
 // fifth of each six without a title, and the last with no body, which is
 // no document.
@@ -2396,7 +2409,9 @@ export function documentStreams(
                 version: `1|${sha(`${n.title}\0${n.markdown}`, 32)}`,
                 at: n.createdAt,
                 title: n.title || "Untitled note",
-                url: `https://app.attio.com/${ATTIO_WORKSPACE}/${n.parentObject}/${n.parentRecordId}`,
+                // attio.go's link: the path the object's records' web_url
+                // give it, then the record's id.
+                url: `https://app.attio.com/${ATTIO_WORKSPACE}/${ATTIO_PATHS[n.parentObject]}/${n.parentRecordId}`,
                 text: `# ${n.title || "Untitled note"}\n\n${n.markdown}`,
               }))
           : null,

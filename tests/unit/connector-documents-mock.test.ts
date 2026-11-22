@@ -465,7 +465,7 @@ describe("Slack's, Notion's, Attio's and Google Workspace's documents", () => {
       mediaType: "text/markdown",
       source: {
         externalId: id,
-        url: "https://app.attio.com/acme/people/a7710001-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        url: "https://app.attio.com/acme/person/a7710001-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
         at: "2026-10-21T09:30:00.000Z",
       },
     });
@@ -485,7 +485,7 @@ describe("Slack's, Notion's, Attio's and Google Workspace's documents", () => {
     expect(docs[4]).toMatchObject({
       name: "Untitled note",
       source: {
-        url: "https://app.attio.com/acme/companies/c0a10005-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        url: "https://app.attio.com/acme/company/c0a10005-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
       },
     });
     // Unchanged at the source, a note keeps its document at the next sync.
