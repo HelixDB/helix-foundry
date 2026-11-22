@@ -16,6 +16,7 @@ func TestEncodeDecode(t *testing.T) {
 	events := map[slack.Kind]slack.Event{
 		slack.KindMention:       slack.Mention{At: at, UserID: "U1", TS: "1.2", UserTeamID: "T1", Text: "<@U9> hi", EventTime: eventTime},
 		slack.KindDM:            slack.DirectMessage{At: at, UserID: "U1", TS: "1.2", Text: "hi", EventTime: eventTime},
+		slack.KindReply:         slack.ThreadReply{At: at, UserID: "U1", TS: "1.3", UserTeamID: "T1", Text: "and then?", EventTime: eventTime},
 		slack.KindStopped:       slack.SessionStopped{At: at, UserID: "U1"},
 		slack.KindUninstalled:   slack.Uninstalled{TeamID: "T1", EventTime: eventTime},
 		slack.KindTokensRevoked: slack.TokensRevoked{TeamID: "T1", Bot: true, EventTime: eventTime},
@@ -57,7 +58,8 @@ func TestEncodeDecode(t *testing.T) {
 		_, err = slack.DecodeInteraction(k, []byte("{"))
 		require.Error(t, err)
 	}
-	for _, e := range []slack.Event{slack.Ignored{Why: "x"}, slack.URLVerification{Challenge: "c"}, nil} {
+	for _, e := range []slack.Event{slack.Ignored{Why: "x"}, slack.URLVerification{Challenge: "c"}, nil,
+		slack.ChannelMessage{}, slack.RateLimited{TeamID: "T1"}} {
 		_, _, err := slack.EncodeEvent(e)
 		require.Error(t, err)
 	}

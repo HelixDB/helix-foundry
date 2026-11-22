@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -208,16 +209,20 @@ func TestQuestions(t *testing.T) {
 	for i := range many {
 		many[i] = open
 	}
-	dm, channel := slack.RepliesIn("D0ADA0001", "U0BOT0001"), slack.RepliesIn("C0GENERAL", "U0BOT0001")
+	history := slices.Concat(slack.Scopes, slack.HistoryScopes)
+	dm, channel := slack.RepliesIn("D0ADA0001", "U0BOT0001", history, true), slack.RepliesIn("C0GENERAL", "U0BOT0001", history, false)
+	followed := slack.RepliesIn("C0GENERAL", "U0BOT0001", history, true)
 	draft := &agent.AskedGeneration{OntologyID: "o1", OntologyName: "Sales", GenerationID: "g1", GenerationTitle: "Contracts", Round: 1}
 	cases := map[string][]slack.Message{
-		"one":                    s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", dm),
-		"four":                   s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}, "w1", dm),
-		"one in a channel":       s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", channel),
-		"four in a channel":      s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}, "w1", channel),
-		"one with no ReplyTo":    s.Questions(agent.Asked{Questions: []agentquestion.Question{open}}, "w1", nil),
-		"a generation's":         s.Questions(agent.Asked{Questions: []agentquestion.Question{free}, Generation: draft}, "w1", channel),
-		"a generation's in a DM": s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, open}, Generation: draft}, "w1", dm),
+		"one":                       s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", dm),
+		"four":                      s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}, "w1", dm),
+		"one in a channel":          s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", channel),
+		"four in a channel":         s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, several, free, open}}, "w1", channel),
+		"one in a followed channel": s.Questions(agent.Asked{Questions: []agentquestion.Question{choice}}, "w1", followed),
+		"two in a followed channel": s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, open}}, "w1", followed),
+		"one with no ReplyTo":       s.Questions(agent.Asked{Questions: []agentquestion.Question{open}}, "w1", nil),
+		"a generation's":            s.Questions(agent.Asked{Questions: []agentquestion.Question{free}, Generation: draft}, "w1", channel),
+		"a generation's in a DM":    s.Questions(agent.Asked{Questions: []agentquestion.Question{choice, open}, Generation: draft}, "w1", dm),
 		"a generation's without a title": s.Questions(agent.Asked{Questions: []agentquestion.Question{free},
 			Generation: &agent.AskedGeneration{OntologyID: "o1", OntologyName: "Sales", GenerationID: "g1", Round: 1}}, "w1", dm),
 		"thirty": s.Questions(agent.Asked{Questions: many}, "w1", dm),
@@ -232,6 +237,11 @@ func TestQuestions(t *testing.T) {
 		intro("one in a channel"))
 	require.Contains(t, intro("four in a channel"), "<@U0BOT0001> to answer them, by their numbers.")
 	require.Equal(t, "Founder has a question for you. Reply in this thread to answer it.", intro("one"))
+	// Where unmentioned follow-ups reach the bot, a reply needn't mention it
+	// while the bot posted last, which the intro says.
+	require.Equal(t, "Founder has a question for you. Reply in this thread to answer it (until someone else joins in, or a day passes: then mention <@U0BOT0001>).",
+		intro("one in a followed channel"))
+	require.Contains(t, intro("two in a followed channel"), "to answer them, by their numbers (until")
 	require.NotContains(t, intro("one"), "<@")
 	// A draft's questions aren't answered by a reply in Slack: they link to
 	// the draft's page, wherever they are asked, and never say to reply.
@@ -247,4 +257,18 @@ func TestQuestions(t *testing.T) {
 	}
 	require.Equal(t, "Founder relays 2 questions from the draft of Sales (Contracts). Answer them on the draft’s page in Foundry: a reply here doesn’t reach the draft.",
 		intro("a generation's in a DM"))
+}
+
+// A DM's replies always reach the bot; a channel's reach it unmentioned only
+// where follow-ups are on and the install can read channel history.
+func TestRepliesIn(t *testing.T) {
+	history := slices.Concat(slack.Scopes, slack.HistoryScopes)
+	require.Equal(t, slack.ReplyPlain{}, slack.RepliesIn("D1", "U0BOT", nil, false))
+	require.Equal(t, slack.ReplyPlain{}, slack.RepliesIn("D1", "U0BOT", history, true))
+	require.Equal(t, slack.ReplyFollowed{BotUserID: "U0BOT"}, slack.RepliesIn("C1", "U0BOT", history, true))
+	require.Equal(t, slack.ReplyFollowed{BotUserID: "U0BOT"}, slack.RepliesIn("G1", "U0BOT", history, true))
+	require.Equal(t, slack.ReplyMentioning{BotUserID: "U0BOT"}, slack.RepliesIn("C1", "U0BOT", history, false), "follow-ups off")
+	require.Equal(t, slack.ReplyMentioning{BotUserID: "U0BOT"}, slack.RepliesIn("C1", "U0BOT", slack.Scopes, true), "no history scopes")
+	require.Equal(t, slack.ReplyMentioning{BotUserID: "U0BOT"},
+		slack.RepliesIn("C1", "U0BOT", append(slices.Clone(slack.Scopes), "channels:history"), true), "only public history")
 }

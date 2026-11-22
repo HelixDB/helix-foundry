@@ -1,7 +1,8 @@
 # Helix's distributed Slack app "Helix Foundry", dev: unlisted, Helix's own
 # sandboxes only. Create or update the app from this file; slack/manifest_test.go
-# keeps its scopes and events equal to what the bot needs (slack.Scopes,
-# slack.Subscriptions).
+# keeps its scopes and events equal to what the bot needs with dev's flags
+# (slack.Required with foundry.slack.feed and foundry.slack.follow on): the
+# channel history the data connector and unmentioned follow-ups read.
 display_information:
   name: Helix Foundry (dev)
   description: Ask your Foundry ontologies and act on them from Slack.
@@ -36,6 +37,8 @@ oauth_config:
       - channels:read
       - groups:read
       - mpim:read
+      - channels:history
+      - groups:history
 settings:
   event_subscriptions:
     request_url: https://ingest.dev.helix-db.com/v1/slack/events
@@ -45,6 +48,21 @@ settings:
       - app_uninstalled
       - tokens_revoked
       - agent_session_stopped
+      - message.channels
+      - message.groups
+      - member_joined_channel
+      - member_left_channel
+      - channel_left
+      - group_left
+      - channel_rename
+      - group_rename
+      - channel_deleted
+      - group_deleted
+      - channel_shared
+      - channel_archive
+      - channel_unarchive
+      - group_archive
+      - group_unarchive
   interactivity:
     is_enabled: true
     request_url: https://ingest.dev.helix-db.com/v1/slack/interactivity

@@ -13,6 +13,7 @@ type Kind string
 const (
 	KindMention       Kind = "mention"
 	KindDM            Kind = "dm"
+	KindReply         Kind = "reply"
 	KindStopped       Kind = "stopped"
 	KindUninstalled   Kind = "uninstalled"
 	KindTokensRevoked Kind = "tokens_revoked"
@@ -27,7 +28,7 @@ const (
 
 // kinds are the kinds ParseKind reads.
 var kinds = map[Kind]bool{
-	KindMention: true, KindDM: true, KindStopped: true, KindUninstalled: true, KindTokensRevoked: true,
+	KindMention: true, KindDM: true, KindReply: true, KindStopped: true, KindUninstalled: true, KindTokensRevoked: true,
 	KindApprove: true, KindDismiss: true, KindRefresh: true, KindReview: true, KindRun: true, KindStop: true, KindUnlink: true,
 }
 
@@ -39,8 +40,8 @@ func ParseKind(s string) (Kind, error) {
 	return Kind(s), nil
 }
 
-// EncodeEvent is an event's kind and JSON, to store. URLVerification and
-// Ignored aren't stored.
+// EncodeEvent is an event's kind and JSON, to store in intake.
+// URLVerification, Ignored and FeedEvents aren't stored there.
 func EncodeEvent(e Event) (Kind, json.RawMessage, error) {
 	var k Kind
 	switch e.(type) {
@@ -48,6 +49,8 @@ func EncodeEvent(e Event) (Kind, json.RawMessage, error) {
 		k = KindMention
 	case DirectMessage:
 		k = KindDM
+	case ThreadReply:
+		k = KindReply
 	case SessionStopped:
 		k = KindStopped
 	case Uninstalled:
@@ -94,6 +97,8 @@ func DecodeEvent(k Kind, data []byte) (Event, error) {
 		return decodeEvent[Mention](k, data)
 	case KindDM:
 		return decodeEvent[DirectMessage](k, data)
+	case KindReply:
+		return decodeEvent[ThreadReply](k, data)
 	case KindStopped:
 		return decodeEvent[SessionStopped](k, data)
 	case KindUninstalled:

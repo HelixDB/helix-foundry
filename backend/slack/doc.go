@@ -14,14 +14,19 @@
 //   - Client calls the Web API, through a Limiter per install and method and
 //     per channel; a rate limit, Slack's or the Limiter's, is a
 //     *RateLimitedError saying when to try again, so no caller sleeps.
+//   - ParseEvent also reads the channel events the Slack data connector
+//     keeps (FeedEvent), and Classify sorts a request for the door's gates
+//     (bot, reply, feed) before it is verified.
 //
 // The manifests the dev and prod apps are made from are in manifest/; a test
-// keeps their scopes and events equal to Scopes and Subscriptions.
+// keeps their scopes and events equal to Required under each stamp's flags.
 package slack
 
-// Scopes are the bot scopes the app asks for, and every install must hold:
-// mentions and direct messages in, posting and agent status out, who a
-// Slack user is (their email, for linking), and whether a channel a card
+import "slices"
+
+// Scopes are the bot scopes the app always asks for, and every install must
+// hold: mentions and direct messages in, posting and agent status out, who
+// a Slack user is (their email, for linking), and whether a channel a card
 // is clicked in is shared with another organisation (conversations.info).
 var Scopes = []string{
 	"app_mentions:read",
@@ -36,12 +41,60 @@ var Scopes = []string{
 	"mpim:read",
 }
 
-// Subscriptions are the bot events the app subscribes to: the events
-// ParseEvent reads into an Event it acts on.
+// Subscriptions are the bot events the app always subscribes to: the events
+// ParseEvent reads into an Event the bot acts on.
 var Subscriptions = []string{
 	"app_mention",
 	"message.im",
 	"app_uninstalled",
 	"tokens_revoked",
 	"agent_session_stopped",
+}
+
+// HistoryScopes are the scopes to read the messages of the public and
+// private channels the bot is in, asked for only where the data connector
+// (foundry.slack.feed) or unmentioned follow-ups (foundry.slack.follow) are
+// on. Direct and group messages are never read beyond the bot's own DMs.
+var HistoryScopes = []string{"channels:history", "groups:history"}
+
+// MessageSubscriptions are the events of every message in the channels the
+// bot is in, subscribed to with HistoryScopes.
+var MessageSubscriptions = []string{"message.channels", "message.groups"}
+
+// ChannelSubscriptions are the channel lifecycle events the data connector
+// reads (ParseEvent's ChannelRenamed, ChannelGone, ChannelArchived,
+// MemberJoined and MemberLeft), subscribed to only where it is on. They need
+// only channels:read and groups:read, which Scopes holds. channel_unshared
+// isn't among them: the connector's hourly directory read finds a channel
+// no longer shared.
+var ChannelSubscriptions = []string{
+	"member_joined_channel",
+	"member_left_channel",
+	"channel_left",
+	"group_left",
+	"channel_rename",
+	"group_rename",
+	"channel_deleted",
+	"group_deleted",
+	"channel_shared",
+	"channel_archive",
+	"channel_unarchive",
+	"group_archive",
+	"group_unarchive",
+}
+
+// Required is what an install must hold and subscribe to where the data
+// connector is on (feed) and where unmentioned follow-ups are (follow):
+// Scopes and Subscriptions always; HistoryScopes and MessageSubscriptions
+// with either; ChannelSubscriptions with feed. The slices are the caller's
+// own.
+func Required(feed, follow bool) (scopes, events []string) {
+	scopes, events = slices.Clone(Scopes), slices.Clone(Subscriptions)
+	if feed || follow {
+		scopes, events = append(scopes, HistoryScopes...), append(events, MessageSubscriptions...)
+	}
+	if feed {
+		events = append(events, ChannelSubscriptions...)
+	}
+	return scopes, events
 }

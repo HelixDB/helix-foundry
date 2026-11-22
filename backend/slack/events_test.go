@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -54,15 +55,15 @@ func TestParseEventFixtures(t *testing.T) {
 		"dm_own_post.json":         {EventID: "Ev0OWNPOST1", AppID: "A0FOUNDRY", Event: slack.Ignored{Why: "a bot's message"}},
 		"dm_edit.json":             {EventID: "Ev0DMEDIT01", AppID: "A0FOUNDRY", Event: slack.Ignored{Why: `message subtype "message_changed"`}},
 		"dm_delete.json":           {EventID: "Ev0DMDEL001", AppID: "A0FOUNDRY", Event: slack.Ignored{Why: `message subtype "message_deleted"`}},
-		"member_joined.json":       {EventID: "Ev0JOIN0001", AppID: "A0FOUNDRY", Event: slack.Ignored{Why: `event type "member_joined_channel"`}},
-		"channel_message.json":     {EventID: "Ev0CHANMSG1", AppID: "A0FOUNDRY", Event: slack.Ignored{Why: `message in a "channel"`}},
 		"url_verification.json":    {Event: slack.URLVerification{Challenge: "3eZbrw1aBm2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO7tYXAYM8P"}},
-		"app_rate_limited.json":    {Event: slack.Ignored{Why: `request type "app_rate_limited"`}},
 		"app_uninstalled.json":     {EventID: "Ev0UNINST01", AppID: "A0FOUNDRY", Event: slack.Uninstalled{TeamID: "T0AAA1111", EventTime: eventTime}},
 		"tokens_revoked.json":      {EventID: "Ev0REVOKE01", AppID: "A0FOUNDRY", Event: slack.TokensRevoked{TeamID: "T0AAA1111", Bot: true, EventTime: eventTime}},
 		"tokens_revoked_user.json": {EventID: "Ev0REVOKE02", AppID: "A0FOUNDRY", Event: slack.TokensRevoked{TeamID: "T0AAA1111", EventTime: eventTime}},
 		"agent_session_stopped.json": {EventID: "Ev0STOPPED1", AppID: "A0FOUNDRY", Event: slack.SessionStopped{
 			At: slack.Conversation{TeamID: "T0AAA1111", ChannelID: "D0DM00001", ThreadTS: "1782234671.392669"}, UserID: "U0ADA0001"}},
+	}
+	for name, e := range feedCases() {
+		cases[name] = e
 	}
 	entries, err := os.ReadDir("testdata/events")
 	require.NoError(t, err)
@@ -124,19 +125,30 @@ func TestParseEventRefusals(t *testing.T) {
 	require.Equal(t, slack.Conversation{TeamID: "T1", EnterpriseID: "E1", ChannelID: "C1", ThreadTS: "1.2"}, got.Event.(slack.Mention).At)
 }
 
-// The subscriptions are the events ParseEvent acts on: each one's fixture
-// reads as an event, not as Ignored.
+// Every subscription, in any mode, is an event ParseEvent acts on: each
+// one's fixture reads as an event, not as Ignored.
 func TestSubscriptionsAreParsed(t *testing.T) {
 	fixtures := map[string]string{
 		"app_mention": "mention.json", "message.im": "dm.json", "app_uninstalled": "app_uninstalled.json",
 		"tokens_revoked": "tokens_revoked.json", "agent_session_stopped": "agent_session_stopped.json",
+		"message.channels": "channel_message.json", "message.groups": "channel_message_private.json",
+		"member_joined_channel": "member_joined.json", "member_left_channel": "member_left.json",
+		"channel_left": "channel_left.json", "group_left": "group_left.json",
+		"channel_rename": "channel_rename.json", "group_rename": "group_rename.json",
+		"channel_deleted": "channel_deleted.json", "group_deleted": "group_deleted.json", "channel_shared": "channel_shared.json",
+		"channel_archive": "channel_archive.json", "channel_unarchive": "channel_unarchive.json",
+		"group_archive": "group_archive.json", "group_unarchive": "group_unarchive.json",
 	}
-	require.Len(t, slack.Subscriptions, len(fixtures))
-	for _, sub := range slack.Subscriptions {
+	_, all := slack.Required(true, true)
+	require.Len(t, all, len(fixtures))
+	for _, sub := range all {
 		got, err := slack.ParseEvent(fixture(t, "events/"+fixtures[sub]))
 		require.NoError(t, err, sub)
 		_, ignored := got.Event.(slack.Ignored)
 		require.False(t, ignored, sub)
+		// The channel events are the data connector's.
+		_, feed := got.Event.(slack.FeedEvent)
+		require.Equal(t, slices.Contains(slack.ChannelSubscriptions, sub) || slices.Contains(slack.MessageSubscriptions, sub), feed, sub)
 	}
 }
 
@@ -162,6 +174,13 @@ func FuzzParseEvent(f *testing.F) {
 			require.NoError(t, err)
 			require.Equal(t, got.Event, back)
 		}
+		if fe, ok := got.Event.(slack.FeedEvent); ok {
+			if back, err := roundTrip(fe); err == nil { // a time past year 9999 has no JSON
+				require.Equal(t, fe, back)
+			}
+		}
+		// Classify reads any body without failing.
+		_ = slack.Classify(body)
 	})
 }
 

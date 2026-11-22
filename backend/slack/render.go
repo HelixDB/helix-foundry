@@ -3,6 +3,7 @@ package slack
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -229,27 +230,39 @@ type ReplyTo interface{ replyTo() }
 // it.
 type ReplyPlain struct{}
 
+// ReplyFollowed is a channel where a reply in the bot's thread reaches it
+// without a mention while the bot posted there last apart from the person
+// replying, within a day (foundry.slack.follow); after that, only by
+// mentioning it, as BotUserID.
+type ReplyFollowed struct{ BotUserID string }
+
 // ReplyMentioning is a channel, where the bot sees only the messages that
 // mention it, as BotUserID: a reply reaches it only by mentioning it.
 type ReplyMentioning struct{ BotUserID string }
 
 func (ReplyPlain) replyTo()      {}
+func (ReplyFollowed) replyTo()   {}
 func (ReplyMentioning) replyTo() {}
 
 // RepliesIn is how a reply in channel reaches the bot, as botUserID: a
-// direct message's (Slack's IM ids start with D) plainly, any other's by
-// mentioning it.
-func RepliesIn(channel, botUserID string) ReplyTo {
-	if strings.HasPrefix(channel, "D") {
+// direct message's (Slack's IM ids start with D) plainly; any other's
+// without a mention for a while (ReplyFollowed) where follows (unmentioned
+// follow-ups are on for the install) and the install's scopes hold
+// HistoryScopes, else by mentioning it.
+func RepliesIn(channel, botUserID string, scopes []string, follows bool) ReplyTo {
+	switch {
+	case strings.HasPrefix(channel, "D"):
 		return ReplyPlain{}
+	case follows && !slices.ContainsFunc(HistoryScopes, func(s string) bool { return !slices.Contains(scopes, s) }):
+		return ReplyFollowed{BotUserID: botUserID}
 	}
 	return ReplyMentioning{BotUserID: botUserID}
 }
 
 // Questions draws the questions a turn asks its person, each numbered, its
 // options numbered under it. Founder's own are answered by replying in the
-// thread ("1: 2, 2: my own words"), mentioning the bot outside a direct
-// message (to). A generation's, which a reply in Slack can't answer, are
+// thread ("1: 2, 2: my own words"), mentioning the bot where a reply
+// reaches it only so (to). A generation's, which a reply in Slack can't answer, are
 // shown for the person to answer on the draft's page in Foundry, which
 // they link to (in workspaceID). A recommended option is marked, and a
 // question of Founder's that isn't blocking may be left to it. More than
@@ -277,6 +290,9 @@ func (s Site) Questions(asked agent.Asked, workspaceID string, to ReplyTo) []Mes
 		switch to := to.(type) {
 		case ReplyPlain:
 			intro = s.Text(ask + "Reply in this thread to answer " + them + ".")
+		case ReplyFollowed:
+			intro = Join(s.Text(ask+"Reply in this thread to answer "+them+" (until someone else joins in, or a day passes: then mention "),
+				UserMention(to.BotUserID), s.Text(")."))
 		case ReplyMentioning:
 			intro = Join(s.Text(ask+"Reply in this thread mentioning "), UserMention(to.BotUserID),
 				s.Text(" to answer "+them+". Without the mention, Founder won’t see your reply."))

@@ -468,7 +468,7 @@ func (f *follower) post(ctx context.Context, due slack.Due, turnLive bool) (bool
 		}
 		msgs = []slack.Message{m}
 	case slack.QuestionsDue:
-		msgs = b.site.Questions(d.Asked, ws, slack.RepliesIn(f.r.ChannelID, f.install.BotUserID))
+		msgs = b.site.Questions(d.Asked, ws, slack.RepliesIn(f.r.ChannelID, f.install.BotUserID, f.install.Scopes, false))
 	default:
 		return true, nil
 	}

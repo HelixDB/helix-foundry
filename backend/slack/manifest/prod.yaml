@@ -1,6 +1,9 @@
 # Helix's distributed Slack app "Helix Foundry", production. Create or update
 # the app from this file; slack/manifest_test.go keeps its scopes and events
-# equal to what the bot needs (slack.Scopes, slack.Subscriptions).
+# equal to what the bot needs with prod's flags (slack.Required with
+# foundry.slack.feed and foundry.slack.follow off): no channel history until
+# Slack confirms the data connector in writing. Turning them on changes this
+# file, the test's flags and the chart together.
 display_information:
   name: Helix Foundry
   description: Ask your Foundry ontologies and act on them from Slack.

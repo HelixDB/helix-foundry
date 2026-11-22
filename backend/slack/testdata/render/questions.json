@@ -306,6 +306,32 @@
       ]
     }
   ],
+  "one in a followed channel": [
+    {
+      "text": "Founder has a question for you. Reply in this thread to answer it (until someone else joins in, or a day passes: then mention <@U0BOT0001>).\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has a question for you. Reply in this thread to answer it (until someone else joins in, or a day passes: then mention \u003c@U0BOT0001\u003e).",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
   "one with no ReplyTo": [
     {
       "text": "Founder has a question for you. Reply in this thread mentioning the app to answer it.\n*1.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
@@ -676,6 +702,43 @@
           "text": {
             "type": "mrkdwn",
             "text": "*30.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "two in a followed channel": [
+    {
+      "text": "Founder has 2 questions for you. Reply in this thread to answer them, by their numbers (until someone else joins in, or a day passes: then mention <@U0BOT0001>).\n*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._\n*2.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Founder has 2 questions for you. Reply in this thread to answer them, by their numbers (until someone else joins in, or a day passes: then mention \u003c@U0BOT0001\u003e).",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*1.* *Customers*: Is a customer an *account* or a person at `acme.com`?\n   1. An account _(recommended)_ — Billing accounts\n   2. A person\n_Reply with an option’s number, or in your own words._",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*2.* Anything else?\n_Reply in your own words. You may leave it to Founder._",
             "verbatim": true
           }
         }
