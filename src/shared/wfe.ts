@@ -547,6 +547,7 @@ export type ConnectorKindName =
   | "notion"
   | "google"
   | "databuddy"
+  | "attio"
   | "postgres"
   | "mysql"
   | "s3"
@@ -705,6 +706,14 @@ export type DatabuddyConnectorConfig = {
   // Days of history to keep, 1 to 365; 0 means 90.
   historyDays?: number;
 };
+/**
+ * v1AttioConnectorConfig: an Attio access token (64 characters); the
+ * connector reads everything its scopes allow.
+ */
+export type AttioConnectorConfig = {
+  // Write-only.
+  apiKey?: string;
+};
 /** v1DatabaseConnectorConfig: PostgreSQL and MySQL. */
 export type DatabaseConnectorConfig = {
   host?: string;
@@ -800,6 +809,7 @@ export type ConnectorConfig =
   | { notion: NotionConnectorConfig }
   | { google: GoogleWorkspaceConnectorConfig }
   | { databuddy: DatabuddyConnectorConfig }
+  | { attio: AttioConnectorConfig }
   | { postgres: DatabaseConnectorConfig }
   | { mysql: DatabaseConnectorConfig }
   | { s3: S3ConnectorConfig }

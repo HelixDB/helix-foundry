@@ -1,6 +1,7 @@
 import {
   Braces,
   ChartLine,
+  Contact,
   Database,
   FileUp,
   Globe2,
@@ -43,6 +44,7 @@ const labels: Record<string, string> = {
   notion: "Notion",
   google: "Google Workspace",
   databuddy: "Databuddy",
+  attio: "Attio",
   stripe: "Stripe",
   s3: "Amazon S3",
   events: "API source",
@@ -56,10 +58,12 @@ const labels: Record<string, string> = {
   api: "Ingestion API",
   pipeline: "Pipeline output",
 };
-// Kinds without a logo file draw these; Databuddy's mark isn't vendored.
+// Kinds without a logo file draw these; Databuddy's and Attio's marks aren't
+// vendored.
 const generic: Record<string, LucideIcon> = {
   events: Braces,
   databuddy: ChartLine,
+  attio: Contact,
   neo4j: Waypoints,
   upload: FileUp,
   rest: Globe2,
