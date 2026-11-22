@@ -47,6 +47,36 @@ type memoryStore struct {
 	// discarded are the cursors a sync of an older account generation
 	// wrote, which the store dropped.
 	discarded []string
+	// audiences are each connector's stored audiences, read at audiencesAt;
+	// problems the audience problems recorded, as "connector: problem".
+	// failAudiences fails the next ReplaceSourceAudiences.
+	audiences     map[string]connector.Audiences
+	audiencesAt   map[string]time.Time
+	problems      []string
+	failAudiences error
+}
+
+func (m *memoryStore) ReplaceSourceAudiences(_ context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error {
+	if err := m.failAudiences; err != nil {
+		m.failAudiences = nil
+		return err
+	}
+	if c := m.connectors[connectorID]; c == nil || c.WorkspaceID != workspaceID {
+		return foundrystore.ErrNotFound
+	}
+	if m.audiences == nil {
+		m.audiences, m.audiencesAt = map[string]connector.Audiences{}, map[string]time.Time{}
+	}
+	m.audiences[connectorID], m.audiencesAt[connectorID] = a, readAt
+	return nil
+}
+
+func (m *memoryStore) RecordSourceAudienceProblem(_ context.Context, workspaceID, connectorID string, _ time.Time, problem string) error {
+	if c := m.connectors[connectorID]; c == nil || c.WorkspaceID != workspaceID {
+		return foundrystore.ErrNotFound
+	}
+	m.problems = append(m.problems, connectorID+": "+problem)
+	return nil
 }
 
 func (m *memoryStore) BreakConnectorAccount(_ context.Context, _, connectorID string, generation int, reason string) (bool, error) {

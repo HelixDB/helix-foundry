@@ -52,6 +52,8 @@ type store interface {
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
 	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
+	ReplaceSourceAudiences(ctx context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error
+	RecordSourceAudienceProblem(ctx context.Context, workspaceID, connectorID string, at time.Time, problem string) error
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	ListConnectorChangeBatches(ctx context.Context, workspaceID, syncID string) ([]*model.ConnectorChangeBatch, error)
 	ListFoundryDocumentSets(ctx context.Context, workspaceID string) ([]*model.FoundryDocumentSet, error)
@@ -201,7 +203,9 @@ const releaseTimeout = 30 * time.Second
 //     new snapshot and a change batch, in one lease-guarded write.
 //  5. Once every table is in, empty the document sets of streams no longer
 //     written, drop the tables no longer selected or discovered, then store
-//     the cursor the next change read starts from.
+//     the cursor the next change read starts from. A connector.Audienced
+//     kind then reads and stores its source's permissions (storeAudiences),
+//     which fails nothing.
 //  6. Mark the ontologies that read a changed table as owing a refresh.
 //  7. For a Pushed kind, read what waits beyond the stored cursor.
 //
@@ -396,6 +400,9 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 	if err := s.DB.UpdateConnectorCursor(ctx, c.ID, *res.AccountGeneration, cursor, sync.ID, leaseOwner(sync)); err != nil {
 		return r.result(res), published(err, "store the change cursor")
 	}
+	if audienced, ok := kind.(connector.Audienced); ok {
+		s.storeAudiences(ctx, c, audienced, *src)
+	}
 	res = r.result(res)
 	if len(res.Changed) > 0 && s.Refresh != nil {
 		if err := s.Refresh.OweFoundryRefreshes(ctx, c.WorkspaceID, c.ID, sync.ID, res.Changed, plan.Sync.RefreshEvery); err != nil {
@@ -412,6 +419,32 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 		res.Pushed = &PushedResult{Backlog: backlog, Rows: res.Rows}
 	}
 	return res, nil
+}
+
+// storeAudiences reads who the connector's source shares each item with
+// (connector.Audienced), in full, and stores it in place of what was, at the
+// time the read began. A read or a write that fails keeps what was stored,
+// records why for owners and admins, and fails nothing: the sync has
+// published, and a connector whose audiences are stale shows its content to
+// full readers only (plans/SOURCE_ACLS.md).
+func (s *Syncer) storeAudiences(ctx context.Context, c *model.Connector, kind connector.Audienced, src connector.Source) {
+	at := s.now()
+	audiences, err := kind.Audiences(ctx, src)
+	var problem string
+	if err != nil {
+		var failure *Failure
+		_ = errors.As(classify(err), &failure) // classify's errors are all Failures
+		problem = failure.Message
+	} else if err = s.DB.ReplaceSourceAudiences(ctx, c.WorkspaceID, c.ID, at, audiences); err != nil {
+		problem = "Helix could not store who the source shares what with; it will try again at the next sync"
+	}
+	if err == nil {
+		return
+	}
+	log.From(ctx).Warn("a connector's audiences were not stored", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind, "err", err)
+	if err := s.DB.RecordSourceAudienceProblem(ctx, c.WorkspaceID, c.ID, at, problem); err != nil {
+		log.From(ctx).Warn("a connector's audience problem was not recorded", "workspace", c.WorkspaceID, "connector", c.ID, "err", err)
+	}
 }
 
 // AccountGeneration is the connector's account generation: 0 for one with
