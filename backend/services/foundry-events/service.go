@@ -49,6 +49,15 @@
 // and the minute of its channel sent, once a minute, to
 // FoundryEventsService.RecordFoundrySlackFeedGaps, for the data connector to read again.
 //
+// The fifth is Helix's Slack relay, while foundry.slack and its relay are on (relay.go): standalone
+// Foundry installs linked to a Helix workspace redeem their link's code, claim what Slack sent
+// their installs, call Slack as them, start installs and unlink, bearing their hx_rl_ token,
+//
+//	POST /v1/relay/token, /v1/relay/claim, /v1/relay/slack/{method}, /v1/relay/slack-install, /v1/relay/revoke
+//
+// behind a gate of their own, a claim waiting in a place of its own, and forwarded to
+// FoundryEventsService's relay methods with the token's SHA-256.
+//
 // Another method on a route is 405, and another path 404, from the mux.
 //
 // The role holds nothing: no Secret, database, AWS identity or service-account token; not even the

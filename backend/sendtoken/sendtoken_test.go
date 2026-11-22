@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/helixdb/helix-foundry/backend/pkg/keytoken"
 )
 
 // address is the client the tests send from, and elsewhere another one.
@@ -96,7 +98,7 @@ func (w *waiting) Done() <-chan struct{} {
 }
 
 // failuresLeft spends what is left of address's failures at now, counting them.
-func failuresLeft(a *Admission, address string, now time.Time) int {
+func failuresLeft(a *Admission[Sender], address string, now time.Time) int {
 	n := 0
 	for a.Unauthenticated(address, now).Verdict == Refused {
 		n++
@@ -117,8 +119,8 @@ func TestAdmit(t *testing.T) {
 
 	t.Run("admits a live token and gives its failure back", func(t *testing.T) {
 		b := newBackend(token(1))
-		a := New(b.lookup, 0)
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, a.Admit(ctx, address, token(1), t0))
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, a.Admit(ctx, address, token(1), t0))
 		assert.EqualValues(t, 1, b.calls.Load())
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, address, t0))
 	})
@@ -128,19 +130,19 @@ func TestAdmit(t *testing.T) {
 	t.Run("takes an unknown token's failure before its lookup", func(t *testing.T) {
 		b := newBackend()
 		gate := b.hold()
-		a := New(b.lookup, 0)
-		answer := make(chan Outcome, 1)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
+		answer := make(chan Outcome[Sender], 1)
 		go func() { answer <- a.Admit(ctx, address, token(1), t0) }()
 		eventually(t, func() bool { return b.calls.Load() == 1 })
 		assert.Equal(t, FailuresPerMinute-1, failuresLeft(a, address, t0))
 		close(gate)
-		assert.Equal(t, Outcome{Verdict: Refused}, <-answer)
+		assert.Equal(t, Outcome[Sender]{Verdict: Refused}, <-answer)
 	})
 
 	t.Run("keeps the failure of a token that isn't live", func(t *testing.T) {
 		b := newBackend()
-		a := New(b.lookup, 0)
-		assert.Equal(t, Outcome{Verdict: Refused}, a.Admit(ctx, address, token(1), t0))
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
+		assert.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Admit(ctx, address, token(1), t0))
 		assert.Equal(t, FailuresPerMinute-1, failuresLeft(a, address, t0))
 	})
 
@@ -152,21 +154,21 @@ func TestAdmit(t *testing.T) {
 		"any id":      {},
 	} {
 		t.Run("refuses a live answer without "+name, func(t *testing.T) {
-			a := New(func(context.Context, string) (Sender, bool, error) { return sender, true, nil }, 0)
-			assert.Equal(t, Outcome{Verdict: Refused}, a.Admit(ctx, address, token(1), t0))
+			a := New(keytoken.ValidateEventSource, func(context.Context, string) (Sender, bool, error) { return sender, true, nil }, 0)
+			assert.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Admit(ctx, address, token(1), t0))
 			assert.Equal(t, FailuresPerMinute-1, failuresLeft(a, address, t0))
 		})
 	}
 
 	t.Run("spends a failure on a malformed token, with no lookup", func(t *testing.T) {
 		b := newBackend()
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		digits := strings.TrimPrefix(token(1), "hx_ev_")
 		malformed := []string{
 			"", "hx_ev_", "hx_ev_" + digits[1:], token(1) + "0", "hx_ev_" + strings.Repeat("A", 64), "hx_ev_g" + digits[1:], "hlxs_" + digits,
 		}
 		for _, token := range malformed {
-			assert.Equal(t, Outcome{Verdict: Refused}, a.Admit(ctx, address, token, t0), token)
+			assert.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Admit(ctx, address, token, t0), token)
 		}
 		assert.Zero(t, b.calls.Load())
 		assert.Equal(t, FailuresPerMinute-len(malformed), failuresLeft(a, address, t0))
@@ -176,31 +178,31 @@ func TestAdmit(t *testing.T) {
 	// bucket refills; another address keeps its own.
 	t.Run("limits an address with no failure left before any lookup", func(t *testing.T) {
 		b := newBackend(token(1), token(2))
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		for i := range FailuresPerMinute {
-			require.Equal(t, Outcome{Verdict: Refused}, a.Admit(ctx, address, token(100+i), t0))
+			require.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Admit(ctx, address, token(100+i), t0))
 		}
 		limited := a.Admit(ctx, address, token(1), t0)
 		assert.Equal(t, Limited, limited.Verdict)
 		assert.InDelta(t, 6*time.Second, limited.RetryAfter, float64(time.Millisecond), "one failure comes back every 6 s")
-		assert.Zero(t, limited.Sender)
+		assert.Zero(t, limited.Bearer)
 		later := a.Admit(ctx, address, token(1), t0.Add(5*time.Second))
 		assert.Equal(t, Limited, later.Verdict)
 		assert.InDelta(t, time.Second, later.RetryAfter, float64(time.Millisecond))
 		assert.EqualValues(t, FailuresPerMinute, b.calls.Load(), "a limited address gets no lookup")
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, a.Admit(ctx, elsewhere, token(2), t0))
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, a.Admit(ctx, address, token(1), t0.Add(6*time.Second)))
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, a.Admit(ctx, elsewhere, token(2), t0))
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, a.Admit(ctx, address, token(1), t0.Add(6*time.Second)))
 		assert.EqualValues(t, FailuresPerMinute+2, b.calls.Load())
 	})
 
 	// The sender did nothing wrong, whether its token was known live or not.
 	t.Run("spends nothing when the lookup can't answer", func(t *testing.T) {
 		b := newBackend(token(1))
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		require.Equal(t, Admitted, a.Admit(ctx, address, token(1), t0).Verdict)
 		b.fail(errors.New("mysql down"))
 		for i := range 2 * FailuresPerMinute {
-			assert.Equal(t, Outcome{Verdict: Unavailable}, a.Admit(ctx, address, token(i%2), t0), "token %d", i%2)
+			assert.Equal(t, Outcome[Sender]{Verdict: Unavailable}, a.Admit(ctx, address, token(i%2), t0), "token %d", i%2)
 		}
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, address, t0))
 	})
@@ -209,11 +211,11 @@ func TestAdmit(t *testing.T) {
 	// last found it live, and each such lookup holds it longer.
 	t.Run("lets a token found live lately skip the bucket", func(t *testing.T) {
 		b := newBackend(token(1))
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		require.Equal(t, Admitted, a.Admit(ctx, address, token(1), t0).Verdict)
 		at := t0.Add(liveFor - time.Nanosecond)
 		failuresLeft(a, address, at)
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, a.Admit(ctx, address, token(1), at))
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, a.Admit(ctx, address, token(1), at))
 		later := at.Add(liveFor - time.Nanosecond)
 		failuresLeft(a, address, later)
 		assert.Equal(t, Admitted, a.Admit(ctx, address, token(1), later).Verdict, "its last lookup held it longer")
@@ -235,9 +237,9 @@ func TestAdmit(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b := newBackend(token(1))
-			a := New(b.lookup, c.cacheFor)
+			a := New(keytoken.ValidateEventSource, b.lookup, c.cacheFor)
 			for i, at := range []time.Duration{0, time.Second, 30*time.Second - time.Nanosecond, 30 * time.Second, 59 * time.Second} {
-				assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, a.Admit(ctx, address, token(1), t0.Add(at)), at)
+				assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, a.Admit(ctx, address, token(1), t0.Add(at)), at)
 				assert.Equal(t, c.lookups[i], b.calls.Load(), at)
 			}
 		})
@@ -248,17 +250,17 @@ func TestAdmit(t *testing.T) {
 	t.Run("shares one lookup among a live token's first requests", func(t *testing.T) {
 		b := newBackend(token(1))
 		gate := b.hold()
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		const sent = 50
 		waiting := newWaiting()
-		answers := make(chan Outcome, sent)
+		answers := make(chan Outcome[Sender], sent)
 		for range sent {
 			go func() { answers <- a.Admit(waiting, address, token(1), t0) }()
 		}
 		eventually(t, func() bool { return waiting.n.Load() == sent })
 		close(gate)
 		for range sent {
-			assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, <-answers)
+			assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, <-answers)
 		}
 		assert.EqualValues(t, 1, b.calls.Load())
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, address, t0))
@@ -268,17 +270,17 @@ func TestAdmit(t *testing.T) {
 	t.Run("shares one lookup and one failure among an unknown token's requests", func(t *testing.T) {
 		b := newBackend()
 		gate := b.hold()
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		const sent = 50
 		waiting := newWaiting()
-		answers := make(chan Outcome, sent)
+		answers := make(chan Outcome[Sender], sent)
 		for range sent {
 			go func() { answers <- a.Admit(waiting, address, token(1), t0) }()
 		}
 		eventually(t, func() bool { return waiting.n.Load() == sent })
 		close(gate)
 		for range sent {
-			assert.Equal(t, Outcome{Verdict: Refused}, <-answers)
+			assert.Equal(t, Outcome[Sender]{Verdict: Refused}, <-answers)
 		}
 		assert.EqualValues(t, 1, b.calls.Load())
 		assert.Equal(t, FailuresPerMinute-1, failuresLeft(a, address, t0))
@@ -289,9 +291,9 @@ func TestAdmit(t *testing.T) {
 	t.Run("looks up at most 10 distinct unknown tokens of an address at once", func(t *testing.T) {
 		b := newBackend()
 		gate := b.hold()
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		const sent = 50
-		answers := make(chan Outcome, sent)
+		answers := make(chan Outcome[Sender], sent)
 		for i := range sent {
 			go func() { answers <- a.Admit(ctx, address, token(i), t0) }()
 		}
@@ -301,7 +303,7 @@ func TestAdmit(t *testing.T) {
 		eventually(t, func() bool { return b.calls.Load() == FailuresPerMinute })
 		close(gate)
 		for range FailuresPerMinute {
-			assert.Equal(t, Outcome{Verdict: Refused}, <-answers)
+			assert.Equal(t, Outcome[Sender]{Verdict: Refused}, <-answers)
 		}
 		assert.EqualValues(t, FailuresPerMinute, b.calls.Load())
 	})
@@ -311,7 +313,7 @@ func TestAdmit(t *testing.T) {
 	// address takes the leader's outcome.
 	t.Run("sends a request again when its leader's address was limited", func(t *testing.T) {
 		b := newBackend(token(1))
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		failuresLeft(a, elsewhere, t0)
 		hash := Hash(token(1))
 		gate := make(chan struct{})
@@ -321,15 +323,15 @@ func TestAdmit(t *testing.T) {
 			return a.lead(ctx, elsewhere, hash, t0), nil
 		})
 		same, other := newWaiting(), newWaiting()
-		sameAnswer, otherAnswer := make(chan Outcome, 1), make(chan Outcome, 1)
+		sameAnswer, otherAnswer := make(chan Outcome[Sender], 1), make(chan Outcome[Sender], 1)
 		go func() { sameAnswer <- a.Admit(same, elsewhere, token(1), t0) }()
 		go func() { otherAnswer <- a.Admit(other, address, token(1), t0) }()
 		eventually(t, func() bool { return same.n.Load() == 1 && other.n.Load() == 1 })
 		close(gate)
-		assert.Equal(t, Limited, (<-led).Val.(flight).Verdict)
+		assert.Equal(t, Limited, (<-led).Val.(flight[Sender]).Verdict)
 		assert.Equal(t, Limited, (<-sameAnswer).Verdict)
 		assert.EqualValues(t, 1, same.n.Load(), "the leader's address's request took its outcome")
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, <-otherAnswer)
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, <-otherAnswer)
 		assert.EqualValues(t, 2, other.n.Load(), "another address's request went again")
 		assert.EqualValues(t, 1, b.calls.Load())
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, address, t0), "it gave its own failure back")
@@ -338,7 +340,7 @@ func TestAdmit(t *testing.T) {
 	// A leader whose request went away answers nothing for the requests that waited on it.
 	t.Run("sends a request again when its leader went away", func(t *testing.T) {
 		var calls atomic.Int32
-		a := New(func(ctx context.Context, _ string) (Sender, bool, error) {
+		a := New(keytoken.ValidateEventSource, func(ctx context.Context, _ string) (Sender, bool, error) {
 			if calls.Add(1) == 1 {
 				<-ctx.Done()
 				return Sender{}, false, ctx.Err()
@@ -346,16 +348,16 @@ func TestAdmit(t *testing.T) {
 			return sender1, true, nil
 		}, 0)
 		leaderCtx, leave := context.WithCancel(ctx)
-		leader := make(chan Outcome, 1)
+		leader := make(chan Outcome[Sender], 1)
 		go func() { leader <- a.Admit(leaderCtx, address, token(1), t0) }()
 		eventually(t, func() bool { return calls.Load() == 1 })
 		follower := newWaiting()
-		answer := make(chan Outcome, 1)
+		answer := make(chan Outcome[Sender], 1)
 		go func() { answer <- a.Admit(follower, address, token(1), t0) }()
 		eventually(t, func() bool { return follower.n.Load() == 1 })
 		leave()
-		assert.Equal(t, Outcome{Verdict: Unavailable}, <-leader)
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, <-answer)
+		assert.Equal(t, Outcome[Sender]{Verdict: Unavailable}, <-leader)
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, <-answer)
 		assert.EqualValues(t, 2, calls.Load())
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, address, t0), "the leader gave its failure back")
 	})
@@ -363,15 +365,15 @@ func TestAdmit(t *testing.T) {
 	t.Run("answers a request that goes away while it waits", func(t *testing.T) {
 		b := newBackend(token(1))
 		gate := b.hold()
-		a := New(b.lookup, 0)
-		leader := make(chan Outcome, 1)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
+		leader := make(chan Outcome[Sender], 1)
 		go func() { leader <- a.Admit(ctx, address, token(1), t0) }()
 		eventually(t, func() bool { return b.calls.Load() == 1 })
 		gone, leave := context.WithCancel(ctx)
 		leave()
-		assert.Equal(t, Outcome{Verdict: Unavailable}, a.Admit(gone, elsewhere, token(1), t0))
+		assert.Equal(t, Outcome[Sender]{Verdict: Unavailable}, a.Admit(gone, elsewhere, token(1), t0))
 		close(gate)
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, <-leader)
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, <-leader)
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, elsewhere, t0))
 	})
 
@@ -379,19 +381,19 @@ func TestAdmit(t *testing.T) {
 	// lookups, and only the one that forgot it spends a failure.
 	t.Run("spends one failure on a live token's refused lookups", func(t *testing.T) {
 		b := newBackend(token(1))
-		a := New(b.lookup, 0)
+		a := New(keytoken.ValidateEventSource, b.lookup, 0)
 		require.Equal(t, Admitted, a.Admit(ctx, address, token(1), t0).Verdict)
 		b.revoke(token(1))
 		gate := b.hold()
 		const sent = 10
-		answers := make(chan Outcome, sent)
+		answers := make(chan Outcome[Sender], sent)
 		for range sent {
 			go func() { answers <- a.Admit(ctx, address, token(1), t0) }()
 		}
 		eventually(t, func() bool { return b.calls.Load() == 1+sent })
 		close(gate)
 		for range sent {
-			assert.Equal(t, Outcome{Verdict: Refused}, <-answers)
+			assert.Equal(t, Outcome[Sender]{Verdict: Refused}, <-answers)
 		}
 		assert.Equal(t, FailuresPerMinute-1, failuresLeft(a, address, t0))
 	})
@@ -404,7 +406,7 @@ func TestRevoked(t *testing.T) {
 
 	t.Run("spends one failure however many requests saw the token refused", func(t *testing.T) {
 		b := newBackend(token(1), token(2))
-		a := New(b.lookup, 30*time.Second)
+		a := New(keytoken.ValidateEventSource, b.lookup, 30*time.Second)
 		require.Equal(t, Admitted, a.Admit(ctx, address, token(1), t0).Verdict)
 		for range FailuresPerMinute - 2 {
 			a.Unauthenticated(address, t0)
@@ -414,24 +416,24 @@ func TestRevoked(t *testing.T) {
 			revoked.Go(func() { a.Revoked(address, token(1), t0) })
 		}
 		revoked.Wait()
-		assert.Equal(t, Outcome{Verdict: Admitted, Sender: sender1}, a.Admit(ctx, address, token(2), t0),
+		assert.Equal(t, Outcome[Sender]{Verdict: Admitted, Bearer: sender1}, a.Admit(ctx, address, token(2), t0),
 			"a new token from the address is admitted at once")
 		assert.Equal(t, 1, failuresLeft(a, address, t0), "the 10 calls spent one failure")
 	})
 
 	t.Run("looks the token up again on its next request", func(t *testing.T) {
 		b := newBackend(token(1))
-		a := New(b.lookup, 30*time.Second)
+		a := New(keytoken.ValidateEventSource, b.lookup, 30*time.Second)
 		require.Equal(t, Admitted, a.Admit(ctx, address, token(1), t0).Verdict)
 		b.revoke(token(1))
 		assert.Equal(t, Admitted, a.Admit(ctx, address, token(1), t0.Add(time.Second)).Verdict, "the cache doesn't know")
 		a.Revoked(address, token(1), t0.Add(time.Second))
-		assert.Equal(t, Outcome{Verdict: Refused}, a.Admit(ctx, address, token(1), t0.Add(2*time.Second)))
+		assert.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Admit(ctx, address, token(1), t0.Add(2*time.Second)))
 		assert.EqualValues(t, 2, b.calls.Load())
 	})
 
 	t.Run("spends nothing for a token it doesn't hold", func(t *testing.T) {
-		a := New(newBackend().lookup, 30*time.Second)
+		a := New(keytoken.ValidateEventSource, newBackend().lookup, 30*time.Second)
 		a.Revoked(address, token(1), t0)
 		assert.Equal(t, FailuresPerMinute, failuresLeft(a, address, t0))
 	})
@@ -444,20 +446,20 @@ func TestPrescreen(t *testing.T) {
 	ctx := context.Background()
 	digits := strings.TrimPrefix(token(1), "hx_ev_")
 	// spent spends address's failures at at.
-	spent := func(n int, at time.Time) func(*Admission) {
-		return func(a *Admission) {
+	spent := func(n int, at time.Time) func(*Admission[Sender]) {
+		return func(a *Admission[Sender]) {
 			for range n {
 				a.Unauthenticated(address, at)
 			}
 		}
 	}
 	// live finds token 1 live at at.
-	live := func(at time.Time) func(*Admission) {
-		return func(a *Admission) { require.Equal(t, Admitted, a.Admit(ctx, address, token(1), at).Verdict) }
+	live := func(at time.Time) func(*Admission[Sender]) {
+		return func(a *Admission[Sender]) { require.Equal(t, Admitted, a.Admit(ctx, address, token(1), at).Verdict) }
 	}
 	for _, c := range []struct {
 		name    string
-		prepare []func(*Admission)
+		prepare []func(*Admission[Sender])
 		token   string
 		at      time.Time
 		decided bool
@@ -466,26 +468,26 @@ func TestPrescreen(t *testing.T) {
 		{name: "refuses no token, spending a failure", token: "", at: t0, decided: true, want: Refused},
 		{name: "refuses a malformed token, spending a failure", token: "hx_ev_" + digits[1:], at: t0, decided: true, want: Refused},
 		{name: "refuses another kind of token, spending a failure", token: "hlxs_" + digits, at: t0, decided: true, want: Refused},
-		{name: "limits a malformed token from an address with no failure left", prepare: []func(*Admission){spent(FailuresPerMinute, t0)},
+		{name: "limits a malformed token from an address with no failure left", prepare: []func(*Admission[Sender]){spent(FailuresPerMinute, t0)},
 			token: "hx_ev_", at: t0, decided: true, want: Limited},
 		{name: "leaves an unknown token to Admit, spending nothing", token: token(2), at: t0, want: Refused},
-		{name: "leaves an unknown token from an address with one failure left to Admit", prepare: []func(*Admission){spent(FailuresPerMinute-1, t0)},
+		{name: "leaves an unknown token from an address with one failure left to Admit", prepare: []func(*Admission[Sender]){spent(FailuresPerMinute-1, t0)},
 			token: token(2), at: t0, want: Refused},
 		{name: "limits an unknown token from an address with no failure left, spending nothing",
-			prepare: []func(*Admission){spent(FailuresPerMinute, t0)}, token: token(2), at: t0.Add(5 * time.Second), decided: true, want: Limited},
+			prepare: []func(*Admission[Sender]){spent(FailuresPerMinute, t0)}, token: token(2), at: t0.Add(5 * time.Second), decided: true, want: Limited},
 		{name: "leaves a token found live within cacheFor to Admit, with no failure left",
-			prepare: []func(*Admission){live(t0), spent(FailuresPerMinute, t0)}, token: token(1), at: t0, want: Admitted},
+			prepare: []func(*Admission[Sender]){live(t0), spent(FailuresPerMinute, t0)}, token: token(1), at: t0, want: Admitted},
 		{name: "leaves a token found live lately to Admit, with no failure left",
-			prepare: []func(*Admission){live(t0), spent(FailuresPerMinute, t0.Add(liveFor-time.Nanosecond))}, token: token(1),
+			prepare: []func(*Admission[Sender]){live(t0), spent(FailuresPerMinute, t0.Add(liveFor-time.Nanosecond))}, token: token(1),
 			at: t0.Add(liveFor - time.Nanosecond), want: Admitted},
 		{name: "limits a token found live longer ago than liveFor, with no failure left",
-			prepare: []func(*Admission){live(t0), spent(FailuresPerMinute, t0.Add(liveFor))}, token: token(1), at: t0.Add(liveFor), decided: true, want: Limited},
+			prepare: []func(*Admission[Sender]){live(t0), spent(FailuresPerMinute, t0.Add(liveFor))}, token: token(1), at: t0.Add(liveFor), decided: true, want: Limited},
 		{name: "leaves a request to Admit when only another address has no failure left",
-			prepare: []func(*Admission){func(a *Admission) { failuresLeft(a, elsewhere, t0) }}, token: token(1), at: t0, want: Admitted},
+			prepare: []func(*Admission[Sender]){func(a *Admission[Sender]) { failuresLeft(a, elsewhere, t0) }}, token: token(1), at: t0, want: Admitted},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b, twinBackend := newBackend(token(1)), newBackend(token(1))
-			a, twin := New(b.lookup, 30*time.Second), New(twinBackend.lookup, 30*time.Second)
+			a, twin := New(keytoken.ValidateEventSource, b.lookup, 30*time.Second), New(keytoken.ValidateEventSource, twinBackend.lookup, 30*time.Second)
 			for _, prepare := range c.prepare {
 				prepare(a)
 				prepare(twin)
@@ -511,31 +513,31 @@ func TestPrescreen(t *testing.T) {
 	t.Run("limits an address whose last failure a lookup in flight holds", func(t *testing.T) {
 		b := newBackend()
 		gate := b.hold()
-		a := New(b.lookup, 30*time.Second)
+		a := New(keytoken.ValidateEventSource, b.lookup, 30*time.Second)
 		for range FailuresPerMinute - 1 {
 			a.Unauthenticated(address, t0)
 		}
-		answer := make(chan Outcome, 1)
+		answer := make(chan Outcome[Sender], 1)
 		go func() { answer <- a.Admit(ctx, address, token(2), t0) }()
 		eventually(t, func() bool { return b.calls.Load() == 1 })
 		outcome, decided := a.Prescreen(address, token(3), t0)
 		assert.True(t, decided)
 		assert.Equal(t, Limited, outcome.Verdict)
 		close(gate)
-		assert.Equal(t, Outcome{Verdict: Refused}, <-answer)
+		assert.Equal(t, Outcome[Sender]{Verdict: Refused}, <-answer)
 	})
 }
 
 // The HTTP door has no token to admit without a bearer header, so such a request is a guess too.
 func TestUnauthenticated(t *testing.T) {
-	a := New(newBackend().lookup, 0)
+	a := New(keytoken.ValidateEventSource, newBackend().lookup, 0)
 	for range FailuresPerMinute {
-		require.Equal(t, Outcome{Verdict: Refused}, a.Unauthenticated(address, t0))
+		require.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Unauthenticated(address, t0))
 	}
 	limited := a.Unauthenticated(address, t0)
 	assert.Equal(t, Limited, limited.Verdict)
 	assert.Positive(t, limited.RetryAfter)
-	assert.Equal(t, Outcome{Verdict: Refused}, a.Unauthenticated(elsewhere, t0), "another address keeps its own")
+	assert.Equal(t, Outcome[Sender]{Verdict: Refused}, a.Unauthenticated(elsewhere, t0), "another address keeps its own")
 }
 
 // A pod holds at most capacity live tokens. Full, a new token makes room from those unfound for
@@ -543,7 +545,7 @@ func TestUnauthenticated(t *testing.T) {
 func TestLiveBound(t *testing.T) {
 	ctx := context.Background()
 	var calls atomic.Int32
-	a := New(func(_ context.Context, hash string) (Sender, bool, error) {
+	a := New(keytoken.ValidateEventSource, func(_ context.Context, hash string) (Sender, bool, error) {
 		calls.Add(1)
 		return Sender{TokenID: hash, WorkspaceID: "workspace-1", ConnectorID: "source-1"}, true, nil
 	}, 0)
@@ -570,13 +572,35 @@ func TestLiveBound(t *testing.T) {
 func TestNew(t *testing.T) {
 	lookup := newBackend().lookup
 	for name, build := range map[string]func(){
-		"without a lookup":                    func() { New(nil, 0) },
-		"with a negative cacheFor":            func() { New(lookup, -time.Nanosecond) },
-		"with a cacheFor past a token's life": func() { New(lookup, liveFor+time.Nanosecond) },
+		"without a format":                    func() { New(nil, lookup, 0) },
+		"without a lookup":                    func() { New[Sender](keytoken.ValidateEventSource, nil, 0) },
+		"with a negative cacheFor":            func() { New(keytoken.ValidateEventSource, lookup, -time.Nanosecond) },
+		"with a cacheFor past a token's life": func() { New(keytoken.ValidateEventSource, lookup, liveFor+time.Nanosecond) },
 	} {
 		t.Run("panics "+name, func(t *testing.T) { assert.Panics(t, build) })
 	}
-	assert.NotPanics(t, func() { New(lookup, liveFor) })
+	assert.NotPanics(t, func() { New(keytoken.ValidateEventSource, lookup, liveFor) })
+}
+
+// link is a bearer of another kind of token, as the relay's door admits: an admission takes only
+// tokens of its own format, and a bearer that isn't complete is no token.
+type link struct{ id, workspace string }
+
+func (l link) Complete() bool { return l.id != "" && l.workspace != "" }
+
+func TestOtherKinds(t *testing.T) {
+	ctx := context.Background()
+	relayToken := "hx_rl_" + token(1)[len("hx_ev_"):]
+	links := map[string]link{Hash(relayToken): {id: "link-1", workspace: "workspace-1"}, Hash("hx_rl_" + token(2)[len("hx_ev_"):]): {id: "link-2"}}
+	a := New(keytoken.ValidateRelay, func(_ context.Context, hash string) (link, bool, error) {
+		l, ok := links[hash]
+		return l, ok, nil
+	}, 0)
+	assert.Equal(t, Outcome[link]{Verdict: Admitted, Bearer: link{id: "link-1", workspace: "workspace-1"}}, a.Admit(ctx, address, relayToken, t0))
+	assert.Equal(t, Refused, a.Admit(ctx, address, token(1), t0).Verdict, "a send token isn't a relay token")
+	_, decided := a.Prescreen(address, token(1), t0)
+	assert.True(t, decided, "a token of another format is refused unlooked")
+	assert.Equal(t, Refused, a.Admit(ctx, address, "hx_rl_"+token(2)[len("hx_ev_"):], t0).Verdict, "an incomplete bearer is no token")
 }
 
 // The backend stores and finds a token by its SHA-256 in lowercase hex.

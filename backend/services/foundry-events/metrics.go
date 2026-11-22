@@ -55,3 +55,13 @@ var feedGapsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Minutes of channels whose Slack events the door answered on Slack's last retry without the backend taking them, by " +
 		"outcome: held, flushed, retried or lost.",
 }, []string{"outcome"})
+
+// relayRequestsTotal counts the relay's answers to linked installs by route (token, claim, slack,
+// slack_install, revoke) and code: ok for a 200, or the error body's code (rate_limited also for a
+// call Slack takes later).
+var relayRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_events_relay_requests_total",
+	Help: "Linked installs' calls to Helix's Slack relay by route (token, claim, slack, slack_install, revoke) and answer: ok, or the " +
+		"error's code (rate_limited, payload_too_large, unsupported_media_type, unauthorized, invalid_token, forbidden, not_found, " +
+		"failed_precondition, resource_exhausted, request_timeout, invalid_arguments, backend_unavailable or internal).",
+}, []string{"route", "code"})
