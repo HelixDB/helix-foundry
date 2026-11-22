@@ -279,6 +279,7 @@ test("data: each connector's form", async ({ page }) => {
     ["Granola", { "API key": "grn_DocsExample" }],
     ["Slack", { "Bot token": "xoxb-DocsExample" }],
     ["Notion", { "Integration secret": "ntn_DocsExample" }],
+    ["Attio", { "Access token": "DocsExampleAttioAccessToken" }],
     ["Google Workspace", { "Acts as": "admin@example.com" }],
     [
       "PostgreSQL",
