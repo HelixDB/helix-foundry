@@ -131,7 +131,7 @@ func (s *memStore) RecordFoundryAgentThreadGrants(_ context.Context, _, id strin
 				merged = append(merged, target)
 			}
 		}
-		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged}
+		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged, Items: access.SortItems(slices.Concat(t.Granted.Items, granted.Items))}
 	}
 	return nil
 }
@@ -601,9 +601,11 @@ type backend struct {
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
 	// grantee reads the person as a restricted member; accessErr refuses
-	// reading their access.
+	// reading their access; items are the Slack channels the API reads as
+	// shared with them.
 	grantee   bool
 	accessErr error
+	items     []*foundryv1.FoundrySourceItem
 	// loadErr refuses making a load.
 	loadErr error
 	// approved are the workflows approved, approveErr refuses approving,
@@ -617,7 +619,7 @@ func (b *backend) GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAcc
 	if b.accessErr != nil {
 		return nil, b.accessErr
 	}
-	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true}, nil
+	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true, SourceItems: b.items}, nil
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (

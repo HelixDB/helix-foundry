@@ -1064,30 +1064,31 @@ describe("testing and creating", () => {
         ).connector.tables!.map((t) => [t.name, Number(t.rowCount)]),
       );
     // 30 days of history: the 30 before the sync's, two of every three of
-    // them with messages in each of four channels, two messages a day (a
-    // thread's reply is no row).
+    // them with messages in each of five channels, two messages a day (a
+    // thread's reply is no row); the members of the five, and every
+    // channel and person, the bot and the guest among them.
     const days = rows(slack.id).channel_days!;
-    expect(days).toBe(80);
+    expect(days).toBe(100);
     expect(rows(slack.id)).toEqual({
       channel_days: days,
-      channel_members: 31,
-      channels: 5,
+      channel_members: 24,
+      channels: 6,
       messages: days * 2,
-      users: 18,
+      users: 7,
     });
     // Without the history scope, the members are still read.
     expect(rows(noscope.id)).toEqual({
-      channel_members: 31,
-      channels: 5,
-      users: 18,
+      channel_members: 24,
+      channels: 6,
+      users: 7,
     });
     // An app in no channel reads no history.
     expect(rows(lonely.id)).toEqual({
       channel_days: 0,
       channel_members: 0,
-      channels: 5,
+      channels: 6,
       messages: 0,
-      users: 18,
+      users: 7,
     });
     // Pages holds every page, the databases' rows among them.
     expect(rows(notion.id)).toEqual({

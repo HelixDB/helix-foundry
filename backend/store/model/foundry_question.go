@@ -73,7 +73,11 @@ type FoundryQuestion struct {
 	// question: the question is that principal's own, and runs as its.
 	Grantee *access.Principal
 	// Seen is what that grantee held of the load when it ran, if not all of it.
-	Seen       *access.Inputs
+	Seen *access.Inputs
+	// SeenItems are the items of audienced sources (Slack channels) the
+	// documents it held of the load then were of, sorted: its answer reads
+	// only while each is still shared with the grantee (access.Grants.Keeps).
+	SeenItems  []access.ItemRef
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time

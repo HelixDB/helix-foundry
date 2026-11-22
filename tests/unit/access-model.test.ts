@@ -3,8 +3,11 @@ import type * as wfe from "@/shared/wfe";
 import {
   keyParam,
   addsSources,
+  audienceRead,
+  listNames,
   covered,
   grantKey,
+  SLACK_GRANT_NOTE,
   grantOf,
   granteeRedirect,
   grantsOf,
@@ -24,6 +27,7 @@ import {
   restrictable,
   restrictedHoldingNothing,
   setOwners,
+  sourcePermissions,
   sourceState,
   sourceTree,
   syncedFrom,
@@ -729,6 +733,144 @@ describe("restricted mode", () => {
         { id: "o" },
       ),
     ).toBe("none");
+  });
+});
+
+describe("source permissions", () => {
+  const names: Record<string, string> = {
+    ada: "Ada Lovelace",
+    grace: "Grace Hopper",
+    bob: "bob@elsewhere.example",
+  };
+  const name = (userId: string) => names[userId] || "Unknown user";
+  const relative = (at: string) => `at ${at}`;
+  const slack: wfe.FoundrySourceAudience = {
+    connectorId: "c",
+    kind: "slack",
+    readAt: "2026-11-20T10:00:00Z",
+    stale: false,
+    everyoneItems: 5,
+    membersItems: 1,
+    grantees: 2,
+  };
+
+  it("tells a read that worked from a stale one and none", () => {
+    expect(audienceRead(slack)).toEqual({
+      kind: "fresh",
+      at: "2026-11-20T10:00:00Z",
+    });
+    expect(audienceRead({ ...slack, stale: true })).toEqual({
+      kind: "stale",
+      at: "2026-11-20T10:00:00Z",
+    });
+    // Stale without a read is one that never worked.
+    expect(audienceRead({ stale: true })).toEqual({ kind: "never" });
+    expect(audienceRead({})).toEqual({ kind: "never" });
+  });
+
+  it("says what a Slack connection follows, when it was read, and whom of the people it narrows it matches", () => {
+    expect(sourcePermissions(slack, name, relative)).toEqual({
+      follows: "Follows Slack channel membership",
+      line: "Read at 2026-11-20T10:00:00Z · 5 public channels, 1 private · 2 of 2 restricted people matched",
+      notes: [],
+    });
+    expect(
+      sourcePermissions(
+        {
+          ...slack,
+          everyoneItems: 1,
+          membersItems: 2,
+          grantees: 4,
+          unmatchedUserIds: ["bob", "nobody"],
+          guestUserIds: ["grace"],
+        },
+        name,
+        relative,
+      ),
+    ).toEqual({
+      follows: "Follows Slack channel membership",
+      line: "Read at 2026-11-20T10:00:00Z · 1 public channel, 2 private · 2 of 4 restricted people matched",
+      notes: [
+        "Not in Slack by their email: bob@elsewhere.example, Unknown user. Restricted, they read none of its channels.",
+        "A guest in Slack: Grace Hopper. Restricted, they read only the private channels that list them.",
+      ],
+    });
+    expect(
+      sourcePermissions(
+        { ...slack, guestUserIds: ["grace", "ada"] },
+        name,
+        relative,
+      ).notes,
+    ).toEqual([
+      "Guests in Slack: Grace Hopper, Ada Lovelace. Restricted, they read only the private channels that list them.",
+    ]);
+    expect(
+      sourcePermissions({ ...slack, grantees: 1 }, name, relative).line,
+    ).toContain("1 of 1 restricted person matched");
+  });
+
+  it("lists five names, then counts the rest", () => {
+    expect(listNames([])).toBe("");
+    expect(listNames(["Ada", "Eve"])).toBe("Ada, Eve");
+    expect(listNames(["A", "B", "C", "D", "E"])).toBe("A, B, C, D, E");
+    expect(listNames(["A", "B", "C", "D", "E", "F", "G"])).toBe(
+      "A, B, C, D, E and 2 more",
+    );
+    const many = Array.from({ length: 10_000 }, (_, i) => `u${i}`);
+    expect(
+      sourcePermissions(
+        { ...slack, grantees: many.length, unmatchedUserIds: many },
+        (id) => id,
+        relative,
+      ).notes[0],
+    ).toBe(
+      "Not in Slack by their email: u0, u1, u2, u3, u4 and 9,995 more. Restricted, they read none of its channels.",
+    );
+  });
+
+  it("reads counts the WFE leaves out as none", () => {
+    expect(
+      sourcePermissions(
+        { kind: "slack", readAt: "2026-11-20T10:00:00Z" },
+        name,
+        relative,
+      ).line,
+    ).toBe(
+      "Read at 2026-11-20T10:00:00Z · 0 public channels, 0 private · 0 of 0 restricted people matched",
+    );
+  });
+
+  it("says when a read is stale or never worked, and why the last one failed", () => {
+    expect(
+      sourcePermissions({ ...slack, stale: true }, name, relative).line,
+    ).toBe(
+      "Last read at 2026-11-20T10:00:00Z, too long ago: only owners, admins and members who aren’t restricted read it until a sync reads them again · 5 public channels, 1 private · 2 of 2 restricted people matched",
+    );
+    const never = sourcePermissions(
+      {
+        connectorId: "c",
+        kind: "slack",
+        stale: true,
+        grantees: 1,
+        unmatchedUserIds: ["ada"],
+        problem: {
+          message: "add the users:read.email scope to the app and reinstall it",
+          at: "2026-11-21T10:00:00Z",
+        },
+      },
+      name,
+      relative,
+    );
+    expect(never.line).toBe(
+      "Not read yet: only owners, admins and members who aren’t restricted read it until a sync reads them again · 0 of 1 restricted person matched",
+    );
+    expect(never.notes).toEqual([
+      "Not in Slack by their email: Ada Lovelace. Restricted, they read none of its channels.",
+      "The last read of who it shares what with failed: add the users:read.email scope to the app and reinstall it.",
+    ]);
+    expect(SLACK_GRANT_NOTE).toBe(
+      "only the channels each person is in, now and later",
+    );
   });
 });
 

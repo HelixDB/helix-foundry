@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -151,7 +152,7 @@ type ReadStore interface {
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	GetOntologyVersionSources(ctx context.Context, ontologyID, versionID string) (*model.OntologyVersionSources, error)
 	GetOntologyVersionMappings(ctx context.Context, ontologyID, versionID string) (string, error)
-	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string, filter model.FoundryDocumentFilter,
+	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, held *[]string, filter model.FoundryDocumentFilter,
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)
 	FoundryLoadHoldsDocument(ctx context.Context, loadID, documentID string) (bool, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
@@ -196,8 +197,16 @@ type ReadStore interface {
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
-	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs, items []access.ItemRef) error
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
+	// SourceSharingFor is what a reader (a person by email, nil for an
+	// agent's key) reads of each connector whose source's permissions are
+	// stored; ListSourceAudiences is those permissions as owners and admins
+	// see them, and SourcePeopleByEmail whom of a workspace's people they
+	// match.
+	SourceSharingFor(ctx context.Context, workspaceID string, reader *connector.Email) ([]model.FoundrySourceSharing, error)
+	ListSourceAudiences(ctx context.Context, workspaceID string) ([]model.FoundrySourceAudience, error)
+	SourcePeopleByEmail(ctx context.Context, workspaceID string, emails []connector.Email) (map[connector.Email][]model.FoundrySourcePerson, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)
 	ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error)
@@ -455,6 +464,10 @@ type Store interface {
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
 	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
 	RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error
+	// A sync's read of its source's permissions (connector.Audienced).
+	SourceAudienceRead(ctx context.Context, workspaceID, connectorID string) (model.FoundrySourceAudienceRead, error)
+	ReplaceSourceAudiences(ctx context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error
+	RecordSourceAudienceProblem(ctx context.Context, workspaceID, connectorID string, at time.Time, problem string) error
 	// The host's directory sync: teams that follow a directory's groups.
 	SyncFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID, provider string, groups []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error)
 	ReleaseFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID string) error

@@ -538,17 +538,21 @@ func TestFoundryOntologyDocuments(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, page, 2)
 		assert.Equal(t, waiting, page[0].ID)
-		// Kept to the sets a grantee holds, nothing of another shows, on the page or in its token.
+		// Kept to the documents a grantee reads, nothing of another shows, on the page or in its token.
 		none := []string{}
 		held, _, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, &none, model.FoundryDocumentFilterAll, "", 2)
 		require.NoError(t, err)
 		assert.Empty(t, held)
-		only := []string{general}
-		held, _, err = s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, &only, model.FoundryDocumentFilterAll, "", 50)
+		only := []string{read, waiting}
+		held, heldNext, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, &only, model.FoundryDocumentFilterAll, "", 1)
 		require.NoError(t, err)
-		for _, d := range held {
-			assert.Equal(t, general, d.SetID)
-		}
+		require.Len(t, held, 1)
+		assert.Equal(t, waiting, held[0].ID)
+		held, heldNext, err = s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, &only, model.FoundryDocumentFilterAll, heldNext, 1)
+		require.NoError(t, err)
+		require.Len(t, held, 1)
+		assert.Equal(t, read, held[0].ID)
+		assert.Empty(t, heldNext, "the last of those it reads ends the list")
 		rest, last, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, nil, model.FoundryDocumentFilterAll, next, 2)
 		require.NoError(t, err)
 		assert.Len(t, rest, 2)

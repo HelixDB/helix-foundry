@@ -353,6 +353,37 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/access/sources": {
+      "get": {
+        "summary": "The connections whose sources' own permissions narrow what grants give\n(a Slack connection follows its channels' membership): a grantee reads of\none only the items its source shares with the grantee's verified email,\nand its tables only when that is every item. For each: when Foundry last\nread who its source shares each item with, why the latest read failed,\nhow many items it shares with everyone and how many with the people they\nlist, and the source's people, which the site matches against the\nworkspace's members.",
+        "operationId": "FoundryService_ListFoundrySourceAudiences",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundrySourceAudiencesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/access/teams": {
       "post": {
         "summary": "Teams of the workspace's members, which hold grants for them.",
@@ -12838,6 +12869,85 @@
         }
       }
     },
+    "v1FoundrySourceAudience": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "The connector's kind (\"slack\")."
+        },
+        "readAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the source's permissions were last read; unset while no read has\nworked."
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, as its tables always do."
+        },
+        "problem": {
+          "$ref": "#/definitions/v1FoundrySourceAudienceProblem",
+          "description": "Why the latest read failed, when no read has worked since; unset\notherwise."
+        },
+        "everyoneItems": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The items shared with everyone the source doesn't mark as a guest (public\nchannels), and those shared only with the people they list (private\nchannels)."
+        },
+        "membersItems": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "grantees": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The people the source narrows: restricted members and the members of\nteams with grants, each matched to the source's people by their verified\nemail."
+        },
+        "unmatchedUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Those of them the source has no account for by that email, or who have\nnone: they read none of its items."
+        },
+        "guestUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Those the source knows as a guest: they read only the items that list\nthem."
+        }
+      },
+      "description": "FoundrySourceAudience is who one connection's source shares its items with,\nas Foundry last read it at the end of a sync."
+    },
+    "v1FoundrySourceAudienceProblem": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundrySourceAudienceProblem is why a read of a source's permissions\nfailed, worded for the customer, and when."
+    },
+    "v1FoundrySourceItem": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "itemKey": {
+          "type": "string"
+        }
+      },
+      "description": "FoundrySourceItem is one item of a connection's source: a Slack channel,\nby its id."
+    },
     "v1FoundrySyncRules": {
       "type": "object",
       "properties": {
@@ -13650,6 +13760,14 @@
         "workflows": {
           "type": "boolean",
           "description": "The caller may use the workflows of the ontologies it reads: always, for\na caller that isn't a grantee; for a grantee, while its Workflows\npermission is on."
+        },
+        "sourceItems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySourceItem"
+          },
+          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under."
         }
       }
     },
@@ -14190,6 +14308,19 @@
             "$ref": "#/definitions/v1FoundrySlackAccessRequest"
           },
           "description": "A standalone install's: Slack users who asked to use it, oldest first."
+        }
+      }
+    },
+    "v1ListFoundrySourceAudiencesResponse": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySourceAudience"
+          },
+          "description": "Each live connection whose kind follows its source's permissions, oldest\nfirst, whether or not they were ever read."
         }
       }
     },

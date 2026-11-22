@@ -169,7 +169,7 @@ func TestBuildWorkers(t *testing.T) {
 		return slackbot.RelayAccess{}, store.ErrNotFound
 	}}
 	parts, err := buildWorkers(cfg.foundry(), logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
-		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{}, relayed)
+		local.Databases{HelixURL: cfg.Local.HelixURL}, local.People{}, noSessions{}, relayed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestBuildWorkers(t *testing.T) {
 	heal.Foundry.Read.GRPC.Listen, heal.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
 	heal.Foundry.Agent.Enabled, heal.Foundry.Automations.Enabled, heal.Foundry.Slack.Enabled = false, false, false
 	parts, err = buildWorkers(heal, logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
-		local.Databases{HelixURL: cfg.Local.HelixURL}, noSessions{}, nil)
+		local.Databases{HelixURL: cfg.Local.HelixURL}, local.People{}, noSessions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

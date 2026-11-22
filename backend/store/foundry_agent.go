@@ -25,7 +25,8 @@ const foundryAgentThreadScans = 10
 // renewed and settled as a question is (foundry_questions.go); its events and
 // transcript are written only while its worker holds its lease.
 
-const foundryAgentThreadColumns = `id, workspace_id, principal_kind, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at`
+const foundryAgentThreadColumns = `id, workspace_id, principal_kind, user_id, kind, title, runtime, runtime_session_id, granted_targets, created_at, updated_at,
+  (SELECT JSON_ARRAYAGG(JSON_ARRAY(i.connector_id, i.item_key)) FROM foundry_agent_thread_source_items i WHERE i.thread_id = foundry_agent_threads.id)`
 
 // foundryAgentThreadSurface is a thread's first turn's surface, after its
 // columns where it is read (never under a lock: it would lock the turn).
@@ -106,6 +107,11 @@ func (s *mysqlDB) CreateFoundryAgentTurn(ctx context.Context, t *model.FoundryAg
 			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_agent_threads (id, workspace_id, principal_kind, user_id, title, runtime, granted_targets)
 VALUES (?, ?, ?, ?, ?, ?, ?)`, thread.ID, thread.WorkspaceID, principal.Kind.String(), principal.ID, thread.Title, string(thread.Runtime), granted); err != nil {
 				return err
+			}
+			if thread.Granted != nil {
+				if err := tx.addSourceItems(ctx, "foundry_agent_thread_source_items", "thread_id", thread.ID, thread.Granted.Items); err != nil {
+					return err
+				}
 			}
 			runtime = thread.Runtime
 		} else {
@@ -373,9 +379,9 @@ func (s *mysqlDB) ListFoundryAgentThreads(ctx context.Context, workspaceID strin
 
 // RecordFoundryAgentThreadGrants records what a turn of the thread runs
 // under: nil, the workspace's whole view, makes it a thread no restricted
-// member reads, for good; granted adds its targets to those a restricted
-// member's thread holds, and leaves a whole view's thread as it is. A thread
-// the workspace hasn't is ErrNotFound.
+// member reads, for good; granted adds its targets and items to those a
+// restricted member's thread holds, and leaves a whole view's thread as it
+// is. A thread the workspace hasn't is ErrNotFound.
 func (s *mysqlDB) RecordFoundryAgentThreadGrants(ctx context.Context, workspaceID, id string, granted *model.FoundryAgentThreadGrants) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -387,7 +393,13 @@ FROM foundry_agent_threads WHERE id=? AND workspace_id=? FOR UPDATE`, id, worksp
 		case thread.Granted == nil:
 			return nil
 		case granted == nil:
+			if _, err = tx.db.ExecContext(ctx, `DELETE FROM foundry_agent_thread_source_items WHERE thread_id=?`, id); err != nil {
+				return err
+			}
 			_, err = tx.db.ExecContext(ctx, `UPDATE foundry_agent_threads SET granted_targets=NULL WHERE id=?`, id)
+			return err
+		}
+		if err := tx.addSourceItems(ctx, "foundry_agent_thread_source_items", "thread_id", id, granted.Items); err != nil {
 			return err
 		}
 		merged := slices.Clone(thread.Granted.Targets)
@@ -1257,9 +1269,9 @@ func scanFoundryAgentThreadSurface(scanner rowScanner) (*model.FoundryAgentThrea
 func scanFoundryAgentThread(scanner rowScanner, extra ...any) (*model.FoundryAgentThread, error) {
 	var t model.FoundryAgentThread
 	var runtime, kind, principalKind, owner string
-	var session, granted sql.NullString
+	var session, granted, items sql.NullString
 	if err := scanner.Scan(append([]any{&t.ID, &t.WorkspaceID, &principalKind, &owner, &kind, &t.Title, &runtime, &session, &granted, &t.CreatedAt,
-		&t.UpdatedAt}, extra...)...); err != nil {
+		&t.UpdatedAt, &items}, extra...)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1274,6 +1286,9 @@ func scanFoundryAgentThread(scanner rowScanner, extra ...any) (*model.FoundryAge
 		g, err := parseGrantedTargets(granted.String)
 		if err != nil {
 			return nil, err
+		}
+		if g.Items, err = parseSourceItems(items); err != nil {
+			return nil, fmt.Errorf("read foundry agent thread %s: %w", t.ID, err)
 		}
 		t.Granted = g
 	}

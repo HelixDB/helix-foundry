@@ -384,7 +384,10 @@ func TestNewProber(t *testing.T) {
 	cfg.Foundry.AI.Default = config.AIDefault{Provider: "anthropic", APIKey: houseKey, Models: config.AIModels{
 		Draft: "claude-opus-5-5", Ask: "claude-sonnet-5-5", Extract: "claude-haiku-5-5", Verify: "claude-sonnet-5-5",
 	}}
-	task, err := New(Deps{Cfg: &cfg, DB: foundrystore.Unimplemented{}, Databases: noDatabases{},
+	if _, err := New(Deps{Cfg: &cfg, DB: foundrystore.Unimplemented{}, Databases: noDatabases{}, Logger: slog.New(slog.DiscardHandler)}); err == nil {
+		t.Fatal("a worker with no way to tell a grantee's email was built")
+	}
+	task, err := New(Deps{Cfg: &cfg, DB: foundrystore.Unimplemented{}, Databases: noDatabases{}, People: emails{},
 		Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)

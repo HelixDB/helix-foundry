@@ -233,36 +233,52 @@ func reachOf(session integration.Session, workspaceID string) (Reach, error) {
 	return ReachWorkspace, nil
 }
 
+// threadView is what a restricted member's or a bot's turn ran under, as
+// recorded on its thread: its grant targets, and the items of audienced
+// sources (Slack channels) the API reads as shared with it.
+type threadView struct {
+	targets []access.Target
+	items   []access.ItemRef
+}
+
+// same reports whether v and other give exactly the same.
+func (v threadView) same(other threadView) bool {
+	return access.NewGrants(v.targets).Holds(other.targets) && access.NewGrants(other.targets).Holds(v.targets) &&
+		slices.Equal(v.items, other.items)
+}
+
 // threadReach records the turn's Reach on its thread, as the API reads it
 // (model.FoundryAgentThread.Granted), before anything of the turn runs and
 // around each tool call of a restricted member's or a bot's
 // (turnRun.reachAround): a whole view's run makes the thread no restricted
 // member's, for good; a restricted member's runs only while they hold every
-// grant the thread ran under (else its transcript holds what they may no
-// longer read: it fails for good) and adds what they hold now, which it
-// returns. A person's grants are their own and their teams'; a bot's, its
-// credential's alone. A thread begun with the whole view fails the attempt
-// to retry, as a role that couldn't be read reads as restricted until it
-// can; so does a read or write that fails.
-func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, reach Reach) ([]access.Target, error) {
+// grant the thread ran under and every item of an audienced source it ran
+// under is still shared with them, which the API says (GetMyFoundryAccess's
+// source_items): else its transcript holds what they may no longer read,
+// and it fails for good. It adds what they hold now, which it returns. A
+// person's grants are their own and their teams'; a bot's, its credential's
+// alone. A thread begun with the whole view fails the attempt to retry, as a
+// role that couldn't be read reads as restricted until it can; so does a
+// read or write that fails.
+func threadReach(ctx context.Context, db Store, session integration.Session, turn *model.FoundryAgentTurn, reach Reach) (threadView, error) {
 	retry := func(err error) error {
 		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
 	if reach.wholeView() {
 		if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
-			return nil, retry(err)
+			return threadView{}, retry(err)
 		}
-		return nil, nil
+		return threadView{}, nil
 	}
 	thread, err := db.GetFoundryAgentThread(ctx, turn.WorkspaceID, turn.ThreadID)
 	if err != nil {
-		return nil, retry(err)
+		return threadView{}, retry(err)
 	}
 	principals := []access.Principal{turn.Principal.Access()}
 	if person, ok := turn.Principal.(model.AgentPerson); ok {
 		teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, person.UserID)
 		if err != nil {
-			return nil, retry(err)
+			return threadView{}, retry(err)
 		}
 		for _, team := range teams {
 			principals = append(principals, access.Principal{Kind: access.PrincipalTeam, ID: team})
@@ -270,39 +286,51 @@ func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, re
 	}
 	grants, err := db.ListFoundryAccessGrants(ctx, turn.WorkspaceID, principals)
 	if err != nil {
-		return nil, retry(err)
+		return threadView{}, retry(err)
 	}
-	targets := make([]access.Target, len(grants))
+	mine, err := session.Service.Foundry.GetMyFoundryAccess(session.Ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: turn.WorkspaceID})
+	if err != nil {
+		return threadView{}, retry(err)
+	}
+	view := threadView{targets: make([]access.Target, len(grants))}
 	for i, g := range grants {
-		targets[i] = g.Target
+		view.targets[i] = g.Target
 	}
+	for _, item := range mine.GetSourceItems() {
+		view.items = append(view.items, access.ItemRef{ConnectorID: item.GetConnectorId(), Item: item.GetItemKey()})
+	}
+	view.items = access.SortItems(view.items)
+	shared := func(item access.ItemRef) bool { return slices.Contains(view.items, item) }
 	switch {
 	case thread.Granted == nil:
-		return nil, &Failure{Message: "This conversation began with the workspace's whole view, which your access doesn't give now: start a new one"}
-	case !access.NewGrants(targets).Holds(thread.Granted.Targets):
-		return nil, &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
+		return threadView{}, &Failure{Message: "This conversation began with the workspace's whole view, which your access doesn't give now: start a new one"}
+	case !access.NewGrants(view.targets).Holds(thread.Granted.Targets),
+		slices.ContainsFunc(thread.Granted.Items, func(item access.ItemRef) bool { return !shared(item) }):
+		return threadView{}, &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
 	}
-	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, &model.FoundryAgentThreadGrants{Targets: targets}); err != nil {
-		return nil, retry(err)
+	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID,
+		&model.FoundryAgentThreadGrants{Targets: view.targets, Items: view.items}); err != nil {
+		return threadView{}, retry(err)
 	}
-	return targets, nil
+	return view, nil
 }
 
 // reachAround runs call, a restricted member's or a bot's tool call,
-// between two reads of their reach and grants, each recorded on the thread
-// (threadReach): the API reads every call as they are at that moment, so a call during which
-// they were made an owner or admin, or their grants changed, may have read
-// what the thread's grants don't hold. Such a call makes the thread the whole
-// view's and fails the turn for good, before its result reaches the model or
-// the person.
+// between two reads of their reach, grants and the items their sources
+// share with them, each recorded on the thread (threadReach): the API reads
+// every call as they are at that moment, so a call during which they were
+// made an owner or admin, their grants changed, or a source's permissions
+// changed, may have read what the thread doesn't hold. Such a call makes the
+// thread the whole view's and fails the turn for good, before its result
+// reaches the model or the person.
 func (t *turnRun) reachAround(ctx context.Context, call func()) error {
-	read := func() (Reach, []access.Target, error) {
+	read := func() (Reach, threadView, error) {
 		reach, err := turnReach(t.session, t.turn)
 		if err != nil {
-			return reach, nil, err
+			return reach, threadView{}, err
 		}
-		targets, err := threadReach(ctx, t.r.DB, t.turn, reach)
-		return reach, targets, err
+		view, err := threadReach(ctx, t.r.DB, t.session, t.turn, reach)
+		return reach, view, err
 	}
 	before, held, err := read()
 	if err != nil {
@@ -313,8 +341,7 @@ func (t *turnRun) reachAround(ctx context.Context, call func()) error {
 	if err != nil {
 		return err
 	}
-	same := before == after && access.NewGrants(held).Holds(holds) && access.NewGrants(holds).Holds(held)
-	if same {
+	if before == after && held.same(holds) {
 		return nil
 	}
 	if err := t.r.DB.RecordFoundryAgentThreadGrants(ctx, t.turn.WorkspaceID, t.turn.ThreadID, nil); err != nil {
@@ -428,7 +455,7 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		// Its owner is now a restricted member, who runs no automation.
 		return out, &Failure{Message: "The workflow's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
 	}
-	if _, err := threadReach(ctx, r.DB, turn, reach); err != nil {
+	if _, err := threadReach(ctx, r.DB, session, turn, reach); err != nil {
 		return out, err
 	}
 	// Before the tools register: the prepare tool reads what the sink allows.

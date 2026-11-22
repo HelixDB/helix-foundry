@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -35,8 +36,8 @@ type accessStore struct {
 	// its other loads, by load.
 	inputs     map[string]foundrymodel.FoundryLoadInputs
 	olderLoads map[string]foundrymodel.FoundryLoadInputs
-	// heldSets is what the last list of an ontology's documents was kept to.
-	heldSets *[]string
+	// held is what the last list of an ontology's documents was kept to.
+	held *[]string
 	// holdings are what each load holds, document by document.
 	holdings map[string]access.Holdings
 	// granteeSpend is what each grantee's questions charged to the month.
@@ -50,11 +51,38 @@ type accessStore struct {
 	teams      []foundrymodel.FoundryTeam
 	// workflowsOff are the principals whose Workflows permission is off.
 	workflowsOff []access.Principal
+	// sharing is what sources share with each reader, by email ("agent" for
+	// no one), audiences the sources' permissions as owners see them, and
+	// sourcePeople the sources' accounts, by email.
+	sharing      map[string][]foundrymodel.FoundrySourceSharing
+	audiences    []foundrymodel.FoundrySourceAudience
+	sourcePeople map[string][]foundrymodel.FoundrySourcePerson
 	// slackBot is the service credential ws-1's Slack install acts as in
 	// bot mode (slack_bot_test.go); empty for none. slackBotErr fails its
 	// read.
 	slackBot    string
 	slackBotErr error
+}
+
+func (s *accessStore) SourceSharingFor(_ context.Context, _ string, reader *connector.Email) ([]foundrymodel.FoundrySourceSharing, error) {
+	if reader == nil {
+		return s.sharing["agent"], nil
+	}
+	return s.sharing[reader.String()], nil
+}
+
+func (s *accessStore) SourcePeopleByEmail(_ context.Context, _ string, emails []connector.Email) (map[connector.Email][]foundrymodel.FoundrySourcePerson, error) {
+	out := map[connector.Email][]foundrymodel.FoundrySourcePerson{}
+	for _, e := range emails {
+		if people, ok := s.sourcePeople[e.String()]; ok && e != (connector.Email{}) {
+			out[e] = people
+		}
+	}
+	return out, nil
+}
+
+func (s *accessStore) ListSourceAudiences(context.Context, string) ([]foundrymodel.FoundrySourceAudience, error) {
+	return s.audiences, nil
 }
 
 func (s *accessStore) ListFoundryAccessWorkflowsOff(_ context.Context, _ string, principals []access.Principal) ([]access.Principal, error) {
@@ -106,14 +134,14 @@ func (s *accessStore) ListFoundryLoadInputs(_ context.Context, workspaceID strin
 	return out, nil
 }
 
-func (s *accessStore) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string,
+func (s *accessStore) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, held *[]string,
 	filter foundrymodel.FoundryDocumentFilter, pageToken string, limit int) ([]*foundrymodel.FoundryDocument, string, error) {
-	s.heldSets = heldSets
-	docs, next, err := s.questionStore.ListFoundryOntologyDocuments(ctx, workspaceID, currentLoadID, scope, heldSets, filter, pageToken, limit)
-	if err != nil || heldSets == nil {
+	s.held = held
+	docs, next, err := s.questionStore.ListFoundryOntologyDocuments(ctx, workspaceID, currentLoadID, scope, held, filter, pageToken, limit)
+	if err != nil || held == nil {
 		return docs, next, err
 	}
-	return slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return !slices.Contains(*heldSets, d.SetID) }), next, nil
+	return slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return !slices.Contains(*held, d.ID) }), next, nil
 }
 
 func (s *accessStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
@@ -835,8 +863,8 @@ func TestGranteePartial(t *testing.T) {
 		if _, err := client.GetFoundryOntologyDocument(ctx, &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
 			t.Fatal(err)
 		}
-		if got := store.heldSets; got == nil || !slices.Contains(*got, "set-general") || slices.Contains(*got, "set-hr") {
-			t.Fatalf("listed by sets %v", got)
+		if got := store.held; got == nil || !slices.Equal(*got, []string{"doc-general"}) {
+			t.Fatalf("listed by documents %v", got)
 		}
 		if _, err := client.GetFoundryDocumentContent(ctx, &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
 			t.Fatalf("the text of a document it doesn't hold: %v", err)

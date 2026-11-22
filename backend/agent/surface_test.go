@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -94,9 +93,6 @@ func TestTheLoopTellsASlackTurnItIsInSlack(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, say("Hello."))
 			h.backend.grantee = tc.grantee
-			if tc.as != nil && *tc.as == slackAsBot {
-				h.backend.accessErr = errors.New("no person here")
-			}
 			_, err := h.runner.Run(context.Background(), tc.turn)
 			require.NoError(t, err)
 			got := h.model.requests[0].System

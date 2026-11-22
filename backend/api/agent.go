@@ -274,14 +274,19 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		t.ThreadID = id.New()
 		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, Principal: principal, Title: foundryagent.Title(t.Input),
 			Runtime: runtime}
-		// A restricted member's thread holds what their grants give now;
-		// each of its turns adds what they hold when it runs.
+		// A restricted member's thread holds what their grants give now,
+		// and the channels their sources share with them; each of its turns
+		// adds what they hold when it runs.
 		if grantee {
 			targets, err := s.targetsOf(ctx, ws, g.Principals())
 			if err != nil {
 				return nil, err
 			}
-			thread.Granted = &foundrymodel.FoundryAgentThreadGrants{Targets: targets}
+			grants, err := s.grantsOf(ctx, g)
+			if err != nil {
+				return nil, err
+			}
+			thread.Granted = &foundrymodel.FoundryAgentThreadGrants{Targets: targets, Items: grants.VisibleItems()}
 		}
 	}
 	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits(principal), first)
@@ -410,11 +415,13 @@ func (s *Service) ListFoundryAgentThreads(ctx context.Context, req *foundryv1.Li
 	}
 	var keep func(*foundrymodel.FoundryAgentThread) bool
 	if g, grantee := access.GranteeFrom(ctx); grantee {
-		grants, err := s.grantsOf(ctx, ws, g.Principals())
+		grants, err := s.grantsOf(ctx, g)
 		if err != nil {
 			return nil, err
 		}
-		keep = func(t *foundrymodel.FoundryAgentThread) bool { return grants.Holds(t.Granted.Targets) }
+		keep = func(t *foundrymodel.FoundryAgentThread) bool {
+			return grants.Holds(t.Granted.Targets) && grants.SeesItems(t.Granted.Items)
+		}
 	}
 	threads, next, err := s.deps.DB.ListFoundryAgentThreads(ctx, ws, principal, keep, req.GetPageToken(), agentThreadPage)
 	switch {
@@ -451,11 +458,11 @@ func (s *Service) agentThread(ctx context.Context, workspaceID string, principal
 	if t.Granted == nil {
 		return nil, status.Error(codes.NotFound, "thread not found")
 	}
-	grants, err := s.grantsOf(ctx, workspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return nil, err
 	}
-	if !grants.Holds(t.Granted.Targets) {
+	if !grants.Holds(t.Granted.Targets) || !grants.SeesItems(t.Granted.Items) {
 		return nil, status.Error(codes.NotFound, "thread not found")
 	}
 	return t, nil

@@ -39,8 +39,10 @@ import { layout, type Listed } from "./data-files";
 //   is warned that it isn't a team admin; a Granola key containing
 //   "personal" cannot read spaces. A Slack token containing "noscope"
 //   lacks channels:history and groups:history (messages and channel_days
-//   can't be read, and nothing is a document), and one containing "lonely"
-//   is in no channels, so the test warns and syncs read no history. A
+//   can't be read, and nothing is a document), one containing "lonely"
+//   is in no channels, so the test warns and syncs read no history, and one
+//   containing "noemail" lacks users:read.email, so each sync's read of who
+//   its channels are shared with fails (`slackAudiences`). A
 //   Notion secret containing "nousers" can't read users, and one containing
 //   "empty" has nothing shared with it. A Google Workspace key is rejected
 //   when its JSON contains "bad"; a subject containing "member" is no
@@ -68,7 +70,7 @@ import { layout, type Listed } from "./data-files";
 //   newest) is edited before every sync: a new version with new text. A
 //   Slack sync reads each day with messages of the channels the app is in
 //   (two of every three of the history_days before the sync's, in each of
-//   four channels) into Conversations, a Notion sync its 60 pages with a
+//   five channels, private #leadership among them) into Conversations, a Notion sync its 60 pages with a
 //   body into Pages, an Attio sync its 23 notes with a body into Notes,
 //   and a Google Workspace sync its 14 Docs into Docs and
 //   its 4 meeting transcripts (.vtt files in Drive, as WebVTT with
@@ -897,6 +899,125 @@ const granolaForeignKeys: Record<string, ConnectorForeignKey[]> = {
   ],
 };
 
+const SLACK_TEAM = "T0MOCKACME",
+  // The mock app's bot user, which the no-channels warning names.
+  SLACK_BOT = "Foundry",
+  SLACK_BOT_ID = "U0MOCKBOT";
+// The workspace's people, as users.list lists them: the mock's Foundry
+// members (Ada, Alan and Eve) by the emails they sign in with, the people
+// who write its messages, a guest from a partner (is_restricted), and the
+// app's bot, which has no email.
+const slackUsers: {
+  id: string;
+  name: string;
+  email?: string;
+  guest?: true;
+}[] = [
+  { id: "U0MOCKADA", name: "Ada Lovelace", email: "ada@example.com" },
+  { id: "U0MOCKALN", name: "Alan Turing", email: "alan@example.com" },
+  { id: "U0MOCKEVE", name: "Eve Adler", email: "eve@example.com" },
+  { id: "U0MOCKHDY", name: "Hedy Lamarr", email: "hedy@example.com" },
+  { id: "U0MOCKMGT", name: "Margaret Hamilton", email: "margaret@example.com" },
+  {
+    id: "U0MOCKGST",
+    name: "Grace Hopper",
+    email: "Grace.Hopper@Partner.example",
+    guest: true,
+  },
+  { id: SLACK_BOT_ID, name: SLACK_BOT },
+];
+// The workspace's channels and their members, by user id: the app is in
+// each its bot is a member of (all but #random), unless its token contains
+// "lonely" (in none). #leadership is private, without Eve; the guest is in
+// #support only. Each channel the app is in says one of its lines a day.
+const slackChannels: {
+  id: string;
+  name: string;
+  private?: true;
+  members: string[];
+  lines: string[];
+}[] = [
+  {
+    id: "C0MOCKGEN",
+    name: "general",
+    members: [
+      "U0MOCKADA",
+      "U0MOCKALN",
+      "U0MOCKEVE",
+      "U0MOCKHDY",
+      "U0MOCKMGT",
+      SLACK_BOT_ID,
+    ],
+    lines: [
+      "Morning all: the weekly metrics are in Notion.",
+      "Reminder that the all-hands moves to Thursday this week.",
+      "Welcome Margaret, who joins the platform team today!",
+      "The office is closed on Friday for the move.",
+      "The Q4 planning doc is ready for comments.",
+    ],
+  },
+  {
+    id: "C0MOCKSAL",
+    name: "sales",
+    members: ["U0MOCKADA", "U0MOCKALN", "U0MOCKEVE", "U0MOCKMGT", SLACK_BOT_ID],
+    lines: [
+      "The Globex renewal is on track for the end of the month.",
+      "Initech asked for a revised quote for 40 seats.",
+      "Umbrella Holdings wants a call about the Enterprise plan.",
+      "Closed the Hooli expansion: 25 more seats from November.",
+      "Pipeline review moved to 3pm.",
+    ],
+  },
+  {
+    id: "C0MOCKSUP",
+    name: "support",
+    members: ["U0MOCKADA", "U0MOCKEVE", "U0MOCKHDY", "U0MOCKGST", SLACK_BOT_ID],
+    lines: [
+      "Globex reported slow CSV exports again; the ticket is with engineering.",
+      "Initech can't reset passwords for two users, looking now.",
+      "The queue is clear, nice work everyone.",
+      "Umbrella Holdings asked how to rotate their API key.",
+      "The new macro for refund requests is live.",
+    ],
+  },
+  {
+    id: "C0MOCKENG",
+    name: "engineering",
+    members: ["U0MOCKALN", "U0MOCKHDY", "U0MOCKMGT", SLACK_BOT_ID],
+    lines: [
+      "The billing webhooks fix is deployed.",
+      "The Postgres upgrade is scheduled for Saturday 06:00 UTC.",
+      "The flaky export test is quarantined until Monday.",
+      "Code freeze starts Wednesday for the release.",
+      "Error rates are back to normal after the rollback.",
+    ],
+  },
+  {
+    id: "C0MOCKRND",
+    name: "random",
+    members: ["U0MOCKADA", "U0MOCKALN", "U0MOCKEVE", "U0MOCKHDY", "U0MOCKMGT"],
+    lines: [],
+  },
+  {
+    id: "C0MOCKLDR",
+    name: "leadership",
+    private: true,
+    members: ["U0MOCKADA", "U0MOCKALN", "U0MOCKHDY", SLACK_BOT_ID],
+    lines: [
+      "The board pack for Thursday is in the shared drive.",
+      "Hiring plan: two more engineers in Q1.",
+      "The Hooli acquisition talks are paused until January.",
+      "The compensation review closes on Friday.",
+      "Next year's draft budget is ready for comments.",
+    ],
+  },
+];
+/** The channels the app is in: its bot is a member, and its token isn't "lonely". */
+const slackChannelsIn = (src: Source) =>
+  src.secret.includes("lonely")
+    ? []
+    : slackChannels.filter((c) => c.members.includes(SLACK_BOT_ID));
+
 // Slack's Web API (slack.com/api), as slack.go reads it with a bot token:
 // the workspace's people, its channels, and the members and the messages
 // of the channels the app is in, over the last history_days. A message is
@@ -921,11 +1042,13 @@ const slackObjects = [
       "is_bot",
       "is_admin",
       "is_owner",
+      "is_restricted",
+      "is_ultra_restricted",
       "deleted",
       "tz",
       "updated_at",
     ],
-    18,
+    slackUsers.length,
   ),
   object(
     "channels",
@@ -942,13 +1065,16 @@ const slackObjects = [
       "created_at",
       "num_members",
     ],
-    5,
+    slackChannels.length,
   ),
   object(
     "channel_members",
     ["channel_id", "user_id"],
     ["channel_id", "user_id"],
-    31,
+    // conversations.members of each channel the app is in.
+    slackChannels
+      .filter((c) => c.members.includes(SLACK_BOT_ID))
+      .reduce((n, c) => n + c.members.length, 0),
   ),
   object(
     "messages",
@@ -997,7 +1123,8 @@ const slackForeignKeys: Record<string, ConnectorForeignKey[]> = {
   channel_days: [fk("channel_id", "channels")],
 };
 // The scope each table needs of the mock's public channels; a token
-// containing "noscope" lacks channels:history (and groups:history).
+// containing "noscope" lacks channels:history and groups:history, so no
+// channel's history can be read.
 const slackScopes: Record<string, string> = {
   users: "users:read",
   channels: "channels:read",
@@ -1005,59 +1132,6 @@ const slackScopes: Record<string, string> = {
   messages: "channels:history",
   channel_days: "channels:history",
 };
-const SLACK_TEAM = "T0MOCKACME",
-  // The mock app's bot user, which the no-channels warning names.
-  SLACK_BOT = "Foundry";
-// The workspace's public channels; the app is in all but #random, unless
-// its token contains "lonely" (in none). Each channel says one of its lines
-// a day.
-const slackChannels = [
-  {
-    id: "C0MOCKGEN",
-    name: "general",
-    lines: [
-      "Morning all: the weekly metrics are in Notion.",
-      "Reminder that the all-hands moves to Thursday this week.",
-      "Welcome Margaret, who joins the platform team today!",
-      "The office is closed on Friday for the move.",
-      "The Q4 planning doc is ready for comments.",
-    ],
-  },
-  {
-    id: "C0MOCKSAL",
-    name: "sales",
-    lines: [
-      "The Globex renewal is on track for the end of the month.",
-      "Initech asked for a revised quote for 40 seats.",
-      "Umbrella Holdings wants a call about the Enterprise plan.",
-      "Closed the Hooli expansion: 25 more seats from November.",
-      "Pipeline review moved to 3pm.",
-    ],
-  },
-  {
-    id: "C0MOCKSUP",
-    name: "support",
-    lines: [
-      "Globex reported slow CSV exports again; the ticket is with engineering.",
-      "Initech can't reset passwords for two users, looking now.",
-      "The queue is clear, nice work everyone.",
-      "Umbrella Holdings asked how to rotate their API key.",
-      "The new macro for refund requests is live.",
-    ],
-  },
-  {
-    id: "C0MOCKENG",
-    name: "engineering",
-    lines: [
-      "The billing webhooks fix is deployed.",
-      "The Postgres upgrade is scheduled for Saturday 06:00 UTC.",
-      "The flaky export test is quarantined until Monday.",
-      "Code freeze starts Wednesday for the release.",
-      "Error rates are back to normal after the rollback.",
-    ],
-  },
-  { id: "C0MOCKRND", name: "random", lines: [] },
-];
 // The mock's people in Slack, Notion and Google Workspace.
 const PEOPLE_AT_WORK = [
   "Ada Lovelace",
@@ -1639,8 +1713,9 @@ const sha = (text: string, digits: number) =>
  * thread's latest reply when later.
  */
 function slackDays(src: Source, syncedAt: string) {
-  if (!("slack" in src.settings) || src.secret.includes("lonely")) return [];
+  if (!("slack" in src.settings)) return [];
   const days = src.settings.slack.historyDays || 90,
+    channels = slackChannelsIn(src),
     today = Date.parse(syncedAt.slice(0, 10));
   // Through Helix's Slack app, the messages Slack sent today
   // (POST /__mock/slack/feed): a day of their own per channel.
@@ -1669,47 +1744,42 @@ function slackDays(src: Source, syncedAt: string) {
   return Array.from({ length: days }, (_, i) => today - (i + 1) * 86_400_000)
     .flatMap((midnight) => {
       const n = midnight / 86_400_000;
-      return slackChannels
-        .filter((c) => c.lines.length)
-        .flatMap((c, j) => {
-          if ((n + j) % 3 === 0) return [];
-          const minute = ((n * 7 + j * 11) % 40) + 5,
-            at = (h: number, m: number) => midnight + (h * 60 + m) * 60_000,
-            who = (k: number) =>
-              PEOPLE_AT_WORK[(n + j + k) % PEOPLE_AT_WORK.length]!;
-          const first = {
-            at: at(9, minute),
-            who: who(0),
-            text: c.lines[n % c.lines.length]!,
-            replies: [
-              {
-                at: at((n + j) % 2 ? 16 : 9, minute + 12),
-                who: who(1),
-                text: SLACK_REPLIES[(n + j) % SLACK_REPLIES.length]!,
-              },
-            ],
-          };
-          const second = {
-            at: at(14, ((n * 5 + j * 13) % 50) + 5),
-            who: who(2),
-            text: c.lines[(n + 3) % c.lines.length]!,
-            replies: [],
-          };
-          const messages = [first, second];
-          return [
+      return channels.flatMap((c, j) => {
+        if ((n + j) % 3 === 0) return [];
+        const minute = ((n * 7 + j * 11) % 40) + 5,
+          at = (h: number, m: number) => midnight + (h * 60 + m) * 60_000,
+          who = (k: number) =>
+            PEOPLE_AT_WORK[(n + j + k) % PEOPLE_AT_WORK.length]!;
+        const first = {
+          at: at(9, minute),
+          who: who(0),
+          text: c.lines[n % c.lines.length]!,
+          replies: [
             {
-              channel: c,
-              day: new Date(midnight).toISOString().slice(0, 10),
-              messages,
-              active: Math.max(
-                ...messages.flatMap((m) => [
-                  m.at,
-                  ...m.replies.map((r) => r.at),
-                ]),
-              ),
+              at: at((n + j) % 2 ? 16 : 9, minute + 12),
+              who: who(1),
+              text: SLACK_REPLIES[(n + j) % SLACK_REPLIES.length]!,
             },
-          ];
-        });
+          ],
+        };
+        const second = {
+          at: at(14, ((n * 5 + j * 13) % 50) + 5),
+          who: who(2),
+          text: c.lines[(n + 3) % c.lines.length]!,
+          replies: [],
+        };
+        const messages = [first, second];
+        return [
+          {
+            channel: c,
+            day: new Date(midnight).toISOString().slice(0, 10),
+            messages,
+            active: Math.max(
+              ...messages.flatMap((m) => [m.at, ...m.replies.map((r) => r.at)]),
+            ),
+          },
+        ];
+      });
     })
     .concat(fed)
     .sort(
@@ -2197,6 +2267,57 @@ const attioNotes = Array.from({ length: 24 }, (_, i) => {
     markdown: i === 23 ? "" : body.replaceAll("{who}", who),
   };
 });
+
+/**
+ * A source's permissions at one read (connector.Audiences): its people by
+ * email, trimmed and lowercased, with its guests, and each item by key with
+ * the emails it is shared with, or `everyone` (any reader but a guest).
+ */
+export type MockAudiences = {
+  people: { email: string; guest: boolean }[];
+  items: { key: string; members: string[] | "everyone" }[];
+};
+
+/**
+ * Who a Slack connection's channels are shared with, as slack.go's
+ * Audiences reads them, or why it can't: the people of users.list with an
+ * email (the bot left out), each public channel shared with everyone, and
+ * each private one the app is in with its members that have an email. A
+ * token containing "noemail" lacks users:read.email, so no one can be
+ * matched and the read is refused with the scope to add.
+ */
+export function slackAudiences(src: Source): MockAudiences | string {
+  if (src.secret.includes("noemail"))
+    return "add the users:read.email scope to the app and reinstall it, so Foundry can follow who each channel is shared with";
+  const emails = new Map(
+    slackUsers.flatMap((u) =>
+      u.email ? [[u.id, u.email.trim().toLowerCase()] as const] : [],
+    ),
+  );
+  const inChannel = new Set(slackChannelsIn(src).map((c) => c.id));
+  return {
+    people: slackUsers
+      .flatMap((u) =>
+        u.email ? [{ email: emails.get(u.id)!, guest: !!u.guest }] : [],
+      )
+      .sort((a, b) => a.email.localeCompare(b.email)),
+    items: slackChannels.flatMap((c): MockAudiences["items"] =>
+      !c.private
+        ? [{ key: c.id, members: "everyone" }]
+        : inChannel.has(c.id)
+          ? [
+              {
+                key: c.id,
+                members: c.members.flatMap((id) => {
+                  const email = emails.get(id);
+                  return email ? [email] : [];
+                }),
+              },
+            ]
+          : [],
+    ),
+  };
+}
 
 /**
  * The streams `src`'s kind has, each with the documents a sync at `syncedAt`

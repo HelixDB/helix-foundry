@@ -610,12 +610,12 @@ func TestSlackSync(t *testing.T) {
 		}
 		want := []map[string]any{
 			{"user_id": "U1", "team_id": "T1", "name": "ada", "real_name": "Ada Lovelace", "display_name": "ada", "email": "ada@example.com",
-				"title": "Engineer", "is_bot": false, "is_admin": true, "is_owner": true, "deleted": false, "tz": "Europe/London",
+				"title": "Engineer", "is_bot": false, "is_admin": true, "is_owner": true, "is_restricted": false, "is_ultra_restricted": false, "deleted": false, "tz": "Europe/London",
 				"updated_at": time.Unix(1792000000, 0).UTC().Format(time.RFC3339)},
 			{"user_id": "U2", "team_id": "T1", "name": "grace", "real_name": "Grace Hopper", "display_name": nil, "email": nil, "title": nil,
-				"is_bot": false, "is_admin": false, "is_owner": false, "deleted": false, "tz": nil, "updated_at": nil},
+				"is_bot": false, "is_admin": false, "is_owner": false, "is_restricted": false, "is_ultra_restricted": false, "deleted": false, "tz": nil, "updated_at": nil},
 			{"user_id": "U3", "team_id": "T1", "name": "alan", "real_name": nil, "display_name": nil, "email": nil, "title": nil,
-				"is_bot": false, "is_admin": false, "is_owner": false, "deleted": true, "tz": nil, "updated_at": nil},
+				"is_bot": false, "is_admin": false, "is_owner": false, "is_restricted": false, "is_ultra_restricted": false, "deleted": true, "tz": nil, "updated_at": nil},
 		}
 		if len(rows) != 4 || fmt.Sprint(rows[:3]) != fmt.Sprint(want) || rows[3]["is_bot"] != true {
 			t.Fatalf("rows = %v", rows)

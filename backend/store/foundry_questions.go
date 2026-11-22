@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"slices"
 	"strings"
 	"time"
 )
@@ -16,7 +17,9 @@ const foundryQuestionColumns = `id, workspace_id, ontology_id, load_id, version_
        client_token, lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros,
        input_tokens, output_tokens, last_seq, asked_by_user_id, created_at, started_at, finished_at,
        (SELECT CONCAT(g.principal_kind, ' ', g.principal_id) FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id),
-       (SELECT g.seen FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id)`
+       (SELECT g.seen FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id),
+       (SELECT JSON_ARRAYAGG(JSON_ARRAY(i.connector_id, i.item_key)) FROM foundry_question_source_items i
+         WHERE i.question_id = foundry_questions.id)`
 
 // claimFoundryQuestionTries bounds the questions one claim looks at: each one
 // its workspace's limits hold back is deferred, or failed, so the next is
@@ -108,21 +111,65 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
 		if err != nil {
 			return err
 		}
-		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_question_grantees (question_id, ontology_id, principal_kind, principal_id, seen)
-VALUES (?, ?, ?, ?, ?)`, q.ID, q.OntologyID, q.Grantee.Kind.String(), q.Grantee.ID, seen)
-		return err
+		if _, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_question_grantees (question_id, ontology_id, principal_kind, principal_id, seen)
+VALUES (?, ?, ?, ?, ?)`, q.ID, q.OntologyID, q.Grantee.Kind.String(), q.Grantee.ID, seen); err != nil {
+			return err
+		}
+		return tx.addSourceItems(ctx, "foundry_question_source_items", "question_id", q.ID, q.SeenItems)
 	})
 }
 
 // SetFoundryQuestionSeen records what the grantee that asked a question held of
-// its load when it ran, when that wasn't all of it; nil when it was.
-func (s *mysqlDB) SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error {
+// its load when it ran, when that wasn't all of it (nil when it was), and the
+// items of audienced sources its documents were of, in place of those
+// recorded before.
+func (s *mysqlDB) SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs, items []access.ItemRef) error {
 	raw, err := seenJSON(seen)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE foundry_question_grantees SET seen=? WHERE question_id=?`, raw, questionID)
-	return err
+	return s.inTx(ctx, func(tx *mysqlDB) error {
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_question_grantees SET seen=? WHERE question_id=?`, raw, questionID); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_question_source_items WHERE question_id=?`, questionID); err != nil {
+			return err
+		}
+		return tx.addSourceItems(ctx, "foundry_question_source_items", "question_id", questionID, items)
+	})
+}
+
+// addSourceItems records items as read by the question or thread id
+// (keyColumn of table), beside those recorded already.
+func (s *mysqlDB) addSourceItems(ctx context.Context, table, keyColumn, id string, items []access.ItemRef) error {
+	for chunk := range slices.Chunk(access.SortItems(slices.Clone(items)), sourceAudienceChunk) {
+		args := make([]any, 0, 3*len(chunk))
+		for _, i := range chunk {
+			args = append(args, id, i.ConnectorID, i.Item)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO `+table+` (`+keyColumn+`, connector_id, item_key) VALUES `+
+			strings.TrimSuffix(strings.Repeat("(?, ?, ?),", len(chunk)), ","), args...); err != nil {
+			return fmt.Errorf("record the source items %s %s read: %w", keyColumn, id, err)
+		}
+	}
+	return nil
+}
+
+// parseSourceItems reads the JSON array of [connector id, item key] pairs a
+// column's subquery aggregates (NULL for none), sorted.
+func parseSourceItems(raw sql.NullString) ([]access.ItemRef, error) {
+	if !raw.Valid {
+		return nil, nil
+	}
+	var pairs [][2]string
+	if err := json.Unmarshal([]byte(raw.String), &pairs); err != nil {
+		return nil, fmt.Errorf("read source items: %w", err)
+	}
+	items := make([]access.ItemRef, len(pairs))
+	for i, p := range pairs {
+		items[i] = access.ItemRef{ConnectorID: p[0], Item: p[1]}
+	}
+	return access.SortItems(items), nil
 }
 
 // seenJSON is what a question saw, as the column stores it.
@@ -466,13 +513,13 @@ func (s *mysqlDB) queryFoundryQuestions(ctx context.Context, query string, args 
 func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 	var q model.FoundryQuestion
 	var status string
-	var focus, result, errText, clientToken, leaseOwner, askedBy, grantee, seen sql.NullString
+	var focus, result, errText, clientToken, leaseOwner, askedBy, grantee, seen, seenItems sql.NullString
 	var validAt, leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &q.Spend
 	if err := scanner.Scan(&q.ID, &q.WorkspaceID, &q.OntologyID, &q.LoadID, &q.VersionID, &q.ThreadID, &q.Question, &focus, &validAt, &status,
 		&result, &errText, &clientToken, &leaseOwner, &leaseUntil, &q.Attempts, &q.NextAttemptAt, &q.MaxUSDMicros,
 		&q.ReservedMicros, &spend.USDMicros, &spend.InputTokens, &spend.OutputTokens, &q.LastSeq, &askedBy, &q.CreatedAt,
-		&startedAt, &finishedAt, &grantee, &seen,
+		&startedAt, &finishedAt, &grantee, &seen, &seenItems,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -485,6 +532,10 @@ func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 		if err := json.Unmarshal([]byte(seen.String), q.Seen); err != nil {
 			return nil, fmt.Errorf("foundry question %s: read what it saw: %w", q.ID, err)
 		}
+	}
+	var err error
+	if q.SeenItems, err = parseSourceItems(seenItems); err != nil {
+		return nil, fmt.Errorf("foundry question %s: %w", q.ID, err)
 	}
 	if grantee.Valid {
 		kind, id, _ := strings.Cut(grantee.String, " ")
