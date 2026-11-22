@@ -379,6 +379,99 @@ func (k *slackKind) Identity(ctx context.Context, src Source) (string, string, e
 	return user + " in " + team, id, nil
 }
 
+var _ Audienced = (*slackKind)(nil)
+
+// Audiences reads who each channel the app can see is shared with: the
+// workspace's people from users.list, by email (deleted accounts and bots
+// left out; two accounts with one email are one person, a guest when
+// either is), then every channel conversations.list lists of the types the
+// token may list. A public channel is shared with everyone; a private one,
+// which the app sees only while in it, with its members of
+// conversations.members that have an email, others dropped. A private
+// channel gone since it was listed stays unknown. Without users:read,
+// users:read.email or channels:read no one can be matched, so the read is
+// refused with the scope to add; without groups:read the private channels
+// stay unknown, so only full readers read them.
+func (k *slackKind) Audiences(ctx context.Context, src Source) (Audiences, error) {
+	c := k.client(src.Secret)
+	auth, err := c.auth(ctx)
+	if err != nil {
+		return Audiences{}, err
+	}
+	for _, scope := range []string{"users:read", "users:read.email", "channels:read"} {
+		if !auth.scopes.has(scope) {
+			return Audiences{}, refused(errMissingScope, "add the %s scope to the app and reinstall it, so Foundry can follow who each channel is shared with", scope)
+		}
+	}
+	a := Audiences{People: map[Email]Person{}, Items: map[string]Audience{}}
+	emails := map[string]Email{} // by user id
+	err = c.pages(ctx, "users.list", "members", url.Values{"limit": {slackListPage}}, func(raw json.RawMessage) error {
+		var u slackUser
+		if json.Unmarshal(raw, &u) != nil || u.ID == "" {
+			return errors.New("slack users.list: a listed user has no id")
+		}
+		email, ok := ParseEmail(u.Profile.Email)
+		if !ok || u.Deleted || u.IsBot {
+			return nil
+		}
+		emails[u.ID] = email
+		a.People[email] = Person{Guest: a.People[email].Guest || u.IsRestricted || u.IsUltraRestricted}
+		return nil
+	})
+	if err != nil {
+		return Audiences{}, err
+	}
+	var private []string
+	err = c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {auth.scopes.types()}},
+		func(raw json.RawMessage) error {
+			var ch slackChannel
+			if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
+				return errors.New("slack conversations.list: a listed channel has no id")
+			}
+			if ch.IsPrivate {
+				private = append(private, ch.ID)
+			} else {
+				a.Items[ch.ID] = EveryoneAudience()
+			}
+			return nil
+		})
+	if err != nil {
+		return Audiences{}, err
+	}
+	for _, channel := range private {
+		var members []Email
+		err := c.pages(ctx, "conversations.members", "members", url.Values{"channel": {channel}, "limit": {slackListPage}},
+			func(raw json.RawMessage) error {
+				var user string
+				if json.Unmarshal(raw, &user) != nil || user == "" {
+					return fmt.Errorf("slack conversations.members: channel %s lists a member without an id", channel)
+				}
+				if email, ok := emails[user]; ok {
+					members = append(members, email)
+				}
+				return nil
+			})
+		switch {
+		case errors.Is(err, errChannelGone):
+			continue
+		case err != nil:
+			return Audiences{}, err
+		}
+		a.Items[channel] = MembersAudience(members...)
+	}
+	return a, nil
+}
+
+// ItemOfDocument is a conversations document's channel: its external id is
+// "<channel>:<day>".
+func (k *slackKind) ItemOfDocument(stream, externalID string) (string, bool) {
+	channel, day, found := strings.Cut(externalID, ":")
+	if stream != slackConversations.Name || !found || channel == "" || day == "" {
+		return "", false
+	}
+	return channel, true
+}
+
 func (k *slackKind) Hint(secret string) string {
 	if hint := keyHint(strings.TrimSpace(secret), 0); hint != "…" {
 		return "xoxb" + hint
@@ -1051,8 +1144,12 @@ type slackUser struct {
 	IsBot    bool   `json:"is_bot"`
 	IsAdmin  bool   `json:"is_admin"`
 	IsOwner  bool   `json:"is_owner"`
-	Updated  int64  `json:"updated"`
-	Profile  struct {
+	// IsRestricted is a multi-channel guest, IsUltraRestricted a
+	// single-channel one.
+	IsRestricted      bool  `json:"is_restricted"`
+	IsUltraRestricted bool  `json:"is_ultra_restricted"`
+	Updated           int64 `json:"updated"`
+	Profile           struct {
 		RealName    string `json:"real_name"`
 		DisplayName string `json:"display_name"`
 		Email       string `json:"email"` // only with users:read.email
@@ -1064,7 +1161,8 @@ func (u slackUser) row() map[string]any {
 	row := map[string]any{
 		"user_id": u.ID, "team_id": orNull(u.TeamID), "name": orNull(u.Name), "real_name": orNull(cmp.Or(u.RealName, u.Profile.RealName)),
 		"display_name": orNull(u.Profile.DisplayName), "email": orNull(u.Profile.Email), "title": orNull(u.Profile.Title),
-		"is_bot": u.IsBot, "is_admin": u.IsAdmin, "is_owner": u.IsOwner, "deleted": u.Deleted, "tz": orNull(u.TZ), "updated_at": nil,
+		"is_bot": u.IsBot, "is_admin": u.IsAdmin, "is_owner": u.IsOwner,
+		"is_restricted": u.IsRestricted, "is_ultra_restricted": u.IsUltraRestricted, "deleted": u.Deleted, "tz": orNull(u.TZ), "updated_at": nil,
 	}
 	if u.Updated > 0 {
 		row["updated_at"] = time.Unix(u.Updated, 0).UTC().Format(time.RFC3339)
