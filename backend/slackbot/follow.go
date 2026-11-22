@@ -250,6 +250,7 @@ func (f *follower) step(ctx context.Context) (bool, error) {
 		if err != nil {
 			return false, err
 		}
+		b.posted(ctx, f.install.ID, f.r.ChannelID, f.r.ThreadTS, ts)
 		if err := f.update(ctx, model.SlackReplyUpdate{MessageTS: &ts}); err != nil {
 			return false, err
 		}
@@ -384,6 +385,7 @@ func (f *follower) posting(ctx context.Context, key string, msgs []slack.Message
 			if ts, err = f.b.slack.PostMessage(ctx, f.bot, slack.Post{Channel: f.r.ChannelID, ThreadTS: f.r.ThreadTS, Message: m}); err != nil {
 				return err
 			}
+			f.b.posted(ctx, f.install.ID, f.r.ChannelID, f.r.ThreadTS, ts)
 			if err := f.update(ctx, model.SlackReplyUpdate{Posted: map[string]string{part: ts}}); err != nil {
 				return err
 			}
@@ -468,7 +470,7 @@ func (f *follower) post(ctx context.Context, due slack.Due, turnLive bool) (bool
 		}
 		msgs = []slack.Message{m}
 	case slack.QuestionsDue:
-		msgs = b.site.Questions(d.Asked, ws, slack.RepliesIn(f.r.ChannelID, f.install.BotUserID, f.install.Scopes, false))
+		msgs = b.site.Questions(d.Asked, ws, slack.RepliesIn(f.r.ChannelID, f.install.BotUserID, f.install.Scopes, b.cfg.Follow.Enabled))
 	default:
 		return true, nil
 	}

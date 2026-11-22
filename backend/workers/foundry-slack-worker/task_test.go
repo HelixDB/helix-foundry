@@ -67,6 +67,7 @@ type fakeBot struct {
 	claims   atomic.Int32
 	ran      atomic.Int32
 	sweeps   atomic.Int32
+	backfill atomic.Int32
 	release  chan struct{}
 	claimErr error
 }
@@ -97,7 +98,8 @@ func (b *fakeBot) NextIntake(context.Context) (func(context.Context), error) {
 func (b *fakeBot) NextFollow(context.Context) (func(context.Context), error) {
 	return b.next(&b.follows)
 }
-func (b *fakeBot) Sweep(context.Context) { b.sweeps.Add(1) }
+func (b *fakeBot) Sweep(context.Context)    { b.sweeps.Add(1) }
+func (b *fakeBot) Backfill(context.Context) { b.backfill.Add(1) }
 
 func TestDrainHoldsASlotPerJob(t *testing.T) {
 	b := &fakeBot{intake: 5, release: make(chan struct{})}
@@ -130,6 +132,16 @@ func TestStartRunsUntilStopped(t *testing.T) {
 	assert.Eventually(t, func() bool { return b.ran.Load() == 2 && b.sweeps.Load() >= 1 }, time.Second, time.Millisecond)
 	cancel()
 	require.NoError(t, <-done, "jobs in flight see the stop and end")
+	assert.Zero(t, b.backfill.Load(), "the feed off, nothing backfills")
+
+	cfg.Feed.Enabled, cfg.Backfill.PollInterval = true, 5*time.Millisecond
+	fed := &fakeBot{release: make(chan struct{})}
+	task = &Task{deps: Deps{Logger: slog.Default()}, cfg: cfg, bot: fed, intake: make(chan struct{}, 1), follows: make(chan struct{}, 1)}
+	ctx, cancel = context.WithCancel(context.Background())
+	go func() { done <- task.Start(ctx) }()
+	assert.Eventually(t, func() bool { return fed.backfill.Load() >= 2 }, time.Second, time.Millisecond, "the feed on, it backfills every poll")
+	cancel()
+	require.NoError(t, <-done)
 
 	off := &Task{deps: Deps{Logger: slog.Default()}, cfg: config.SlackConfig{}}
 	ctx, cancel = context.WithCancel(context.Background())

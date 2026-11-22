@@ -183,7 +183,9 @@ func (b *Bot) retry(in *model.SlackIntake, err error) model.SlackIntakeOutcome {
 // it gives the row up rather than try again.
 func (b *Bot) lastTry(in *model.SlackIntake) bool { return in.Failures+1 >= b.cfg.MaxAttempts }
 
-// event handles an event: a message, or a stop of an agent session.
+// event handles an event: a message (a mention, a direct message, or a
+// reply the API took unmentioned, foundry.slack.follow), or a stop of an
+// agent session.
 // Uninstalls end in the API, as Slack sends them; one queued here ends.
 func (b *Bot) event(ctx context.Context, c claim, e slack.Event) (model.SlackIntakeOutcome, error) {
 	switch e := e.(type) {
@@ -191,18 +193,23 @@ func (b *Bot) event(ctx context.Context, c claim, e slack.Event) (model.SlackInt
 		return b.message(ctx, c, said{at: e.At, user: e.UserID, ts: e.TS, userTeam: e.UserTeamID, text: e.Text})
 	case slack.DirectMessage:
 		return b.message(ctx, c, said{at: e.At, user: e.UserID, ts: e.TS, userTeam: e.UserTeamID, text: e.Text})
+	case slack.ThreadReply:
+		return b.message(ctx, c, said{at: e.At, user: e.UserID, ts: e.TS, userTeam: e.UserTeamID, text: e.Text, unmentioned: true})
 	case slack.SessionStopped:
 		return b.sessionStopped(ctx, c, e)
 	}
 	return model.SlackIntakeEnded{}, nil
 }
 
-// said is a message someone wrote to the bot.
+// said is a message someone wrote to the bot; unmentioned is a reply in a
+// thread the bot follows that doesn't mention it, which gets no link
+// prompt and no word when it says nothing.
 type said struct {
-	at       slack.Conversation
-	user, ts string
-	userTeam string
-	text     string
+	at          slack.Conversation
+	user, ts    string
+	userTeam    string
+	text        string
+	unmentioned bool
 }
 
 // memberOf reports a Slack user the bot answers for install: a full member
@@ -252,6 +259,8 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		}
 		input = slack.InputText(m.text, c.install.BotUserID, func(id string) string { return names[id] })
 		switch {
+		case input == "" && m.unmentioned:
+			return model.SlackIntakeEnded{}, nil
 		case input == "":
 			return tell("Ask me something about your Foundry data.")
 		case utf8.RuneCountInString(input) > maxInputChars:
@@ -266,6 +275,8 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	}
 	link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, m.user)
 	switch {
+	case errors.Is(err, store.ErrNotFound) && m.unmentioned:
+		return model.SlackIntakeEnded{}, nil
 	case errors.Is(err, store.ErrNotFound):
 		if err := b.linkPrompt(ctx, c, m); err != nil {
 			return nil, err
@@ -461,7 +472,21 @@ func (b *Bot) startReply(ctx context.Context, c claim, turnID, channel, threadTS
 		case err != nil:
 			return fmt.Errorf("record the reply's message: %w", err)
 		}
+		b.posted(ctx, c.install.ID, channel, threadTS, ts)
 	}
 	b.setAgentStatus(ctx, c.bot, channel, threadTS, slack.AgentProcessing)
 	return nil
+}
+
+// posted records that the bot posted at ts in a channel's thread, which a
+// reply there needs to reach it unmentioned (foundry.slack.follow): never
+// in a direct message, where every reply does. A failure only logs: the
+// next reply needs a mention.
+func (b *Bot) posted(ctx context.Context, installID, channel, threadTS, ts string) {
+	if !b.cfg.Follow.Enabled || inDM(channel) || !model.ValidSlackTS(ts) {
+		return
+	}
+	if err := b.db.MarkFoundrySlackThreadBot(ctx, installID, channel, threadTS, slackTime(ts)); err != nil {
+		log.From(ctx).Warn("record the bot's post in a Slack thread failed", "err", err)
+	}
 }

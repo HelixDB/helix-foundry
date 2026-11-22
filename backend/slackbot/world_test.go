@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -156,11 +158,16 @@ type fakeSlack struct {
 	// infoRefusal, when set, is conversations.info's error code.
 	shared      map[string]bool
 	infoRefusal string
+	// history is each channel's messages, and replies each thread's, by
+	// its root's ts, the root first: what conversations.history and
+	// conversations.replies list.
+	history map[string][]map[string]any
+	replies map[string][]map[string]any
 }
 
 func newFakeSlack(t *testing.T) *fakeSlack {
 	f := &fakeSlack{queued: map[string][]func(call) (int, http.Header, string){}, users: map[string]map[string]any{}, deleted: map[string]bool{},
-		shared: map[string]bool{}}
+		shared: map[string]bool{}, history: map[string][]map[string]any{}, replies: map[string][]map[string]any{}}
 	f.lastTS.Store(1_700_000_000_000_000)
 	for _, u := range []string{ada, grace, alan} {
 		f.users[u] = map[string]any{"id": u, "team_id": team, "name": strings.ToLower(u[2:]), "real_name": "Person " + u[2:], "tz": "Europe/London",
@@ -170,6 +177,9 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		c := call{method: strings.TrimPrefix(r.URL.Path, "/api/"), args: map[string]any{}}
+		for k := range r.URL.Query() {
+			c.args[k] = r.URL.Query().Get(k)
+		}
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 			_ = json.Unmarshal(body, &c.args)
 		} else if form, err := url.ParseQuery(string(body)); err == nil {
@@ -231,8 +241,42 @@ func (f *fakeSlack) answer(c call) string {
 			return fmt.Sprintf(`{"ok":false,"error":%q}`, refusal)
 		}
 		return fmt.Sprintf(`{"ok":true,"channel":{"id":%q,"is_ext_shared":%t}}`, channel, shared)
+	case "conversations.history", "conversations.replies":
+		return f.page(c)
 	}
 	return `{"ok":true}`
+}
+
+// page is a page of conversations.history (newest first, after oldest and
+// before latest, both exclusive) or conversations.replies (oldest first),
+// at most limit messages from the offset its cursor names.
+func (f *fakeSlack) page(c call) string {
+	arg := func(k string) string { return fmt.Sprint(c.args[k]) }
+	f.mu.Lock()
+	var all []map[string]any
+	if c.method == "conversations.history" {
+		for _, m := range f.history[arg("channel")] {
+			if ts := m["ts"].(string); ts > arg("oldest") && ts < arg("latest") {
+				all = append(all, m)
+			}
+		}
+		slices.SortFunc(all, func(a, b map[string]any) int { return strings.Compare(b["ts"].(string), a["ts"].(string)) })
+	} else {
+		all = f.replies[arg("ts")]
+	}
+	f.mu.Unlock()
+	if c.method == "conversations.replies" && len(all) == 0 {
+		return `{"ok":false,"error":"thread_not_found"}`
+	}
+	from, _ := strconv.Atoi(fmt.Sprint(c.args["cursor"]))
+	limit, _ := strconv.Atoi(arg("limit"))
+	page := all[min(from, len(all)):min(from+limit, len(all))]
+	out := map[string]any{"ok": true, "messages": page, "has_more": from+limit < len(all)}
+	if from+limit < len(all) {
+		out["response_metadata"] = map[string]any{"next_cursor": strconv.Itoa(from + limit)}
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
 }
 
 // queue answers method's next call with code and body (and Retry-After,
@@ -426,7 +470,9 @@ type world struct {
 var slackTables = []string{"foundry_slack_installs", "foundry_slack_install_tokens", "foundry_slack_install_states", "foundry_slack_links",
 	"foundry_slack_link_tokens", "foundry_slack_threads", "foundry_slack_intake", "foundry_slack_replies", "foundry_agent_threads",
 	"foundry_agent_turns", "foundry_agent_events", "foundry_agent_messages", "foundry_agent_actions", "foundry_questions", "foundry_ontologies",
-	"workspaces"}
+	"foundry_slack_slots", "foundry_slack_feeds", "foundry_slack_feed", "foundry_slack_feed_channels", "foundry_slack_feed_days",
+	"foundry_slack_backfill", "foundry_slack_backfill_threads", "foundry_slack_gap_budget", "connectors", "connector_syncs",
+	"connector_replaced_snapshots", "workspaces"}
 
 // newWorld is a workspace with an install of team, Ada and Grace linked,
 // and a bot on it; with mutates its options first.
@@ -461,7 +507,7 @@ func newWorld(t *testing.T, with ...func(*Options)) *world {
 	cfg := config.Defaults().Foundry.Slack
 	cfg.Enabled, cfg.SiteURL, cfg.ClientID, cfg.ClientSecret = true, siteURL, "1.2", "client secret"
 	cfg.PollInterval, cfg.RetryBackoff, cfg.Lease = 20*time.Millisecond, 50*time.Millisecond, 30*time.Second
-	o := Options{DB: db, Sessions: s, Slack: client, Keys: keys, Cfg: cfg}
+	o := Options{DB: db, Sessions: s, Slack: client, Keys: keys, Cfg: cfg, WebAPI: fake.URL + "/api"}
 	for _, w := range with {
 		w(&o)
 	}

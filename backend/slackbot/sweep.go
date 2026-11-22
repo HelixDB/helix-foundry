@@ -2,9 +2,11 @@ package slackbot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -25,13 +27,18 @@ const (
 	uninstallPatience = 24 * time.Hour
 )
 
-// Sweep does what no message starts (the spec's §8.2 and §12): it tells
-// Slack of the uninstalls it wasn't told of yet (apps.uninstall), so their
-// teams may install again; purges the Slack-born Founder threads idle past
-// foundry.slack.retention.threads or of a revoked install; and prunes the
-// intake and replies past foundry.slack.retention.intake and .replies, and
-// the link tokens and install states Slack's terms let go. Each step goes on
-// whatever another's failure; each is counted.
+// Sweep does what no message starts (the spec's §8.2 and §12, and the
+// connector spec's §5.4, §7.3, §7.5 and §12): it tells Slack of the
+// uninstalls it wasn't told of yet (apps.uninstall), so their teams may
+// install again; purges the Slack-born Founder threads idle past
+// foundry.slack.retention.threads or of a revoked install; prunes the
+// intake and replies past foundry.slack.retention.intake and .replies, the
+// link tokens and install states Slack's terms let go, and the feeds'
+// buffer rows the mirror holds, and what unbound feeds held; deletes the
+// connectors of installs removed past foundry.slack.feed.orphan_retention;
+// and, with the feed on, flips staged switches whose backfill is done and
+// closes yesterday's days once a day. Each step goes on whatever another's
+// failure; each is counted.
 func (b *Bot) Sweep(ctx context.Context) {
 	installs, err := b.db.ListFoundrySlackUninstalls(ctx, sweepUninstalls)
 	if err != nil {
@@ -55,6 +62,186 @@ func (b *Bot) Sweep(ctx context.Context) {
 	default:
 		sweeps.WithLabelValues("prune", "pruned").Add(float64(n))
 	}
+	switch n, err := b.db.PruneFoundrySlackFeed(ctx, sweepFeedRows); {
+	case err != nil:
+		sweeps.WithLabelValues("prune_feed", "error").Inc()
+		log.From(ctx).Error("prune Slack feeds' rows failed", "err", err)
+	default:
+		sweeps.WithLabelValues("prune_feed", "pruned").Add(float64(n))
+	}
+	if b.cfg.Feed.OrphanRetention > 0 {
+		b.orphans(ctx)
+	}
+	if b.feed != nil {
+		b.feeds(ctx)
+	}
+}
+
+// orphans deletes the Slack connectors whose install was removed more than
+// foundry.slack.feed.orphan_retention ago (their data frozen since, as
+// their page said), through the connector delete, which takes their
+// documents out of every load. A staged switch, which still syncs by its
+// token, reads by its token alone instead: its feed is unbound. A
+// connector with a sync live waits for the next sweep.
+func (b *Bot) orphans(ctx context.Context) {
+	feeds, err := b.db.ListFoundrySlackOrphans(ctx, b.cfg.Feed.OrphanRetention, sweepOrphans)
+	if err != nil {
+		sweeps.WithLabelValues("orphan", "error").Inc()
+		log.From(ctx).Error("list the Slack feeds of removed installs failed", "err", err)
+		return
+	}
+	for _, feed := range feeds {
+		sweeps.WithLabelValues("orphan", b.orphan(ctx, feed)).Inc()
+	}
+}
+
+// orphan ends one feed of a removed install, and names how: deleted,
+// unbound (a staged switch), busy (a sync live), gone or error.
+func (b *Bot) orphan(ctx context.Context, feed *model.SlackFeed) string {
+	logger := log.From(ctx).With("feed", feed.ID, "connector_id", feed.ConnectorID, "workspace_id", feed.WorkspaceID)
+	c, err := b.db.GetConnector(ctx, feed.WorkspaceID, feed.ConnectorID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "gone"
+	case err != nil:
+		logger.Warn("read a removed Slack install's connector failed", "err", err)
+		return "error"
+	}
+	switch _, err := b.db.GetActiveConnectorSync(ctx, c.WorkspaceID, c.ID); {
+	case err == nil:
+		return "busy"
+	case !errors.Is(err, store.ErrNotFound):
+		logger.Warn("read a removed Slack install's connector's sync failed", "err", err)
+		return "error"
+	}
+	var s connector.SlackSettings
+	if err := json.Unmarshal(c.Config, &s); err != nil {
+		logger.Warn("a Slack connector's settings can't be read", "err", err)
+		return "error"
+	}
+	if s.Staged {
+		token, _ := json.Marshal(connector.SlackSettings{HistoryDays: s.HistoryDays}) // plain fields
+		err = b.db.UpdateSlackAppConnector(ctx, c.WorkspaceID, c.ID, model.ConnectorUpdate{Config: token, SecretCiphertext: c.SecretCiphertext,
+			SecretKeyID: c.SecretKeyID, SecretHint: c.SecretHint}, model.SlackAppUnbind{})
+	} else {
+		err = b.db.DeleteConnector(ctx, c.WorkspaceID, c.ID)
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "gone"
+	case err != nil:
+		logger.Warn("end a removed Slack install's connector failed; the next sweep tries again", "err", err)
+		return "error"
+	case s.Staged:
+		logger.Info("a staged switch to a removed Slack install reads by its token again")
+		return "unbound"
+	}
+	logger.Info("deleted a Slack connector whose install was removed past its retention")
+	return "deleted"
+}
+
+// feeds goes through the live feeds of live installs: each staged switch
+// whose bound windows and threads are read flips to the app (flip), and,
+// once a day at foundry.slack.feed.close_at past midnight UTC, yesterday's
+// days close and every pushed connector syncs, so their documents are
+// offered.
+func (b *Bot) feeds(ctx context.Context) {
+	day := model.SlackDay(b.now().Add(-b.cfg.Feed.CloseAt))
+	b.mu.Lock()
+	closing := day.After(b.closed)
+	b.mu.Unlock()
+	failed := false
+	for after := ""; ; {
+		feeds, err := b.db.ListFoundrySlackFeeds(ctx, after, sweepFeeds)
+		if err != nil {
+			sweeps.WithLabelValues("feeds", "error").Inc()
+			log.From(ctx).Error("list the Slack feeds failed", "err", err)
+			return
+		}
+		for _, feed := range feeds {
+			if closing {
+				switch _, err := b.db.CloseFoundrySlackDays(ctx, feed.ID, day, b.cfg.Feed.Spacing); {
+				case err != nil && !errors.Is(err, store.ErrNotFound):
+					failed = true
+					sweeps.WithLabelValues("close", "error").Inc()
+					log.From(ctx).Warn("close a Slack feed's days failed; the next sweep tries again", "feed", feed.ID, "err", err)
+				default:
+					sweeps.WithLabelValues("close", "closed").Inc()
+				}
+			}
+			if outcome := b.flip(ctx, feed); outcome != "" {
+				sweeps.WithLabelValues("flip", outcome).Inc()
+			}
+		}
+		if len(feeds) < sweepFeeds {
+			break
+		}
+		after = feeds[len(feeds)-1].ID
+	}
+	if closing && !failed {
+		b.mu.Lock()
+		b.closed = day
+		b.mu.Unlock()
+	}
+}
+
+// flip ends feed's connector's staged switch once the backfill read what
+// its bound windows and threads hold, so its mirror covers its window: its
+// days are closed and folded, then the connector reads through the app,
+// in full (store.FlipSlackAppConnector). It names how it went: flipped,
+// waiting (a sync live, or the settings changed meanwhile) or error; ""
+// for a connector not staged, or whose backfill is still reading.
+func (b *Bot) flip(ctx context.Context, feed *model.SlackFeed) string {
+	logger := log.From(ctx).With("feed", feed.ID, "connector_id", feed.ConnectorID)
+	c, err := b.db.GetConnector(ctx, feed.WorkspaceID, feed.ConnectorID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return ""
+	case err != nil:
+		logger.Warn("read a Slack feed's connector failed", "err", err)
+		return "error"
+	}
+	var s connector.SlackSettings
+	if json.Unmarshal(c.Config, &s) != nil || !s.Staged {
+		return ""
+	}
+	progress, err := b.db.FoundrySlackBackfillProgress(ctx, feed.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return ""
+	case err != nil:
+		logger.Warn("read a Slack feed's backfill failed", "err", err)
+		return "error"
+	case progress.QueuedThreads > 0:
+		return ""
+	}
+	for _, w := range progress.Windows {
+		if w.Reason == model.SlackBackfillBound && (w.Status == model.SlackBackfillQueued || w.Status == model.SlackBackfillRunning) {
+			return ""
+		}
+	}
+	install, err := b.db.GetFoundrySlackInstallByID(ctx, feed.InstallID)
+	if err != nil {
+		logger.Warn("read a Slack feed's install failed", "err", err)
+		return "error"
+	}
+	b.settle(ctx, feed, b.appOf(install))
+	s.Staged = false
+	flipped, _ := json.Marshal(s) // plain fields
+	sealed, keyID, err := b.keys.Seal([]byte(""), connector.SecretContext(c.ID))
+	if err != nil {
+		logger.Warn("seal a flipped Slack connector's empty secret failed", "err", err)
+		return "error"
+	}
+	switch err := b.db.FlipSlackAppConnector(ctx, c.WorkspaceID, c.ID, c.Config, flipped, sealed, keyID); {
+	case errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound):
+		return "waiting"
+	case err != nil:
+		logger.Warn("flip a staged Slack connector failed; the next sweep tries again", "err", err)
+		return "error"
+	}
+	logger.Info("a staged Slack connector reads through Helix's Slack app now")
+	return "flipped"
 }
 
 // uninstall tells Slack a revoked install is gone, with its token, and

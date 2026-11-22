@@ -15,8 +15,14 @@
 //     its lease on every read: it folds the turn's events into the reply
 //     message (chat.update, spaced per install), and posts once what they
 //     have it post apart (an Analyst answer, a card, questions).
+//   - Backfill reads the Slack data connector's history (foundry.slack.feed)
+//     a page at a time, on Slack's one call a minute per method and
+//     workspace, into the feed's buffer, and folds it into the day mirror.
 //   - Sweep tells Slack of uninstalls it missed, purges Slack-born Founder
-//     threads past their retention, and prunes what Slack's terms let go.
+//     threads past their retention, prunes what Slack's terms let go and
+//     what the feeds' mirror holds, deletes the data connectors of installs
+//     removed past their retention, flips staged switches to the app once
+//     their history is read, and closes yesterday's days once a day.
 //
 // Every Web API call goes through the slack.Client's Limiter. A rate limit,
 // Slack's or the Limiter's, never makes a worker sleep: the row or the reply
@@ -26,6 +32,7 @@ package slackbot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -38,10 +45,12 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/slack"
+	"github.com/helixdb/helix-foundry/backend/snapshot"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -118,6 +127,29 @@ type Store interface {
 	GetFoundryAgentAction(ctx context.Context, workspaceID, id string) (*model.FoundryAgentAction, error)
 	GetFoundryQuestion(ctx context.Context, ontologyID, id string) (*model.FoundryQuestion, error)
 	GetFoundryOntology(ctx context.Context, workspaceID, id string) (*model.FoundryOntology, error)
+	MarkFoundrySlackThreadBot(ctx context.Context, installID, channelID, threadTS string, at time.Time) error
+
+	// The Slack data connector's backfill and sweeps (backfill.go), and
+	// the fold's own (connector.SlackFeedStore).
+	connector.SlackFeedStore
+	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
+	GetActiveConnectorSync(ctx context.Context, workspaceID, connectorID string) (*model.ConnectorSync, error)
+	DeleteConnector(ctx context.Context, workspaceID, id string) error
+	UpdateSlackAppConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate, sw model.SlackAppSwitch) error
+	FlipSlackAppConnector(ctx context.Context, workspaceID, connectorID string, staged, flipped json.RawMessage, sealed []byte, keyID string) error
+	ListFoundrySlackFeeds(ctx context.Context, after string, limit int) ([]*model.SlackFeed, error)
+	ListFoundrySlackOrphans(ctx context.Context, retention time.Duration, limit int) ([]*model.SlackFeed, error)
+	PruneFoundrySlackFeed(ctx context.Context, limit int) (int64, error)
+	CloseFoundrySlackDays(ctx context.Context, feedID string, before time.Time, spacing time.Duration) (int, error)
+	DueFoundrySlackBackfill(ctx context.Context, method model.SlackSlotMethod, limit int) ([]model.SlackBackfillWork, error)
+	ReserveFoundrySlackSlot(ctx context.Context, installID string, method model.SlackSlotMethod, every time.Duration) (bool, error)
+	DeferFoundrySlackSlot(ctx context.Context, installID string, method model.SlackSlotMethod, after time.Duration) error
+	AdvanceFoundrySlackBackfill(ctx context.Context, step model.SlackBackfillStep, spacing time.Duration) error
+	QueueFoundrySlackThreads(ctx context.Context, threads []model.SlackBackfillThread) (int, error)
+	FailFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, message string, maxAttempts int) (model.SlackBackfillStatus, error)
+	EndFoundrySlackBackfill(ctx context.Context, w model.SlackBackfillWindow, status model.SlackBackfillStatus, message string) error
+	SpendFoundrySlackGap(ctx context.Context, feedID string, max int) (bool, error)
+	FoundrySlackBackfillProgress(ctx context.Context, feedID string) (model.SlackBackfillProgress, error)
 }
 
 var _ Store = store.Store(nil)
@@ -133,8 +165,16 @@ type Options struct {
 	// Keys opens installs' bot tokens (the connectors' keyring).
 	Keys *secretbox.Keyring
 	// Cfg is foundry.slack: its site, lease, poll interval, attempts,
-	// back-off, busy wait and retention.
+	// back-off, busy wait and retention; the follow-ups', and the feed's
+	// and its backfill's.
 	Cfg config.SlackConfig
+	// Objects holds the Slack data connector's day mirror; nil leaves the
+	// backfill, the daily close and the staged switches' flips off, as
+	// does foundry.slack.feed off.
+	Objects snapshot.Store
+	// WebAPI is Slack's Web API the backfill reads history from:
+	// https://slack.com/api when empty.
+	WebAPI string
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 }
@@ -155,6 +195,13 @@ type Bot struct {
 	users map[[2]string]cachedUser
 	// agentOff is, by install, until when its threads get no agent status.
 	agentOff map[string]time.Time
+
+	// feed folds the data connector's feeds and reads their mirror; nil
+	// while the feed is off. webAPI is Slack's Web API the backfill calls.
+	feed   *connector.SlackFeedOptions
+	webAPI string
+	// closed is the last day whose days the sweep closed (feeds).
+	closed time.Time
 }
 
 type cachedUser struct {
@@ -179,8 +226,19 @@ func New(o Options) (*Bot, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Bot{db: o.DB, sessions: o.Sessions, slack: o.Slack, keys: o.Keys, site: site, cfg: o.Cfg, now: now,
-		users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}}, nil
+	b := &Bot{db: o.DB, sessions: o.Sessions, slack: o.Slack, keys: o.Keys, site: site, cfg: o.Cfg, now: now,
+		users: map[[2]string]cachedUser{}, agentOff: map[string]time.Time{}, webAPI: o.WebAPI}
+	if o.Objects != nil && o.Cfg.Feed.Enabled {
+		f, bf := o.Cfg.Feed, o.Cfg.Backfill
+		if f.Spacing <= 0 || f.ReadBudget.Rows < 1 || f.ReadBudget.Bytes < 1 || bf.HistoryPerMinute < 1 || bf.RepliesPerMinute < 1 ||
+			bf.PageLimit < 1 || bf.RepliesDays < 1 || bf.MaxAttempts < 1 || bf.RetryBackoff <= 0 {
+			return nil, errors.New("slackbot: foundry.slack.feed's spacing and read budget, and foundry.slack.backfill's pace, page, " +
+				"replies days, attempts and back-off are positive")
+		}
+		b.feed = &connector.SlackFeedOptions{Feed: o.DB, Objects: o.Objects, Budget: model.SlackFeedBudget{Rows: f.ReadBudget.Rows, Bytes: f.ReadBudget.Bytes},
+			HelixAppID: o.Cfg.AppID, RepliesDays: bf.RepliesDays}
+	}
+	return b, nil
 }
 
 // token is an install's bot, its token opened: store.ErrNotFound once Slack

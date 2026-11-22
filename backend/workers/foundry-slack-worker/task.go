@@ -2,8 +2,11 @@
 // slackbot, foundry.slack): it handles what Slack sent, which the API
 // recorded in intake, follows the Founder turns it started into Slack, and
 // sweeps (uninstalls Slack wasn't told of, Slack-born threads past their
-// retention, rows Slack's terms let go). Off (foundry.slack.enabled false)
-// it only serves its health listener, so a host may list it everywhere.
+// retention, rows Slack's terms let go, data connectors of removed
+// installs). With the Slack data connector on (foundry.slack.feed), it also
+// reads its feeds' history from Slack (the backfill), flips staged switches
+// and closes yesterday's days. Off (foundry.slack.enabled false) it only
+// serves its health listener, so a host may list it everywhere.
 //
 // Messages and follows run on slots of their own, so turns being followed
 // never hold messages back: foundry.slack.concurrency messages at once, and
@@ -19,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.uber.org/dig"
 
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -29,6 +34,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
 	"github.com/helixdb/helix-foundry/backend/slack"
 	"github.com/helixdb/helix-foundry/backend/slackbot"
+	"github.com/helixdb/helix-foundry/backend/snapshot"
 	"github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -56,6 +62,9 @@ type Deps struct {
 	// Sessions opens a linked person's session, whose Founder API the bot
 	// calls as them; required while foundry.slack is on.
 	Sessions integration.SessionHost `optional:"true"`
+	// AWS reaches the data bucket that holds the feeds' day mirror
+	// (foundry.sync.data_bucket), hosted with foundry.slack.feed on.
+	AWS aws.Config `optional:"true"`
 }
 
 // bot is what the worker runs: *slackbot.Bot.
@@ -63,6 +72,7 @@ type bot interface {
 	NextIntake(ctx context.Context) (func(context.Context), error)
 	NextFollow(ctx context.Context) (func(context.Context), error)
 	Sweep(ctx context.Context)
+	Backfill(ctx context.Context)
 }
 
 // Task runs the bot on its slots.
@@ -78,7 +88,8 @@ type Task struct {
 
 // New is the worker on d's store and sessions, with Slack's Web API paced
 // at foundry.slack.api_share of its limits and installs' tokens opened with
-// the connectors' keyring.
+// the connectors' keyring; hosted, with the feed on, the feeds' mirror in
+// the data bucket.
 func New(d Deps) (*Task, error) {
 	cfg := d.Cfg.Foundry.Slack
 	slots := max(cfg.Concurrency, 1)
@@ -104,7 +115,14 @@ func New(d Deps) (*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("foundry-slack-worker: %w", err)
 	}
-	b, err := slackbot.New(slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg})
+	o := slackbot.Options{DB: d.DB, Sessions: d.Sessions, Slack: client, Keys: keys, Cfg: cfg}
+	// The feed's mirror sits beside the sync's snapshots. A standalone
+	// install reaches Slack through Helix's relay, which isn't built yet:
+	// its backfill waits for it.
+	if cfg.Feed.Enabled && !d.Cfg.Host.Local {
+		o.Objects = snapshot.NewS3(s3.NewFromConfig(d.AWS), d.Cfg.Foundry.Sync.DataBucket)
+	}
+	b, err := slackbot.New(o)
 	if err != nil {
 		return nil, fmt.Errorf("foundry-slack-worker: %w", err)
 	}
@@ -116,7 +134,8 @@ func New(d Deps) (*Task, error) {
 func (t *Task) Name() string { return Name }
 
 // Start handles messages and follows turns every poll interval while a slot
-// is free, and sweeps every sweepEvery; off, it only serves its health
+// is free, sweeps every sweepEvery, and, with the feed on, backfills every
+// foundry.slack.backfill.poll_interval; off, it only serves its health
 // listener.
 func (t *Task) Start(ctx context.Context) error {
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
@@ -131,6 +150,9 @@ func (t *Task) Start(ctx context.Context) error {
 		loops.Go(func() {
 			tasks.Tick(ctx, t.cfg.PollInterval, func(ctx context.Context) { t.drain(ctx, t.follows, t.bot.NextFollow, "claim a Slack reply") })
 		})
+		if t.cfg.Feed.Enabled && t.cfg.Backfill.PollInterval > 0 {
+			loops.Go(func() { tasks.Tick(ctx, t.cfg.Backfill.PollInterval, t.bot.Backfill) })
+		}
 		tasks.Tick(ctx, sweepEvery, t.bot.Sweep)
 		loops.Wait()
 		t.running.Wait()

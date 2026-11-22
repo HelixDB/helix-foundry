@@ -19,7 +19,15 @@ var (
 	}, []string{"outcome"})
 	sweeps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "helix_foundry_slack_sweep_total",
-		Help: "What the Slack worker's sweep did, by step (uninstall, purge, prune) and outcome: uninstalled, abandoned (taken as uninstalled " +
-			"without Slack's word), deferred, purged and pruned (rows), or error.",
+		Help: "What the Slack worker's sweep did, by step (uninstall, purge, prune, prune_feed, orphan, feeds, close, flip) and outcome: " +
+			"uninstalled, abandoned (taken as uninstalled without Slack's word), deferred, purged and pruned (rows), deleted and unbound " +
+			"(connectors of removed installs), busy, gone, closed (feeds), flipped, waiting, or error.",
 	}, []string{"step", "outcome"})
+	backfills = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "helix_foundry_slack_backfill_total",
+		Help: "Pages of Slack history the worker's backfill took, by method (history, replies) and outcome: read, busy (another replica " +
+			"had the slot), lossy (a gap past the day's budget), deferred (a rate limit), scopes (a history scope missing), refused " +
+			"(the install's token), cancelled or gone (the channel or thread can't be read), retried, failed (a window's last attempt), " +
+			"conflict (another worker wrote the page), unbound or error.",
+	}, []string{"method", "outcome"})
 )
