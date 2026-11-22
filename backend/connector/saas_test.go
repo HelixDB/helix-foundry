@@ -88,8 +88,8 @@ func findTable(t *testing.T, d Discovery, name string) Table {
 	return Table{}
 }
 
-// TestRetryBackoff waits a Retry-After in seconds or until an HTTP date,
-// up to 30 seconds, and doubles from 250ms without one.
+// TestRetryBackoff waits a Retry-After in seconds or until an HTTP date (at
+// least the doubling), up to 30 seconds, and doubles from 250ms without one.
 func TestRetryBackoff(t *testing.T) {
 	date := func(d time.Duration) string { return time.Now().Add(d).UTC().Format(http.TimeFormat) }
 	for _, c := range []struct {
@@ -107,7 +107,11 @@ func TestRetryBackoff(t *testing.T) {
 		// An HTTP date has whole seconds: ten seconds from now is nine to ten away.
 		{"a date", 0, date(10 * time.Second), 8 * time.Second, 10 * time.Second},
 		{"a date past the cap", 0, date(time.Hour), 30 * time.Second, 30 * time.Second},
-		{"a date passed", 4, date(-time.Minute), 0, 0},
+		// A date sooner than the doubling, or passed (the clocks differ),
+		// waits the doubling.
+		{"a date passed", 4, date(-time.Minute), 4 * time.Second, 4 * time.Second},
+		{"a date sooner than the doubling", 5, date(time.Second), 8 * time.Second, 8 * time.Second},
+		{"a date later than the doubling", 1, date(5 * time.Second), 3 * time.Second, 5 * time.Second},
 		{"an RFC 850 date", 0, time.Now().Add(time.Hour).UTC().Format(time.RFC850), 30 * time.Second, 30 * time.Second},
 	} {
 		t.Run(c.name, func(t *testing.T) {

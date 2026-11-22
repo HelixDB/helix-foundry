@@ -58,15 +58,18 @@ const maxRetries = 6
 
 // retryBackoff waits Retry-After when the API gives it (capped at 30s), else
 // doubles from 250ms. Retry-After is seconds, or an HTTP date to wait until
-// (Attio's), which waits nothing once it has passed. Tests replace it.
+// (Attio's): a date has whole seconds, and the clocks differ, so it waits
+// at least the doubling, which spreads the retries over 15s, longer than a
+// window of Attio's limits (10s), however soon the date. Tests replace it.
 var retryBackoff = func(attempt int, retryAfter string) time.Duration {
+	doubling := 250 * time.Millisecond << attempt
 	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
 		return min(time.Duration(seconds)*time.Second, 30*time.Second)
 	}
 	if at, err := http.ParseTime(retryAfter); err == nil {
-		return min(max(time.Until(at), 0), 30*time.Second)
+		return min(max(time.Until(at), doubling), 30*time.Second)
 	}
-	return 250 * time.Millisecond << attempt
+	return doubling
 }
 
 // fetch sends the request build makes, retrying 429 and 5xx answers. It
