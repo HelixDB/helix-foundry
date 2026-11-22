@@ -435,8 +435,11 @@ func (s *Service) slackLinkToProto(ctx context.Context, l *model.SlackLink) *fou
 // a state bound to them, the workspace and the site path to return to for
 // slackStateTTL, once, and Slack's page asking to add the app with the
 // scopes foundry.slack's flags need (slack.Required), which returns to the
-// site's /slack/installed. A workspace with an install lacking none of
-// them is refused; one lacking some is installed again.
+// site's /slack/installed. A workspace whose install lacks none of them is
+// refused, unless the Slack connector is on (foundry.slack.feed) and the
+// install lacks what a connection through the app needs of it besides: a
+// Slack admin or owner's install, or its bot's id. Such an install, or one
+// lacking a scope, is installed again.
 func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.StartFoundrySlackInstallRequest) (
 	*foundryv1.StartFoundrySlackInstallResponse, error) {
 	ws := req.GetWorkspaceId()
@@ -456,7 +459,8 @@ func (s *Service) StartFoundrySlackInstall(ctx context.Context, req *foundryv1.S
 	}
 	required := s.slackRequired()
 	switch install, err := s.deps.DB.GetFoundrySlackInstall(ctx, ws); {
-	case err == nil && !slices.ContainsFunc(required, func(scope string) bool { return !slices.Contains(install.Scopes, scope) }):
+	case err == nil && !slices.ContainsFunc(required, func(scope string) bool { return !slices.Contains(install.Scopes, scope) }) &&
+		(!s.slackConfig().Feed.Enabled || install.InstallerAdmin && install.BotID != ""):
 		return nil, foundryPrecondition(ws, "FOUNDRY_SLACK_INSTALLED", "this workspace is connected to Slack already; disconnect it first")
 	case err != nil && !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)

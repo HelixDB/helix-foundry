@@ -805,8 +805,22 @@ func TestStartFoundrySlackReinstall(t *testing.T) {
 	assert.Equal(t, "/data/connections/conn1", f.db.states[hashToken(u.Query().Get("state"))].ReturnPath)
 	i.Scopes = f.s.slackRequired()
 	_, err = start("")
+	require.NoError(t, err, "an install no Slack admin or owner made, whose bot's id is unknown, installs again")
+	i.InstallerAdmin = true
+	_, err = start("")
+	require.NoError(t, err, "as does one whose bot's id is unknown")
+	i.InstallerAdmin, i.BotID = false, "B0BOT0001"
+	_, err = start("")
+	require.NoError(t, err, "or one no Slack admin or owner made")
+	i.InstallerAdmin = true
+	_, err = start("")
 	reason, _ := slackReason(t, err)
-	assert.Equal(t, "FOUNDRY_SLACK_INSTALLED", reason)
+	assert.Equal(t, "FOUNDRY_SLACK_INSTALLED", reason, "an install a connection through the app can bind to is refused")
+	f.cfg.Foundry.Slack.Feed.Enabled = false
+	i.InstallerAdmin, i.BotID = false, ""
+	_, err = start("")
+	reason, _ = slackReason(t, err)
+	assert.Equal(t, "FOUNDRY_SLACK_INSTALLED", reason, "with the connector off, what it needs of the install doesn't matter")
 }
 
 func TestFinishFoundrySlackLearnsTheBot(t *testing.T) {
