@@ -228,7 +228,7 @@ func attioWorkspace(t *testing.T, scope string, extra attioRoutes) attioRoutes {
 	return routes
 }
 
-func attioSource(forSync bool) Source {
+func attioTestSource(forSync bool) Source {
 	return Source{Settings: json.RawMessage(`{}`), Secret: attioTestToken, ForSync: forSync}
 }
 
@@ -299,7 +299,7 @@ func TestAttioDiscover(t *testing.T) {
 
 	t.Run("lists every table the token's scopes read, with a preview of each object and list", func(t *testing.T) {
 		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
-		d, err := k.Discover(ctx, attioSource(false))
+		d, err := k.Discover(ctx, attioTestSource(false))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -372,7 +372,7 @@ func TestAttioDiscover(t *testing.T) {
 
 	t.Run("a sync lists what it reads without previews", func(t *testing.T) {
 		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
-		d, err := k.Discover(ctx, attioSource(true))
+		d, err := k.Discover(ctx, attioTestSource(true))
 		if err != nil || !slices.Equal(tableNames(d), everyTable) {
 			t.Fatalf("Discover = %v, %v", tableNames(d), err)
 		}
@@ -436,7 +436,7 @@ func TestAttioDiscover(t *testing.T) {
 	} {
 		t.Run("names the scopes a table lacks: "+c.name, func(t *testing.T) {
 			k, hits := attioAt(t, attioWorkspace(t, c.scope, nil))
-			d, err := k.Discover(ctx, attioSource(true))
+			d, err := k.Discover(ctx, attioTestSource(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -457,7 +457,7 @@ func TestAttioDiscover(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, "", attioRoutes{
 			"/v2/self": func(*http.Request) (int, string) { return http.StatusOK, `{"active":true,"workspace_slug":"acme"}` },
 		}))
-		d, err := k.Discover(ctx, attioSource(true))
+		d, err := k.Discover(ctx, attioTestSource(true))
 		if err != nil || !slices.Equal(tableNames(d), everyTable) || len(d.Unavailable) != 0 {
 			t.Fatalf("Discover = %v, %v, %v", tableNames(d), d.Unavailable, err)
 		}
@@ -465,7 +465,7 @@ func TestAttioDiscover(t *testing.T) {
 
 	t.Run("refuses a token with no scope it reads with", func(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, "webhook:read", nil))
-		_, err := k.Discover(ctx, attioSource(false))
+		_, err := k.Discover(ctx, attioTestSource(false))
 		notionRefusal(t, err, "this Attio token has none of the read scopes Helix reads with; give it read access to records, "+
 			"lists, notes, tasks or members in Attio, then test again")
 	})
@@ -480,7 +480,7 @@ func TestAttioDiscover(t *testing.T) {
 	} {
 		t.Run("rejects "+c.name, func(t *testing.T) {
 			k, _ := attioAt(t, attioRoutes{"/v2/self": func(*http.Request) (int, string) { return c.status, c.body }})
-			_, err := k.Discover(ctx, attioSource(false))
+			_, err := k.Discover(ctx, attioTestSource(false))
 			notionRefusal(t, err, "Attio rejected this token; check it and enter it again")
 			var authErr *AuthError
 			if !errors.As(err, &authErr) || authErr.Provider != "Attio" || strings.Contains(err.Error(), attioTestToken) {
@@ -498,7 +498,7 @@ func TestAttioDiscover(t *testing.T) {
 				return http.StatusForbidden, `{"status_code":403,"type":"invalid_request_error","code":"billing_error","message":"Upgrade to read lists."}`
 			},
 		}))
-		d, err := k.Discover(ctx, attioSource(false))
+		d, err := k.Discover(ctx, attioTestSource(false))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -517,7 +517,7 @@ func TestAttioDiscover(t *testing.T) {
 				return http.StatusForbidden, `{"status_code":403,"type":"invalid_request_error","code":"validation_type","message":"No."}`
 			},
 		}))
-		_, err := k.Discover(ctx, attioSource(false))
+		_, err := k.Discover(ctx, attioTestSource(false))
 		notionRefusal(t, err, "Attio returned HTTP 403 for /v2/objects/obj_companies/records/query: No.")
 	})
 
@@ -531,7 +531,7 @@ func TestAttioDiscover(t *testing.T) {
 				return http.StatusOK, attioSelfJSON(attioAllScopes)
 			},
 		}))
-		if d, err := k.Discover(ctx, attioSource(true)); err != nil || calls != 2 || !slices.Equal(tableNames(d), everyTable) {
+		if d, err := k.Discover(ctx, attioTestSource(true)); err != nil || calls != 2 || !slices.Equal(tableNames(d), everyTable) {
 			t.Fatalf("Discover = %v, %v after %d calls", tableNames(d), err, calls)
 		}
 	})
@@ -540,7 +540,7 @@ func TestAttioDiscover(t *testing.T) {
 		k, hits := attioAt(t, attioRoutes{"/v2/self": func(*http.Request) (int, string) {
 			return http.StatusTooManyRequests, `{"status_code":429,"type":"rate_limit_error","code":"rate_limit_exceeded","message":"Slow down"}`
 		}})
-		_, err := k.Discover(ctx, attioSource(true))
+		_, err := k.Discover(ctx, attioTestSource(true))
 		notionRefusal(t, err, "this Attio token has used up its rate limit; Helix will retry")
 		if took := hits.took(); took["GET /v2/self"] != maxRetries+1 {
 			t.Fatalf("requests = %v", took)
@@ -553,7 +553,7 @@ func TestAttioDiscover(t *testing.T) {
 				return http.StatusBadGateway, `{"status_code":502,"type":"api_error","code":"bad_gateway","message":"Try later."}`
 			},
 		}))
-		_, err := k.Discover(ctx, attioSource(true))
+		_, err := k.Discover(ctx, attioTestSource(true))
 		notionRefusal(t, err, "Attio returned HTTP 502 for /v2/objects: Try later.")
 		if took := hits.took(); took["GET /v2/objects"] != maxRetries+1 {
 			t.Fatalf("requests = %v", took)
@@ -562,7 +562,7 @@ func TestAttioDiscover(t *testing.T) {
 
 	t.Run("refuses an answer without a body's message", func(t *testing.T) {
 		k, _ := attioAt(t, attioRoutes{"/v2/self": func(*http.Request) (int, string) { return http.StatusBadRequest, `oops` }})
-		_, err := k.Discover(ctx, attioSource(true))
+		_, err := k.Discover(ctx, attioTestSource(true))
 		notionRefusal(t, err, "Attio returned HTTP 400 for /v2/self; try again")
 	})
 
@@ -570,7 +570,7 @@ func TestAttioDiscover(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{
 			"/v2/objects": func(*http.Request) (int, string) { return http.StatusOK, `{}` },
 		}))
-		if _, err := k.Discover(ctx, attioSource(true)); err == nil || !strings.Contains(err.Error(), "the response has no data") {
+		if _, err := k.Discover(ctx, attioTestSource(true)); err == nil || !strings.Contains(err.Error(), "the response has no data") {
 			t.Fatalf("Discover = %v", err)
 		}
 	})
@@ -605,7 +605,7 @@ func TestAttioNaming(t *testing.T) {
 		"/v2/lists/l1/attributes": attioPaged(t, nil),
 		"/v2/lists/l2/attributes": attioPaged(t, nil),
 	})
-	d, err := k.Discover(context.Background(), attioSource(true))
+	d, err := k.Discover(context.Background(), attioTestSource(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +710,7 @@ func TestAttioSync(t *testing.T) {
 	t.Run("writes each object's records and each list's entries with every column", func(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
 		people := &rowSink{}
-		written, err := k.Sync(ctx, attioSource(false), Table{Name: "people"}, people)
+		written, err := k.Sync(ctx, attioTestSource(false), Table{Name: "people"}, people)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -729,7 +729,7 @@ func TestAttioSync(t *testing.T) {
 			t.Fatalf("people = %s", got)
 		}
 		entries := &rowSink{}
-		if _, err := k.Sync(ctx, attioSource(false), Table{Name: "list_sales_pipeline"}, entries); err != nil {
+		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "list_sales_pipeline"}, entries); err != nil {
 			t.Fatal(err)
 		}
 		if got := attioRows(entries.rows); !slices.Equal(got, []string{`{"created_at":"2024-03-01T00:00:00.000000000Z","entry_id":"ent_1",` +
@@ -757,7 +757,7 @@ func TestAttioSync(t *testing.T) {
 		}
 		for name, rows := range want {
 			sink := &rowSink{}
-			if _, err := k.Sync(ctx, attioSource(false), Table{Name: name}, sink); err != nil {
+			if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: name}, sink); err != nil {
 				t.Fatal(err)
 			}
 			if got := attioRows(sink.rows); !slices.Equal(got, rows) {
@@ -781,7 +781,7 @@ func TestAttioSync(t *testing.T) {
 		for name, sink := range sinks {
 			rows[name] = sink
 		}
-		if _, err := k.SyncPass(ctx, attioSource(false), tables, rows, noDocuments{}); err != nil {
+		if _, err := k.SyncPass(ctx, attioTestSource(false), tables, rows, noDocuments{}); err != nil {
 			t.Fatal(err)
 		}
 		if took := hits.took(); took["GET /v2/tasks"] != 1 {
@@ -828,7 +828,7 @@ func TestAttioSync(t *testing.T) {
 			},
 		}))
 		sink := &rowSink{}
-		if _, err := k.Sync(ctx, attioSource(false), Table{Name: "companies"}, sink); err != nil {
+		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "companies"}, sink); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(offsets, []int{0, 500, 1000}) || len(sink.rows) != 1099 {
@@ -848,14 +848,14 @@ func TestAttioSync(t *testing.T) {
 			notes = append(notes, attioNoteJSON(fmt.Sprintf("not_%03d", i), "N", "body", "2024-03-01T10:00:00Z", "people", "rec_ada"))
 		}
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, attioRoutes{"/v2/notes": attioPaged(t, notes)}))
-		_, err := k.Sync(ctx, attioSource(false), Table{Name: "notes"}, &rowSink{})
+		_, err := k.Sync(ctx, attioTestSource(false), Table{Name: "notes"}, &rowSink{})
 		notionInvalid(t, err, "Attio holds more notes than Helix reads in one sync (2 pages of 50)")
 	})
 
 	t.Run("refuses a table whose object or list Attio no longer has", func(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
 		for _, name := range []string{"deals", "list_renewals"} {
-			_, err := k.Sync(ctx, attioSource(false), Table{Name: name}, &rowSink{})
+			_, err := k.Sync(ctx, attioTestSource(false), Table{Name: name}, &rowSink{})
 			notionRefusal(t, err, "the Attio object or list of table "+name+" no longer exists in Attio, or was renamed; test the connection again")
 		}
 	})
@@ -866,13 +866,13 @@ func TestAttioSync(t *testing.T) {
 				return http.StatusForbidden, `{"status_code":403,"type":"auth_error","code":"unauthorized","message":"No access."}`
 			},
 		}))
-		_, err := k.Sync(ctx, attioSource(false), Table{Name: "people"}, &rowSink{})
+		_, err := k.Sync(ctx, attioTestSource(false), Table{Name: "people"}, &rowSink{})
 		notionRefusal(t, err, "this Attio token may not read /v2/objects/obj_people/records/query: No access.")
 	})
 
 	t.Run("a sync reads the listing its discovery made", func(t *testing.T) {
 		k, hits := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
-		src := attioSource(true)
+		src := attioTestSource(true)
 		src.ConnectorID = "conn-1"
 		d, err := k.Discover(ctx, src)
 		if err != nil {
@@ -918,7 +918,7 @@ func TestAttioDocuments(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
 		docs := &granolaDocs{want: map[string]bool{"notes": true}}
 		sink := &rowSink{}
-		if _, err := k.SyncDocuments(ctx, attioSource(false), Table{Name: "notes"}, sink, docs); err != nil {
+		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, sink, docs); err != nil {
 			t.Fatal(err)
 		}
 		var ids []string
@@ -959,7 +959,7 @@ func TestAttioDocuments(t *testing.T) {
 	t.Run("takes back the document of a note whose body was emptied", func(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
 		docs := &notionHeld{granolaDocs: &granolaDocs{want: map[string]bool{"notes": true}}, held: map[string]bool{"not_empty": true}}
-		if _, err := k.SyncDocuments(ctx, attioSource(false), Table{Name: "notes"}, &rowSink{}, docs); err != nil {
+		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, &rowSink{}, docs); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(docs.drops, []string{"notes not_empty"}) || slices.Contains(docs.putNames(), "notes not_empty") || len(docs.offers) != 6 {
@@ -970,11 +970,11 @@ func TestAttioDocuments(t *testing.T) {
 	t.Run("puts nothing a writer doesn't want, and nothing in a plain sync", func(t *testing.T) {
 		k, _ := attioAt(t, attioWorkspace(t, attioAllScopes, nil))
 		only := &onlyDocs{id: "not_old"}
-		if _, err := k.SyncDocuments(ctx, attioSource(false), Table{Name: "notes"}, &rowSink{}, only); err != nil {
+		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, &rowSink{}, only); err != nil {
 			t.Fatal(err)
 		}
 		sink := &rowSink{}
-		if _, err := k.Sync(ctx, attioSource(false), Table{Name: "notes"}, sink); err != nil || len(sink.rows) != 6 {
+		if _, err := k.Sync(ctx, attioTestSource(false), Table{Name: "notes"}, sink); err != nil || len(sink.rows) != 6 {
 			t.Fatalf("Sync = %d rows, %v", len(sink.rows), err)
 		}
 	})
@@ -992,7 +992,7 @@ func TestAttioDocuments(t *testing.T) {
 		}}))
 		docs := &granolaDocs{want: map[string]bool{"notes": true}}
 		sink := &rowSink{}
-		if _, err := k.SyncDocuments(ctx, attioSource(false), Table{Name: "notes"}, sink, docs); err != nil {
+		if _, err := k.SyncDocuments(ctx, attioTestSource(false), Table{Name: "notes"}, sink, docs); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(asked, []string{"limit=50&offset=0", "limit=50&offset=50", "limit=50&offset=100"}) || len(sink.rows) != 120 || len(docs.puts) != 120 {
