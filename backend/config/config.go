@@ -873,7 +873,139 @@ type SlackConfig struct {
 	BusyWait time.Duration `koanf:"busy_wait"`
 	// Retention is how long Slack's data stays.
 	Retention SlackRetentionConfig `koanf:"retention"`
+	// Feed is the Slack data connector on the app's install, and Follow the
+	// bot's answers to replies that don't mention it. Either one makes the
+	// app read channel messages (ReadsHistory). Both are off on hosted until
+	// Slack confirms in writing that the app may keep copies of them.
+	Feed   SlackFeedConfig   `koanf:"feed"`
+	Follow SlackFollowConfig `koanf:"follow"`
+	// Backfill paces the worker's reads of a feed's history from Slack.
+	Backfill SlackBackfillConfig `koanf:"backfill"`
+	// Relay bounds what hosted holds of a relayed install's feed until the
+	// install takes it.
+	Relay SlackRelayConfig `koanf:"relay"`
 }
+
+// ReadsHistory reports whether the app reads channel messages, as the
+// feed or the bot's follow-ups need: only then does it ask Slack for
+// history scopes and message events.
+func (s SlackConfig) ReadsHistory() bool {
+	return s.Feed.Enabled || s.Follow.Enabled
+}
+
+// SlackFeedConfig is the Slack data connector whose credential is the
+// app's install (foundry.slack.feed): Slack's events about the channels the
+// bot is in are buffered (foundry_slack_feed), folded into a mirror of each
+// channel-day, and synced from it into the connector's rows and documents.
+type SlackFeedConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// Spacing is how long after a buffer's first waiting row its connector
+	// syncs, so a burst syncs once.
+	Spacing time.Duration `koanf:"spacing"`
+	// ReadBudget bounds one fold of the buffer; past it the connector syncs
+	// again at once.
+	ReadBudget SlackFeedReadBudget `koanf:"read_budget"`
+	// MaxBufferedRows is how many rows may wait to be folded per connector;
+	// past it a batch is recorded as a gap, for the backfill to read again.
+	MaxBufferedRows int `koanf:"max_buffered_rows"`
+	// BackendInFlight is how many channel messages one API replica takes
+	// at once; past it it refuses at once rather than wait, so mentions and
+	// clicks keep their database connections: at most
+	// MaxSlackFeedBackendInFlight.
+	BackendInFlight int `koanf:"backend_in_flight"`
+	// DirectoryEvery is how often a sync lists the team's users, channels
+	// and members again: at least 5 minutes.
+	DirectoryEvery time.Duration `koanf:"directory_every"`
+	// RedocumentEvery is how often a closed day that keeps changing (its
+	// threads' replies) offers its document again: at least an hour.
+	RedocumentEvery time.Duration `koanf:"redocument_every"`
+	// CloseAt is how long after midnight UTC yesterday's days close: at
+	// least MinSlackFeedCloseAt, past Slack's last retry of an event.
+	CloseAt time.Duration `koanf:"close_at"`
+	// GapThreadLookback is how long before a gap a thread's latest reply
+	// may be for the backfill to read its replies again too.
+	GapThreadLookback time.Duration `koanf:"gap_thread_lookback"`
+	// OrphanRetention is how long a feed whose install is gone keeps its
+	// data before it is deleted.
+	OrphanRetention time.Duration `koanf:"orphan_retention"`
+}
+
+// SlackFeedReadBudget bounds one fold of a feed's buffer, by its rows and
+// their payloads' bytes: Bytes is at least SlackEventsBodyBytes, so the
+// largest row always fits.
+type SlackFeedReadBudget struct {
+	Rows  int   `koanf:"rows"`
+	Bytes int64 `koanf:"bytes"`
+}
+
+// SlackFollowConfig is the bot's answers to replies in a thread that don't
+// mention it (foundry.slack.follow): taken only while the bot posted last
+// there, apart from the person replying, within Window.
+type SlackFollowConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// Window is how long after the bot's last post in a thread a reply
+	// reaches it unmentioned: at most foundry.slack.retention.threads.
+	Window time.Duration `koanf:"window"`
+}
+
+// SlackBackfillConfig paces the foundry-slack-worker's reads of a feed's
+// history (conversations.history and conversations.replies), which Slack
+// allows an app outside its Marketplace once a minute per method and
+// workspace, 15 messages a page. The slots are shared by every replica;
+// for a relayed install, hosted's values bind and a local install's can
+// only narrow them.
+type SlackBackfillConfig struct {
+	// HistoryPerMinute and RepliesPerMinute are each method's calls a
+	// minute per Slack workspace: 1 to 50.
+	HistoryPerMinute int `koanf:"history_per_minute"`
+	RepliesPerMinute int `koanf:"replies_per_minute"`
+	// PageLimit is the messages a call asks for: 1 to 999.
+	PageLimit int `koanf:"page_limit"`
+	// RepliesDays is how many of the newest days have their threads'
+	// replies read: 1 to MaxSlackAppHistoryDays.
+	RepliesDays int `koanf:"replies_days"`
+	// GapCallsPerDay caps the calls a connector spends repairing gaps a day;
+	// past it a gap's days are published as missing messages. 0 repairs none.
+	GapCallsPerDay int `koanf:"gap_calls_per_day"`
+	// MaxAttempts caps a read's attempts after errors; RetryBackoff is the
+	// wait before the next, doubling.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+	// PollInterval is how often the worker looks for reads due.
+	PollInterval time.Duration `koanf:"poll_interval"`
+}
+
+// SlackRelayConfig bounds the channel messages hosted holds for a relayed
+// install (a standalone one reaching Slack through Helix) until it claims
+// them.
+type SlackRelayConfig struct {
+	// FeedTTL is how long a row waits to be claimed before it is deleted
+	// and recorded as a gap.
+	FeedTTL time.Duration `koanf:"feed_ttl"`
+	// FeedBatch and FeedBatchBytes bound one claim's rows: FeedBatchBytes
+	// is at least SlackEventsBodyBytes, so the largest row always fits.
+	FeedBatch      int   `koanf:"feed_batch"`
+	FeedBatchBytes int64 `koanf:"feed_batch_bytes"`
+	// FeedMaxRows is how many rows may wait per install; past it a row is
+	// recorded as a gap instead.
+	FeedMaxRows int `koanf:"feed_max_rows"`
+}
+
+// MaxSlackAppHistoryDays bounds the history the app reads for a feed:
+// Slack's free plans keep 90 days, and data from them mustn't stay
+// reachable longer.
+const MaxSlackAppHistoryDays = 90
+
+// MaxSlackFeedBackendInFlight bounds foundry.slack.feed.backend_in_flight:
+// half the 25 connections each replica's database pool opens (a standalone
+// install's, and hosted's db.max_open by default), so channel messages
+// never hold the connections mentions and clicks need.
+const MaxSlackFeedBackendInFlight = 25 / 2
+
+// MinSlackFeedCloseAt bounds foundry.slack.feed.close_at from below: Slack
+// retries an event at once, a minute later and five minutes later, so a day
+// closed earlier may still be sent one of its messages.
+const MinSlackFeedCloseAt = 6 * time.Minute
 
 // SlackRetentionConfig is how long Foundry keeps what came from Slack, as
 // little as it can (Slack's API terms): a message's text leaves its intake
@@ -924,11 +1056,17 @@ func (s SlackConfig) InstallAllowed(workspaceID string) bool {
 
 // validate checks what the roles read of an enabled app: the app's
 // identity and secrets where the API or the worker runs hosted (a
-// standalone install holds none: validateLocal), and the worker's own
-// settings where it runs. The door reads Enabled alone. agent is
-// foundry.agent, whose turns a message waits on.
+// standalone install holds none: validateLocal), the feed's, the
+// follow-ups', the backfill's and the relay's where they are on and the
+// API or a worker reads them, and the worker's own settings where it runs.
+// The feed and the follow-ups need the app on, whatever the roles. The door
+// reads Enabled alone. agent is foundry.agent, whose turns a message waits
+// on.
 func (s SlackConfig) validate(roles Roles, local bool, agent AssistantConfig) error {
 	if !s.Enabled {
+		if s.ReadsHistory() {
+			return fmt.Errorf("foundry.slack.feed.enabled and foundry.slack.follow.enabled need foundry.slack.enabled")
+		}
 		return nil
 	}
 	if (roles.API || roles.SlackWorker) && !local {
@@ -954,6 +1092,47 @@ func (s SlackConfig) validate(roles Roles, local bool, agent AssistantConfig) er
 			case slices.Contains(s.InstallAllowlist[:i], id):
 				return fmt.Errorf("foundry.slack.install_allowlist lists %q twice", id)
 			}
+		}
+	}
+	// Channel messages reach the API, the sync worker folds them and the
+	// Slack worker reads history and sweeps: each checks all of it, the
+	// relay's too (a standalone install's are never read).
+	if (roles.API || roles.SyncWorker || roles.SlackWorker) && s.ReadsHistory() {
+		f, b, rl := s.Feed, s.Backfill, s.Relay
+		switch {
+		case f.BackendInFlight < 1 || f.BackendInFlight > MaxSlackFeedBackendInFlight:
+			return fmt.Errorf("foundry.slack.feed.backend_in_flight is %d; it must be from 1 to %d, half a replica's database connections",
+				f.BackendInFlight, MaxSlackFeedBackendInFlight)
+		case s.Follow.Enabled && (s.Follow.Window <= 0 || s.Follow.Window > s.Retention.Threads):
+			return fmt.Errorf("foundry.slack.follow.window is %s; it must be above 0 and at most foundry.slack.retention.threads (%s), while the thread is kept",
+				s.Follow.Window, s.Retention.Threads)
+		case rl.FeedTTL <= 0 || rl.FeedBatch < 1 || rl.FeedMaxRows < 1:
+			return fmt.Errorf("foundry.slack.relay feed_ttl, feed_batch and feed_max_rows must be positive")
+		case rl.FeedBatchBytes < SlackEventsBodyBytes:
+			return fmt.Errorf("foundry.slack.relay.feed_batch_bytes is %d; it must be at least %d, or the largest row is never delivered",
+				rl.FeedBatchBytes, SlackEventsBodyBytes)
+		case !f.Enabled:
+			// The rest is the feed's alone.
+		case f.Spacing <= 0 || f.ReadBudget.Rows < 1 || f.MaxBufferedRows < 1 || f.GapThreadLookback < 0 || f.OrphanRetention <= 0:
+			return fmt.Errorf("foundry.slack.feed spacing, read_budget.rows, max_buffered_rows and orphan_retention must be positive, and gap_thread_lookback not negative")
+		case f.ReadBudget.Bytes < SlackEventsBodyBytes:
+			return fmt.Errorf("foundry.slack.feed.read_budget.bytes is %d; it must be at least %d, or the largest row is never folded",
+				f.ReadBudget.Bytes, SlackEventsBodyBytes)
+		case f.DirectoryEvery < 5*time.Minute:
+			return fmt.Errorf("foundry.slack.feed.directory_every is %s; it must be at least 5m0s", f.DirectoryEvery)
+		case f.RedocumentEvery < time.Hour:
+			return fmt.Errorf("foundry.slack.feed.redocument_every is %s; it must be at least 1h0m0s", f.RedocumentEvery)
+		case f.CloseAt < MinSlackFeedCloseAt || f.CloseAt >= 24*time.Hour:
+			return fmt.Errorf("foundry.slack.feed.close_at is %s; it must be from %s, past Slack's last retry, to under 24h after midnight UTC",
+				f.CloseAt, MinSlackFeedCloseAt)
+		case b.HistoryPerMinute < 1 || b.HistoryPerMinute > 50 || b.RepliesPerMinute < 1 || b.RepliesPerMinute > 50:
+			return fmt.Errorf("foundry.slack.backfill history_per_minute and replies_per_minute must be from 1 to 50")
+		case b.PageLimit < 1 || b.PageLimit > 999:
+			return fmt.Errorf("foundry.slack.backfill.page_limit is %d; it must be from 1 to 999", b.PageLimit)
+		case b.RepliesDays < 1 || b.RepliesDays > MaxSlackAppHistoryDays:
+			return fmt.Errorf("foundry.slack.backfill.replies_days is %d; it must be from 1 to %d", b.RepliesDays, MaxSlackAppHistoryDays)
+		case b.GapCallsPerDay < 0 || b.MaxAttempts < 1 || b.RetryBackoff <= 0 || b.PollInterval <= 0:
+			return fmt.Errorf("foundry.slack.backfill max_attempts, retry_backoff and poll_interval must be positive, and gap_calls_per_day not negative")
 		}
 	}
 	if !roles.SlackWorker {
@@ -1347,6 +1526,14 @@ type EventsEndpointConfig struct {
 	// SlackEventsBodyBytes and SlackInteractivityBodyBytes. Slack sends from
 	// few addresses, so its address bounds are wide.
 	Slack DoorGateConfig `koanf:"slack"`
+	// SlackFeed and SlackReply are the gates of Slack's channel messages
+	// (slack.ClassFeed) and of replies in threads (slack.ClassReply), each
+	// held until the backend answers, so a flood of a channel's messages
+	// never refuses a mention, a click or a reply to the bot. Only events
+	// are sorted into them, so their bodies are capped at
+	// SlackEventsBodyBytes.
+	SlackFeed  DoorGateConfig `koanf:"slack_feed"`
+	SlackReply DoorGateConfig `koanf:"slack_reply"`
 }
 
 // DoorGateConfig is one gate of the foundry-events door: what a pod admits
@@ -1420,7 +1607,7 @@ const MaxEventValidatedFor = 5 * time.Minute
 // Validate checks the door's bounds where the foundry-events role runs.
 // sendBytes is foundry.events.max_send_bytes, a send's compacted data, which
 // a body must hold with its envelope; a body stays within MaxEventSendBytes,
-// as the request the door forwards it in does. Its Slack gate is checked
+// as the request the door forwards it in does. Its Slack gates are checked
 // whether or not foundry.slack is on.
 func (d EventsEndpointConfig) Validate(sendBytes int) error {
 	switch least := int64(sendBytes) + EventEnvelopeBytes; {
@@ -1437,7 +1624,13 @@ func (d EventsEndpointConfig) Validate(sendBytes int) error {
 	if err := d.SendGate().validate("foundry.events.endpoint", d.MaxBodyBytes); err != nil {
 		return err
 	}
-	return d.Slack.validate("foundry.events.endpoint.slack", max(SlackEventsBodyBytes, SlackInteractivityBodyBytes))
+	if err := d.Slack.validate("foundry.events.endpoint.slack", max(SlackEventsBodyBytes, SlackInteractivityBodyBytes)); err != nil {
+		return err
+	}
+	if err := d.SlackFeed.validate("foundry.events.endpoint.slack_feed", SlackEventsBodyBytes); err != nil {
+		return err
+	}
+	return d.SlackReply.validate("foundry.events.endpoint.slack_reply", SlackEventsBodyBytes)
 }
 
 // EventsConfig drives event sources (connector kind events), which
@@ -2198,6 +2391,28 @@ func Defaults() Config {
 				MaxInFlight:              64,
 				MaxBytesInFlight:         64 << 20,
 			},
+			// Channel messages come in bursts: 400 a second, 16 held, 32
+			// MiB of bodies.
+			SlackFeed: DoorGateConfig{
+				AddressRequestsPerSecond: 200,
+				AddressBurstRequests:     400,
+				AddressMaxInFlight:       8,
+				RequestsPerSecond:        400,
+				BurstRequests:            800,
+				MaxInFlight:              16,
+				MaxBytesInFlight:         32 << 20,
+			},
+			// Replies in threads: 100 a second, 8 held; their bytes are
+			// bound by their places alone (8 of the largest body).
+			SlackReply: DoorGateConfig{
+				AddressRequestsPerSecond: 50,
+				AddressBurstRequests:     100,
+				AddressMaxInFlight:       4,
+				RequestsPerSecond:        100,
+				BurstRequests:            200,
+				MaxInFlight:              8,
+				MaxBytesInFlight:         8 * SlackEventsBodyBytes,
+			},
 		},
 		MaxSourcesPerWorkspace:     20,
 		MaxTokensPerSource:         10,
@@ -2391,6 +2606,30 @@ func Defaults() Config {
 			Intake:  7 * 24 * time.Hour,
 			Replies: 7 * 24 * time.Hour,
 		},
+		Feed: SlackFeedConfig{
+			Spacing:           2 * time.Minute,
+			ReadBudget:        SlackFeedReadBudget{Rows: 50_000, Bytes: 64 << 20},
+			MaxBufferedRows:   200_000,
+			BackendInFlight:   8,
+			DirectoryEvery:    time.Hour,
+			RedocumentEvery:   24 * time.Hour,
+			CloseAt:           10 * time.Minute,
+			GapThreadLookback: 24 * time.Hour,
+			OrphanRetention:   7 * 24 * time.Hour,
+		},
+		Follow: SlackFollowConfig{Window: 24 * time.Hour},
+		// Slack's pace for apps outside its Marketplace.
+		Backfill: SlackBackfillConfig{
+			HistoryPerMinute: 1,
+			RepliesPerMinute: 1,
+			PageLimit:        15,
+			RepliesDays:      30,
+			GapCallsPerDay:   60,
+			MaxAttempts:      5,
+			RetryBackoff:     time.Minute,
+			PollInterval:     5 * time.Second,
+		},
+		Relay: SlackRelayConfig{FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000},
 	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,
