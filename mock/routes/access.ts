@@ -17,6 +17,7 @@ import type {
   FoundryTeamResponse,
   GetMyFoundryAccessResponse,
   ListFoundryAccessResponse,
+  ListFoundrySourceAudiencesResponse,
   ListServiceCredentialsResponse,
   PreviewFoundryAccessChangeResponse,
   ServiceCredential,
@@ -35,6 +36,7 @@ import {
   ok,
   type MockGrantee,
   type MockGranteeLoad,
+  type MockSeen,
   type MockReply,
   type MockRequest,
   type MockRoute,
@@ -47,11 +49,12 @@ import {
   onReset,
   type Membership,
 } from "../state";
-import { workspaceConnectors } from "./data";
+import { connectorAudiences, workspaceConnectors } from "./data";
 import {
   ACME_GENERAL,
   documentSet,
   documentSets,
+  documentSource,
   loadDocumentIds,
   setConnector,
 } from "./documents";
@@ -108,6 +111,13 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 // restrict the rest. `POST /__mock/config {"directoryTeams": true}` syncs
 // Acme's Okta directory until the next reset: Engineering (Ada and Alan) and
 // Finance (Alan and Eve), so giving either sources leaves Alan out.
+//
+// A source's own permissions narrow what grants give (see "sharing" below):
+// a grantee given a Slack connection, or a set it writes, reads only its
+// Conversations documents of the channels Slack shares with their email,
+// its tables only while that is every channel, and none of it while its
+// channels are unknown; `GET .../access/sources` says, for owners and
+// admins, what each Slack connection's last sync read of them.
 //
 // Acme starts with Eve restricted, holding the General set, and one agent's
 // key holding nothing. A key's token is shown once, when it is made, and
@@ -536,8 +546,8 @@ const targetKey = (t: FoundryAccessTarget) =>
     "\u001f",
   );
 
-/** Whether targets cover a document in `set` (Grants.CoversSet). */
-function coversSet(
+/** Whether targets give `set`, whatever its source shares (Grants.givesSet). */
+function givesSet(
   targets: readonly FoundryAccessTarget[],
   set: { setId: string; connectorId: string },
 ) {
@@ -553,26 +563,8 @@ function coversSet(
   );
 }
 
-/**
- * Whether targets give at least every one of `wanted` (Grants.Holds): a
- * table by its own grant or its connector's, everything else by its own.
- */
-function holdsAll(
-  targets: readonly FoundryAccessTarget[],
-  wanted: readonly FoundryAccessTarget[],
-) {
-  return wanted.every((w) =>
-    w.kind === "KIND_TABLE"
-      ? coversTable(targets, {
-          connectorId: w.connectorId || "",
-          table: w.table || "",
-        })
-      : targets.some((t) => targetKey(t) === targetKey(w)),
-  );
-}
-
-/** Whether targets cover a table (Grants.CoversTable). */
-const coversTable = (
+/** Whether targets give a table, by its own grant or its connector's. */
+const givesTable = (
   targets: readonly FoundryAccessTarget[],
   x: { connectorId: string; table: string },
 ) =>
@@ -584,26 +576,192 @@ const coversTable = (
         t.table === x.table),
   );
 
-/** Whether targets cover all a load holds (Grants.Covers). */
-function covers(targets: readonly FoundryAccessTarget[], inputs: Inputs) {
+/**
+ * Whether targets give at least every one of `wanted` (Grants.Holds), as
+ * given, whatever their sources share: a table by its own grant or its
+ * connector's, everything else by its own.
+ */
+function holdsAll(
+  targets: readonly FoundryAccessTarget[],
+  wanted: readonly FoundryAccessTarget[],
+) {
+  return wanted.every((w) =>
+    w.kind === "KIND_TABLE"
+      ? givesTable(targets, {
+          connectorId: w.connectorId || "",
+          table: w.table || "",
+        })
+      : targets.some((t) => targetKey(t) === targetKey(w)),
+  );
+}
+
+// ---------------------------------------------------------------- sharing
+//
+// A source's own permissions narrow what grants give (plans/SOURCE_ACLS.md,
+// backend/access/sharing.go, backend/sourceaccess): a Slack connector's
+// syncs read who each channel is shared with (./data.ts
+// connectorAudiences), and a reader, matched by their verified email,
+// reads of it only the channels shared with them: a public one unless the
+// source knows them as a guest, a private one when it lists them. A key or
+// a team is no one in any source, and reads public channels only. Its
+// Conversations documents are read per channel; its tables and sets are
+// covered only while the reader reads every channel; and a connector whose
+// channels were never read, or were read over 7 days ago, reads as
+// unknown: only full readers (anyone not a grantee) read any of it.
+
+/** How old a read of a source's audiences may be and still count (access.MaxAudienceAge). */
+const MAX_AUDIENCE_AGE_MS = 7 * 86_400_000;
+
+/**
+ * What one reader reads of one audienced connector (access.SourceReach):
+ * its items are unknown, or the items the source shares with the reader,
+ * and whether that is every item.
+ */
+type Reach =
+  | { known: false }
+  | { known: true; items: ReadonlySet<string>; all: boolean };
+
+/**
+ * A principal's grants as it reads them (access.Grants with its Sharing):
+ * the targets, and its reach of each of the workspace's audienced
+ * connectors, by id; a connector `sharing` doesn't name is narrowed by
+ * grants alone.
+ */
+type Reader = {
+  targets: readonly FoundryAccessTarget[];
+  sharing: ReadonlyMap<string, Reach>;
+};
+
+/**
+ * `targets` as `principal` reads them in the workspace (sourceaccess.Of): a
+ * user as their verified email, trimmed and lowercased; a key or a team as
+ * no one.
+ */
+function readerOf(
+  workspaceId: string,
+  principal: Principal,
+  targets: readonly FoundryAccessTarget[],
+): Reader {
+  const user =
+      principal.kind === "KIND_USER" ? db.users.get(principal.id) : undefined,
+    email =
+      user && !user.emailUnverified ? user.email.trim().toLowerCase() : "";
+  const sharing = new Map<string, Reach>();
+  // Slack is the one kind whose source reports its permissions.
+  for (const c of workspaceConnectors(workspaceId)) {
+    if (c.kind !== "slack") continue;
+    const a = connectorAudiences(c.id);
+    if (!a?.readAt || Date.now() - Date.parse(a.readAt) > MAX_AUDIENCE_AGE_MS) {
+      sharing.set(c.id, { known: false });
+      continue;
+    }
+    const guest = !!a.people?.some((p) => p.email === email && p.guest),
+      items = new Set(
+        (a.items || [])
+          .filter((i) =>
+            i.members === "everyone" ? !guest : i.members.includes(email),
+          )
+          .map((i) => i.key),
+      );
+    sharing.set(c.id, {
+      known: true,
+      items,
+      all: items.size >= (a.items || []).length,
+    });
+  }
+  return { targets, sharing };
+}
+
+/** Whether the reader reads every item of a connector (Sharing.whole). */
+function whole(r: Reader, connectorId: string) {
+  const reach = r.sharing.get(connectorId);
+  return !reach || (reach.known && reach.all);
+}
+
+/** Whether the reader reads any item of a connector (Sharing.some). */
+function some(r: Reader, connectorId: string) {
+  const reach = r.sharing.get(connectorId);
+  return !reach || (reach.known && reach.items.size > 0);
+}
+
+/** Whether the reader's grants cover every document in `set` (Grants.CoversSet). */
+const coversSet = (r: Reader, set: { setId: string; connectorId: string }) =>
+  givesSet(r.targets, set) && whole(r, set.connectorId);
+
+/** Whether they give some documents of `set` (Grants.ReachesSet). */
+const reachesSet = (r: Reader, set: { setId: string; connectorId: string }) =>
+  givesSet(r.targets, set) && some(r, set.connectorId);
+
+/**
+ * Whether the reader's grants cover a table (Grants.CoversTable): its rows
+ * aren't told apart by item, so an audienced connector's only while the
+ * reader reads every item.
+ */
+const coversTable = (r: Reader, x: { connectorId: string; table: string }) =>
+  givesTable(r.targets, x) && whole(r, x.connectorId);
+
+/**
+ * Whether the reader reads a document (Grants.Reads): its set is given, and
+ * the source of an audienced connector that owns the set shares its item
+ * (a Conversations document's channel, before its external id's colon)
+ * with the reader. One of no item, or of a connector whose items are
+ * unknown, it doesn't.
+ */
+function readsDocument(r: Reader, documentId: string) {
+  const set = documentSet(documentId);
+  if (!givesSet(r.targets, set)) return false;
+  const reach = r.sharing.get(set.connectorId);
+  if (!reach) return true;
+  if (!reach.known) return false;
+  const source = documentSource(documentId),
+    [channel, day] = source?.externalId.split(":") || [];
+  return (
+    source?.stream === "conversations" &&
+    !!channel &&
+    !!day &&
+    reach.items.has(channel)
+  );
+}
+
+/** Whether the reader's grants cover all a load holds (Grants.Covers). */
+function covers(r: Reader, inputs: Inputs) {
   return (
     !inputs.uncoverable &&
-    (!inputs.enrichment || targets.some((t) => t.kind === "KIND_ENRICHMENT")) &&
-    inputs.tables.every((x) => coversTable(targets, x)) &&
-    inputs.sets.every((s) => coversSet(targets, s))
+    (!inputs.enrichment ||
+      r.targets.some((t) => t.kind === "KIND_ENRICHMENT")) &&
+    inputs.tables.every((x) => coversTable(r, x)) &&
+    inputs.sets.every((s) => coversSet(r, s))
   );
 }
 
 /**
- * Whether targets hold anything of what a load holds (Grants.Reaches): a load
- * whose inputs can't be told isn't read at all.
+ * Whether the reader's grants hold anything of what a load holds
+ * (Grants.Reaches): a covered table, a set they give (of an audienced
+ * connector, while its source shares an item with the reader) or People
+ * enrichment. A load whose inputs can't be told isn't read at all.
  */
-function reaches(targets: readonly FoundryAccessTarget[], inputs: Inputs) {
+function reaches(r: Reader, inputs: Inputs) {
   return (
     !inputs.uncoverable &&
-    ((inputs.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT")) ||
-      inputs.tables.some((x) => coversTable(targets, x)) ||
-      inputs.sets.some((s) => coversSet(targets, s)))
+    ((inputs.enrichment &&
+      r.targets.some((t) => t.kind === "KIND_ENRICHMENT")) ||
+      inputs.tables.some((x) => coversTable(r, x)) ||
+      inputs.sets.some((s) => reachesSet(r, s)))
+  );
+}
+
+/**
+ * Whether a reader that read `seen`, part of a load, may still read what it
+ * said (Grants.Keeps): as covers, but a set counts while it reaches it, since
+ * `seen` names sets, not the documents read of them.
+ */
+function keeps(r: Reader, seen: MockSeen) {
+  return (
+    (seen.tables.length + seen.sets.length > 0 || seen.enrichment) &&
+    seen.sets.every((s) => reachesSet(r, s)) &&
+    seen.tables.every((t) => coversTable(r, t)) &&
+    (!seen.enrichment || r.targets.some((t) => t.kind === "KIND_ENRICHMENT")) &&
+    !seen.uncoverable
   );
 }
 
@@ -746,46 +904,42 @@ function userTargets(workspaceId: string, userId: string) {
     .map((g) => g.target);
 }
 
-/** The current loads targets hold anything of, by ontology (granteeLoads). */
-function heldLoads(
-  workspaceId: string,
-  targets: readonly FoundryAccessTarget[],
-) {
+/**
+ * The current loads a reader's grants hold anything of, by ontology
+ * (granteeLoads): one they hold only some of, or whose sources share only
+ * some of it with the reader, is partial.
+ */
+function heldLoads(workspaceId: string, r: Reader) {
   const out = new Map<string, MockGranteeLoad>();
-  if (!targets.length) return out;
+  if (!r.targets.length) return out;
   for (const [ontologyId, l] of currentInputs(workspaceId))
-    if (reaches(targets, l.inputs))
+    if (reaches(r, l.inputs))
       out.set(ontologyId, {
         loadId: l.loadId,
         versionId: l.versionId,
-        partial: !covers(targets, l.inputs),
+        partial: !covers(r, l.inputs),
       });
   return out;
 }
 
 /**
- * What targets hold of an ontology's current load, as the agent is told it
+ * What a reader holds of an ontology's current load, as the agent is told it
  * (Grants.Part and ontologyagent.VisibilityOf): its tables and table files,
- * the documents it holds by the set each is in now, and the properties decided
- * while it doesn't hold them all.
+ * the documents it reads (by the set each is in now, and the item its
+ * source shares), and the properties decided while it doesn't hold them all.
  */
-function visibilityOf(
-  ontologyId: string,
-  targets: readonly FoundryAccessTarget[],
-): Visibility {
+function visibilityOf(ontologyId: string, r: Reader): Visibility {
   const load = servableLoad(ontologyId);
   const drafted = load && versionInputs(ontologyId, load.versionId);
   const documents = load ? loadDocumentIds(load.loadId) : [];
-  const held = documents.filter((d) => coversSet(targets, documentSet(d))),
-    files = (drafted?.documents || []).filter((d) =>
-      coversSet(targets, documentSet(d)),
-    );
+  const held = documents.filter((d) => readsDocument(r, d)),
+    files = (drafted?.documents || []).filter((d) => readsDocument(r, d));
   const all = held.length === documents.length;
   return {
     sources: [
       ...(drafted?.tables || [])
         .filter((t) =>
-          coversTable(targets, {
+          coversTable(r, {
             connectorId: t.connectorId || "",
             table: t.table || "",
           }),
@@ -796,7 +950,7 @@ function visibilityOf(
     documents: all ? "all" : { only: held },
     sets: [...new Set([...held, ...files].map((d) => documentSet(d).setId))],
     enrichment:
-      !!load?.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT"),
+      !!load?.enrichment && r.targets.some((t) => t.kind === "KIND_ENRICHMENT"),
     withheld: all ? [] : load ? loadPropDecisions(load.loadId) : [],
   };
 }
@@ -946,33 +1100,37 @@ export function guarded(route: MockRoute): MockRoute {
         ? null
         : fail("PERMISSION_DENIED", "permission denied");
       if (!rule) return denied || fail("PERMISSION_DENIED", NOT_GRANTED);
-      const targets = userTargets(m.workspaceId, m.userId);
+      const targets = userTargets(m.workspaceId, m.userId),
+        reader = readerOf(
+          m.workspaceId,
+          { kind: "KIND_USER", id: m.userId },
+          targets,
+        );
       const grantee: MockGrantee = {
         principal: principalKey({ kind: "KIND_USER", id: m.userId }),
         targets,
         holdsAll: (wanted) => holdsAll(targets, wanted),
-        covered: heldLoads(m.workspaceId, targets),
-        coversSet: (setId) =>
-          coversSet(targets, { setId, connectorId: setConnector(setId) }),
+        covered: heldLoads(m.workspaceId, reader),
+        reads: (documentId) => readsDocument(reader, documentId),
         holds: (documentId, ontologyId) =>
-          coversSet(targets, documentSet(documentId)) &&
+          readsDocument(reader, documentId) &&
           [...grantee.covered].some(
             ([o, l]) =>
               (!ontologyId || o === ontologyId) &&
               holds(o, l.loadId, l.versionId, documentId),
           ),
-        visibility: (ontologyId) => visibilityOf(ontologyId, targets),
+        visibility: (ontologyId) => visibilityOf(ontologyId, reader),
         seen: (ontologyId) => {
           const l = currentInputs(m.workspaceId).get(ontologyId)!.inputs;
           return {
-            tables: l.tables.filter((t) => coversTable(targets, t)),
-            sets: l.sets.filter((s) => coversSet(targets, s)),
+            tables: l.tables.filter((t) => coversTable(reader, t)),
+            sets: l.sets.filter((s) => reachesSet(reader, s)),
             enrichment:
               l.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT"),
             uncoverable: false,
           };
         },
-        stillSees: (seen) => covers(targets, seen),
+        stillSees: (seen) => keeps(reader, seen),
       };
       if (rule === "workflows" && !workflowsOn(m.workspaceId, m.userId))
         return denied || fail("PERMISSION_DENIED", WORKFLOWS_OFF);
@@ -1137,6 +1295,12 @@ export const accessRoutes: MockRoute[] = [
         held.set(k, held.get(k) || { ...g.principal, targets: [] });
         held.get(k)!.targets.push(g.target);
       }
+      // Each as it reads them: a team as no one in any source, since each
+      // member reads as themselves.
+      const readers = [...held.values()].map((p) => ({
+        p,
+        r: readerOf(m.workspaceId, p, p.targets),
+      }));
       const ontologies: FoundryOntologyAccess[] = [
         ...currentInputs(m.workspaceId),
       ]
@@ -1145,15 +1309,12 @@ export const accessRoutes: MockRoute[] = [
           ontologyId,
           loadId: l.loadId,
           inputs: inputsOut(l.inputs),
-          readers: [...held.values()]
-            .filter((p) => covers(p.targets, l.inputs))
-            .map(({ kind, id }): FoundryPrincipal => ({ kind, id })),
-          partialReaders: [...held.values()]
-            .filter(
-              (p) =>
-                !covers(p.targets, l.inputs) && reaches(p.targets, l.inputs),
-            )
-            .map(({ kind, id }): FoundryPrincipal => ({ kind, id })),
+          readers: readers
+            .filter(({ r }) => covers(r, l.inputs))
+            .map(({ p }): FoundryPrincipal => ({ kind: p.kind, id: p.id })),
+          partialReaders: readers
+            .filter(({ r }) => !covers(r, l.inputs) && reaches(r, l.inputs))
+            .map(({ p }): FoundryPrincipal => ({ kind: p.kind, id: p.id })),
         }));
       return ok({
         grants: grants.map(grantOut),
@@ -1368,9 +1529,14 @@ export const accessRoutes: MockRoute[] = [
         if (keep(g)) h.then.push(g.target);
         held.set(k, h);
       }
+      const narrowed = [...held.values()].map((h) => ({
+        p: h.p,
+        now: readerOf(ws, h.p, h.now),
+        then: readerOf(ws, h.p, h.then),
+      }));
       const losses = [...after.keys()].sort().flatMap((ontologyId) => {
         const was = before.get(ontologyId);
-        return [...held.values()]
+        return narrowed
           .filter(
             (h) =>
               was &&
@@ -1393,7 +1559,10 @@ export const accessRoutes: MockRoute[] = [
       const m = membership(req.params.workspaceId!, req.principal.user.id);
       if (isReply(m)) return m;
       const targets = userTargets(m.workspaceId, m.userId),
-        loads = heldLoads(m.workspaceId, targets);
+        loads = heldLoads(
+          m.workspaceId,
+          readerOf(m.workspaceId, { kind: "KIND_USER", id: m.userId }, targets),
+        );
       return ok({
         grantee: !!req.grantee,
         hasGrants: targets.length > 0,
@@ -1404,6 +1573,41 @@ export const accessRoutes: MockRoute[] = [
           .map(([o]) => o)
           .sort(),
       } satisfies GetMyFoundryAccessResponse);
+    },
+  },
+  {
+    // The connections whose sources' own permissions narrow grants (owners
+    // and admins; a grantee is refused, as RULES names it not): each live
+    // Slack connector, oldest first, with its last read's people and
+    // channel counts, stale while never read or read over 7 days ago.
+    method: "GET",
+    path: `${A}/sources`,
+    handle: (req) => {
+      const m = manager(req);
+      if (isReply(m)) return m;
+      return ok({
+        sources: workspaceConnectors(m.workspaceId)
+          .filter((c) => c.kind === "slack")
+          .map((c) => {
+            const a = connectorAudiences(c.id),
+              items = a?.items || [];
+            return {
+              connectorId: c.id,
+              kind: c.kind,
+              readAt: a?.readAt,
+              stale:
+                !a?.readAt ||
+                Date.now() - Date.parse(a.readAt) > MAX_AUDIENCE_AGE_MS,
+              // Why the newest read failed: a read that works clears it.
+              problem: a?.problem,
+              everyoneItems: items.filter((i) => i.members === "everyone")
+                .length,
+              membersItems: items.filter((i) => i.members !== "everyone")
+                .length,
+              people: a?.people || [],
+            };
+          }),
+      } satisfies ListFoundrySourceAudiencesResponse);
     },
   },
   {

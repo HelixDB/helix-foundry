@@ -780,8 +780,10 @@ export const papiRoutes = [
 
   // Access: source grants (owners and admins grant a member, a team or an
   // agent's key the workspace's sources, and read who reads what through
-  // them), who a change would cut off, restricting a member, teams, and
-  // what the caller itself reads through grants (any member).
+  // them), who a change would cut off, restricting a member, teams, what
+  // the caller itself reads through grants (any member), and the
+  // connections whose sources' own permissions narrow grants (owners and
+  // admins).
   {
     area: "access",
     method: "GET",
@@ -801,6 +803,11 @@ export const papiRoutes = [
     area: "access",
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/access/me",
+  },
+  {
+    area: "access",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/sources",
   },
   {
     area: "access",

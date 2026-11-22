@@ -291,11 +291,11 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       slack: { botToken: "xoxb-1-team1234" },
     });
     const conversations = await setOf("conversations");
-    // The 90 days before the sync's, two of every three in each of four
-    // channels: the app isn't in #random.
+    // The 90 days before the sync's, two of every three in each of five
+    // channels, private #leadership among them: the app isn't in #random.
     expect(conversations).toMatchObject({
       name: "Conversations",
-      documents: 240,
+      documents: 300,
       connector: {
         connectorId,
         stream: "conversations",
@@ -321,10 +321,14 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
         at: "2026-10-22T16:24:00.000Z",
       },
     });
-    // And its last message where no reply is later.
+    // And its last message where no reply is later: here private
+    // #leadership's, whose days are documents as the others' are.
     expect(next).toMatchObject({
-      name: "#support, 2026-10-22",
-      source: { at: "2026-10-22T14:21:00.000Z" },
+      name: "#leadership, 2026-10-22",
+      source: {
+        externalId: "C0MOCKLDR:2026-10-22",
+        at: "2026-10-22T14:47:00.000Z",
+      },
     });
     // The version is "2|", 40 hex digits of a hash of its messages and 16
     // of the names they show.
@@ -362,7 +366,7 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
     });
     // The 7 days before the sync's.
     const week = (await setOf("conversations"))!;
-    expect(week.documents).toBe(18);
+    expect(week.documents).toBe(23);
     const days = (await page(`setId=${week.id}`)).documents.map((d) =>
       d.name!.slice(-10),
     );

@@ -572,6 +572,18 @@ export function documentSet(documentId: string) {
   const setId = documents.get(documentId)?.setId || "";
   return { setId, connectorId: sets.get(setId)?.connector?.connectorId || "" };
 }
+/**
+ * For ./access.ts: a connector's document's stream and its row's key
+ * (access.DocumentRef's Stream and ExternalID), which say what item of its
+ * source it is of; undefined for an upload.
+ */
+export function documentSource(documentId: string) {
+  const d = documents.get(documentId),
+    stream = d && sets.get(d.setId)?.connector?.stream;
+  return d?.source && stream
+    ? { stream, externalId: d.source.externalId }
+    : undefined;
+}
 /** For ./access.ts: a set's connector, if a connector owns it. */
 export const setConnector = (setId: string) =>
   sets.get(setId)?.connector?.connectorId || "";
@@ -1373,7 +1385,8 @@ export const documentRoutes: MockRoute[] = [
           "source grants let a grantee name documents only by id",
         );
       // These documents only, as asked, each once, deleted ones too; a
-      // grantee's only those in sets its grants cover.
+      // grantee's only those its grants read (Grants.Reads): of a set they
+      // give, and of an item its connector's source shares with it.
       if (ids.length) {
         if (ids.length > MAX_IDS)
           return fail(
@@ -1390,7 +1403,7 @@ export const documentRoutes: MockRoute[] = [
             const d = documents.get(id);
             return d &&
               d.workspaceId === m.workspaceId &&
-              (!req.grantee || req.grantee.coversSet(d.setId))
+              (!req.grantee || req.grantee.reads(d.id))
               ? [toDocument(d)]
               : [];
           }),
@@ -1591,8 +1604,8 @@ export const documentRoutes: MockRoute[] = [
             held?.has(d.id) ||
             (d.status === "uploaded" && scope.includes(d.setId))
           ) ||
-          // Of a load it holds only some of, only what it holds.
-          (req.grantee?.load?.partial && !req.grantee.coversSet(d.setId))
+          // Of a load it holds only some of, only the documents it reads.
+          (req.grantee?.load?.partial && !req.grantee.reads(d.id))
         )
           return [];
         const x = currentExtraction(s.o.id, d.id);

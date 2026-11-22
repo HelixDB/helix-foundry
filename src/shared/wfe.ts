@@ -5513,6 +5513,46 @@ export type GetMyFoundryAccessResponse = {
 };
 
 /**
+ * v1FoundrySourcePerson: one of a source's people, by email (trimmed and
+ * lowercased, as members are matched by it); a `guest` reads only the items
+ * that list them.
+ */
+export type FoundrySourcePerson = { email?: string; guest?: boolean };
+
+/** v1FoundrySourceAudienceProblem: why the latest read failed, and when. */
+export type FoundrySourceAudienceProblem = { message?: string; at?: string };
+
+/**
+ * v1FoundrySourceAudience: who one connection's source shares its items
+ * with (a Slack connection's channels), as its last sync read it. A grantee
+ * reads only the items shared with their verified email, and its tables only
+ * when that is every item. `stale`: never read, or last read more than 7 days
+ * ago, so its documents and tables go to full readers only. `problem`: why the
+ * latest read failed, while none has worked since. `everyoneItems` are shared
+ * with everyone but guests (public channels), `membersItems` only with the
+ * people they list (private channels).
+ */
+export type FoundrySourceAudience = {
+  connectorId?: string;
+  kind?: string;
+  readAt?: string;
+  stale?: boolean;
+  problem?: FoundrySourceAudienceProblem;
+  everyoneItems?: number;
+  membersItems?: number;
+  people?: FoundrySourcePerson[];
+};
+
+/**
+ * v1ListFoundrySourceAudiencesResponse: GET .../foundry/access/sources,
+ * owners and admins. Each live connection whose kind follows its source's
+ * permissions, oldest first, read or not.
+ */
+export type ListFoundrySourceAudiencesResponse = {
+  sources?: FoundrySourceAudience[];
+};
+
+/**
  * FoundryServiceSetFoundryMemberRestrictedBody: PUT
  * .../foundry/access/members/{userId}. Only a plain member without project
  * write or query access can be restricted (FAILED_PRECONDITION otherwise).

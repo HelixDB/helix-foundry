@@ -35,10 +35,12 @@ export type MockGranteeLoad = {
  * A caller admitted only through source grants, as the backend's
  * access.Grantee: who it is (a principal key, "KIND_USER:usr_eve"), the
  * current loads its grants hold any of by ontology, the one an ontology's
- * route was admitted on, whether its grants cover a document set, whether a
- * load they hold holds a document in a set they cover (of `ontologyId`'s, or
- * any), what they hold of an ontology's current load, for the agent, and
- * whether they still hold what an answer read.
+ * route was admitted on, whether its grants read a document (Grants.Reads:
+ * its set is given, and its connector's source, when that reports its
+ * permissions, shares its item with the grantee), whether a load they hold
+ * holds a document they read (of `ontologyId`'s, or any), what they hold of
+ * an ontology's current load, for the agent, and whether they still hold
+ * what an answer read (Grants.Keeps).
  */
 export type MockGrantee = {
   principal: string;
@@ -49,7 +51,7 @@ export type MockGrantee = {
   holdsAll: (targets: readonly FoundryAccessTarget[]) => boolean;
   covered: Map<string, MockGranteeLoad>;
   load?: MockGranteeLoad;
-  coversSet: (setId: string) => boolean;
+  reads: (documentId: string) => boolean;
   holds: (documentId: string, ontologyId?: string) => boolean;
   visibility: (ontologyId: string) => Visibility;
   // The part of the admitted ontology's load it holds, to keep with a
