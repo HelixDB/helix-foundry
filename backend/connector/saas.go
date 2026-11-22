@@ -57,10 +57,14 @@ const maxPageBytes = 64 << 20
 const maxRetries = 6
 
 // retryBackoff waits Retry-After when the API gives it (capped at 30s), else
-// doubles from 250ms. Tests replace it.
+// doubles from 250ms. Retry-After is seconds, or an HTTP date to wait until
+// (Attio's), which waits nothing once it has passed. Tests replace it.
 var retryBackoff = func(attempt int, retryAfter string) time.Duration {
 	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
 		return min(time.Duration(seconds)*time.Second, 30*time.Second)
+	}
+	if at, err := http.ParseTime(retryAfter); err == nil {
+		return min(max(time.Until(at), 0), 30*time.Second)
 	}
 	return 250 * time.Millisecond << attempt
 }
