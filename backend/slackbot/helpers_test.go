@@ -205,8 +205,10 @@ func TestFollowEndsWhenSlackOrTheInstallGoes(t *testing.T) {
 	turn := w.only()
 	w.claimTurn(turn.ID).finish(agent.StopAnswered, "")
 	w.slack.queue("chat.update", http.StatusOK, "", `{"ok":false,"error":"message_not_found"}`)
-	w.follow(5 * time.Second)
-	assert.True(t, w.replyDone(turn.ID)(), "a message Slack lost ends its follow")
+	// A follow cut short by the test's deadline is due again after a
+	// back-off, so it is followed until it ends rather than once.
+	w.until("a message Slack lost ends its follow", w.replyDone(turn.ID))
+	assert.Len(t, w.slack.of("chat.update"), 1, "it ends at Slack's answer, not tried again")
 
 	w.message(ada, dmAda, ts(2), ts(2), "again")
 	w.settle()
@@ -216,6 +218,5 @@ func TestFollowEndsWhenSlackOrTheInstallGoes(t *testing.T) {
 	require.NotNil(t, r.MessageTS)
 	_, err = testDB.Exec(`UPDATE foundry_slack_installs SET revoked_at=NOW(6)`)
 	require.NoError(t, err)
-	w.follow(5 * time.Second)
-	assert.True(t, w.replyDone(next.ID)(), "a revoked install's follow ends")
+	w.until("a revoked install's follow ends", w.replyDone(next.ID))
 }

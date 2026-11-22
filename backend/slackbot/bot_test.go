@@ -570,11 +570,13 @@ func TestRateLimitsDeferNeverLose(t *testing.T) {
 	// The follower's update is refused too: the reply waits Retry-After.
 	w.slack.queue("chat.update", http.StatusTooManyRequests, "1", `{"ok":false,"error":"ratelimited"}`)
 	w.claimTurn(turn.ID).finish(agent.StopAnswered, "")
-	w.follow(5 * time.Second)
-	reply, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
-	require.NoError(t, err)
-	assert.Equal(t, model.SlackReplyFollowing, reply.Status)
-	assert.True(t, reply.NextPollAt.After(time.Now().Add(500*time.Millisecond)))
+	// An earlier follow cut short by the test's deadline may be backing
+	// off: follow until Slack's 429 defers it.
+	w.until("the follow deferred", func() bool {
+		reply, err := w.db.GetFoundrySlackReply(w.ctx, turn.ID)
+		require.NoError(t, err)
+		return reply.Status == model.SlackReplyFollowing && reply.NextPollAt.After(time.Now().Add(500*time.Millisecond))
+	})
 	w.until("the reply", w.replyDone(turn.ID))
 }
 
