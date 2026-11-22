@@ -2047,7 +2047,11 @@ const attioTables: AttioTable[] = [
       ["created_by_id", "string", true],
       ["created_at", "string"],
     ],
-    scopes: ["note:read", "object_configuration:read", "record_permission:read"],
+    scopes: [
+      "note:read",
+      "object_configuration:read",
+      "record_permission:read",
+    ],
     preview: [],
     rows: 24,
   },
@@ -2148,10 +2152,7 @@ const ATTIO_NOTES = [
     "Security review",
     "- SOC 2 report sent to {who}.\n- ~~Pen test summary~~ replaced by the 2026 report.\n- Open question: data residency in the EU.",
   ],
-  [
-    "",
-    "Quick note: {who} is out until Monday; follow up then.",
-  ],
+  ["", "Quick note: {who} is out until Monday; follow up then."],
   [
     "QBR prep",
     "### Agenda\n\n- Usage this quarter\n- ==Expansion== into the support team\n- Roadmap preview",

@@ -454,7 +454,9 @@ describe("Slack's, Notion's, Attio's and Google Workspace's documents", () => {
       documents: 23,
       connector: { connectorId, stream: "notes", connectorName: "Acme CRM" },
     });
-    expect(notes!.description).toMatch(/^Notes written in Attio on its records/);
+    expect(notes!.description).toMatch(
+      /^Notes written in Attio on its records/,
+    );
     const docs = (await page(`setId=${notes!.id}`)).documents;
     const [newest] = docs;
     const id = "a0be0001-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
@@ -471,7 +473,9 @@ describe("Slack's, Notion's, Attio's and Google Workspace's documents", () => {
     const text: string = (await call("GET", `${DOCS}/${newest!.id}:content`))
       .body.text;
     const heading = "# Discovery call\n\n";
-    expect(text.startsWith(heading + "## Context\n\n- Grace Hopper")).toBe(true);
+    expect(text.startsWith(heading + "## Context\n\n- Grace Hopper")).toBe(
+      true,
+    );
     // "1|" and 32 hex digits of a hash of the title and the body: Attio
     // dates no edit of a note.
     expect(newest!.source!.version).toBe(

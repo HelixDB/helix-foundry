@@ -614,7 +614,12 @@ describe("testing and creating", () => {
     ]);
     // Each object's and list's table shows its first rows, every value in
     // a column of its own.
-    for (const name of ["people", "companies", "deals", "list_sales_pipeline"]) {
+    for (const name of [
+      "people",
+      "companies",
+      "deals",
+      "list_sales_pipeline",
+    ]) {
       const t = table(name);
       expect(t.preview).toHaveLength(5);
       const columns = t.columns.map((c: { name: string }) => c.name);
@@ -632,9 +637,7 @@ describe("testing and creating", () => {
     expect(deal.web_url).toBe(
       `https://app.attio.com/acme/deal/${deal.record_id}`,
     );
-    const [person] = table("people").preview.map((r: string) =>
-      JSON.parse(r),
-    );
+    const [person] = table("people").preview.map((r: string) => JSON.parse(r));
     expect(person).toMatchObject({
       name: "Grace Hopper",
       name_first_name: "Grace",
