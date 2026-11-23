@@ -226,6 +226,11 @@ func (r *routeRecorder) SettleFoundryReview(_ context.Context, req *foundryv1.Se
 	return &foundryv1.FoundryReviewDecisionResponse{}, nil
 }
 
+func (r *routeRecorder) BatchSettleFoundryReviews(_ context.Context, req *foundryv1.BatchSettleFoundryReviewsRequest) (*foundryv1.BatchSettleFoundryReviewsResponse, error) {
+	r.hit("BatchSettleFoundryReviews", req, fmt.Sprint(req.GetLoadId(), " ", len(req.GetItems()), " ", req.GetExpectOpen()))
+	return &foundryv1.BatchSettleFoundryReviewsResponse{}, nil
+}
+
 func (r *routeRecorder) ListFoundryReviews(_ context.Context, req *foundryv1.ListFoundryReviewsRequest) (*foundryv1.ListFoundryReviewsResponse, error) {
 	r.hit("ListFoundryReviews", req, strings.Join(req.GetReviewKeys(), ",")+req.GetPageToken())
 	return &foundryv1.ListFoundryReviewsResponse{}, nil
@@ -485,6 +490,8 @@ func TestFoundryRoutes(t *testing.T) {
 			"GenerateOntology ws-1 ont-1 g c-1:FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED"},
 		{http.MethodGet, o + "/ont-1/generations/g-1", "", "GetOntologyGeneration ws-1 ont-1 g-1"},
 		{http.MethodPost, o + "/ont-1/reviews/r-1:settle", `{"decision":{"resolve":{"notInData":true}}}`, "SettleFoundryReview ws-1 ont-1 r-1"},
+		{http.MethodPost, o + "/ont-1/reviews:batchSettle", `{"loadId":"l-1","items":[{"reviewId":"r-1","decision":{"resolve":{"notInData":true}}}],"expectOpen":true}`,
+			"BatchSettleFoundryReviews ws-1 ont-1 l-1 1 true"},
 		{http.MethodGet, o + "/ont-1/review-decisions?pageToken=d-1", "", "ListFoundryReviewDecisions ws-1 ont-1 d-1"},
 		{http.MethodGet, o + "/ont-1/reviews?reviewKeys=r-1&reviewKeys=r-2", "", "ListFoundryReviews ws-1 ont-1 r-1,r-2"},
 		{http.MethodGet, o + "/ont-1/reviews?pageToken=50", "", "ListFoundryReviews ws-1 ont-1 50"},

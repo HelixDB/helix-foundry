@@ -118,9 +118,15 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_ListFoundryReviewDecisions_FullMethodName:  Deny,
 	foundryv1.FoundryService_ListFoundryReviews_FullMethodName:          Deny,
 	foundryv1.FoundryService_SettleFoundryReview_FullMethodName:         Deny,
+	foundryv1.FoundryService_BatchSettleFoundryReviews_FullMethodName:   Deny,
 	foundryv1.FoundryService_DeleteFoundryReviewDecision_FullMethodName: Deny,
 	foundryv1.FoundryService_SettleFoundryReviewLabel_FullMethodName:    Deny,
 	foundryv1.FoundryService_ListFoundryReviewLabels_FullMethodName:     Deny,
+	foundryv1.FoundryService_ListFoundryReviewCards_FullMethodName:      Deny,
+	foundryv1.FoundryService_ListFoundryReviewSpotChecks_FullMethodName: Deny,
+	foundryv1.FoundryService_DrawFoundryReviewSpotChecks_FullMethodName: Deny,
+	// Answers a grantee with no ontologies, so a page's badge never fails.
+	foundryv1.FoundryService_GetFoundryReviewSummary_FullMethodName: Workspace,
 
 	// Documents and their sets.
 	foundryv1.FoundryService_ListFoundryDocuments_FullMethodName:                  Workspace,

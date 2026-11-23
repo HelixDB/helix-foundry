@@ -1688,6 +1688,10 @@ enum FoundryUsageTask {
   // Assess, on the questions model), capped by
   // foundry.workflows.assess.monthly_usd, apart from questions'.
   FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS = 4;
+  // Review advice charged this month: Founder's model's suggestions on the
+  // review cards the rules leave undecided, on the verify model, capped by
+  // foundry.reviews.advise.monthly_usd, apart from every other task's.
+  FOUNDRY_USAGE_TASK_REVIEW_ADVICE = 5;
 }
 
 // FoundryUsageEntry is one task's month.
@@ -2086,6 +2090,169 @@ message FoundryReviewLabel {
   string load_id = 15;
   string decided_by_user_id = 16;
   google.protobuf.Timestamp decided_at = 17;
+}
+
+// Review cards: what a load asks a person to decide, one card a decision,
+// indexed by the graph worker from the load's reviews (backend/reviewcards).
+
+// Where a card goes in the review walk.
+enum FoundryReviewLane {
+  FOUNDRY_REVIEW_LANE_UNSPECIFIED = 0;
+  // To decide.
+  FOUNDRY_REVIEW_LANE_DECIDE = 1;
+  // For information: a name only the model linked, or a value whose table
+  // row's value stands.
+  FOUNDRY_REVIEW_LANE_FYI = 2;
+}
+
+enum FoundryReviewCardKind {
+  FOUNDRY_REVIEW_CARD_KIND_UNSPECIFIED = 0;
+  FOUNDRY_REVIEW_CARD_KIND_NAME = 1;
+  FOUNDRY_REVIEW_CARD_KIND_CLAIM = 2;
+  FOUNDRY_REVIEW_CARD_KIND_VALUE = 3;
+}
+
+// An ontology's current load and how many cards it asks to decide.
+message FoundryReviewSummary {
+  string ontology_id = 1;
+  string load_id = 2;
+  // Open cards to decide, at most 10,000; more says there are more.
+  int32 open = 3;
+  bool more = 4;
+  // The load's index is still first being built (no pass has indexed every
+  // document yet): open may be too low. Documents owed again later don't
+  // set it.
+  bool indexing = 5;
+}
+
+// A card of the review walk: a name, a held claim or a value. Its reviews
+// are read from the load by review key.
+message FoundryReviewCard {
+  // Stable across reindexes and a review keyed again: the SHA-256 of its
+  // decision's identity, in hexadecimal.
+  string card_id = 1;
+  FoundryReviewLane lane = 2;
+  string doc_id = 3;
+  // The facts its decisions write.
+  int32 facts = 4;
+  oneof card {
+    FoundryReviewNameCard name = 5;
+    FoundryReviewClaimCard claim = 6;
+    FoundryReviewValueCard value = 7;
+  }
+  // Founder's model's suggestion, on a name or value card of the decide lane
+  // the rules leave undecided, once the model picked one of its choices.
+  FoundryReviewModelAdvice model_advice = 8;
+}
+
+// Founder's model's suggestion for a review card: one of the card's choices
+// when it was written, with why, from the quotes it cites. Unmeasured and
+// never batched: a person takes it as any other choice. Show it only while
+// the card's choices are still `offered`.
+message FoundryReviewModelAdvice {
+  FoundryReviewChoice choice = 1;
+  // One or two sentences, at most 300 characters: plain text, never markup,
+  // sanitized of control and bidi characters.
+  string rationale = 2;
+  // The quotes it stands on, at least one.
+  repeated FoundryReviewCite cites = 3;
+  // The card's choices the model was offered, in order.
+  repeated FoundryReviewChoice offered = 4;
+}
+
+// A place in a document a suggestion cites.
+message FoundryReviewCite {
+  string doc_id = 1;
+  FoundryReviewSpan span = 2;
+}
+
+// A name of a document: every review of it shares one resolve decision.
+message FoundryReviewNameCard {
+  // The review its choice settles.
+  string review_key = 1;
+  // The settling review first, then up to 199 more in document order.
+  repeated string review_keys = 2;
+  // Every review of the name in the document.
+  int32 review_count = 3;
+  // Accepted claims it blocks, written once it is settled.
+  int32 blocked = 4;
+  // The held claims that wait on it, each approved on its own.
+  repeated FoundryReviewClaimCard held = 5;
+  string type = 6;
+  string norm_name = 7;
+}
+
+// A held claim, approved or rejected on its own.
+message FoundryReviewClaimCard {
+  string review_key = 1;
+  // Its score band: 0.9, 0.8, 0.7, 0.6, low or none.
+  string band = 2;
+  // The saved decisions at its place that don't decide it: an approval of
+  // what it said before asks to be read again.
+  repeated FoundryReviewDecision decisions = 3;
+}
+
+// A value documents state differently.
+message FoundryReviewValueCard {
+  string review_key = 1;
+}
+
+// The resolve decisions of one name across the ontology's documents.
+message FoundryReviewNameDecisions {
+  string type = 1;
+  string norm_name = 2;
+  int32 total = 3;
+  // How many different choices they make (an entity each, or not in the data).
+  int32 choices = 4;
+  // The newest, at most 20, with what became of each in the current load.
+  repeated FoundryReviewDecision newest = 5;
+}
+
+// How often the spot checks of each band were right, and how often
+// re-checks agreed.
+message FoundryReviewPrecision {
+  message Band {
+    string band = 1;
+    int32 right = 2;
+    int32 total = 3;
+  }
+  repeated Band bands = 1;
+  int32 rechecks_agreed = 2;
+  int32 rechecks_total = 3;
+}
+
+// A spot check of a load, at its place: a held claim or a fact's quote.
+message FoundryReviewDraw {
+  int64 seq = 1;
+  string band = 2;
+  string doc_id = 3;
+  FoundryReviewSpan span = 4;
+  string link = 5;
+  optional double confidence = 6;
+  oneof drawn {
+    FoundryReviewHeldDraw held = 7;
+    FoundryReviewQuoteDraw quote = 8;
+  }
+  // Someone labelled its place at random, in any load.
+  bool done = 9;
+}
+message FoundryReviewHeldDraw {
+  string claim_key = 1;
+  string statement_hash = 2;
+  // Its review while the load's cards hold its claim; empty once its card
+  // is gone (its approval written): it is read from its place then.
+  string review_key = 3;
+}
+message FoundryReviewQuoteDraw {
+  string fact_key = 1;
+}
+
+// A decision or a label a second person may re-check.
+message FoundryReviewRecheck {
+  oneof of {
+    FoundryReviewDecision decision = 1;
+    FoundryReviewLabel label = 2;
+  }
 }
 
 // Helix Foundry model providers: where a workspace's model calls go
@@ -2793,6 +2960,10 @@ message FoundryAgentPageContext {
   // Assistant's default for a schedule. One that isn't a zone Go's database
   // has, or longer than 64 characters, is dropped, never refused.
   string time_zone = 5;
+  // The review card open in the review walk (64 lowercase hexadecimal
+  // characters), of the current load of ontology_id, which it requires.
+  // Founder is told the card's review, so it can recommend a choice.
+  string review_card_id = 6;
 }
 
 // FoundryAgentThread is a conversation with the Assistant, private to its user.
@@ -3195,8 +3366,8 @@ message FoundryAutomation {
   int64 approved_spec_revision = 12;
   google.protobuf.Timestamp approved_at = 13;
   // Its trigger's kind (schedule, sync_finished, load_ready,
-  // document_arrived, generation_finished or manual) and the connector,
-  // ontology or document set an event trigger listens to.
+  // document_arrived, generation_finished, reviews_waiting or manual) and the
+  // connector, ontology or document set an event trigger listens to.
   string trigger_kind = 14;
   string trigger_target = 15;
   // An active schedule's next time.

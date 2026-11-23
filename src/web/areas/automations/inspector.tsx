@@ -1,4 +1,5 @@
 import { ArrowDownUp, Trash2 } from "lucide-react";
+import { useState } from "react";
 import type {
   AutomationAction,
   AutomationNode,
@@ -16,6 +17,7 @@ import {
 import {
   KIND_HEADS,
   LIMITS,
+  MAX_REVIEWS_WAITING,
   WEEKDAYS,
   actionText,
   edgesOutOf,
@@ -25,6 +27,7 @@ import {
   setConfig,
   triggerOfKind,
   validZone,
+  wholeNumber,
   type Weekday,
 } from "./model";
 import { nodeIcon, stepTitle } from "./parts";
@@ -48,6 +51,7 @@ const TRIGGERS: SelectOption<AutomationTrigger["kind"]>[] = [
   { value: "load_ready", label: "When a load of an ontology is ready" },
   { value: "document_arrived", label: "When documents arrive in a set" },
   { value: "generation_finished", label: "When a draft of an ontology ends" },
+  { value: "reviews_waiting", label: "When reviews wait in an ontology" },
   { value: "manual", label: "Only when I run it" },
 ];
 const OUTCOMES: SelectOption<"succeeded" | "failed" | "any">[] = [
@@ -187,6 +191,40 @@ export function Inspector({
 }
 
 /** The inspector's Remove, under it; never for the trigger. */
+/**
+ * A whole-number field. Its text is the person's while they type, so it can
+ * be emptied and retyped; only a number commits (`wholeNumber`, clamped),
+ * and leaving the field shows the number kept.
+ */
+function WholeNumber({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max?: number;
+  onChange: (n: number) => void;
+}) {
+  const [text, setText] = useState<string>();
+  return (
+    <input
+      type="number"
+      inputMode="numeric"
+      min={min}
+      max={max}
+      value={text ?? value}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = wholeNumber(e.target.value, min, max);
+        if (n !== undefined) onChange(n);
+      }}
+      onBlur={() => setText(undefined)}
+    />
+  );
+}
+
 export function RemoveStep({ onRemove }: { onRemove: () => void }) {
   return (
     <Button variant="ghost" size="sm" icon={Trash2} onClick={onRemove}>
@@ -253,21 +291,11 @@ function TriggerFields({
           {t.every === "hour" && (
             <label className="hf-field">
               <span>Minutes past the hour</span>
-              <input
-                type="number"
-                inputMode="numeric"
+              <WholeNumber
                 min={0}
                 max={59}
                 value={t.minute}
-                onChange={(e) =>
-                  onChange({
-                    ...t,
-                    minute: Math.max(
-                      0,
-                      Math.min(59, Math.trunc(Number(e.target.value) || 0)),
-                    ),
-                  })
-                }
+                onChange={(minute) => onChange({ ...t, minute })}
               />
             </label>
           )}
@@ -337,7 +365,9 @@ function TriggerFields({
           </label>
         </>
       )}
-      {(t.kind === "load_ready" || t.kind === "generation_finished") && (
+      {(t.kind === "load_ready" ||
+        t.kind === "generation_finished" ||
+        t.kind === "reviews_waiting") && (
         <label className="hf-field">
           <span>Ontology</span>
           <Select
@@ -360,6 +390,17 @@ function TriggerFields({
           />
         </label>
       )}
+      {t.kind === "reviews_waiting" && (
+        <label className="hf-field">
+          <span>Cards to review, at least</span>
+          <WholeNumber
+            min={1}
+            max={MAX_REVIEWS_WAITING}
+            value={t.at_least}
+            onChange={(at_least) => onChange({ ...t, at_least })}
+          />
+        </label>
+      )}
       {t.kind === "document_arrived" && (
         <label className="hf-field">
           <span>Document set</span>
@@ -377,12 +418,22 @@ function TriggerFields({
           It never starts on its own: you run it from its page.
         </p>
       )}
-      {t.kind !== "schedule" && t.kind !== "manual" && (
+      {t.kind === "reviews_waiting" && (
         <p className="au-hint">
-          Foundry checks every half minute or so, and starts it a couple of
-          minutes after what it waits for ends. Several at once start it once.
+          Runs when at least this many cards wait in the ontology’s current
+          load, once its reviews are sorted, including the load that is current
+          when you turn it on. It runs again for a new load, or after the count
+          drops below this and rises past it again.
         </p>
       )}
+      {t.kind !== "schedule" &&
+        t.kind !== "manual" &&
+        t.kind !== "reviews_waiting" && (
+          <p className="au-hint">
+            Foundry checks every half minute or so, and starts it a couple of
+            minutes after what it waits for ends. Several at once start it once.
+          </p>
+        )}
     </>
   );
 }
@@ -653,17 +704,10 @@ function ConditionFields({
           </label>
           <label className="hf-field">
             <span>Number</span>
-            <input
-              type="number"
-              inputMode="numeric"
+            <WholeNumber
               min={0}
               value={c.value}
-              onChange={(e) =>
-                onChange({
-                  ...c,
-                  value: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
-                })
-              }
+              onChange={(value) => onChange({ ...c, value })}
             />
           </label>
         </div>
@@ -671,7 +715,7 @@ function ConditionFields({
       <p className="au-hint">
         {c.check === "answer"
           ? "It reads the yes or no of the Founder step before it."
-          : "It reads the count of the step before it: Founder’s, the documents that arrived, or the rows a sync wrote."}
+          : "It reads the count of the step before it: Founder’s, the documents that arrived, the rows a sync wrote, or the cards waiting for review."}
       </p>
       <dl className="au-branches">
         <dt>When met</dt>

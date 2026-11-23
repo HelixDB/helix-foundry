@@ -148,6 +148,12 @@ services:
       HELIX_FOUNDRY__AI__DEFAULT__MODELS__ASK: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_ASK_MODEL:-${FOUNDRY_AI_MODEL:-}}}
       HELIX_FOUNDRY__AI__DEFAULT__MODELS__EXTRACT: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_EXTRACT_MODEL:-${FOUNDRY_AI_MODEL:-}}}
       HELIX_FOUNDRY__AI__DEFAULT__MODELS__VERIFY: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_VERIFY_MODEL:-${FOUNDRY_AI_MODEL:-}}}
+      # Review advice: the install's verify model suggests a choice for the
+      # review cards the rules leave undecided, on its own monthly budget in
+      # US dollars, spent on the install's model and key (never on Ollama,
+      # nor on a server taking one call at a time). false turns it off.
+      HELIX_FOUNDRY__REVIEWS__ADVISE__ENABLED: ${FOUNDRY_REVIEW_ADVICE:-true}
+      HELIX_FOUNDRY__REVIEWS__ADVISE__MONTHLY_USD: ${FOUNDRY_REVIEW_ADVICE_MONTHLY_USD:-10}
     volumes: ["work:/work", "secrets:/secrets:ro"]
     # As the chart's pods: time for a load or question in flight to finish or
     # be handed back uncounted (the graph worker waits up to about 115 s).

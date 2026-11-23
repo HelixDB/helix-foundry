@@ -31,6 +31,7 @@ import type {
   FoundryAutomation,
   FoundryAutomationRun,
 } from "../../../shared/wfe";
+import { LOCAL } from "../../../shared/deployment";
 import { ApiError, sentence as asSentence } from "../../api";
 import {
   Button,
@@ -157,8 +158,18 @@ export function AutomationPage() {
   );
 }
 
-/** /automations/new?template=: a draft from a template, on the canvas, until its first save. */
-export function DraftPage({ templateId }: { templateId: string }) {
+/**
+ * /automations/new?template=&ontology=: a draft from a template, on the
+ * canvas, until its first save, on the ontology named when the workspace
+ * lists it, else its first.
+ */
+export function DraftPage({
+  templateId,
+  ontologyId,
+}: {
+  templateId: string;
+  ontologyId?: string;
+}) {
   const { id: ws } = useWorkspace(),
     lists = useNames(ws);
   const template =
@@ -171,11 +182,13 @@ export function DraftPage({ templateId }: { templateId: string }) {
         ? template.build({
             timeZone: here(),
             connector: lists.connectors[0],
-            ontology: lists.ontologies[0],
+            ontology:
+              lists.ontologies.find((o) => o.id === ontologyId) ??
+              lists.ontologies[0],
             set: lists.sets[0],
           })
         : undefined,
-    [lists.ready, template],
+    [lists.ready, template, ontologyId],
   );
   if (!start)
     return (
@@ -307,7 +320,9 @@ function Editor({
     navigate = useNavigate(),
     qc = useQueryClient(),
     lists = useNames(ws);
-  const email = useQuery(automationQueries.list(ws)).data?.email ?? true;
+  // Whether notify steps email: the list's, else (unread, or a false the
+  // JSON left out) the build's.
+  const email = useQuery(automationQueries.list(ws)).data?.email ?? !LOCAL;
   const phone = useMedia("(max-width: 760px)");
   const [params] = useSearchParams();
   const asked = params.get("tab") as Tab | null;

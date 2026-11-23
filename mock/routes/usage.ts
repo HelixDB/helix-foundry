@@ -11,10 +11,13 @@ import { ASSESSMENTS_CAP_MICROS, assessmentSpend } from "./workflows";
 // spend (./loads.ts, $100 a month, or prod's $50), API sources' extraction no person
 // started (./documents.ts, which spends none unless `eventSetAllowanceSpent`;
 // part of loads' spend, so the total counts it once), and questions'
-// settled spend and reservations (./questions.ts, $30, or prod's $15). Any member reads it.
+// settled spend and reservations (./questions.ts, $30, or prod's $15), and
+// review advice's (none: ../review-advice.ts is deterministic). Any member reads it.
 
 /** foundry.events.max_system_usd_per_workspace_month: $20. */
 const API_SOURCES_CAP_MICROS = 20_000_000;
+/** foundry.reviews.advise.monthly_usd: $10. The mock's advice spends nothing. */
+const REVIEW_ADVICE_CAP_MICROS = 10_000_000;
 
 export const usageRoutes: MockRoute[] = [
   {
@@ -60,6 +63,12 @@ export const usageRoutes: MockRoute[] = [
               spentUsdMicros: String(assessed),
               reservedUsdMicros: "0",
               capUsdMicros: String(ASSESSMENTS_CAP_MICROS),
+            },
+            {
+              task: "FOUNDRY_USAGE_TASK_REVIEW_ADVICE",
+              spentUsdMicros: "0",
+              reservedUsdMicros: "0",
+              capUsdMicros: String(REVIEW_ADVICE_CAP_MICROS),
             },
           ],
         },

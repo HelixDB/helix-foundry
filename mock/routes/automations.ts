@@ -56,6 +56,7 @@ import { dataRoutes, syncsEnded, storedConnector } from "./data";
 import { documentSets, documentsArrived } from "./documents";
 import { loadsEnded, queueLoad } from "./loads";
 import { ontologyById } from "./ontologies";
+import { openReviews } from "./review-cards";
 import { currentVersionOf, draftsEnded } from "./ontology";
 import {
   automationDeleted,
@@ -89,6 +90,12 @@ import { manages } from "./workspaces";
 //   ./ontology.ts, ./documents.ts), at once, not 2 minutes later as the
 //   backend counts them, and fires one run for what matched, which waits
 //   while a run is live;
+// - a reviews_waiting trigger reads its ontology's current load's open
+//   cards (./review-cards.ts openReviews) once the index is whole, which it
+//   always is but under `reviewIndexing`, and fires once per arming
+//   (reviewsFiredOn, the load it fired on): again for a new load, or after
+//   the count fell below its threshold (armed again, with no run) and rose
+//   past it;
 // - a run walks one step every `automationStepMs` (500): an action runs the
 //   mock's real sync, load or publish as the owner; an Assistant step
 //   queues an Assistant turn of kind automation in the run's thread, run by
@@ -146,6 +153,9 @@ type StoredAutomation = {
   backoffUntil: number | null;
   // ms; an event trigger finds what ended after it.
   cursor: number | null;
+  // The load a reviews_waiting trigger fired on, until its count fell
+  // below its threshold; null while armed. Activating arms it.
+  reviewsFiredOn: string | null;
   clientToken: string;
   createdAt: string;
   updatedAt: string;
@@ -286,7 +296,11 @@ function checkedSpec(ws: string, raw: unknown): AutomationSpec | MockReply {
         t.connector_id,
         storedConnector(t.connector_id)?.workspaceId === ws,
       ]);
-    if (t.kind === "load_ready" || t.kind === "generation_finished")
+    if (
+      t.kind === "load_ready" ||
+      t.kind === "generation_finished" ||
+      t.kind === "reviews_waiting"
+    )
       named.push([
         "ontology",
         t.ontology_id,
@@ -344,7 +358,9 @@ function automationOut(
   const target =
     t.kind === "sync_finished"
       ? t.connector_id
-      : t.kind === "load_ready" || t.kind === "generation_finished"
+      : t.kind === "load_ready" ||
+          t.kind === "generation_finished" ||
+          t.kind === "reviews_waiting"
         ? t.ontology_id
         : t.kind === "document_arrived"
           ? t.set_id
@@ -579,6 +595,44 @@ function work(ws: string) {
       continue;
     }
     if (t.kind === "manual" || a.cursor === null) continue;
+    // Work its own runs started, directly or through automations they set
+    // off, or past MAX_CHAIN_DEPTH runs, is skipped (the backend's loops).
+    const what =
+      t.kind === "load_ready" || t.kind === "reviews_waiting" ? "load" : "sync";
+    const loopOf = (id: string) => {
+      const c = state.causes.get(id);
+      if (!c) return "";
+      if (c.automationId === a.id)
+        return `Skipped: the ${what} was started by this workflow itself; running on it would loop.`;
+      if (c.chain.includes(a.id))
+        return `Skipped: the ${what} was started by a workflow this one set off; running on it would loop.`;
+      if (c.depth > MAX_CHAIN_DEPTH)
+        return `Skipped: the ${what} came from a chain of ${c.depth} workflows setting each other off; a chain stops after ${MAX_CHAIN_DEPTH}.`;
+      return "";
+    };
+    if (t.kind === "reviews_waiting") {
+      const o = ontologyById(t.ontology_id);
+      const w = o?.workspaceId === ws ? openReviews(o) : null;
+      if (!w || w.indexing) continue;
+      const open = w.open ?? 0;
+      if (open >= t.at_least && a.reviewsFiredOn !== w.loadId) {
+        const fired = fire(
+          a,
+          `reviews_waiting:${w.loadId}:${a.cursor}`,
+          { kind: t.kind, at: iso(Date.now()), load_id: w.loadId, count: open },
+          {
+            summary: `${open >= 10_000 ? "10,000 or more" : open.toLocaleString("en-US")} to review in its ontology's current load.`,
+            count: open,
+          },
+          false,
+          loopOf(w.loadId),
+        );
+        if (fired)
+          Object.assign(a, { reviewsFiredOn: w.loadId, cursor: Date.now() });
+      } else if (open < t.at_least && a.reviewsFiredOn === w.loadId)
+        Object.assign(a, { reviewsFiredOn: null, cursor: Date.now() });
+      continue;
+    }
     const found = ended(t).filter((e) => e.at > a.cursor!);
     if (!found.length) continue;
     const matched = found.filter((e) =>
@@ -593,20 +647,6 @@ function work(ws: string) {
       a.cursor = newest.at;
       continue;
     }
-    // Work its own runs started, directly or through automations they set
-    // off, or past MAX_CHAIN_DEPTH runs, is skipped (the backend's loops).
-    const what = t.kind === "load_ready" ? "load" : "sync";
-    const loopOf = (id: string) => {
-      const c = state.causes.get(id);
-      if (!c) return "";
-      if (c.automationId === a.id)
-        return `Skipped: the ${what} was started by this workflow itself; running on it would loop.`;
-      if (c.chain.includes(a.id))
-        return `Skipped: the ${what} was started by a workflow this one set off; running on it would loop.`;
-      if (c.depth > MAX_CHAIN_DEPTH)
-        return `Skipped: the ${what} came from a chain of ${c.depth} workflows setting each other off; a chain stops after ${MAX_CHAIN_DEPTH}.`;
-      return "";
-    };
     const fired = matched.filter((e) => !loopOf(e.id));
     const loop = fired.length ? "" : loopOf(matched[matched.length - 1]!.id);
     const counted = fired.length ? fired : matched;
@@ -1225,6 +1265,7 @@ function activate(a: StoredAutomation, approved: boolean) {
     // Work ends on the real clock: its cursor is now, however far ahead
     // the schedules' clock was moved.
     cursor: triggerSpec(a).kind === "schedule" ? null : Date.now(),
+    reviewsFiredOn: null,
     updatedAt: now(),
     ...(approved && {
       approvedSpecRevision: a.specRevision,
@@ -1550,6 +1591,7 @@ export const automationRoutes: MockRoute[] = [
         failures: 0,
         backoffUntil: null,
         cursor: null,
+        reviewsFiredOn: null,
         clientToken: token,
         createdAt: now(),
         updatedAt: now(),

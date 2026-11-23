@@ -27,6 +27,7 @@ import { LOCAL } from "../shared/deployment";
 import type { WizardStepId } from "./areas/ontology/model";
 import type { AgentOperation } from "./areas/agent/model";
 import type { TemplateId } from "./areas/automations/model";
+import type { Decidable, RuleId } from "./areas/reviews/advice";
 import type { SectionId } from "./shell/types";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type {
@@ -133,6 +134,25 @@ export type SampleTiming = {
  * refused as asked (a 4xx: a cap, a plan, a precondition), or it failed.
  */
 export type Refusal = "rate_limit" | "refused" | "error";
+
+/** A count in buckets: events carry no exact sizes. */
+export type SizeBucket = "0" | "1" | "2-9" | "10-49" | "50-199" | "200+";
+/**
+ * The bucket of `n`.
+ *
+ * @example
+ * sizeBucket(12); // "10-49"
+ */
+export const sizeBucket = (n: number): SizeBucket =>
+  (
+    [
+      [0, "0"],
+      [1, "1"],
+      [9, "2-9"],
+      [49, "10-49"],
+      [199, "50-199"],
+    ] as const
+  ).find(([max]) => n <= max)?.[1] ?? "200+";
 
 /**
  * Foundry's custom events, in one place so their names stay stable in
@@ -253,7 +273,7 @@ export type AnalyticsEvents = {
   // prepared, then run (how it ended), dismissed or refused, with whether
   // the person named its target. Never the text, a name or a payload.
   agent_dock_opened: {
-    from: "shortcut" | "button" | "palette" | "new_dashboard";
+    from: "shortcut" | "button" | "palette" | "new_dashboard" | "review";
   };
   agent_turn_started: { section: AgentSection };
   agent_turn_ended: {
@@ -343,6 +363,22 @@ export type AnalyticsEvents = {
   load_made_current: undefined;
   review_settled: { kind: "resolve" | "prop" | "release" | "reject" };
   review_decision_removed: undefined;
+  // The review walkthrough (areas/reviews/walkthrough.tsx): a card decided
+  // (Founder's suggestion accepted, or another choice), with the rule that
+  // suggested one; a batch of one rule's measured or repeated suggestions;
+  // a choice or batch taken back; and the walk's end, by how many it decided.
+  review_decided: {
+    how: "accepted" | "chosen";
+    kind: Decidable["kind"];
+    rule: RuleId | "none";
+  };
+  review_batch_accepted: { size_bucket: SizeBucket; rule: RuleId };
+  review_undone: { kind: "choice" | "batch" };
+  review_walk_finished: { size_bucket: SizeBucket };
+  // The sidebar's nudge to an owner or admin (areas/reviews/nudge.tsx): shown
+  // for a load with cards to decide, and Start pressed, by how many.
+  review_nudge_shown: { size_bucket: SizeBucket };
+  review_nudge_started: { size_bucket: SizeBucket };
   graph_exported: undefined;
   // Use cases (the Usage pages; the events keep their workflow_ names): an
   // agent's task, and the prompt that has an agent run it.

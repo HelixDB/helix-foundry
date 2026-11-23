@@ -13,12 +13,13 @@ import {
   StatusDot,
   cx,
   formatNumber,
+  plural,
 } from "../../kit";
 import { paths } from "../../paths";
 import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
-import { reviewQueries } from "../reviews/api";
+import { useReviewSummary } from "../reviews/cards-api";
 import { suggestionQueries } from "../suggestions/api";
 import { loadVersion } from "./model";
 import { lastLoadBadge } from "./parts";
@@ -55,19 +56,32 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       ...ontologyQueries.ontology(ws, open),
       enabled: !!open,
     }).data?.ontology;
-  // Review counts what is open on both its tabs: Facts as the Review page
-  // last counted it on the current load (reading the load's reviews is the
-  // page's, not every page's), and Ontology's suggestions where audits run.
-  // A total waits for Facts' part; no grantee reaches Review.
+  // Review counts what is open on each of its tabs, apart ("7 · 4"), and
+  // says each part: Facts' cards to decide on the current load, as the
+  // review cards index counts them (the summary, less the walk's own
+  // choices), the number the job dock, the nudge and the overview's notice
+  // show, and Ontology's suggestions where audits run. The counts wait for
+  // Facts' part; no grantee reaches Review.
   const heal = useQuery({
       ...suggestionQueries.list(ws, open),
       enabled: !!open && !grantee,
     }),
-    facts = useQuery(reviewQueries.openFacts(ws, open)).data;
-  const reviewOpen =
-    facts && own?.currentLoad?.id === facts.loadId
-      ? facts.open + (heal.data?.enabled ? heal.data.findings?.length || 0 : 0)
-      : 0;
+    facts = useReviewSummary().get(open);
+  const counted = facts && own?.currentLoad?.id === facts.loadId,
+    factsOpen = counted ? (facts.open ?? 0) : undefined,
+    // The index counts at most 10,000: more says so.
+    more = !!(counted && facts.more),
+    suggestionsOpen = heal.data?.enabled ? heal.data.findings?.length || 0 : 0;
+  const reviewOpen = factsOpen === undefined ? 0 : factsOpen + suggestionsOpen;
+  const reviewParts = [
+    factsOpen &&
+      (more
+        ? `${formatNumber(factsOpen)}+ cards to decide`
+        : `${plural(factsOpen, "card")} to decide`),
+    suggestionsOpen && plural(suggestionsOpen, "ontology suggestion"),
+  ]
+    .filter(Boolean)
+    .join(", ");
   // The open ontology's row, until the list names it (made in another tab).
   const listed = list.data?.ontologies || [],
     ontologies =
@@ -225,14 +239,17 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           aria-current={onReview ? "page" : undefined}
                           aria-label={
                             reviewOpen > 0
-                              ? `Review, ${formatNumber(reviewOpen)} open`
+                              ? `Review: ${reviewParts}`
                               : undefined
                           }
+                          title={reviewOpen > 0 ? reviewParts : undefined}
                         >
                           <span>Review</span>
                           {reviewOpen > 0 && (
                             <span className="hf-nav-badge" aria-hidden>
-                              {formatNumber(reviewOpen)}
+                              {/* Facts' count always leads, 0 too, so
+                              the suggestions' never reads as cards. */}
+                              {`${formatNumber(factsOpen ?? 0)}${more ? "+" : ""}${suggestionsOpen ? ` · ${formatNumber(suggestionsOpen)}` : ""}`}
                             </span>
                           )}
                         </Link>

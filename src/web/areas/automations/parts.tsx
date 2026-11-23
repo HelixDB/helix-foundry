@@ -1,4 +1,5 @@
 import "./automations.css";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
   CalendarClock,
@@ -16,6 +17,8 @@ import type {
   FoundryAutomation,
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
+import { LOCAL } from "../../../shared/deployment";
+import { useWorkspace } from "../../ui";
 import {
   actionText,
   edgesOutOf,
@@ -30,7 +33,7 @@ import {
   TEMPLATES,
 } from "./model";
 import { automationPaths as paths } from "./paths";
-import type { useNames } from "./queries";
+import { automationQueries, type useNames } from "./queries";
 
 // What the automations' pages share: how an automation, a run and a step
 // show their state, each kind's icon, and the steps as they will run
@@ -211,8 +214,16 @@ const NEEDS: Record<Template["needs"][number], string> = {
   set: "a document set",
 };
 
-/** The templates a new automation starts from on the canvas, each saying what it needs that the workspace lacks. */
+/**
+ * The templates a new automation starts from on the canvas, each saying what
+ * it needs that the workspace lacks. Where notify steps send no email (the
+ * list's `email`, false on a local build; until it is read, or when the JSON
+ * leaves a false out, the build's), the reviews digest, an email and nothing
+ * else, isn't offered.
+ */
 export function Templates({ lists }: { lists: ReturnType<typeof useNames> }) {
+  const { id: ws } = useWorkspace();
+  const email = useQuery(automationQueries.list(ws)).data?.email ?? !LOCAL;
   const has = {
     connector: !!lists.connectors.length,
     ontology: !!lists.ontologies.length,
@@ -220,7 +231,7 @@ export function Templates({ lists }: { lists: ReturnType<typeof useNames> }) {
   };
   return (
     <ul className="au-templates" aria-label="Templates">
-      {TEMPLATES.map((t) => {
+      {TEMPLATES.filter((t) => email || t.id !== "reviews-digest").map((t) => {
         const lacks = t.needs.filter((n) => !has[n]);
         return (
           <li key={t.id}>

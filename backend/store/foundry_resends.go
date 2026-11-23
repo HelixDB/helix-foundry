@@ -16,7 +16,7 @@ import (
 // A load owes the engine a document again (foundry_load_resends) when
 // something of the document that the load holds changed after its commit: a
 // person's approval of a claim its review holds back, which joins the load's
-// decisions as it is settled (SettleFoundryReleases). A resend job sends each
+// decisions as it is settled (settleRelease). A resend job sends each
 // owed document again, and the engine writes what the approval releases from
 // the review the load keeps, asking no model (contract 4.17.0; through
 // 4.16.0 it replayed the document's saved extraction); the document never
@@ -27,7 +27,7 @@ import (
 //
 // A load owes the engine its own decisions again (model.FoundryResendDecisions,
 // a row that names no document) when its list of value decisions changed: a
-// person chose a value of a property (SettleFoundryValue) or took a choice
+// person chose a value of a property (settleValue) or took a choice
 // back (DeleteFoundryReviewDecision). Every Extract of a load carries all of
 // its value decisions, and the engine sets each and withdraws those it is no
 // longer sent, so the same job answers it, with an Extract of no documents
@@ -38,7 +38,7 @@ import (
 // never by the order it arrived in, so a load it was applied to in place
 // holds what a rebuild with the same decisions holds. The engine keeps a
 // decision once, by its id, so a property decided again with another value
-// is a new decision (SettleFoundryValue). One taken back stays in the list,
+// is a new decision (settleValue). One taken back stays in the list,
 // marked removed and sent in no Extract, until the request ends: the load
 // holds its value until then, and the access rules read the list.
 //
@@ -198,7 +198,7 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 // list already has a decision for, by its key or by the statement at its
 // place (as the engine binds a release), is left as it is, whatever its id;
 // so is a decision the list holds a copy of under the key its claim had
-// before it was approved again (SettleFoundryReleases).
+// before it was approved again (settleRelease).
 //
 // A release of a claim the ontology holds a rejection of (foundryClaimAt) is
 // never carried, and a copy of one the list has not written goes: the load
@@ -211,7 +211,7 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 // claim the ontology holds a rejection of (withdrawFoundryReleases): one the
 // load may have written becomes a withdraw, which the resend sends, and the
 // rest are deleted. Removing or replacing a decision takes it from the load
-// that is current then (DeleteFoundryReviewDecision, SettleFoundryReleases),
+// that is current then (DeleteFoundryReviewDecision, settleRelease),
 // so a copy is left behind in a load that was not: one being written then,
 // which copied the approval as it was created and may have written it, or
 // one made current again later. So is a copy an older binary's removal
@@ -343,7 +343,8 @@ AND NOT EXISTS (SELECT 1 FROM foundry_load_resends WHERE load_id=? AND document_
 }
 
 // makeFoundryLoadCurrent makes loadID the ontology's current load, the load
-// reads go to, and, when it was not, brings it the resolves its list lacks
+// reads go to, and, when it was not, asks for a full pass of its review
+// cards and brings it the resolves its list lacks
 // (carryFoundryResolves): every path that makes a load current comes here (a
 // load job's end, SetCurrentFoundryLoad, an enrichment purge). The caller
 // holds the ontology's lock, and has locked the live job's row, if any,
@@ -358,6 +359,16 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 	if was != nil && *was == loadID {
 		return nil
 	}
+	// The decisions and stored values its review cards were built against
+	// may have changed while it was not current.
+	if err := s.requestFoundryReviewPass(ctx, o.ID, loadID); err != nil {
+		return err
+	}
+	// Its cards may have been indexed while a job wrote it, owing advice
+	// that waited for it to be current.
+	if err := s.oweFoundryReviewAdvice(ctx, o.WorkspaceID, o.ID, loadID); err != nil {
+		return err
+	}
 	return s.carryFoundryResolves(ctx, o)
 }
 
@@ -367,9 +378,9 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 // this one's writing, which its creation could not copy. It runs only as a
 // load becomes current (makeFoundryLoadCurrent). A resolve that asks about a
 // name, settled while this load was current, joined the list then
-// (SettleFoundryResolve) and is held by id. One of a name this load links
+// (settleResolve) and is held by id. One of a name this load links
 // already, settled while it was current, was the next load's then
-// (SettleFoundryBoundResolve) and its list holds no copy of it as chosen:
+// (settleResolve, a name its load links already) and its list holds no copy of it as chosen:
 // nothing records which load was current when, so made current again
 // (another load current between) the load gets it as any other it lacks.
 // The engine refuses it on its own document (bound), which its card shows,
@@ -396,7 +407,7 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 // DeleteFoundryReviewDecision); and a copy of a name of a document (type,
 // document and name) that is not the decision that stands goes, whatever
 // became of it, as the engine refuses an Extract that decides a name twice:
-// one under another id (SettleFoundryResolve), or under its id with another
+// one under another id (settleResolve), or under its id with another
 // entity (a name the load links already, chosen again: its decision keeps its
 // id, SettleFoundryReviewDecision). A copy the list holds by id of the same
 // choice is left as it is.
@@ -448,7 +459,7 @@ const foundryAliasUnread = `EXISTS (SELECT 1 FROM foundry_load_decisions c WHERE
 
 // ListFoundryCarriedAliases reads at most limit aliases carried to a load
 // whose asking documents are yet to be owed (carryFoundryResolves,
-// SettleFoundryResolve or SettleFoundryBoundResolve from another load), in
+// settleResolve from another load), in
 // id order: resolves that chose
 // an entity, carried, with no job's word on them, whose document is owed a
 // resend for a name. A resend job of the load reads them before it reads
@@ -943,7 +954,7 @@ WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 
 // recordFoundryNameOutcomes records what the engine said of the resolve
 // decisions of document docID that the load waits to settle in place
-// (SettleFoundryResolve): each on the load's copy, by its id, of that
+// (settleResolve): each on the load's copy, by its id, of that
 // document, while it waits (model.FoundryNameApplied). Only a run that read
 // the document with its saved model work says it
 // (FoundryDocumentExtraction.SettlesNames); a failed event leaves the copy
@@ -978,7 +989,8 @@ WHERE load_id=? AND id=? AND kind='resolve' AND doc_id=? AND applied_status IN (
 // it failed (contract 4.22.0), which join the row's names
 // (mergeFoundryDocumentNames). The job's load is the one its row names, while
 // workerID holds its lease; ErrNotFound means it lost it, and nothing was
-// written.
+// written. The document's review cards are owed a rebuild in the same
+// transaction.
 func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome,
 	names []model.FoundryDocumentName) error {
 	if len(outcomes) == 0 && len(names) == 0 {
@@ -986,9 +998,9 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		var loadID string
-		if err := tx.db.QueryRowContext(ctx, `SELECT load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
-			Scan(&loadID); err != nil {
+		var ontologyID, loadID string
+		if err := tx.db.QueryRowContext(ctx, `SELECT ontology_id, load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
+			Scan(&ontologyID, &loadID); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
@@ -997,7 +1009,12 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 		if err := tx.mergeFoundryDocumentNames(ctx, loadID, docID, names); err != nil {
 			return err
 		}
-		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true)
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true); err != nil {
+			return err
+		}
+		// A withdraw taken back, or a name settled, changed the document's
+		// reviews in the graph: its cards are owed a rebuild.
+		return tx.oweFoundryReviewDocument(ctx, ontologyID, loadID, docID)
 	})
 }
 

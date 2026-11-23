@@ -1202,7 +1202,7 @@ export function Composer({
     qc = useQueryClient();
   const page = pageContext(location.pathname, location.search, about),
     pageKey = page
-      ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}/${page.newAutomation ? "new" : ""}`
+      ? `${page.ontologyId || ""}/${page.loadId || ""}/${page.dashboardId || ""}/${page.newAutomation ? "new" : ""}/${page.reviewCardId || ""}`
       : "";
   const [dropped, setDropped] = useState("");
   const context = page && dropped !== pageKey ? page : null;
@@ -1525,7 +1525,9 @@ function NamedChip({
           : `Looking at: ${name}${
               context.loadId
                 ? ` / ${load ? `${loadVersion(load)} load` : "a load"}`
-                : ""
+                : context.reviewCardId
+                  ? " / this review"
+                  : ""
             }`}
       </Tag>
       <DropChip onDrop={onDrop} />

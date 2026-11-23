@@ -63,7 +63,7 @@ func entityIn(t *testing.T, load, id string) string {
 // while that load is current.
 func (f resendFixture) settleBound(t *testing.T, d *model.FoundryReviewDecision) {
 	t.Helper()
-	_, err := f.db.SettleFoundryBoundResolve(context.Background(), f.ontology.WorkspaceID, f.load, d, &model.FoundryGraphJob{ID: id26("RB-" + d.ID)})
+	_, err := settleBound(f.db, context.Background(), f.ontology.WorkspaceID, f.load, d, &model.FoundryGraphJob{ID: id26("RB-" + d.ID)})
 	require.NoError(t, err)
 }
 
@@ -392,7 +392,7 @@ func TestFoundryResolveSettledAfterTheLoadChanged(t *testing.T) {
 		f, first, second := swapped(t, "RVSWAP")
 		acme := "acme"
 		d := f.resolveOf("1", f.a, "acme corp", &acme)
-		queued, err := f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, []string{f.b},
+		queued, err := settleResolve(f.db, ctx, f.ontology.WorkspaceID, first, d, []string{f.b},
 			&model.FoundryGraphJob{ID: id26("RN-1"), RequestedByUserID: ptr(id26("user"))})
 		require.NoError(t, err)
 		assert.True(t, queued)
@@ -412,7 +412,7 @@ func TestFoundryResolveSettledAfterTheLoadChanged(t *testing.T) {
 	t.Run("not in data", func(t *testing.T) {
 		f, first, second := swapped(t, "RVSWAPN")
 		d := f.resolveOf("1", f.a, "helio", nil)
-		_, err := f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, nil, &model.FoundryGraphJob{ID: id26("RN-1")})
+		_, err := settleResolve(f.db, ctx, f.ontology.WorkspaceID, first, d, nil, &model.FoundryGraphJob{ID: id26("RN-1")})
 		require.NoError(t, err)
 		require.NotNil(t, d.Applied)
 		assert.Equal(t, model.FoundryReleasePending, d.Applied.Status)
@@ -421,7 +421,7 @@ func TestFoundryResolveSettledAfterTheLoadChanged(t *testing.T) {
 WHERE load_id=? AND document_id=?`, second, f.b)
 		require.NoError(t, err)
 		unread := f.resolveOf("2", f.b, "helio", nil)
-		_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, unread, nil, &model.FoundryGraphJob{ID: id26("RN-2")})
+		_, err = settleResolve(f.db, ctx, f.ontology.WorkspaceID, first, unread, nil, &model.FoundryGraphJob{ID: id26("RN-2")})
 		require.NoError(t, err)
 		assert.Nil(t, unread.Applied)
 		assert.Equal(t, map[string]string{d.ID: "pending", unread.ID: ""}, resolvesIn(t, second))
@@ -434,7 +434,7 @@ WHERE load_id=? AND document_id=?`, second, f.b)
 		require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "RVSWAPV2")))
 		f.loaded(t, f.worker, f.a, f.b)
 		acme := "acme"
-		_, err := f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, f.resolveOf("1", f.a, "acme corp", &acme), nil,
+		_, err := settleResolve(f.db, ctx, f.ontology.WorkspaceID, first, f.resolveOf("1", f.a, "acme corp", &acme), nil,
 			&model.FoundryGraphJob{ID: id26("RN-1")})
 		assert.ErrorIs(t, err, store.ErrConflict)
 		assert.Empty(t, f.decisionIDs(t))
@@ -466,9 +466,9 @@ func TestFoundryResolveSettledAsTheLoadChanges(t *testing.T) {
 				settle := func() {
 					var err error
 					if bound {
-						_, err = f.db.SettleFoundryBoundResolve(ctx, f.ontology.WorkspaceID, first, d, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
+						_, err = settleBound(f.db, ctx, f.ontology.WorkspaceID, first, d, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
 					} else {
-						_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, first, d, []string{f.b}, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
+						_, err = settleResolve(f.db, ctx, f.ontology.WorkspaceID, first, d, []string{f.b}, &model.FoundryGraphJob{ID: id26("RN-" + tag)})
 					}
 					require.NoError(t, err)
 				}

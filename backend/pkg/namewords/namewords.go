@@ -119,13 +119,13 @@ func fold(s string) string {
 	return norm.NFC.String(b.String())
 }
 
-// normName is the engine's norm_name: s folded, every run of characters
+// NormName is the engine's norm_name: s folded, every run of characters
 // other than letters, digits, marks, + # & @ $ and a kept dot replaced by
 // one space, trimmed. A dot is kept where it starts a word (".net") or joins
 // a run of two or more letters or digits to a letter or digit ("node.js").
 // Normalizing a name twice gives what normalizing it once does, as the
 // engine's tests check.
-func normName(s string) string {
+func NormName(s string) string {
 	chars := []rune(fold(s))
 	out := make([]rune, 0, len(chars))
 	for i, c := range chars {
@@ -371,7 +371,7 @@ type Text struct {
 // NewText reads the words of text, a document's whole text, as the engine
 // does: normalized as a name is, then read as words.
 func NewText(text string) *Text {
-	t := &Text{words: Words(normName(text)), at: map[string][]int{}}
+	t := &Text{words: Words(NormName(text)), at: map[string][]int{}}
 	for i, w := range t.words {
 		t.at[w] = append(t.at[w], i)
 	}

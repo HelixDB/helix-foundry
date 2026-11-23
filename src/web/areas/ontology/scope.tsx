@@ -40,6 +40,7 @@ import {
   questionQueries,
   type JobsSeen,
 } from "./queries";
+import { refreshSummary } from "../reviews/cards-api";
 
 // /ontology/:ontologyId/*, /explore/:ontologyId/* and /ask/:ontologyId:
 // every page of one ontology runs inside its scope, which loads the
@@ -178,6 +179,8 @@ export function OntologyScope({ explores = false }: { explores?: boolean }) {
       void qc.invalidateQueries({ queryKey: [ws, "ontology", ontologyId] });
       // What a load holds decides who reads it through grants.
       void qc.invalidateQueries({ queryKey: myAccessQuery(ws).queryKey });
+      // And what it asks a person to decide.
+      void refreshSummary(qc, ws);
     }
   }, [loads.data, ontologyId]);
   // The Ontologies panel's list isn't polled: each fresh read of this

@@ -17,11 +17,11 @@ import { useOntology } from "../ontology/scope";
 import { spanAnchor } from "../documents/model";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
+import { aType, choicesOf, notInDataText } from "./choices";
 import type { Naming } from "../explore/naming";
 import {
   approvalOf,
   decidedText,
-  decisionFor,
   holdingEnds,
   holdsDecided,
   isUndoableLink,
@@ -112,7 +112,7 @@ function NameReviews({
  * claim (`holding`, holdingEnds), are named as the document writes them,
  * each with the way to its review.
  */
-function ClaimWritten({
+export function ClaimWritten({
   settle,
   single,
   holding,
@@ -185,6 +185,15 @@ function ClaimWritten({
 }
 
 /**
+ * Decisions a page holds already, for SettleReview to read in place of
+ * every decision of the ontology, and how it hears of each it saves.
+ */
+export type HeldDecisions = {
+  list: readonly FoundryReviewDecision[];
+  onSaved: (d: FoundryReviewDecision) => void;
+};
+
+/**
  * Settles a review of the load the page shows (`load`); only the current one
  * settles. A name is saved as an override for the next load: linked to a
  * record, the next load links that name in its other documents too, where
@@ -211,7 +220,9 @@ export function SettleReview({
   load,
   link,
   naming,
+  decisions,
   drawn,
+  compact,
   onSettled,
 }: {
   review: Settleable & { reason: string };
@@ -219,13 +230,36 @@ export function SettleReview({
   link: (path: string) => string;
   // The rules of the page's version: which links hold one value.
   naming: Naming;
+  // The decisions of this review the page holds already (the review walk's,
+  // read by id and at its places), read in place of every decision of the
+  // ontology; unset, the card reads them all.
+  decisions?: HeldDecisions;
   drawn?: ReviewDrawn;
+  // A spot check's: Reject and Approve alike in one row, as Wrong and
+  // Right are, without the notes on what each does.
+  compact?: boolean;
   onSettled?: () => void;
 }) {
   const { id: ws, role } = useWorkspace();
   const { id: o, ontology } = useOntology();
   const qc = useQueryClient();
-  const query = useQuery(reviewQueries.list(ws, o));
+  const listed = useQuery({
+    ...reviewQueries.list(ws, o),
+    enabled: !decisions,
+  });
+  // The decision saved here, until the page's decisions hold it.
+  const [savedHere, setSavedHere] = useState<FoundryReviewDecision>();
+  const query = {
+    data: decisions
+      ? [
+          ...(savedHere && !decisions.list.some((d) => d.id === savedHere.id)
+            ? [savedHere]
+            : []),
+          ...decisions.list,
+        ]
+      : listed.data,
+    error: decisions ? null : listed.error,
+  };
   const [choice, setChoice] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -272,17 +306,12 @@ export function SettleReview({
       : table
         ? "Replace the table’s value with"
         : "Keep value";
-  const decision =
-    isRelease || choice === ""
-      ? undefined
-      : isProp
-        ? decisionFor(review, {
-            value: s.values.find((v) => JSON.stringify(v.value) === choice)
-              ?.value,
-          })
-        : decisionFor(review, {
-            entityKey: choice === "none" ? null : choice.slice(4),
-          });
+  const choices = choicesOf(review, (c) => c.entity?.name ?? c.key);
+  // What a card's own buttons send: Approve and Reject of a held claim.
+  const approval = choices.find((c) => c.kind === "approve"),
+    rejection = choices.find((c) => c.kind === "reject");
+  // The choice picked in the form, of a name or a value.
+  const picked = isRelease ? undefined : choices.find((c) => c.id === choice);
   // Also when the version isn't known: a card promises no edge it can't.
   const single = isRelease && (!naming.version || naming.oneValued.has(s.link));
   // A claim held as conflicting with what its link holds, where the version
@@ -294,11 +323,11 @@ export function SettleReview({
   // The names of the claim the load linked on less than a name that hold it
   // in this load, in the order the engine refuses them.
   const unsettled = isRelease ? holdingEnds(s.unsettled, single) : [];
-  const approval = isRelease
+  const approved = isRelease
     ? approvalOf(query.data ?? [], s, editable)
     : undefined;
-  const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
-  const moved = !!approval?.moved;
+  const saved = approved?.saved ?? query.data?.find((d) => matchesReview(d, s));
+  const moved = !!approved?.moved;
   // An approval of this claim a person took back from this load (contract
   // 4.16.0): the claim is held again, and approving it saves a new one.
   const withdrawn =
@@ -365,30 +394,23 @@ export function SettleReview({
     setPending(true);
     setError("");
     try {
-      await settleReview(ws, o, s.reviewId, {
+      const saved = await settleReview(ws, o, s.reviewId, {
         decision: choice,
         ...(drawn ? { drawn } : {}),
       });
       onSettled?.();
-      await qc.invalidateQueries({
-        queryKey: reviewQueries.list(ws, o).queryKey,
-      });
+      if (decisions) {
+        setSavedHere(saved.decision);
+        decisions.onSaved(saved.decision);
+      } else
+        await qc.invalidateQueries({
+          queryKey: reviewQueries.list(ws, o).queryKey,
+        });
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setPending(false);
     }
-  };
-  // The record a person picked, if any.
-  const chosen = review.candidates.find((c) => `key:${c.key}` === choice);
-  // A name two candidates share reads with their keys.
-  const label = (c: Candidate) => {
-    const name = c.entity?.name ?? c.key;
-    return review.candidates.some(
-      (other) => other !== c && (other.entity?.name ?? other.key) === name,
-    )
-      ? `${name} (${c.key})`
-      : name;
   };
   return (
     <div className="on-stack">
@@ -496,7 +518,7 @@ export function SettleReview({
       )}
       {canManage(role) && editable && (approves || rejects) && (
         <div className="on-stack">
-          {approves && (
+          {approves && !compact && (
             <p className="on-muted">
               On your word, from this sentence alone.{" "}
               {unsettled.length
@@ -511,15 +533,13 @@ export function SettleReview({
               {error || query.error?.message}
             </p>
           )}
-          <div className="hf-form-actions">
+          <div className={compact ? "rq-verdict" : "hf-form-actions"}>
             {rejects && (
               <Button
                 size="sm"
-                variant="ghost"
+                variant={compact ? undefined : "ghost"}
                 disabled={pending}
-                onClick={() =>
-                  void (held && save({ reject: { statementHash: held.hash } }))
-                }
+                onClick={() => void (rejection && save(rejection.decision))}
               >
                 Reject
               </Button>
@@ -529,15 +549,13 @@ export function SettleReview({
                 size="sm"
                 disabled={pending}
                 pending={pending}
-                onClick={() =>
-                  void (held && save({ release: { statementHash: held.hash } }))
-                }
+                onClick={() => void (approval && save(approval.decision))}
               >
                 Approve
               </Button>
             )}
           </div>
-          {rejects && (
+          {rejects && !compact && (
             <p className="on-muted">
               Reject it if it’s wrong: nothing is written, and it leaves Needs
               review in this load and later ones. Remove the decision under
@@ -551,8 +569,8 @@ export function SettleReview({
           className="on-stack"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!decision || pending) return;
-            await save(decision);
+            if (!picked || pending) return;
+            await save(picked.decision);
           }}
         >
           <label className="hf-field">
@@ -562,24 +580,7 @@ export function SettleReview({
               value={choice}
               disabled={pending}
               onChange={setChoice}
-              options={
-                isProp
-                  ? [
-                      ...new Map(
-                        s.values.map((v) => [JSON.stringify(v.value), v]),
-                      ).values(),
-                    ].map((v) => ({
-                      value: JSON.stringify(v.value),
-                      label: propValueText(v.value),
-                    }))
-                  : [
-                      ...review.candidates.map((c) => ({
-                        value: `key:${c.key}`,
-                        label: label(c),
-                      })),
-                      { value: "none", label: "Not in data" },
-                    ]
-              }
+              options={choices.map((c) => ({ value: c.id, label: c.label }))}
             />
           </label>
           <p className="on-muted">
@@ -593,11 +594,11 @@ export function SettleReview({
                 ? // This load links the name already: the engine keeps that
                   // link in place, and the next load reads the choice.
                   "This load keeps its link; a choice here, or Undo link, applies from the next load. A record chosen links this name in other documents too, where nothing else links it."
-                : chosen
-                  ? `Links this name to ${label(chosen)} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
-                  : choice === "none"
-                    ? "Not in data is for this document only: in this load at once, and in later loads."
-                    : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
+                : picked?.kind === "link"
+                  ? `Links this name to ${picked.label} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
+                  : picked?.kind === "not_in_data" && s.kind === "resolve"
+                    ? `${notInDataText(s.normName, s.type)} This applies to this load at once, and to later loads.`
+                    : `A record chosen links this name here and in other documents where nothing else links it; ${s.kind === "resolve" ? `“Not ${aType(s.type)} we have”` : "saying it is none"} is for this document only. Either applies to this load at once, and to later loads.`}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">
@@ -618,7 +619,7 @@ export function SettleReview({
             <Button
               type="submit"
               size="sm"
-              disabled={!decision || pending}
+              disabled={!picked || pending}
               pending={pending}
             >
               Settle review
@@ -666,7 +667,7 @@ const chosenLine = (
 const linkedLine = (
   d: Extract<ReviewDecision, { kind: "resolve" }> & FoundryReviewDecision,
 ) => {
-  const line = `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`;
+  const line = `${d.type} · ${d.normName} → ${d.entityKey ?? `not ${aType(d.type)} we have`}`;
   switch (d.applied?.status) {
     case "pending":
       return `${line} · being linked in this load`;

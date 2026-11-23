@@ -14,6 +14,10 @@
 // already writes, so no code path that ends work can forget to tell
 // automations, and nothing is added to those transactions.
 //
+// A reviews_waiting trigger polls state instead: its ontology's current load
+// and its open review cards, once the review index is whole and its count
+// fresh; it fires once per arming (reviewsWaiting).
+//
 // A step runs as the owner, through the host's session (integration.
 // SessionHost), opened afresh each attempt: an owner who lost access pauses
 // the automation. An Assistant step queues an Assistant turn in the run's
@@ -40,6 +44,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -285,6 +290,10 @@ func (t *Task) watch(ctx context.Context) {
 			log.From(ctx).Error("an automation's spec can't be read", "automation", a.ID, "err", err)
 			continue
 		}
+		if _, ok := spec.Trigger().(automation.ReviewsWaiting); ok {
+			t.reviewsWaiting(ctx, a, spec, ended[0])
+			continue
+		}
 		advance := model.FoundryCursorAdvance{From: *a.Cursor, To: ended[len(ended)-1].Cursor}
 		var fired, looped []model.FoundryAutomationEnded
 		why := ""
@@ -310,6 +319,38 @@ func (t *Task) watch(ctx context.Context) {
 	}
 }
 
+// reviewsWaiting fires a's reviews_waiting trigger once per arming, on row,
+// its ontology's current load with its open cards. Its cursor's ID is the
+// load it last fired on, "" while armed:
+//
+//   - the load it fired on, with enough cards: nothing (it fired);
+//   - the load it fired on, with too few: armed again, with no run, so the
+//     load fires again once its count rises past the threshold;
+//   - another load (or armed), with enough: it fires, its cursor naming the
+//     load; a load its own run started is recorded skipped instead, once;
+//   - another load (or armed), with too few: nothing.
+//
+// The run's key is the load and the cursor's time, unique per arming: a
+// re-arm's time is later than the fire's, since the count fell at a newer
+// dirty_at.
+func (t *Task) reviewsWaiting(ctx context.Context, a *model.FoundryAutomation, spec automation.Spec, row model.FoundryAutomationEnded) {
+	enough := len(matching(spec.Trigger(), []model.FoundryAutomationEnded{row})) == 1
+	firedOn := a.Cursor.ID == row.Cursor.ID
+	switch {
+	case firedOn && !enough:
+		t.fire(ctx, a, spec, model.FoundryCursorAdvance{From: *a.Cursor, To: model.FoundryAutomationCursor{At: row.Cursor.At}}, "",
+			model.FoundryAutomationEvent{}, nil, "")
+	case firedOn || !enough:
+		if err := t.db.TouchFoundryAutomation(ctx, a.ID); err != nil {
+			log.From(ctx).Warn("record an automation's look failed", "automation", a.ID, "err", err)
+		}
+	default:
+		event, output := eventOf(spec.Trigger(), []model.FoundryAutomationEnded{row})
+		key := event.Kind + ":" + row.Cursor.ID + ":" + strconv.FormatInt(a.Cursor.At.UnixMicro(), 10)
+		t.fire(ctx, a, spec, model.FoundryCursorAdvance{From: *a.Cursor, To: row.Cursor}, key, event, &output, loops(a.ID, spec.Trigger(), row))
+	}
+}
+
 // loops says why automationID's trigger passes over ended work that would
 // loop: a sync or a load its own run started, or a document a sync it
 // started wrote, or such work of a run of an automation that one of its runs
@@ -323,7 +364,7 @@ func loops(automationID string, trigger automation.Trigger, e model.FoundryAutom
 	}
 	what, started := "the sync", "was started by"
 	switch trigger.(type) {
-	case automation.LoadReady:
+	case automation.LoadReady, automation.ReviewsWaiting:
 		what = "the load"
 	case automation.DocumentArrived:
 		what, started = "the document", "was written by a sync started by"
@@ -340,7 +381,8 @@ func loops(automationID string, trigger automation.Trigger, e model.FoundryAutom
 }
 
 // matching is the ended work trigger fires on, in order: a sync or a draft
-// that ended as its outcome says, a load ready or partial, any document.
+// that ended as its outcome says, a load ready or partial, any document, a
+// current load with at least as many cards to review.
 func matching(trigger automation.Trigger, ended []model.FoundryAutomationEnded) []model.FoundryAutomationEnded {
 	var out []model.FoundryAutomationEnded
 	for _, e := range ended {
@@ -354,6 +396,8 @@ func matching(trigger automation.Trigger, ended []model.FoundryAutomationEnded) 
 			ok = e.Outcome == string(model.FoundryLoadReady) || e.Outcome == string(model.FoundryLoadPartial)
 		case automation.DocumentArrived:
 			ok = true
+		case automation.ReviewsWaiting:
+			ok = e.Rows != nil && *e.Rows >= int64(tr.AtLeast)
 		}
 		if ok {
 			out = append(out, e)
@@ -364,7 +408,9 @@ func matching(trigger automation.Trigger, ended []model.FoundryAutomationEnded) 
 
 // eventOf is what fired a run on matched work, and the trigger's output: the
 // newest names it; a sync's count is the rows it wrote, documents' how many
-// arrived.
+// arrived, a load's the cards it has to review. A reviews_waiting event and
+// output carry ids and numbers only, so a Founder step reads no document's
+// or review's text from them.
 func eventOf(trigger automation.Trigger, matched []model.FoundryAutomationEnded) (model.FoundryAutomationEvent, automation.Output) {
 	newest := matched[len(matched)-1]
 	event := model.FoundryAutomationEvent{Kind: string(automation.KindOf(trigger)), At: newest.Cursor.At.UTC(), Outcome: newest.Outcome,
@@ -393,6 +439,9 @@ func eventOf(trigger automation.Trigger, matched []model.FoundryAutomationEnded)
 	case automation.GenerationFinished:
 		event.GenerationID = newest.Cursor.ID
 		out.Summary = "A draft of its ontology " + newest.Outcome + "."
+	case automation.ReviewsWaiting:
+		event.LoadID, event.Count, out.Count = newest.Cursor.ID, *newest.Rows, newest.Rows
+		out.Summary = automation.CardsToReview(*newest.Rows) + " to review in its ontology's current load."
 	case automation.DocumentArrived:
 		for _, e := range matched {
 			event.DocumentIDs = append(event.DocumentIDs, e.Cursor.ID)

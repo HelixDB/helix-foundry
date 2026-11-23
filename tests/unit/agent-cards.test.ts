@@ -902,8 +902,8 @@ describe("cardView", () => {
       ],
       [
         "no one",
-        "Mark “globexx” as not in the data",
-        "Mark not in data",
+        "Mark “globexx” as not a Customer we have",
+        "Mark not a Customer",
         "Sales graph",
       ],
       [

@@ -23,7 +23,7 @@ func (f resendFixture) resolveOf(tag, doc, name string, entity *string) *model.F
 // owing asking besides its own document.
 func (f resendFixture) settleName(t *testing.T, tag string, d *model.FoundryReviewDecision, asking ...string) bool {
 	t.Helper()
-	queued, err := f.db.SettleFoundryResolve(context.Background(), f.ontology.WorkspaceID, f.load, d, asking,
+	queued, err := settleResolve(f.db, context.Background(), f.ontology.WorkspaceID, f.load, d, asking,
 		&model.FoundryGraphJob{ID: id26("RN-" + tag), RequestedByUserID: ptr(id26("user"))})
 	require.NoError(t, err)
 	return queued
@@ -159,12 +159,12 @@ func TestSettleFoundryResolveAppliesAtOnce(t *testing.T) {
 	// Read from a load no longer current: applied to the current one, with
 	// none of the documents read from the other.
 	elsewhere := f.resolveOf("3", f.b, "helio", nil)
-	_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, id26("FJ-other"), elsewhere, []string{f.a},
+	_, err = settleResolve(f.db, ctx, f.ontology.WorkspaceID, id26("FJ-other"), elsewhere, []string{f.a},
 		&model.FoundryGraphJob{ID: id26("RN-3")})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{elsewhere.ID: "pending"}, f.applied(t, elsewhere))
 	assert.Equal(t, map[string]int{f.b + "/name": 2}, f.owedFor(t), "its document owed again")
-	_, err = f.db.SettleFoundryResolve(ctx, f.ontology.WorkspaceID, f.load, f.held(f.a, 0, readA), nil, &model.FoundryGraphJob{ID: id26("RN-4")})
+	_, err = settleResolve(f.db, ctx, f.ontology.WorkspaceID, f.load, f.held(f.a, 0, readA), nil, &model.FoundryGraphJob{ID: id26("RN-4")})
 	assert.Error(t, err, "a release is not a resolve")
 }
 

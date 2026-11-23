@@ -15,24 +15,18 @@ import {
   entityRequest,
   factEvidenceRequest,
   nameLinksRequest,
-  loadReviewCountRequest,
-  loadReviewsRequest,
   parseQuoteFacts,
-  parseRangeQuotes,
-  quoteCountsRequest,
   quoteFactsRequest,
-  rangeQuotesRequest,
+  reviewsAtRequest,
+  reviewsByKeyRequest,
   parseDocument,
   parseDocumentFacts,
   parseDocumentQuotes,
-  parseLoadReviewCount,
-  parseQuoteCounts,
   parseLoadReviews,
   parseEntity,
   parseFactEvidence,
   parseNameLinks,
   type FactQuote,
-  type ScoreRange,
   type DocumentGraph,
   type EntityGraph,
   type EntityIdentity,
@@ -393,46 +387,19 @@ export const readQueries = {
       ...readOptions,
     };
   },
-  // The review queue's reads of the current load (../reviews/queue.ts): how
-  // many reviews it holds and quotes of facts in each score range, its
-  // reviews a page at a time, the quotes at offsets the queue drew, their
+  // The review walk's reads of the current load (../reviews/cards.ts): the
+  // reviews its cards name, by key, with the name links of its held claims'
+  // documents; the reviews at its spot checks' and re-checks' places; their
   // facts' ends, and a few documents' quotes. Each under the load, so a job
-  // that ends reads them again. All but the counts wait their turn at the
-  // database's limiter (`readLater`).
-  queueReviewCount: (
+  // that ends reads them again; each waits its turn at the database's
+  // limiter (`readLater`).
+  reviewsByKey: (
     ws: string,
     o: string,
     read: QueryExecutor,
     scope: Scope,
-  ) => ({
-    queryKey: [ws, "ontology", o, "read", scope.id, "queue-review-count"],
-    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-      parseLoadReviewCount(
-        await runRead(read, loadReviewCountRequest(scope), signal),
-      ),
-    ...readOptions,
-  }),
-  quoteCounts: (
-    ws: string,
-    o: string,
-    read: QueryExecutor,
-    scope: Scope,
-    ranges: Readonly<Record<string, ScoreRange>>,
-  ) => ({
-    queryKey: [ws, "ontology", o, "read", scope.id, "quote-counts", ranges],
-    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-      parseQuoteCounts(
-        await runRead(read, quoteCountsRequest(scope, ranges), signal),
-        Object.keys(ranges),
-      ),
-    ...readOptions,
-  }),
-  queueReviews: (
-    ws: string,
-    o: string,
-    read: QueryExecutor,
-    scope: Scope,
-    page: number,
+    keys: readonly string[],
+    docs: readonly string[],
     naming: Naming = NO_NAMING,
   ) => ({
     queryKey: [
@@ -441,28 +408,35 @@ export const readQueries = {
       o,
       "read",
       scope.id,
-      "queue-reviews",
-      page,
+      "reviews-by-key",
+      keys,
+      docs,
       naming.version,
     ],
-    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-      parseLoadReviews(
-        await runRead(read, loadReviewsRequest(scope, page), signal),
-      ).map((r) => ({
-        ...r,
-        candidates: r.candidates.map((c) =>
-          c.entity ? { ...c, entity: named(naming, c.entity) } : c,
-        ),
-      })),
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const request = reviewsByKeyRequest(scope, keys, docs);
+      if (!request) return { reviews: [], links: [] };
+      const body = await runRead(read, request, signal);
+      return {
+        reviews: parseLoadReviews(body).map((r) => ({
+          ...r,
+          candidates: r.candidates.map((c) =>
+            c.entity ? { ...c, entity: named(naming, c.entity) } : c,
+          ),
+        })),
+        links: parseNameLinks(body),
+      };
+    },
     ...readOptions,
   }),
-  rangeQuotes: (
+  reviewsAt: (
     ws: string,
     o: string,
     read: QueryExecutor,
     scope: Scope,
-    range: ScoreRange,
-    offsets: readonly number[],
+    docs: readonly string[],
+    starts: readonly number[],
+    naming: Naming = NO_NAMING,
   ) => ({
     queryKey: [
       ws,
@@ -470,15 +444,23 @@ export const readQueries = {
       o,
       "read",
       scope.id,
-      "quotes-at",
-      range,
-      offsets,
+      "reviews-at",
+      docs,
+      starts,
+      naming.version,
     ],
-    queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-      parseRangeQuotes(
-        await runRead(read, rangeQuotesRequest(scope, range, offsets), signal),
-        offsets.length,
-      ),
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const request = reviewsAtRequest(scope, docs, starts);
+      if (!request) return [];
+      return parseLoadReviews(await runRead(read, request, signal)).map(
+        (r) => ({
+          ...r,
+          candidates: r.candidates.map((c) =>
+            c.entity ? { ...c, entity: named(naming, c.entity) } : c,
+          ),
+        }),
+      );
+    },
     ...readOptions,
   }),
   quoteFacts: (

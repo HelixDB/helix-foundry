@@ -150,20 +150,23 @@ test("approves every held claim of a group at once, and says which couldn't be",
     .getByRole("button", { name: "Approve", exact: true })
     .click();
   await expect(approveAll).toHaveText("Approve all (3)");
-  // One of the three fails; the others are saved, each bound to what its
-  // own card shows.
-  const sent: string[] = [];
-  let calls = 0;
-  await page.route("**/papi/**/reviews/*:settle", async (route) => {
-    sent.push(route.request().postDataJSON().decision.release.statementHash);
-    if (calls++ === 1)
-      return route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({ code: 14, message: "Settlement unavailable" }),
-      });
+  // One of the three is refused; the others are saved, each bound to what
+  // its own card shows, all in one batch that expects its cards open.
+  const sent: string[] = [],
+    batches: number[] = [];
+  await page.route("**/papi/**/reviews:batchSettle", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.expectOpen).toBe(true);
+    batches.push(body.items.length);
+    sent.push(
+      ...body.items.map(
+        (i: { decision: { release: { statementHash: string } } }) =>
+          i.decision.release.statementHash,
+      ),
+    );
     await route.continue();
   });
+  await mock.configure({ settleRefusals: 1 });
   await approveAll.click();
   const dialog = page.getByRole("dialog", { name: "Approve 3 claims?" });
   await expect(dialog).toContainText(
@@ -172,7 +175,10 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await dialog.getByRole("button", { name: "Approve all" }).click();
   await expect(
     head.getByRole("status").filter({ hasText: "couldn’t be" }),
-  ).toHaveText("2 approved, 1 couldn’t be: Settlement unavailable");
+  ).toHaveText(
+    "2 approved, 1 couldn’t be: this claim reads differently now; reload the review and decide on what it says.",
+  );
+  expect(batches).toEqual([3]);
   expect(sent.sort()).toEqual(
     ["Initech LLC", "Elstree Media Group", "Lockhart Shipping plc"]
       .map(hashOf)
@@ -186,7 +192,7 @@ test("approves every held claim of a group at once, and says which couldn't be",
     rows.getByRole("button", { name: "Approve", exact: true }),
   ).toHaveCount(1);
   await expect(approveAll).toHaveCount(0);
-  await page.unroute("**/papi/**/reviews/*:settle");
+  await page.unroute("**/papi/**/reviews:batchSettle");
   const saved = page
     .getByRole("list", { name: "Saved decisions" })
     .getByRole("listitem");
@@ -202,6 +208,67 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await page.goto(`${doc}?tab=review`);
   await expect(rows).toHaveCount(1);
   await expect(saved).toHaveCount(3);
+});
+
+test("Approve all keeps a teammate's approval, says so, and Undo takes back only one's own", async ({
+  page,
+  browser,
+}) => {
+  const doc = await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation, Initech, Elstree Media Group and Lockhart Shipping plc may have signed.\n",
+  );
+  const { head } = group(page, HELD);
+  const approveAll = head.getByRole("button", { name: /^Approve all/ });
+  await expect(approveAll).toHaveText("Approve all (4)");
+  // Alan, an admin, approves the Globex claim on its card meanwhile, while
+  // the job that writes approvals waits: the load still holds its review.
+  await mock.configure({
+    alanRole: "WORKSPACE_ROLE_ADMIN",
+    loadStepMs: 600_000,
+  });
+  const alanContext = await browser.newContext();
+  const alan = await alanContext.newPage();
+  await signIn(alan, "alan@example.com");
+  await alan.goto(`${doc}?tab=review`);
+  const globex = group(alan, HELD).rows.filter({
+    hasText: "Globex Corporation (Customer)",
+  });
+  await globex.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(globex.getByRole("status")).toContainText("Approved");
+  await alanContext.close();
+  // Ada's page read the four before: she approves all four.
+  await expect(approveAll).toHaveText("Approve all (4)");
+  await approveAll.click();
+  await page
+    .getByRole("dialog", { name: "Approve 4 claims?" })
+    .getByRole("button", { name: "Approve all" })
+    .click();
+  const said = head
+    .getByRole("status")
+    .filter({ hasText: /approved,|Took back/ });
+  await expect(said).toHaveText(
+    "3 approved, 1 was already approved by others.",
+  );
+  const removed: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "DELETE" && /\/review-decisions\//.test(r.url()))
+      removed.push(r.url());
+  });
+  await head.getByRole("button", { name: "Undo these 3" }).click();
+  await expect(said).toHaveText("Took back 3 approvals.");
+  expect(removed).toHaveLength(3);
+  // Alan's approval stands, and only his.
+  const decisions = await page.request.get(
+    "/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/review-decisions",
+  );
+  const releases = (
+    (await decisions.json()).decisions as {
+      kind: string;
+      decidedByUserId: string;
+    }[]
+  ).filter((d) => d.kind === "release");
+  expect(releases.map((d) => d.decidedByUserId)).toEqual(["usr_alan"]);
 });
 
 // Contract 4.14.0: an approval of a link that holds one value decides what
@@ -382,9 +449,15 @@ test("rejects a held claim: its card and its count go, Approve all leaves it out
 
   // Approve all approves the three left, and never the one rejected.
   const approved: string[] = [];
-  await page.route("**/papi/**/reviews/*:settle", async (route) => {
+  await page.route("**/papi/**/reviews:batchSettle", async (route) => {
     approved.push(
-      route.request().postDataJSON().decision.release.statementHash,
+      ...route
+        .request()
+        .postDataJSON()
+        .items.map(
+          (i: { decision: { release: { statementHash: string } } }) =>
+            i.decision.release.statementHash,
+        ),
     );
     await route.continue();
   });
@@ -399,7 +472,7 @@ test("rejects a held claim: its card and its count go, Approve all leaves it out
       .map(hashOf)
       .sort(),
   );
-  await page.unroute("**/papi/**/reviews/*:settle");
+  await page.unroute("**/papi/**/reviews:batchSettle");
   expect(await listed()).toBe(before - 4);
   await expect(saved.filter({ hasText: /^Approved: “/ })).toHaveCount(3);
   await expect(saved.filter({ hasText: /^Rejected: “/ })).toHaveCount(1);

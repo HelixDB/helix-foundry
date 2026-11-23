@@ -309,6 +309,7 @@ export function Select<V extends string>({
   disabled,
   autoFocus,
   className,
+  align = "start",
 }: {
   // Accessible name of the trigger and the list.
   label: string;
@@ -321,6 +322,9 @@ export function Select<V extends string>({
   // Focused first when its Dialog opens.
   autoFocus?: boolean;
   className?: string;
+  // Which edge of the trigger the list lines up with: "end" for a field at
+  // the right of its row, so a list wider than it stays over the row.
+  align?: "start" | "end";
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null),
@@ -336,7 +340,7 @@ export function Select<V extends string>({
     ) || []),
   ];
   const enabled = options.filter((o) => !o.disabled);
-  usePlacement(open, button, list, "start", "bottom");
+  usePlacement(open, button, list, align, "bottom");
   useEffect(() => {
     if (!open) return;
     (
@@ -416,7 +420,12 @@ export function Select<V extends string>({
           role="listbox"
           popover="manual"
           aria-label={label}
-          className="hf-menu-popover hf-select-popover is-start is-bottom"
+          className={cx(
+            "hf-menu-popover",
+            "hf-select-popover",
+            `is-${align}`,
+            "is-bottom",
+          )}
           onKeyDown={onKey}
         >
           {options.map((o) => (

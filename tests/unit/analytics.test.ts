@@ -816,6 +816,26 @@ describe("jobs", () => {
   });
 });
 
+describe("sizeBucket", () => {
+  it("puts a count in its bucket, at each edge", async () => {
+    const { sizeBucket } = await load();
+    expect(
+      [0, 1, 2, 9, 10, 49, 50, 199, 200, 5000].map((n) => sizeBucket(n)),
+    ).toEqual([
+      "0",
+      "1",
+      "2-9",
+      "2-9",
+      "10-49",
+      "10-49",
+      "50-199",
+      "50-199",
+      "200+",
+      "200+",
+    ]);
+  });
+});
+
 describe("withoutTitle", () => {
   it("drops the page title from page views, and from page exits", async () => {
     vi.resetModules();

@@ -10,9 +10,11 @@ package agent
 import (
 	"cmp"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -32,6 +34,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/reviewcards"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -643,6 +646,7 @@ func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPag
 					out.LoadID = l.ID
 				}
 			}
+			out.Review = reviewOf(ctx, db, o, p.ReviewCardID)
 		}
 	}
 	if p.DashboardID != "" {
@@ -659,6 +663,27 @@ func page(ctx context.Context, db Reads, turn *model.FoundryAgentTurn) *shownPag
 	}
 	return &out
 }
+
+// reviewOf is the review card cardID of o's current load, as the model is
+// told it; nil when it names none that load's index holds. Its review key is
+// graph data the model reads as it is, so a card is kept only when the key
+// is one the engine writes (a SHA-256 in lowercase hexadecimal).
+func reviewOf(ctx context.Context, db Reads, o *model.FoundryOntology, cardID string) *shownReview {
+	raw, err := hex.DecodeString(cardID)
+	var id reviewcards.ID
+	if cardID == "" || err != nil || len(raw) != len(id) || o.CurrentLoadID == nil {
+		return nil
+	}
+	copy(id[:], raw)
+	card, open, err := db.GetFoundryReviewCard(ctx, *o.CurrentLoadID, id)
+	if err != nil || !reviewKeyPattern.MatchString(card.ReviewKey) {
+		return nil
+	}
+	return &shownReview{CardID: cardID, ReviewKey: card.ReviewKey, Kind: string(card.Kind), DocumentID: card.DocID, Open: open}
+}
+
+// reviewKeyPattern is a review key as the engine writes it.
+var reviewKeyPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // loop calls the model and runs its calls until the turn ends.
 func (t *turnRun) loop(ctx context.Context) error {

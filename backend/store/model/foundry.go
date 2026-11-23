@@ -1032,6 +1032,11 @@ type FoundryGraphJobOutcome struct {
 	IngestDone bool
 	Report     json.RawMessage
 	Progress   FoundryGraphJobProgress
+	// ReindexReviews says the attempt may have changed the load's reviews
+	// past the documents it recorded: it sent an Extract (its end-of-run
+	// sweep, the value decisions it carried) or an apply's diff changed
+	// rows. The load's review cards are owed a full pass.
+	ReindexReviews bool
 	// HeldSets, only with Status budget_exhausted, are the sets with an
 	// allowance (FoundrySetAllowance) some of whose documents the job left
 	// unrecorded when a budget, theirs, the job's or the month's, stopped

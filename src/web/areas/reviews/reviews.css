@@ -97,11 +97,10 @@
   margin: 0;
   font-size: var(--hf-text-sm);
 }
-.rq-held {
-  display: grid;
+/* Wrong and Right, alike, under what they judge. */
+.rq-verdict {
+  display: flex;
   gap: 8px;
-  padding-left: 12px;
-  border-left: 2px solid var(--hf-border);
 }
 .rq-precision {
   border-collapse: collapse;
@@ -111,10 +110,448 @@
 .rq-precision th,
 .rq-precision td {
   padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--hf-border);
   text-align: left;
+}
+/* A rule between rows, across every column; none under the last. */
+.rq-precision tbody tr:last-child > * {
+  border-bottom: 0;
 }
 
 /* The Review page's tabs: the header's tab bar already spaces them. */
 .rv-tab.hf-tab-panel {
   padding-top: 0;
+}
+
+/* The review walkthrough (walkthrough.tsx): the lanes and the filters on
+   one row (wrapping on a narrow walk), the progress under them, then one card at a time in a 760px
+   column, the rail of next cards beside it (none where the walk is
+   narrower than 800px, so a phone opens on the card). */
+.rv-walk {
+  display: grid;
+  gap: 16px;
+  container-type: inline-size;
+}
+.rv-walk-head {
+  display: grid;
+  gap: 10px;
+}
+.rv-progress {
+  margin: 0;
+  font-size: var(--hf-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.rv-meter {
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+}
+.rv-meter span {
+  flex-basis: 0;
+  min-width: 0;
+}
+.rv-meter-done {
+  background: var(--hf-accent);
+}
+.rv-meter-skipped {
+  background: var(--hf-warning);
+}
+.rv-meter-left {
+  background: var(--hf-border);
+}
+.rv-walk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rv-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* A phone: the lanes on their own row, the filters two by two across it. */
+@container (max-width: 599px) {
+  .rv-walk-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+  .rv-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .rv-filters .hf-filter-select {
+    min-width: 0;
+  }
+  .rv-filters .hf-select {
+    flex: 1;
+  }
+  .rv-filters > .hf-btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+.rv-walk-body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 760px);
+  align-items: start;
+  gap: 24px;
+}
+/* No rail: every card decided, or none to decide. The finish takes the
+   bar's width. */
+.rv-walk-body.is-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+.rv-walk-main {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.rv-rail {
+  position: sticky;
+  top: calc(var(--hf-shell-top) + 16px);
+  min-width: 0;
+}
+.rv-rail ol {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Each row in two lines: what tells the card apart, then its kind and
+   document, muted. */
+.rv-rail button {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: transparent;
+  color: var(--hf-text-2);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.rv-rail button:hover {
+  background: var(--hf-hover);
+}
+.rv-rail button[aria-current="step"] {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.rv-rail button[aria-current="step"] .rv-rail-line {
+  font-weight: 600;
+}
+.rv-rail button:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: -2px;
+}
+.rv-rail-text {
+  display: grid;
+  min-width: 0;
+}
+.rv-rail-line,
+.rv-rail-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rv-rail-meta {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.rv-dot {
+  flex: none;
+  /* Centred on the first line. */
+  margin-top: 6px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: 50%;
+}
+.rv-dot:is(
+  [data-state="saved"],
+  [data-state="sending"],
+  [data-state="covered"]
+) {
+  border-color: var(--hf-accent);
+  background: var(--hf-accent);
+}
+.rv-dot[data-state="skipped"] {
+  border-color: var(--hf-warning);
+  background: var(--hf-warning);
+}
+.rv-dot:is([data-state="refused"], [data-state="unconfirmed"]) {
+  border-color: var(--hf-danger);
+  background: var(--hf-danger);
+}
+.rv-dot:is([data-state="elsewhere"], [data-state="taken_back"]) {
+  border-color: var(--hf-muted);
+  background: var(--hf-muted);
+}
+@container (max-width: 799px) {
+  .rv-walk-body,
+  .rv-walk-body.is-solo {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rv-rail {
+    display: none;
+  }
+}
+.rv-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+}
+.rv-card-head {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.rv-card-head h2 {
+  margin: 0;
+  font-size: var(--hf-text-lg);
+  font-weight: 600;
+  line-height: 1.35;
+}
+/* The card's and the finish's headings take the focus by script when the
+   walk moves, so a screen reader reads the next question: no ring, as for
+   a page's heading (shell.css), since nothing there answers a key. */
+.rv-walk [tabindex="-1"]:focus {
+  outline: none;
+}
+.rv-card-body {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
+.rv-card-body p {
+  margin: 0;
+}
+.rv-suggest {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--hf-accent);
+  background: var(--hf-accent-soft);
+  font-size: var(--hf-text-sm);
+}
+.rv-suggest-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.rv-why {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--hf-text-2);
+}
+.rv-effect {
+  margin: 0;
+  font-weight: 500;
+}
+.rv-needs {
+  margin: 0;
+  color: var(--hf-text-2);
+}
+.rv-outcome {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.rv-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* What marking a name as none of its type's records does, under the choices. */
+.rv-none {
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
+/* Back, Skip and Undo on the left; Accept all like this, Ask Founder and
+   the shortcuts on the right. */
+.rv-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hf-border);
+}
+.rv-nav-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.rv-walk kbd,
+.rv-keys kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-sm);
+  color: inherit;
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 1;
+}
+/* On a primary button the hint takes the button's own text color, which
+   the theme sets against its fill, in both themes. */
+.rv-walk .hf-btn--primary kbd {
+  border-color: currentColor;
+}
+.rv-keys {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.rv-keys div {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.rv-keys dt,
+.rv-keys dd {
+  margin: 0;
+}
+.rv-banner {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-info);
+  background: var(--hf-info-soft);
+  font-size: var(--hf-text-sm);
+}
+.rv-banner p,
+.rv-banner ul {
+  margin: 0;
+}
+.rv-done {
+  display: grid;
+  gap: 12px;
+}
+.rv-done-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rv-done h2 {
+  margin: 0;
+  font-size: var(--hf-text-lg);
+}
+.rv-done-groups {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.rv-done-groups div {
+  display: grid;
+  gap: 2px;
+}
+.rv-done-groups dt {
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.rv-done-groups dd {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.rv-done .rv-done-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 0;
+}
+.rv-spot {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hf-border);
+}
+.rv-spot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rv-spot-head h3 {
+  margin: 0;
+  font-size: var(--hf-text-md);
+}
+/* A spot check's own actions sit under what they judge, without the
+   form's gap. */
+.rv-spot .rq-card .hf-form-actions {
+  margin-top: 0;
+}
+.rv-spot-intro {
+  margin: -8px 0 0;
+  font-size: var(--hf-text-sm);
+}
+.rv-covered {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--hf-text-sm);
+}
+.rv-covered li {
+  padding: 8px 12px;
+  border: 1px solid var(--hf-border);
+  background: var(--hf-surface);
+}
+/* The batch's list: no type icons in its heads. */
+.hf-grid-th.rv-plain .hf-grid-type {
+  display: none;
+}
+.rv-failed {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--hf-text-sm);
+}
+.rv-toast .rv-undo {
+  display: inline-flex;
+  gap: 6px;
+  width: auto;
+  padding: 0 8px;
+  font-weight: 600;
+  opacity: 1;
+}
+.rv-toast kbd {
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: var(--hf-radius-sm);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
 }

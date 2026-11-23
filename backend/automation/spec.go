@@ -248,6 +248,8 @@ func (s Spec) targets(trigger bool) Targets {
 				add(&t.Sets, tr.SetID)
 			case GenerationFinished:
 				add(&t.Ontologies, tr.OntologyID)
+			case ReviewsWaiting:
+				add(&t.Ontologies, tr.OntologyID)
 			}
 		case AssistantNode:
 			for _, a := range c.Allow {
@@ -418,6 +420,10 @@ func (s *Spec) check() error {
 					what = "syncs the connector"
 				}
 			case LoadReady:
+				if load, ok := a.(CreateLoad); ok && load.OntologyID == tr.OntologyID {
+					what = "loads the ontology"
+				}
+			case ReviewsWaiting:
 				if load, ok := a.(CreateLoad); ok && load.OntologyID == tr.OntologyID {
 					what = "loads the ontology"
 				}

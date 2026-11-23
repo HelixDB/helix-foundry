@@ -221,8 +221,15 @@ type Knobs = {
   // as for every load read before names could be settled in place (prompt
   // 9), so the next load applies it; `written`, which takes away the
   // document's reviews asking about the name, and, for a chosen record, the
-  // other documents' too; or another refusal.
-  nameInPlace?: "written" | "not_replayed" | "bound" | "collides" | "not_asked";
+  // other documents' too; `unconfirmed`, its job failing before it said
+  // (`job_failed`); or another refusal.
+  nameInPlace?:
+    | "written"
+    | "not_replayed"
+    | "unconfirmed"
+    | "bound"
+    | "collides"
+    | "not_asked";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
   readsBusy?: number;
@@ -533,6 +540,13 @@ export function forgetResolve(ontologyId: string, decisionId: string) {
  */
 function settleName(l: StoredLoad, d: Resolve, at: number) {
   const said = knobs.nameInPlace ?? "not_replayed";
+  if (said === "unconfirmed") {
+    state.applied.set(appliedKey(l.id, d.id), {
+      status: "unconfirmed",
+      reason: "job_failed",
+    });
+    return;
+  }
   if (said !== "written") {
     state.applied.set(appliedKey(l.id, d.id), {
       status: "refused",

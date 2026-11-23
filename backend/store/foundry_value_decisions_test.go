@@ -24,7 +24,7 @@ func (f resendFixture) value(tag, customer, tier string) *model.FoundryReviewDec
 // decide settles a value against the fixture's load, as resend job RS-<tag>.
 func (f resendFixture) decide(t *testing.T, tag string, d *model.FoundryReviewDecision) bool {
 	t.Helper()
-	queued, err := f.db.SettleFoundryValue(context.Background(), f.ontology.WorkspaceID, f.load, d,
+	queued, err := settleValue(f.db, context.Background(), f.ontology.WorkspaceID, f.load, d,
 		&model.FoundryGraphJob{ID: id26("RS-" + tag), RequestedByUserID: ptr(id26("user"))})
 	require.NoError(t, err)
 	return queued
@@ -121,15 +121,12 @@ func TestFoundryValueAppliesAtOnce(t *testing.T) {
 	assert.Equal(t, map[string]string{again.ID: "applied"}, f.applied(t, d, again))
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "again", model.FoundryGraphJobSucceeded))
 
-	// Only a value decision is settled this way, and only against the load
-	// its review was read from.
-	_, err := f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, f.held(f.a, 0, readA), resendJob("VNOW-x"))
-	assert.Error(t, err)
-	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, id26("another-load"), f.value("4", "initech", "gold"), resendJob("VNOW-y"))
+	// A value is settled only against the load its review was read from.
+	_, err := settleValue(f.db, ctx, f.ontology.WorkspaceID, id26("another-load"), f.value("4", "initech", "gold"), resendJob("VNOW-y"))
 	assert.ErrorIs(t, err, store.ErrConflict)
 	gone := f.value("5", "initech", "gold")
 	gone.Prop = ptr("region")
-	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, gone, resendJob("VNOW-z"))
+	_, err = settleValue(f.db, ctx, f.ontology.WorkspaceID, f.load, gone, resendJob("VNOW-z"))
 	assert.ErrorIs(t, err, store.ErrConflict, "the load's version has no such property")
 	assert.Nil(t, f.liveJob(t))
 }
@@ -448,18 +445,21 @@ FROM (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION 
 WHERE a.n + 10*b.n + 100*c.n + 1000*e.n < ?`, f.ontology.ID, id26("user"), model.FoundryExtractKindDecisionsMax-2)
 	require.NoError(t, err)
 	last := f.value("2", "globex", "silver")
-	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, last, resendJob("VFULL-a"))
+	_, err = settleValue(f.db, ctx, f.ontology.WorkspaceID, f.load, last, resendJob("VFULL-a"))
 	require.NoError(t, err, "the last one the limit takes")
 	over := f.value("3", "initech", "gold")
-	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, over, resendJob("VFULL-b"))
+	_, err = settleValue(f.db, ctx, f.ontology.WorkspaceID, f.load, over, resendJob("VFULL-b"))
 	assert.ErrorIs(t, err, store.FoundryValueDecisionsFull)
 	assert.Empty(t, f.applied(t, over))
+	refusals, _ := f.batch(t, "VFULL-full", f.load, false, item(f.value("3b", "initech", "gold")))
+	require.NotNil(t, refusals[0])
+	assert.Equal(t, model.FoundrySettleFull, refusals[0].Reason)
 	again := f.value("4", "acme", "platinum")
-	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, again, resendJob("VFULL-c"))
+	_, err = settleValue(f.db, ctx, f.ontology.WorkspaceID, f.load, again, resendJob("VFULL-c"))
 	require.NoError(t, err, "a property already decided is decided again")
 	assert.NotEqual(t, d.ID, again.ID)
 	// Removing one makes room.
 	f.remove(t, "1", last)
-	_, err = f.db.SettleFoundryValue(ctx, f.ontology.WorkspaceID, f.load, over, resendJob("VFULL-d"))
+	_, err = settleValue(f.db, ctx, f.ontology.WorkspaceID, f.load, over, resendJob("VFULL-d"))
 	require.NoError(t, err)
 }

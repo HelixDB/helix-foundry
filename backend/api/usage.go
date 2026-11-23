@@ -13,7 +13,8 @@ import (
 )
 
 // GetFoundryUsage returns the workspace's AI spend this UTC calendar month by
-// task, with each task's cap, read as the caps read it: loads as the graph
+// task, with each task's cap, read as the caps read it (review advice as
+// the graph worker's advisor reads its budget): loads as the graph
 // worker's budget (config.FoundryGraphConfig.MonthBudget, jobs created this
 // month), API sources' extraction no person started as their allowance
 // (config.FoundryConfig.SetAllowances, the workspace's share), and questions
@@ -47,14 +48,19 @@ func (s *Service) GetFoundryUsage(ctx context.Context, req *foundryv1.GetFoundry
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "sum use case assessments spend: %v", err)
 	}
+	advice, err := s.deps.DB.SumFoundryReviewAdviceSpend(ctx, ws, month.Since)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "sum review advice spend: %v", err)
+	}
 	assessCap := cfg.Workflows.Assess.MonthlyMicros()
+	adviceCap := cfg.Reviews.Advise.MonthlyMicros()
 	sourcesCap := cfg.SetAllowances()[foundrymodel.ConnectorKindEvents].WorkspaceMicros
 	questionsCap := cfg.Ask.MonthlyMicros()
 	return &foundryv1.FoundryUsageResponse{Usage: &foundryv1.FoundryUsage{
 		MonthStart: timestamppb.New(month.Since),
 		ResetsAt:   timestamppb.New(month.Since.AddDate(0, 1, 0)),
 		// API sources' spend is part of the loads'.
-		TotalUsdMicros: loads + questions.SpentMicros + assessments,
+		TotalUsdMicros: loads + questions.SpentMicros + assessments + advice,
 		Tasks: []*foundryv1.FoundryUsageEntry{
 			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_LOADS, SpentUsdMicros: loads, CapUsdMicros: &month.CapMicros},
 			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_API_SOURCES, SpentUsdMicros: sources, CapUsdMicros: &sourcesCap},
@@ -63,6 +69,7 @@ func (s *Service) GetFoundryUsage(ctx context.Context, req *foundryv1.GetFoundry
 				ReservedUsdMicros: questions.ReservedMicros, CapUsdMicros: &questionsCap,
 			},
 			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS, SpentUsdMicros: assessments, CapUsdMicros: &assessCap},
+			{Task: foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_REVIEW_ADVICE, SpentUsdMicros: advice, CapUsdMicros: &adviceCap},
 		},
 	}}, nil
 }

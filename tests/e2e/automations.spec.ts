@@ -1,11 +1,15 @@
 import type { Page } from "@playwright/test";
 import {
+  HEDGED,
   csrfToken,
   expect,
+  file,
   mock,
   postToWfe,
   signIn,
   test,
+  uploadAndLoadContract,
+  uploadInData,
 } from "./support/mock";
 
 // Workflows (the automations area, at /workflows): a person's steps Foundry
@@ -1089,6 +1093,136 @@ test("starts after a sync of its connection", async ({ page }) => {
   await ended(page, "Succeeded");
   await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
     "It was met: it went the “When met” way.",
+  );
+});
+
+test("emails when reviews wait in the current load: once, again after the count fell and rose, never under its threshold or while the index counts", async ({
+  page,
+}) => {
+  await mock.configure({
+    loadStepMs: 200,
+    documentUnmatched: true,
+    automationStepMs: 100,
+  });
+  await signIn(page);
+  await uploadAndLoadContract(page, [file("variant.md", HEDGED)]);
+  // What the index counts now: the threshold, so one card fewer is under it.
+  const summary = await page.request.get(
+    "/papi/v1/workspaces/ws_acme/foundry/review-summary",
+  );
+  const open: number = (await summary.json()).ontologies.find(
+    (o: { ontologyId: string }) => o.ontologyId === "ont_acme_contracts",
+  ).open;
+  expect(open).toBeGreaterThan(1);
+  const waiting = (name: string, atLeast: number) =>
+    make(page, name, [
+      {
+        id: "start",
+        kind: "trigger",
+        config: {
+          kind: "reviews_waiting",
+          ontology_id: "ont_acme_contracts",
+          at_least: atLeast,
+        },
+        position: at(0),
+      },
+      step("email", "notify", { message: "Reviews are waiting" }, 150),
+    ]);
+  const id = await waiting("Reviews waiting", open);
+  const runs = page.getByRole("list", { name: "Runs" });
+  const fired = runs.getByRole("link", {
+    name: /to review in “Customer contracts”/,
+  });
+  // The load current when it was turned on fires it, once.
+  await page.goto(`/workflows/${id}?tab=runs`);
+  await expect(
+    runs.getByRole("link", {
+      name: new RegExp(`${open} to review in “Customer contracts”`),
+    }),
+  ).toHaveCount(1, { timeout: 20_000 });
+  await fired.click();
+  await ended(page, "Succeeded");
+  await page.reload();
+  await expect(fired).toHaveCount(1);
+
+  // One card decided takes the count under it, which arms it again; a
+  // second hedged contract read into the current load takes it past.
+  await page.goto("/ontology/ont_acme_contracts/review");
+  await page
+    .getByRole("article")
+    .getByRole("button", { name: "Reject" })
+    .first()
+    .click();
+  await expect(page.locator(".rv-toast")).toContainText("Rejected.");
+  await page.goto(`/workflows/${id}?tab=runs`);
+  await expect(fired).toHaveCount(1);
+  await uploadInData(page, [
+    file("second.md", HEDGED.replace("# Hedged deal", "# Second hedged deal")),
+  ]);
+  await expect
+    .poll(
+      async () => {
+        await page.goto(`/workflows/${id}?tab=runs`);
+        await expect(fired.first()).toBeVisible();
+        return fired.count();
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(2);
+
+  // Under its threshold, or while the index is still counting, nothing runs.
+  const high = await waiting("Thousands waiting", 10_000);
+  await page.goto(`/workflows/${high}?tab=runs`);
+  await expect(page.getByText("No runs yet")).toBeVisible();
+  await mock.configure({ reviewIndexing: true });
+  const counting = await waiting("While counting", 1);
+  await page.goto(`/workflows/${counting}?tab=runs`);
+  await expect(page.getByText("No runs yet")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("No runs yet")).toBeVisible();
+});
+
+test("the walk's link drafts the reviews digest on the ontology it names, whose threshold can be emptied and retyped", async ({
+  page,
+}) => {
+  await signIn(page);
+  const drafted = inspector(page).getByRole("list", { name: "Steps" });
+  // An id the workspace lacks drafts on its first ontology.
+  await page.goto("/workflows/new?template=reviews-digest&ontology=ont_nope");
+  await expect(drafted).toContainText(
+    "at least 50 cards wait for review in “Customer contracts”",
+  );
+  // Sales graph isn't the first: the draft is on the one the link names.
+  await page.goto(
+    "/workflows/new?template=reviews-digest&ontology=ont_acme_sales",
+  );
+  await expect(drafted).toContainText(
+    "at least 50 cards wait for review in “Sales graph”",
+  );
+  await canvas(page)
+    .locator(".react-flow__node")
+    .filter({ hasText: "cards wait for review" })
+    .click();
+  const atLeast = inspector(page).getByRole("spinbutton", {
+    name: "Cards to review, at least",
+  });
+  await expect(atLeast).toHaveValue("50");
+  // Emptied, it stays empty: 200 typed is 200, not 1200.
+  await atLeast.press("End");
+  await atLeast.press("Backspace");
+  await atLeast.press("Backspace");
+  await expect(atLeast).toHaveValue("");
+  await atLeast.pressSequentially("200");
+  await expect(atLeast).toHaveValue("200");
+  // Left empty, it shows the number kept.
+  await atLeast.fill("");
+  await atLeast.blur();
+  await expect(atLeast).toHaveValue("200");
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(drafted).toContainText(
+    "at least 200 cards wait for review in “Sales graph”",
   );
 });
 

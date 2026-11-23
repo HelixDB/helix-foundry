@@ -53,6 +53,9 @@ type memStore struct {
 	finished    map[string]model.FoundryAutomationRunEnd
 	notices     []*model.FoundryNotification
 	lost        bool
+	// live is a run of the automation still going, which work an event
+	// trigger found waits for.
+	live bool
 	// renews counts the lease's renewals; busy is a run's thread with a
 	// live turn already.
 	renews int
@@ -221,6 +224,8 @@ func (s *memStore) FireFoundryAutomation(_ context.Context, f model.FoundryAutom
 		return model.FoundryAutomationFiredMoved, nil
 	case f.Skip != "":
 		return model.FoundryAutomationFiredSkipped, nil
+	case s.live:
+		return model.FoundryAutomationFiredWaiting, nil
 	}
 	return model.FoundryAutomationFiredQueued, nil
 }

@@ -1045,6 +1045,9 @@ const RULES: Record<string, Rule> = {
   [`GET ${O}/workflows/{workflowId}/runs/{id}`]: "workflows",
   [`POST ${O}/workflows/{workflowId}/runs/{id}:finish`]: "workflows",
   [`GET ${O}/workflows/{workflowId}/runs/{id}/accesses`]: "workflows",
+  // Review cards: the summary answers a grantee with none
+  // (./review-cards.ts); the cards and spot checks refuse one.
+  [`GET ${W}/review-summary`]: "workspace",
   // Dashboards: a grantee sees the pinned ones (./dashboards.ts).
   [`GET ${W}/dashboards`]: "workspace",
   [`GET ${W}/dashboards/{id}`]: "workspace",

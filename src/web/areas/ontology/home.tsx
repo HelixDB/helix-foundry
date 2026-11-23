@@ -19,6 +19,7 @@ import type { OntologyVersion } from "../../../shared/wfe";
 import { paths } from "../../paths";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { PartNote } from "../explore/part-note";
+import { ReviewNotice } from "../reviews/notice";
 import { liveRead } from "../documents/model";
 import { projectsQuery } from "./databases-api";
 import { formatLabel, versionFormat } from "./format";
@@ -49,7 +50,8 @@ import { VersionsSection } from "./versions";
 // /ontology/:ontologyId: one ontology's current version drawn as a graph, as
 // helix-foundry's Ontology page draws the published one, with what is
 // generating or loading, whether its database holds the current version,
-// and any newer version waiting for review above it. Until the ontology is
+// what the current load left for a person (../reviews/notice.tsx), and any
+// newer version waiting for review above it. Until the ontology is
 // set up (useOntologySetup), its setup's steps come
 // first, in one card open where it is, with Set up with your agent in its
 // head (./setup.tsx); without a current version they are the page. Its header says which database (and project) it is bound
@@ -264,6 +266,7 @@ function OntologyOverview() {
         {setup?.step !== "draft" && <LiveGeneration />}
         {setup?.step !== "load" && <LiveLoad />}
         {v && setup?.step !== "load" && <NotLoaded version={v} />}
+        <ReviewNotice key={o} />
         {review && setup?.step !== "current" && (
           <ReadyToReview versionId={review.id} current={v} />
         )}

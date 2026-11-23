@@ -125,6 +125,7 @@ import {
   questionRoutes,
   storedQuestion,
 } from "./questions";
+import { reviewCardOf } from "./review-cards";
 import { reviewRoutes } from "./reviews";
 import type { WorkflowCall } from "./workflows";
 import { manages } from "./workspaces";
@@ -1608,9 +1609,58 @@ export const messageIntent = (ws: string, text: string, ontologyId = "") =>
   messageRoute({ ws, text, page: ontologyId ? { ontologyId } : null }, true)
     .intent;
 
+/**
+ * A message sent from the review walk (the page context's reviewCardId, a
+ * card of the ontology's current load): Founder reads the card's review and
+ * recommends one choice in two sentences, preparing nothing; a card decided
+ * already gets no recommendation. Only the walk's ask (F's "Help me decide
+ * this review.") takes this way: any other message, such as "settle the
+ * review about Globex", goes as it would from any page. Undefined when the
+ * card isn't the load's.
+ */
+function reviewAdvice(a: Ask): Step[] | undefined {
+  if (!/\bdecide this review\b/i.test(a.text)) return undefined;
+  const o = a.page?.ontologyId ? ontologyById(a.page.ontologyId) : undefined;
+  const found =
+    o && a.page?.reviewCardId
+      ? reviewCardOf(o, a.page.reviewCardId)
+      : undefined;
+  if (!o || !found) return undefined;
+  if (!found.open)
+    return [
+      started,
+      said(
+        () =>
+          "This card has been decided already, so there is nothing to recommend. Move on to the next one.",
+      ),
+    ];
+  const c = found.card;
+  const tool = "helix_foundry_list_reviews";
+  return [
+    started,
+    call("tu_review", tool, {
+      workspace_id: a.ws,
+      ontology_id: o.id,
+      review_keys: [c.reviewKey],
+    }),
+    result("tu_review", tool, () => ({
+      reviews: [{ review_key: c.reviewKey, settle: c.kind }],
+    })),
+    said(() =>
+      c.kind === "release"
+        ? "I recommend approving it. The document states this link in plain words, and nothing it says contradicts it."
+        : c.kind === "prop"
+          ? "I recommend the value most of its documents state. The others are older mentions the newer documents correct."
+          : `I recommend linking “${c.normName ?? "this name"}” to its closest candidate. The document's words match that record's name, and no earlier decision points elsewhere.`,
+    ),
+  ];
+}
+
 /** What the agent does with a person's message. */
 function messageScript(a: Ask, who: Who): Step[] {
   if (who === "grantee") return granteeScript(a);
+  const advice = reviewAdvice(a);
+  if (advice) return advice;
   const manager = who === "manager";
   const list = [
     call("tu_list", LIST, {}),
@@ -4700,6 +4750,15 @@ export const agentRoutes: MockRoute[] = [
         return fail("INVALID_ARGUMENT", "surface is not a FoundryAgentSurface");
       if (replying && body.text !== undefined)
         return fail("INVALID_ARGUMENT", "text or answers, not both");
+      if (
+        page?.reviewCardId !== undefined &&
+        page.reviewCardId !== "" &&
+        (!page.ontologyId || !/^[0-9a-f]{64}$/.test(page.reviewCardId))
+      )
+        return fail(
+          "INVALID_ARGUMENT",
+          "page_context names a review card by its 64 lowercase hexadecimal characters, with its ontology",
+        );
       if (!replying && (!text || [...text].length > MAX_TEXT))
         return fail(
           "INVALID_ARGUMENT",
@@ -4929,6 +4988,7 @@ export const agentRoutes: MockRoute[] = [
               ...(seen?.dashboardId && { dashboardId: seen.dashboardId }),
               ...(seen?.newAutomation && { newAutomation: true }),
               ...(zone && { timeZone: zone }),
+              ...(seen?.reviewCardId && { reviewCardId: seen.reviewCardId }),
             }
           : null;
       // Its turn runs as the person is now (the worker's threadReach): the

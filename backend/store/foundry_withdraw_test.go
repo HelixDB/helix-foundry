@@ -390,7 +390,7 @@ func TestFoundryTakeBackWhileAJobIsInFlight(t *testing.T) {
 		d := f.held(f.a, 0, readA)
 		require.True(t, f.approve(t, "1", d))
 		f.retried(t, f.claim(t))
-		assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, f.rejected(f.a, 0, readA)), store.ErrConflict)
+		assert.ErrorIs(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, f.rejected(f.a, 0, readA)), store.ErrConflict)
 		assert.Equal(t, map[string]string{d.ID: "release"}, kinds(t, f.load))
 	})
 

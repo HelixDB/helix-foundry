@@ -164,6 +164,7 @@ describe("usageView", () => {
         ["FOUNDRY_USAGE_TASK_API_SOURCES", "API sources", true],
         ["FOUNDRY_USAGE_TASK_QUESTIONS", "Questions", false],
         ["FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS", "Run assessments", false],
+        ["FOUNDRY_USAGE_TASK_REVIEW_ADVICE", "Review suggestions", false],
       ].map((r) => [...r, "—", { of: "", fill: 0, level: "room" }]),
     );
   });
@@ -244,6 +245,7 @@ describe("the mock's usage route", () => {
       ["FOUNDRY_USAGE_TASK_API_SOURCES", "20000000"],
       ["FOUNDRY_USAGE_TASK_QUESTIONS", "30000000"],
       ["FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS", "20000000"],
+      ["FOUNDRY_USAGE_TASK_REVIEW_ADVICE", "10000000"],
     ]);
     const spent = Object.fromEntries(
       u.tasks!.map((t) => [t.task, Number(t.spentUsdMicros)]),

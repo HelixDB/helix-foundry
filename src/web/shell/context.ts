@@ -2,7 +2,12 @@ import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /** Where the person opened Founder from, for analytics. */
-export type AssistantFrom = "shortcut" | "button" | "palette" | "new_dashboard";
+export type AssistantFrom =
+  | "shortcut"
+  | "button"
+  | "palette"
+  | "new_dashboard"
+  | "review";
 
 /** What a new thread's composer starts with; each compose is a new `n`. */
 export type DockSeed = { text: string; n: number };
