@@ -3,9 +3,13 @@
 // starts), the cards skipped or still to decide (for a member, who decides
 // none, those waiting for an owner or admin), then the spot checks
 // (./spot-checks.tsx), which may be skipped. While the index lists cards
-// the walk hasn't read yet, it says it is reading them instead.
+// the walk hasn't read yet, it says it is reading them instead. Owners and
+// admins of a hosted workspace get a link to a workflow that emails them
+// when cards pile up again (the reviews_waiting trigger).
 import { useState, type ReactNode, type Ref } from "react";
+import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import { Button, ButtonLink, formatNumber, plural } from "../../kit";
 import { paths } from "../../paths";
 import { useOntology } from "../ontology/scope";
@@ -151,6 +155,16 @@ export function WalkDone({
             <Button onClick={onClearFilters}>Clear filters</Button>
           )}
         </div>
+      )}
+      {!member && !LOCAL && (
+        <p className="on-muted">
+          <Link
+            className="on-link"
+            to={paths.newAutomation("reviews-digest", o)}
+          >
+            Email me when reviews wait
+          </Link>
+        </p>
       )}
       {!more && (
         <section className="rv-spot" aria-labelledby="rv-spot-title">
