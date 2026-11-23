@@ -285,7 +285,8 @@ func (e FoundryAutomationNodeEnd) Validate() error {
 // FoundryAutomationEvent is what fired a run, as its trigger_event keeps it:
 // Kind is the trigger's kind, or manual for a run by hand; the ids name the
 // work it found (the newest, when several ended at once), Count how many
-// ended or arrived, Outcome how a sync or generation ended.
+// ended or arrived (for reviews_waiting, the cards to review), Outcome how a
+// sync or generation ended.
 type FoundryAutomationEvent struct {
 	Kind         string    `json:"kind"`
 	At           time.Time `json:"at"`
@@ -309,11 +310,12 @@ type FoundryAutomationEvent struct {
 
 // FoundryAutomationEnded is one row of work an event trigger found ended: a
 // sync, a load, a generation or a document, with its end time and id (its
-// cursor) and how it ended.
+// cursor) and how it ended; for reviews_waiting, the ontology's current load
+// and its open cards.
 type FoundryAutomationEnded struct {
 	Cursor  FoundryAutomationCursor
 	Outcome string
-	// Rows is what a sync wrote.
+	// Rows is what a sync wrote, or the cards a load has to review.
 	Rows *int64
 	// Cause is the automation run that started a sync or a load, or the
 	// sync that wrote a document; nil for work a person or Foundry itself

@@ -10,6 +10,9 @@ import (
 	// Time zones come with the binary, so a host image without tzdata
 	// schedules in the owner's zone all the same.
 	_ "time/tzdata"
+
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 // Trigger is what starts an automation's runs: a closed set. A schedule
@@ -101,6 +104,18 @@ type ReviewsWaiting struct {
 // MaxReviewsWaiting is the most a ReviewsWaiting trigger waits for: the
 // review index counts open cards up to it.
 const MaxReviewsWaiting = 10000
+
+// CardsToReview writes a count of open review cards as a person reads it,
+// grouped by thousands, and "10,000 or more" at MaxReviewsWaiting, past
+// which the index stops counting.
+//
+//	automation.CardsToReview(1214) // "1,214"
+func CardsToReview(n int64) string {
+	if n >= MaxReviewsWaiting {
+		return message.NewPrinter(language.English).Sprintf("%d or more", MaxReviewsWaiting)
+	}
+	return message.NewPrinter(language.English).Sprintf("%d", n)
+}
 
 // Manual never fires: its owner runs it.
 type Manual struct{}

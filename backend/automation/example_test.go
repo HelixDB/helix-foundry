@@ -94,3 +94,15 @@ func ExampleSpec_StepTargets() {
 	fmt.Println(spec.Targets().Ontologies, spec.StepTargets().Ontologies)
 	// Output: [01DRAFTED 01SALES] [01SALES]
 }
+
+// A count of review cards reads grouped, and past what the index counts as
+// "or more".
+func ExampleCardsToReview() {
+	fmt.Println(automation.CardsToReview(214))
+	fmt.Println(automation.CardsToReview(1214))
+	fmt.Println(automation.CardsToReview(automation.MaxReviewsWaiting))
+	// Output:
+	// 214
+	// 1,214
+	// 10,000 or more
+}
