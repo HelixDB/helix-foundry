@@ -1000,3 +1000,79 @@ test("a reload on ?card= lands on that card", async ({ page }) => {
   await page.reload();
   await expect(heading(page)).toHaveText(shown!);
 });
+
+/**
+ * Loads one order form naming “Globex Initech Holdings”, which two stored
+ * customers share a word with, so the rules can't pick: Founder's model
+ * may. Opens the walk on its card.
+ */
+async function tiedName(
+  page: Page,
+  config: Parameters<typeof mock.configure>[0] = {},
+) {
+  await mock.configure({ loadStepMs: 200, ...config });
+  await signIn(page);
+  await uploadNaming(page, "Globex Initech Holdings", 1);
+  await makeContractsCurrent(page);
+  await loadVersion3(page);
+  await page.goto(`${O}/review`);
+  await expect(heading(page)).toBeVisible();
+  for (let i = 0; i < 12; i++) {
+    if ((await heading(page).textContent())?.includes("names “Globex Initech"))
+      break;
+    await page.keyboard.press("s");
+  }
+  await expect(heading(page)).toContainText("names “Globex Initech");
+}
+
+test("Founder's model suggests a choice where the rules can't: its source, its quote, Enter takes it, and G batches nothing", async ({
+  page,
+}) => {
+  await tiedName(page);
+  const box = card(page).getByRole("region", { name: "Founder’s suggestion" });
+  await expect(box).toContainText("Founder suggests");
+  await expect(box).toContainText("Founder’s model");
+  await expect(box).toContainText("Not measured");
+  const why = box.getByRole("list", { name: "Why" });
+  await expect(why).toContainText(
+    /^Founder’s model: .+ shares the most words with the name the document uses\. Section \d+ of naming-1\.md$/,
+  );
+  await expect(
+    why.getByRole("link", { name: /^Section \d+ of naming-1\.md$/ }),
+  ).toHaveAttribute("href", /\/documents\/[^?#]+\?tab=review#s\d+-\d+-\d+$/);
+  // Never batched: G opens nothing.
+  await page.keyboard.press("g");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const sent = page.waitForRequest(isBatch);
+  await page.keyboard.press("Enter");
+  expect(choice(await sent)).toEqual({
+    decision: { resolve: { entityKey: expect.any(String) } },
+  });
+});
+
+test("the model's rationale shows as plain text, whatever it holds", async ({
+  page,
+}) => {
+  await tiedName(page, {
+    reviewModelAdviceRationale:
+      "See <b>https://evil.test</b>\u202e now,\n<a href='x'>click</a>",
+  });
+  const why = card(page).getByRole("list", { name: "Why" });
+  await expect(why).toContainText(
+    "Founder’s model: See <b>https://evil.test</b> now, <a href='x'>click</a>",
+  );
+  await expect(why.locator("b")).toHaveCount(0);
+  await expect(why.getByRole("link")).toHaveText([
+    /^Section \d+ of naming-1\.md$/,
+  ]);
+});
+
+test("with the model's advice off, a name between candidates needs you", async ({
+  page,
+}) => {
+  await tiedName(page, { reviewModelAdvice: false });
+  await expect(card(page)).toContainText(
+    "Needs you: more than one record fits this name.",
+  );
+  await expect(card(page)).not.toContainText("Founder’s model");
+});

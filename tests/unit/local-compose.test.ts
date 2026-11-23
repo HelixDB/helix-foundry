@@ -503,13 +503,17 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     expect(services.helix.image).toBe("helix-foundry/helix:local");
   });
 
-  it("passes the secrets directory, the API keys and the AI default, nothing else", () => {
+  it("passes the secrets directory, the API keys, the AI default and review advice, nothing else", () => {
     const { services } = composed(SECRETS);
     const foundry = services.foundry;
     const environment = foundry.environment as Record<string, string>;
     expect(
       Object.keys(environment)
-        .filter((k) => !k.startsWith("HELIX_FOUNDRY__AI__DEFAULT__"))
+        .filter(
+          (k) =>
+            !k.startsWith("HELIX_FOUNDRY__AI__DEFAULT__") &&
+            !k.startsWith("HELIX_FOUNDRY__REVIEWS__ADVISE__"),
+        )
         .sort(),
     ).toEqual([
       "ANTHROPIC_API_KEY",
@@ -528,6 +532,19 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
       HELIX_DB_DSN:
         "helix@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true",
       HELIX_LOCAL__SECRETS_DIR: "/secrets",
+      // Review advice is on, at $10 a month, unless local/.env says not.
+      HELIX_FOUNDRY__REVIEWS__ADVISE__ENABLED: "true",
+      HELIX_FOUNDRY__REVIEWS__ADVISE__MONTHLY_USD: "10",
+    });
+    expect(
+      composed({
+        ...SECRETS,
+        FOUNDRY_REVIEW_ADVICE: "false",
+        FOUNDRY_REVIEW_ADVICE_MONTHLY_USD: "2.5",
+      }).services.foundry.environment,
+    ).toMatchObject({
+      HELIX_FOUNDRY__REVIEWS__ADVISE__ENABLED: "false",
+      HELIX_FOUNDRY__REVIEWS__ADVISE__MONTHLY_USD: "2.5",
     });
     expect(foundry.network_mode).toBe("service:pod");
     expect(foundry.healthcheck.test).toEqual([

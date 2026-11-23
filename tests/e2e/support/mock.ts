@@ -83,6 +83,10 @@ export const mock = {
     };
     // The next n settles are refused: the claim reads differently now.
     settleRefusals?: number;
+    // Founder's model's advice on review cards (mock/review-advice.ts): off,
+    // no card carries it; a rationale, every advice's, as sent.
+    reviewModelAdvice?: boolean;
+    reviewModelAdviceRationale?: string;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"
