@@ -1002,17 +1002,18 @@ test("a reload on ?card= lands on that card", async ({ page }) => {
 });
 
 /**
- * Loads one order form naming “Globex Initech Holdings”, which two stored
- * customers share a word with, so the rules can't pick: Founder's model
- * may. Opens the walk on its card.
+ * Loads `forms` order forms naming “Globex Initech Holdings”, which two
+ * stored customers share a word with, so the rules can't pick: Founder's
+ * model may. Opens the walk on the first such card.
  */
 async function tiedName(
   page: Page,
   config: Parameters<typeof mock.configure>[0] = {},
+  forms = 1,
 ) {
   await mock.configure({ loadStepMs: 200, ...config });
   await signIn(page);
-  await uploadNaming(page, "Globex Initech Holdings", 1);
+  await uploadNaming(page, "Globex Initech Holdings", forms);
   await makeContractsCurrent(page);
   await loadVersion3(page);
   await page.goto(`${O}/review`);
@@ -1028,21 +1029,43 @@ async function tiedName(
 test("Founder's model suggests a choice where the rules can't: its source, its quote, Enter takes it, and G batches nothing", async ({
   page,
 }) => {
-  await tiedName(page);
+  // Two forms: two cards with the same advice, which a rule's suggestion
+  // would batch.
+  await tiedName(page, {}, 2);
   const box = card(page).getByRole("region", { name: "Founder’s suggestion" });
   await expect(box).toContainText("Founder suggests");
   await expect(box).toContainText("Founder’s model");
   await expect(box).toContainText("Not measured");
   const why = box.getByRole("list", { name: "Why" });
   await expect(why).toContainText(
-    /^Founder’s model: .+ shares the most words with the name the document uses\. Section \d+ of naming-1\.md$/,
+    /^Founder’s model: .+ shares the most words with the name the document uses\. Section \d+ of naming-\d\.md$/,
   );
   await expect(
-    why.getByRole("link", { name: /^Section \d+ of naming-1\.md$/ }),
+    why.getByRole("link", { name: /^Section \d+ of naming-\d\.md$/ }),
   ).toHaveAttribute("href", /\/documents\/[^?#]+\?tab=review#s\d+-\d+-\d+$/);
-  // Never batched: G opens nothing.
-  await page.keyboard.press("g");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const first = await why.textContent();
+  // Never batched: no Accept all like this, and G opens nothing, on either
+  // card.
+  for (const shown of ["first", "second"]) {
+    await expect(box, shown).toContainText("Founder’s model");
+    await expect(
+      page.getByRole("button", { name: /Accept all like this/ }),
+    ).toHaveCount(0);
+    await page.keyboard.press("g");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    if (shown === "second") break;
+    for (let i = 0; i < 12; i++) {
+      const at = page.url();
+      await page.keyboard.press("s");
+      await expect(page).not.toHaveURL(at);
+      if (
+        (await heading(page).textContent())?.includes("names “Globex Initech")
+      )
+        break;
+    }
+    await expect(heading(page)).toContainText("names “Globex Initech");
+    await expect(why).not.toHaveText(first!);
+  }
   const sent = page.waitForRequest(isBatch);
   await page.keyboard.press("Enter");
   expect(choice(await sent)).toEqual({
