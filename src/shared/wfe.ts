@@ -4823,7 +4823,6 @@ export type ListFoundryReviewCardsResponse = {
   precision?: FoundryReviewPrecision;
   nextPageToken?: string;
 };
-/** A place in a document: int64s, as strings. */
 /**
  * v1FoundryReviewModelAdvice: Founder's model's pick of one of a card's
  * choices, with a plain-text rationale (at most 300 characters, sanitized)
@@ -4838,6 +4837,7 @@ export type FoundryReviewModelAdvice = {
 };
 /** v1FoundryReviewCite: a place in a document a suggestion cites. */
 export type FoundryReviewCite = { docId?: string; span?: FoundryReviewSpan };
+/** A place in a document: int64s, as strings. */
 export type FoundryReviewSpan = {
   section?: string;
   start?: string;

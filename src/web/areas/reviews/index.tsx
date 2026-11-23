@@ -3,7 +3,8 @@
 // review cards index lists them (./cards-api.ts: the decisions that write
 // the most facts first, a page at a time, filtered by kind, type and
 // document), walked one card at a time (./walkthrough.tsx), each card with
-// Founder's suggestion from fixed rules (./advice.ts) and settled as a
+// Founder's suggestion from fixed rules (./advice.ts), or from Founder's
+// model where the rules abstain on a name or a value, and settled as a
 // document's Needs review settles it. The cards' reviews are read from the
 // load by key, ten cards at a time (./cards.ts). At the finish, a few spot checks drawn at
 // random from every score band measure how often claims at each score are
