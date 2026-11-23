@@ -247,14 +247,9 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           <span>Review</span>
                           {reviewOpen > 0 && (
                             <span className="hf-nav-badge" aria-hidden>
-                              {[
-                                factsOpen &&
-                                  `${formatNumber(factsOpen)}${more ? "+" : ""}`,
-                                suggestionsOpen &&
-                                  formatNumber(suggestionsOpen),
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")}
+                              {/* Facts' count always leads, 0 too, so
+                              the suggestions' never reads as cards. */}
+                              {`${formatNumber(factsOpen ?? 0)}${more ? "+" : ""}${suggestionsOpen ? ` · ${formatNumber(suggestionsOpen)}` : ""}`}
                             </span>
                           )}
                         </Link>

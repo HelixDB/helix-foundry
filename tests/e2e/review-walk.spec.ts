@@ -354,6 +354,18 @@ test("a link to a name settles every document asking about it, which go to Cover
       page.getByRole("heading", { level: 2, name: "Nothing to decide" }),
     ).toBeVisible({ timeout: 3000 });
   }).toPass({ timeout: 20_000 });
+  // With nothing to decide, the panel's Review badge still leads with Facts'
+  // count, so the audit's suggestions never read as cards.
+  const review = page
+    .getByRole("list", { name: "Pages" })
+    .getByRole("link", { name: /^Review/ });
+  await expect(async () => {
+    await page.goto(`${O}/connections`);
+    await expect(review.locator(".hf-nav-badge")).toHaveText("0 · 4", {
+      timeout: 3000,
+    });
+  }).toPass({ timeout: 45_000 });
+  await expect(review).toHaveAccessibleName("Review: 4 ontology suggestions");
 });
 
 test("a link whose job failed before saying offers its choices again, and is still to decide", async ({
