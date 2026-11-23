@@ -392,6 +392,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases, keepExisting); err != nil {
 			return err
 		}
+		// What the load holds of the document changed: its review cards are
+		// owed a rebuild.
+		if err := tx.oweFoundryReviewDocument(ctx, ontologyID, loadID, e.DocumentID); err != nil {
+			return err
+		}
 		if e.SettlesNames {
 			if err := tx.recordFoundryNameOutcomes(ctx, loadID, e.DocumentID, e.Names); err != nil {
 				return err
@@ -489,6 +494,14 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 		}
 		if job.Kind == model.FoundryGraphJobDelete && outcome.Status == model.FoundryGraphJobBudgetExhausted {
 			return fmt.Errorf("foundry graph job %s deletes a load; it spends no budget", jobID)
+		}
+		// An Extract (its sweep, its value decisions) or an apply's diff may
+		// have changed reviews past the documents it recorded: the load's
+		// review cards are owed a full pass.
+		if outcome.ReindexReviews && job.Kind != model.FoundryGraphJobDelete {
+			if err := tx.requestFoundryReviewPass(ctx, o.ID, job.LoadID); err != nil {
+				return err
+			}
 		}
 		p := outcome.Progress
 		attempt := `error=NULLIF(?, ''), report=COALESCE(CAST(? AS JSON), report), chunks_done=?, documents_done=?,

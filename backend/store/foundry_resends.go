@@ -343,7 +343,8 @@ AND NOT EXISTS (SELECT 1 FROM foundry_load_resends WHERE load_id=? AND document_
 }
 
 // makeFoundryLoadCurrent makes loadID the ontology's current load, the load
-// reads go to, and, when it was not, brings it the resolves its list lacks
+// reads go to, and, when it was not, asks for a full pass of its review
+// cards and brings it the resolves its list lacks
 // (carryFoundryResolves): every path that makes a load current comes here (a
 // load job's end, SetCurrentFoundryLoad, an enrichment purge). The caller
 // holds the ontology's lock, and has locked the live job's row, if any,
@@ -357,6 +358,11 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 	o.CurrentLoadID = &loadID
 	if was != nil && *was == loadID {
 		return nil
+	}
+	// The decisions and stored values its review cards were built against
+	// may have changed while it was not current.
+	if err := s.requestFoundryReviewPass(ctx, o.ID, loadID); err != nil {
+		return err
 	}
 	return s.carryFoundryResolves(ctx, o)
 }

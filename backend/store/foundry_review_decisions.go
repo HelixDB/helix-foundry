@@ -404,7 +404,8 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 		}
 	}
 	*d = *stored
-	return nil
+	// A decision may close a card, or open one it replaced.
+	return s.markFoundryReviewsDirty(ctx, d.OntologyID)
 }
 
 // foundryClaimAt is the SQL condition, with alias t's columns, that a decision
@@ -922,6 +923,9 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, 
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, ontologyID, id); err != nil {
 			return err
 		}
+		if err := tx.markFoundryReviewsDirty(ctx, ontologyID); err != nil {
+			return err
+		}
 		switch model.FoundryReviewDecisionKind(kind) {
 		case model.FoundryReviewResolve:
 			// A copy the current load waits to settle, or one it refused, has
@@ -1096,6 +1100,9 @@ func (s *mysqlDB) pruneFoundryReviewDecisions(ctx context.Context, ontologyID, v
 		if len(stale) > 0 {
 			if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id IN (`+
 				idPlaceholders(len(stale))+`)`, append([]any{ontologyID}, stale...)...); err != nil {
+				return err
+			}
+			if err := s.markFoundryReviewsDirty(ctx, ontologyID); err != nil {
 				return err
 			}
 		}
