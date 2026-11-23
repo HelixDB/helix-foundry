@@ -471,6 +471,11 @@
   margin: 0;
   font-size: var(--hf-text-md);
 }
+/* A spot check's own actions sit under what they judge, without the
+   form's gap. */
+.rv-spot .rq-card .hf-form-actions {
+  margin-top: 0;
+}
 .rv-spot-intro {
   margin: -8px 0 0;
   font-size: var(--hf-text-sm);
