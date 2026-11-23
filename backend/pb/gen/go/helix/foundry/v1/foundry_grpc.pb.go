@@ -89,6 +89,10 @@ const (
 	FoundryService_DeleteFoundryReviewDecision_FullMethodName           = "/helix.foundry.v1.FoundryService/DeleteFoundryReviewDecision"
 	FoundryService_SettleFoundryReviewLabel_FullMethodName              = "/helix.foundry.v1.FoundryService/SettleFoundryReviewLabel"
 	FoundryService_ListFoundryReviewLabels_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryReviewLabels"
+	FoundryService_GetFoundryReviewSummary_FullMethodName               = "/helix.foundry.v1.FoundryService/GetFoundryReviewSummary"
+	FoundryService_ListFoundryReviewCards_FullMethodName                = "/helix.foundry.v1.FoundryService/ListFoundryReviewCards"
+	FoundryService_ListFoundryReviewSpotChecks_FullMethodName           = "/helix.foundry.v1.FoundryService/ListFoundryReviewSpotChecks"
+	FoundryService_DrawFoundryReviewSpotChecks_FullMethodName           = "/helix.foundry.v1.FoundryService/DrawFoundryReviewSpotChecks"
 	FoundryService_ListFoundryHealFindings_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryHealFindings"
 	FoundryService_DismissFoundryHealFinding_FullMethodName             = "/helix.foundry.v1.FoundryService/DismissFoundryHealFinding"
 	FoundryService_CreateFoundryWorkflow_FullMethodName                 = "/helix.foundry.v1.FoundryService/CreateFoundryWorkflow"
@@ -307,6 +311,20 @@ type FoundryServiceClient interface {
 	// changes no decision and no load.
 	SettleFoundryReviewLabel(ctx context.Context, in *SettleFoundryReviewLabelRequest, opts ...grpc.CallOption) (*FoundryReviewLabelResponse, error)
 	ListFoundryReviewLabels(ctx context.Context, in *ListFoundryReviewLabelsRequest, opts ...grpc.CallOption) (*ListFoundryReviewLabelsResponse, error)
+	// What each ontology's current load asks a person to decide: its open
+	// review cards, counted by the graph worker's index. A restricted member
+	// gets none.
+	GetFoundryReviewSummary(ctx context.Context, in *GetFoundryReviewSummaryRequest, opts ...grpc.CallOption) (*GetFoundryReviewSummaryResponse, error)
+	// The review walk's cards of the ontology's current load, a page at a
+	// time in the walk's order: names, held claims and values to decide, or
+	// for information.
+	ListFoundryReviewCards(ctx context.Context, in *ListFoundryReviewCardsRequest, opts ...grpc.CallOption) (*ListFoundryReviewCardsResponse, error)
+	// The current load's spot checks, as drawn, with what may be re-checked
+	// and the decisions and labels at their places. Read only.
+	ListFoundryReviewSpotChecks(ctx context.Context, in *ListFoundryReviewSpotChecksRequest, opts ...grpc.CallOption) (*FoundryReviewSpotChecksResponse, error)
+	// Tops the current load's spot checks up to five not yet labelled: each
+	// drawn once, the same for everyone, and never changed. Idempotent.
+	DrawFoundryReviewSpotChecks(ctx context.Context, in *DrawFoundryReviewSpotChecksRequest, opts ...grpc.CallOption) (*FoundryReviewSpotChecksResponse, error)
 	// Self-healing suggestions: what audits of the ontology's current load
 	// found its ontology and mappings lack, the top open ones by support.
 	ListFoundryHealFindings(ctx context.Context, in *ListFoundryHealFindingsRequest, opts ...grpc.CallOption) (*ListFoundryHealFindingsResponse, error)
@@ -1321,6 +1339,46 @@ func (c *foundryServiceClient) ListFoundryReviewLabels(ctx context.Context, in *
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryReviewLabelsResponse)
 	err := c.cc.Invoke(ctx, FoundryService_ListFoundryReviewLabels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetFoundryReviewSummary(ctx context.Context, in *GetFoundryReviewSummaryRequest, opts ...grpc.CallOption) (*GetFoundryReviewSummaryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetFoundryReviewSummaryResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetFoundryReviewSummary_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryReviewCards(ctx context.Context, in *ListFoundryReviewCardsRequest, opts ...grpc.CallOption) (*ListFoundryReviewCardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryReviewCardsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryReviewCards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryReviewSpotChecks(ctx context.Context, in *ListFoundryReviewSpotChecksRequest, opts ...grpc.CallOption) (*FoundryReviewSpotChecksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryReviewSpotChecksResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryReviewSpotChecks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DrawFoundryReviewSpotChecks(ctx context.Context, in *DrawFoundryReviewSpotChecksRequest, opts ...grpc.CallOption) (*FoundryReviewSpotChecksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryReviewSpotChecksResponse)
+	err := c.cc.Invoke(ctx, FoundryService_DrawFoundryReviewSpotChecks_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2434,6 +2492,20 @@ type FoundryServiceServer interface {
 	// changes no decision and no load.
 	SettleFoundryReviewLabel(context.Context, *SettleFoundryReviewLabelRequest) (*FoundryReviewLabelResponse, error)
 	ListFoundryReviewLabels(context.Context, *ListFoundryReviewLabelsRequest) (*ListFoundryReviewLabelsResponse, error)
+	// What each ontology's current load asks a person to decide: its open
+	// review cards, counted by the graph worker's index. A restricted member
+	// gets none.
+	GetFoundryReviewSummary(context.Context, *GetFoundryReviewSummaryRequest) (*GetFoundryReviewSummaryResponse, error)
+	// The review walk's cards of the ontology's current load, a page at a
+	// time in the walk's order: names, held claims and values to decide, or
+	// for information.
+	ListFoundryReviewCards(context.Context, *ListFoundryReviewCardsRequest) (*ListFoundryReviewCardsResponse, error)
+	// The current load's spot checks, as drawn, with what may be re-checked
+	// and the decisions and labels at their places. Read only.
+	ListFoundryReviewSpotChecks(context.Context, *ListFoundryReviewSpotChecksRequest) (*FoundryReviewSpotChecksResponse, error)
+	// Tops the current load's spot checks up to five not yet labelled: each
+	// drawn once, the same for everyone, and never changed. Idempotent.
+	DrawFoundryReviewSpotChecks(context.Context, *DrawFoundryReviewSpotChecksRequest) (*FoundryReviewSpotChecksResponse, error)
 	// Self-healing suggestions: what audits of the ontology's current load
 	// found its ontology and mappings lack, the top open ones by support.
 	ListFoundryHealFindings(context.Context, *ListFoundryHealFindingsRequest) (*ListFoundryHealFindingsResponse, error)
@@ -2969,6 +3041,18 @@ func (UnimplementedFoundryServiceServer) SettleFoundryReviewLabel(context.Contex
 }
 func (UnimplementedFoundryServiceServer) ListFoundryReviewLabels(context.Context, *ListFoundryReviewLabelsRequest) (*ListFoundryReviewLabelsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviewLabels not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetFoundryReviewSummary(context.Context, *GetFoundryReviewSummaryRequest) (*GetFoundryReviewSummaryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFoundryReviewSummary not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryReviewCards(context.Context, *ListFoundryReviewCardsRequest) (*ListFoundryReviewCardsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviewCards not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryReviewSpotChecks(context.Context, *ListFoundryReviewSpotChecksRequest) (*FoundryReviewSpotChecksResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviewSpotChecks not implemented")
+}
+func (UnimplementedFoundryServiceServer) DrawFoundryReviewSpotChecks(context.Context, *DrawFoundryReviewSpotChecksRequest) (*FoundryReviewSpotChecksResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DrawFoundryReviewSpotChecks not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryHealFindings(context.Context, *ListFoundryHealFindingsRequest) (*ListFoundryHealFindingsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryHealFindings not implemented")
@@ -4525,6 +4609,78 @@ func _FoundryService_ListFoundryReviewLabels_Handler(srv interface{}, ctx contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FoundryServiceServer).ListFoundryReviewLabels(ctx, req.(*ListFoundryReviewLabelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetFoundryReviewSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFoundryReviewSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetFoundryReviewSummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetFoundryReviewSummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetFoundryReviewSummary(ctx, req.(*GetFoundryReviewSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryReviewCards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryReviewCardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryReviewCards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryReviewCards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryReviewCards(ctx, req.(*ListFoundryReviewCardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryReviewSpotChecks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryReviewSpotChecksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryReviewSpotChecks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryReviewSpotChecks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryReviewSpotChecks(ctx, req.(*ListFoundryReviewSpotChecksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DrawFoundryReviewSpotChecks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DrawFoundryReviewSpotChecksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DrawFoundryReviewSpotChecks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DrawFoundryReviewSpotChecks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DrawFoundryReviewSpotChecks(ctx, req.(*DrawFoundryReviewSpotChecksRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6593,6 +6749,22 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListFoundryReviewLabels",
 			Handler:    _FoundryService_ListFoundryReviewLabels_Handler,
+		},
+		{
+			MethodName: "GetFoundryReviewSummary",
+			Handler:    _FoundryService_GetFoundryReviewSummary_Handler,
+		},
+		{
+			MethodName: "ListFoundryReviewCards",
+			Handler:    _FoundryService_ListFoundryReviewCards_Handler,
+		},
+		{
+			MethodName: "ListFoundryReviewSpotChecks",
+			Handler:    _FoundryService_ListFoundryReviewSpotChecks_Handler,
+		},
+		{
+			MethodName: "DrawFoundryReviewSpotChecks",
+			Handler:    _FoundryService_DrawFoundryReviewSpotChecks_Handler,
 		},
 		{
 			MethodName: "ListFoundryHealFindings",

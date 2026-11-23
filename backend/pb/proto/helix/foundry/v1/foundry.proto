@@ -368,6 +368,31 @@ service FoundryService {
   rpc ListFoundryReviewLabels(ListFoundryReviewLabelsRequest) returns (ListFoundryReviewLabelsResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-labels"};
   }
+  // What each ontology's current load asks a person to decide: its open
+  // review cards, counted by the graph worker's index. A restricted member
+  // gets none.
+  rpc GetFoundryReviewSummary(GetFoundryReviewSummaryRequest) returns (GetFoundryReviewSummaryResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/review-summary"};
+  }
+  // The review walk's cards of the ontology's current load, a page at a
+  // time in the walk's order: names, held claims and values to decide, or
+  // for information.
+  rpc ListFoundryReviewCards(ListFoundryReviewCardsRequest) returns (ListFoundryReviewCardsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-cards"};
+  }
+  // The current load's spot checks, as drawn, with what may be re-checked
+  // and the decisions and labels at their places. Read only.
+  rpc ListFoundryReviewSpotChecks(ListFoundryReviewSpotChecksRequest) returns (FoundryReviewSpotChecksResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks"};
+  }
+  // Tops the current load's spot checks up to five not yet labelled: each
+  // drawn once, the same for everyone, and never changed. Idempotent.
+  rpc DrawFoundryReviewSpotChecks(DrawFoundryReviewSpotChecksRequest) returns (FoundryReviewSpotChecksResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks:draw"
+      body: "*"
+    };
+  }
   // Self-healing suggestions: what audits of the ontology's current load
   // found its ontology and mappings lack, the top open ones by support.
   rpc ListFoundryHealFindings(ListFoundryHealFindingsRequest) returns (ListFoundryHealFindingsResponse) {
@@ -2033,6 +2058,12 @@ message ListFoundryReviewDecisionsRequest {
   // (contract 4.16.0, kind withdraw), with what became of each. A client
   // before them leaves it unset and gets none: it has no way to show one.
   bool include_withdraws = 4;
+  // Only these decisions, at most 100, never with page_token: each listed
+  // once while the ontology holds it. One missing was removed, or replaced
+  // (a changed choice is a new decision under a new id). With
+  // include_withdraws, a removed approval whose withdraw the current load
+  // shows comes back as that withdraw, under its id.
+  repeated string ids = 5;
 }
 message ListFoundryReviewDecisionsResponse {
   repeated FoundryReviewDecision decisions = 1;
@@ -2093,6 +2124,68 @@ message ListFoundryReviewLabelsRequest {
 message ListFoundryReviewLabelsResponse {
   repeated FoundryReviewLabel labels = 1;
   string next_page_token = 2;
+}
+
+message GetFoundryReviewSummaryRequest {
+  string workspace_id = 1;
+}
+message GetFoundryReviewSummaryResponse {
+  // One per live ontology with a current load.
+  repeated FoundryReviewSummary ontologies = 1;
+}
+
+// ListFoundryReviewCardsRequest lists a page of the current load's open
+// cards. FAILED_PRECONDITION without a current load, or for a page_token of
+// a load no longer current.
+message ListFoundryReviewCardsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  // DECIDE when unset.
+  FoundryReviewLane lane = 3;
+  // These kinds only; none is every kind. A held claim waiting on an open
+  // name is listed on the name's card, unless names are left out.
+  repeated FoundryReviewCardKind kind = 4;
+  // A card's type, or either end's of a held claim.
+  string type = 5;
+  string document_id = 6;
+  string page_token = 7;
+}
+message ListFoundryReviewCardsResponse {
+  string load_id = 1;
+  // The index is still being built: more cards may come, and the walk is
+  // not done when it runs out.
+  bool indexing = 2;
+  // At most 50, in the walk's order.
+  repeated FoundryReviewCard cards = 3;
+  // The decisions, across the ontology's documents, of each name the page's
+  // name cards are of.
+  repeated FoundryReviewNameDecisions names = 4;
+  // The spot checks' precision, on the first page only.
+  FoundryReviewPrecision precision = 5;
+  string next_page_token = 6;
+}
+
+message ListFoundryReviewSpotChecksRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+}
+// DrawFoundryReviewSpotChecksRequest draws the spot checks of load_id,
+// which must be the current load (FAILED_PRECONDITION otherwise).
+message DrawFoundryReviewSpotChecksRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  string load_id = 3;
+}
+message FoundryReviewSpotChecksResponse {
+  string load_id = 1;
+  // In the order drawn.
+  repeated FoundryReviewDraw draws = 2;
+  // What the caller may re-check: someone else's decisions and labels,
+  // sampled, at places the caller has said nothing of.
+  repeated FoundryReviewRecheck rechecks = 3;
+  // The decisions and labels at the drawn places, any load's labels.
+  repeated FoundryReviewDecision decisions = 4;
+  repeated FoundryReviewLabel labels = 5;
 }
 
 // ListFoundryAccessRequest reads the workspace's grants.

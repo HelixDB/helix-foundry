@@ -3839,6 +3839,218 @@ func local_request_FoundryService_ListFoundryReviewLabels_0(ctx context.Context,
 	return msg, metadata, err
 }
 
+func request_FoundryService_GetFoundryReviewSummary_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq GetFoundryReviewSummaryRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	msg, err := client.GetFoundryReviewSummary(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_FoundryService_GetFoundryReviewSummary_0(ctx context.Context, marshaler runtime.Marshaler, server FoundryServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq GetFoundryReviewSummaryRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	msg, err := server.GetFoundryReviewSummary(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+var filter_FoundryService_ListFoundryReviewCards_0 = &utilities.DoubleArray{Encoding: map[string]int{"workspace_id": 0, "ontology_id": 1}, Base: []int{1, 1, 2, 0, 0}, Check: []int{0, 1, 1, 2, 3}}
+
+func request_FoundryService_ListFoundryReviewCards_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ListFoundryReviewCardsRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_FoundryService_ListFoundryReviewCards_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := client.ListFoundryReviewCards(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_FoundryService_ListFoundryReviewCards_0(ctx context.Context, marshaler runtime.Marshaler, server FoundryServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ListFoundryReviewCardsRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	if err := req.ParseForm(); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_FoundryService_ListFoundryReviewCards_0); err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	msg, err := server.ListFoundryReviewCards(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+func request_FoundryService_ListFoundryReviewSpotChecks_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ListFoundryReviewSpotChecksRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	msg, err := client.ListFoundryReviewSpotChecks(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_FoundryService_ListFoundryReviewSpotChecks_0(ctx context.Context, marshaler runtime.Marshaler, server FoundryServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq ListFoundryReviewSpotChecksRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	msg, err := server.ListFoundryReviewSpotChecks(ctx, &protoReq)
+	return msg, metadata, err
+}
+
+func request_FoundryService_DrawFoundryReviewSpotChecks_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DrawFoundryReviewSpotChecksRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	msg, err := client.DrawFoundryReviewSpotChecks(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+}
+
+func local_request_FoundryService_DrawFoundryReviewSpotChecks_0(ctx context.Context, marshaler runtime.Marshaler, server FoundryServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var (
+		protoReq DrawFoundryReviewSpotChecksRequest
+		metadata runtime.ServerMetadata
+		err      error
+	)
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && !errors.Is(err, io.EOF) {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	val, ok := pathParams["workspace_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "workspace_id")
+	}
+	protoReq.WorkspaceId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "workspace_id", err)
+	}
+	val, ok = pathParams["ontology_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "ontology_id")
+	}
+	protoReq.OntologyId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "ontology_id", err)
+	}
+	msg, err := server.DrawFoundryReviewSpotChecks(ctx, &protoReq)
+	return msg, metadata, err
+}
+
 func request_FoundryService_ListFoundryHealFindings_0(ctx context.Context, marshaler runtime.Marshaler, client FoundryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var (
 		protoReq ListFoundryHealFindingsRequest
@@ -10595,6 +10807,86 @@ func RegisterFoundryServiceHandlerServer(ctx context.Context, mux *runtime.Serve
 		}
 		forward_FoundryService_ListFoundryReviewLabels_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodGet, pattern_FoundryService_GetFoundryReviewSummary_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/GetFoundryReviewSummary", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/review-summary"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_FoundryService_GetFoundryReviewSummary_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_GetFoundryReviewSummary_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodGet, pattern_FoundryService_ListFoundryReviewCards_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/ListFoundryReviewCards", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-cards"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_FoundryService_ListFoundryReviewCards_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_ListFoundryReviewCards_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodGet, pattern_FoundryService_ListFoundryReviewSpotChecks_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/ListFoundryReviewSpotChecks", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_FoundryService_ListFoundryReviewSpotChecks_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_ListFoundryReviewSpotChecks_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_FoundryService_DrawFoundryReviewSpotChecks_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/DrawFoundryReviewSpotChecks", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks:draw"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_FoundryService_DrawFoundryReviewSpotChecks_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_DrawFoundryReviewSpotChecks_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	mux.Handle(http.MethodGet, pattern_FoundryService_ListFoundryHealFindings_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -13788,6 +14080,74 @@ func RegisterFoundryServiceHandlerClient(ctx context.Context, mux *runtime.Serve
 		}
 		forward_FoundryService_ListFoundryReviewLabels_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 	})
+	mux.Handle(http.MethodGet, pattern_FoundryService_GetFoundryReviewSummary_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/GetFoundryReviewSummary", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/review-summary"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_FoundryService_GetFoundryReviewSummary_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_GetFoundryReviewSummary_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodGet, pattern_FoundryService_ListFoundryReviewCards_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/ListFoundryReviewCards", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-cards"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_FoundryService_ListFoundryReviewCards_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_ListFoundryReviewCards_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodGet, pattern_FoundryService_ListFoundryReviewSpotChecks_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/ListFoundryReviewSpotChecks", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_FoundryService_ListFoundryReviewSpotChecks_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_ListFoundryReviewSpotChecks_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
+	mux.Handle(http.MethodPost, pattern_FoundryService_DrawFoundryReviewSpotChecks_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/helix.foundry.v1.FoundryService/DrawFoundryReviewSpotChecks", runtime.WithHTTPPathPattern("/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks:draw"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_FoundryService_DrawFoundryReviewSpotChecks_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		forward_FoundryService_DrawFoundryReviewSpotChecks_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+	})
 	mux.Handle(http.MethodGet, pattern_FoundryService_ListFoundryHealFindings_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
@@ -15544,6 +15904,10 @@ var (
 	pattern_FoundryService_DeleteFoundryReviewDecision_0           = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-decisions", "id"}, ""))
 	pattern_FoundryService_SettleFoundryReviewLabel_0              = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-labels"}, ""))
 	pattern_FoundryService_ListFoundryReviewLabels_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-labels"}, ""))
+	pattern_FoundryService_GetFoundryReviewSummary_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4}, []string{"v1", "workspaces", "workspace_id", "foundry", "review-summary"}, ""))
+	pattern_FoundryService_ListFoundryReviewCards_0                = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-cards"}, ""))
+	pattern_FoundryService_ListFoundryReviewSpotChecks_0           = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-spot-checks"}, ""))
+	pattern_FoundryService_DrawFoundryReviewSpotChecks_0           = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "review-spot-checks"}, "draw"))
 	pattern_FoundryService_ListFoundryHealFindings_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "heal-findings"}, ""))
 	pattern_FoundryService_DismissFoundryHealFinding_0             = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6, 1, 0, 4, 1, 5, 7}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "heal-findings", "fingerprint"}, "dismiss"))
 	pattern_FoundryService_CreateFoundryWorkflow_0                 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 1, 0, 4, 1, 5, 2, 2, 3, 2, 4, 1, 0, 4, 1, 5, 5, 2, 6}, []string{"v1", "workspaces", "workspace_id", "foundry", "ontologies", "ontology_id", "workflows"}, ""))
@@ -15715,6 +16079,10 @@ var (
 	forward_FoundryService_DeleteFoundryReviewDecision_0           = runtime.ForwardResponseMessage
 	forward_FoundryService_SettleFoundryReviewLabel_0              = runtime.ForwardResponseMessage
 	forward_FoundryService_ListFoundryReviewLabels_0               = runtime.ForwardResponseMessage
+	forward_FoundryService_GetFoundryReviewSummary_0               = runtime.ForwardResponseMessage
+	forward_FoundryService_ListFoundryReviewCards_0                = runtime.ForwardResponseMessage
+	forward_FoundryService_ListFoundryReviewSpotChecks_0           = runtime.ForwardResponseMessage
+	forward_FoundryService_DrawFoundryReviewSpotChecks_0           = runtime.ForwardResponseMessage
 	forward_FoundryService_ListFoundryHealFindings_0               = runtime.ForwardResponseMessage
 	forward_FoundryService_DismissFoundryHealFinding_0             = runtime.ForwardResponseMessage
 	forward_FoundryService_CreateFoundryWorkflow_0                 = runtime.ForwardResponseMessage

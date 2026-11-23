@@ -457,13 +457,28 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 	if len(req.GetPageToken()) > 26 {
 		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 	}
+	ids := req.GetIds()
+	switch {
+	case len(ids) > maxDecisionIDs:
+		return nil, status.Errorf(codes.InvalidArgument, "ids names at most %d decisions", maxDecisionIDs)
+	case len(ids) > 0 && req.GetPageToken() != "":
+		return nil, status.Error(codes.InvalidArgument, "ids and page_token can't be used together")
+	case slices.ContainsFunc(ids, func(id string) bool { return id == "" || len(id) > 26 }):
+		return nil, status.Error(codes.InvalidArgument, "each id is 1 to 26 characters")
+	}
 	// Only a client that asks gets the current load's withdraws: a site
 	// before contract 4.16.0, beside this backend in a deploy's window or
 	// after a rollback of the site alone, can't show one.
 	list := func() ([]*foundrymodel.FoundryReviewDecision, error) {
 		return s.deps.DB.ListFoundryReviewDecisions(ctx, o.ID, req.GetPageToken(), nil, 101)
 	}
-	if req.GetIncludeWithdraws() {
+	switch {
+	case len(ids) > 0:
+		// A walk polls what became of its own decisions by id.
+		list = func() ([]*foundrymodel.FoundryReviewDecision, error) {
+			return s.deps.DB.ListFoundryReviewDecisionsByID(ctx, o.ID, ids, req.GetIncludeWithdraws())
+		}
+	case req.GetIncludeWithdraws():
 		list = func() ([]*foundrymodel.FoundryReviewDecision, error) {
 			return s.deps.DB.ListFoundryShownDecisions(ctx, o.ID, req.GetPageToken(), 101)
 		}
@@ -477,12 +492,12 @@ func (s *Service) ListFoundryReviewDecisions(ctx context.Context, req *foundryv1
 		out.NextPageToken = rows[99].ID
 		rows = rows[:100]
 	}
-	ids := make([]string, 0, len(rows))
+	listed := make([]string, 0, len(rows))
 	for _, d := range rows {
-		ids = append(ids, d.ID)
+		listed = append(listed, d.ID)
 	}
 	// What became of each in the current load, which the cards show.
-	applied, err := s.deps.DB.ListFoundryDecisionsApplied(ctx, o.ID, ids)
+	applied, err := s.deps.DB.ListFoundryDecisionsApplied(ctx, o.ID, listed)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list review decisions: %v", err)
 	}
