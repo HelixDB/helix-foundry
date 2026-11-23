@@ -113,6 +113,10 @@
   border-bottom: 1px solid var(--hf-border);
   text-align: left;
 }
+/* A rule between rows, across every column; none under the last. */
+.rq-precision tbody tr:last-child > * {
+  border-bottom: 0;
+}
 
 /* The Review page's tabs: the header's tab bar already spaces them. */
 .rv-tab.hf-tab-panel {
@@ -174,6 +178,7 @@
 @container (max-width: 599px) {
   .rv-walk-bar {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     justify-items: start;
   }
   .rv-filters {

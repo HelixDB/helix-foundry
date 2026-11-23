@@ -393,10 +393,12 @@ function waitsOn(
  * queuePins), so a card stays where it was while the page is open: a card
  * drawn then is drawn again first (while its pool still has it), and one
  * ranked then is never drawn. The slice's size is taken from every card
- * the load asks for, decided or not, so deciding cards never changes what
- * is drawn; reviews leaving the load (a name applied at once) can, and the
- * pins keep a card drawn or ranked as it was. A page keeps the draws in its
- * browser for later visits (storedDraws).
+ * the load asks for, decided or not, so a decision saved never changes what
+ * is drawn; one the load applies takes its reviews out of the load (an
+ * approval written, a name linked at once), which can, and the pins keep a
+ * card drawn or ranked as it was. A page keeps its draws in its browser for
+ * later visits (storedDraws), so a card drawn stays a spot check there;
+ * another browser, which never saw the draw, may rank it.
  */
 export function buildQueue({
   reviews,
