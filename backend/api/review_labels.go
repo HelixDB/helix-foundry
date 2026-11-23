@@ -130,7 +130,7 @@ func (s *Service) labelOfReview(ctx context.Context, o *foundrymodel.FoundryOnto
 	if reviewID == "" || len(reviewID) > 256 {
 		return status.Error(codes.InvalidArgument, "invalid review_id")
 	}
-	rows, err := s.foundryDecisionRead(ctx, o, loadID, map[string]string{"$label": "FoundryReview", "review_key": reviewID},
+	rows, err := s.foundryDecisionRead(ctx, o, loadID, map[string]string{"$label": "FoundryReview"}, "review_key", []string{reviewID},
 		[]string{"reason", "doc_id", "claim_key", "section", "start", "end", "suggested_link", "statement", "confidence"})
 	if err != nil {
 		return err

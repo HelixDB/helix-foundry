@@ -21,6 +21,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/events"
+	"github.com/helixdb/helix-foundry/backend/reviewcards"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -135,6 +136,23 @@ type ReadStore interface {
 	ListFoundryReviewLabels(ctx context.Context, ontologyID, afterID string, limit int) ([]*model.FoundryReviewLabel, error)
 	FoundryReviewLabelsOf(ctx context.Context, ontologyID, docID string, span model.FoundryClaimSpan, claimKey, factKey *string) ([]*model.FoundryReviewLabel, error)
 
+	// The review cards index (foundry_review_cards.go)
+	ListFoundryClaimDecisions(ctx context.Context, ontologyID string, docIDs []string) ([]*model.FoundryReviewDecision, error)
+	ListFoundryReviewSummaries(ctx context.Context, workspaceID string) ([]model.FoundryReviewSummary, error)
+	FoundryReviewIndexing(ctx context.Context, loadID string) (bool, error)
+	ListFoundryReviewCards(ctx context.Context, ontologyID, loadID string, filter model.FoundryReviewCardFilter,
+		after *model.FoundryReviewCardCursor, limit int) ([]*model.FoundryReviewListedCard, error)
+	ListFoundryReviewNameDecisions(ctx context.Context, ontologyID string, names [][2]string) ([]*model.FoundryReviewNameDecisions, error)
+	FoundryReviewPrecision(ctx context.Context, ontologyID string) (model.FoundryReviewPrecision, error)
+	ListFoundryReviewRechecks(ctx context.Context, ontologyID, userID string, limit int) ([]*model.FoundryReviewDecision, []*model.FoundryReviewLabel, error)
+	ListFoundryReviewLabelsAt(ctx context.Context, ontologyID string, draws []model.FoundryReviewDraw) ([]*model.FoundryReviewLabel, error)
+	ListFoundryReviewDraws(ctx context.Context, ontologyID, loadID string) ([]model.FoundryReviewDraw, error)
+	FoundryReviewDrawPools(ctx context.Context, loadID string) ([6]reviewcards.Pool, error)
+	FoundryReviewQuoteDocuments(ctx context.Context, loadID string, band, target, limit int) ([]string, error)
+	FoundryReviewPlacesTaken(ctx context.Context, ontologyID, loadID, docID string) (map[string]bool, error)
+	ListFoundryReviewDecisionsByID(ctx context.Context, ontologyID string, ids []string, withdraws bool) ([]*model.FoundryReviewDecision, error)
+	GetFoundryReviewCard(ctx context.Context, loadID string, cardID reviewcards.ID) (card *reviewcards.Card, open bool, err error)
+
 	// Foundry document sets, documents and the Data layout, per workspace
 	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
 	ListFoundryDocumentSets(ctx context.Context, workspaceID string) ([]*model.FoundryDocumentSet, error)
@@ -243,6 +261,7 @@ type ReadStore interface {
 	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
 	CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error)
 	SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+	SumFoundryReviewAdviceSpend(ctx context.Context, workspaceID string, month time.Time) (int64, error)
 	LatestFoundryWorkflowAssessments(ctx context.Context, workflowIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
 	// Automations' workflows (foundry_automation_workflows.go)
 	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)
@@ -410,15 +429,8 @@ type Store interface {
 	CancelOntologyGeneration(ctx context.Context, ontologyID, id string) error
 	ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error)
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
-	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
-		resend *model.FoundryGraphJob) (queued bool, err error)
-	SettleFoundryResolve(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision, documentIDs []string,
-		resend *model.FoundryGraphJob) (bool, error)
-	SettleFoundryBoundResolve(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
-		resend *model.FoundryGraphJob) (bool, error)
-	SettleFoundryValue(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
-		resend *model.FoundryGraphJob) (queued bool, err error)
-	SettleFoundryReject(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision) error
+	SettleFoundryReviews(ctx context.Context, workspaceID, ontologyID, loadID string, items []*model.FoundrySettle, expectOpen bool,
+		resend *model.FoundryGraphJob) (refusals []*model.FoundrySettleRefusal, queued bool, err error)
 	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
 	ListFoundryCarriedAliases(ctx context.Context, loadID string, limit int) ([]*model.FoundryReviewDecision, error)
@@ -428,6 +440,26 @@ type Store interface {
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
+	RequestFoundryReviewPasses(ctx context.Context) (int, error)
+	AdvanceFoundryReviewPasses(ctx context.Context) (int, error)
+	RecountFoundryReviewLoads(ctx context.Context, limit int) (int, error)
+	ClearFoundryReviewLoads(ctx context.Context, limit int) (int, error)
+	ParkFoundryReviewLoad(ctx context.Context, loadID string) error
+	ReserveFoundryReviewRead(ctx context.Context, tenantID string, gap time.Duration) (time.Duration, error)
+	ClaimFoundryReviewDocuments(ctx context.Context, workerID string, lease time.Duration) ([]model.FoundryReviewClaim, error)
+	StoreFoundryReviewDocuments(ctx context.Context, workerID string, claim model.FoundryReviewClaim, indexed []model.FoundryReviewIndexed) (bool, error)
+	BackOffFoundryReviewDocument(ctx context.Context, workerID, loadID, docID string) (bool, error)
+	BackOffFoundryReviewLoad(ctx context.Context, loadID string) error
+	ClaimFoundryReviewAdvice(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryReviewAdviceClaim, error)
+	RenewFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, lease time.Duration) (bool, error)
+	FinishFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, why model.FoundryReviewAdviceStop,
+		recheck time.Duration) (bool, error)
+	BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim,
+		failure model.FoundryReviewAdviceFailure) (held, failed bool, err error)
+	StoreFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, rows []model.FoundryReviewAdviceRow) (bool, error)
+	ChargeFoundryReviewAdvice(ctx context.Context, workspaceID string, usdMicros int64) error
+	DrawFoundryHeldClaim(ctx context.Context, loadID string, seq, band int) (bool, error)
+	InsertFoundryReviewQuoteDraw(ctx context.Context, d model.FoundryReviewDraw) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error
 	DeleteFoundryDocumentSet(ctx context.Context, workspaceID, id string) error

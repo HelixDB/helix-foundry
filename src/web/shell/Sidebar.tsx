@@ -10,7 +10,12 @@ import { Link, useLocation } from "react-router-dom";
 import { Bot, Search, Settings, X } from "lucide-react";
 import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
-import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
+import {
+  canManage,
+  useWorkspace,
+  type ShellUser,
+  type ShellWorkspace,
+} from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
 import { useWatchedJobs } from "../areas/ontology/use-watched-jobs";
 import { FeedbackButton } from "./feedback";
@@ -44,8 +49,13 @@ import {
 
 // The generations and loads this browser started, followed from any page
 // (the Ontology area's), above Feedback: its code loads once there is one.
+// Then, for owners and admins, the nudge to the load with the most cards to
+// decide (the Reviews area's).
 const JobDock = lazy(() =>
   import("../areas/ontology/job-dock").then((m) => ({ default: m.JobDock })),
+);
+const ReviewNudge = lazy(() =>
+  import("../areas/reviews/nudge").then((m) => ({ default: m.ReviewNudge })),
 );
 
 // Settings sits beside the user in the footer rather than in the section list.
@@ -247,7 +257,7 @@ export function Sidebar({
   onSwitch: (id: string) => void;
 }) {
   const shell = useShell(),
-    { id, onboarding, grantee } = useWorkspace(),
+    { id, onboarding, grantee, role } = useWorkspace(),
     watching = useWatchedJobs(id).length > 0,
     { pathname } = useLocation(),
     section = activeSection(pathname),
@@ -328,6 +338,13 @@ export function Sidebar({
         <ChromeBoundary name="Jobs in progress" fallback={null}>
           <Suspense fallback={null}>
             <JobDock />
+          </Suspense>
+        </ChromeBoundary>
+      )}
+      {!onboarding && !grantee && canManage(role) && (
+        <ChromeBoundary name="Cards to review" fallback={null}>
+          <Suspense fallback={null}>
+            <ReviewNudge />
           </Suspense>
         </ChromeBoundary>
       )}

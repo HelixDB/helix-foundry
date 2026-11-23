@@ -92,9 +92,11 @@ type agent interface {
 	Clues(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 }
 
-// resolver is where a workspace's model calls go; *ai.Resolver resolves it.
+// resolver is where a workspace's model calls go; *ai.Resolver resolves it:
+// a load's through the agent (ResolveServed), review advice's directly.
 type resolver interface {
 	ResolveServed(ctx context.Context, workspaceID string, providers []string) (ai.Resolved, error)
+	Resolve(ctx context.Context, workspaceID string) (ai.Resolved, error)
 }
 
 // documentStore is where documents and their artifacts live (document.Store).
@@ -175,6 +177,8 @@ type attempt struct {
 	ingestDone bool
 	// applied is what an apply's Ingest did to each stream, once it is done.
 	applied []ontologyagent.AppliedStream
+	// sentExtract means the attempt sent the agent an Extract.
+	sentExtract bool
 	// ingestViolations is how many violation records this attempt's Ingest
 	// left open, once its report counted them: every update records it on
 	// the load (FoundryGraphJobUpdate.IngestViolations).
@@ -232,6 +236,22 @@ const (
 // as any failure does.
 func (a *attempt) starting(now time.Time) bool {
 	return a.proxy != nil && a.proxy.Starting() && now.Before(a.ontologyCreated.Add(startingWindow))
+}
+
+// reindexReviews reports whether the attempt may have changed the load's
+// reviews past the documents it recorded: it sent an Extract, or an apply's
+// Ingest changed rows (stored values and entities a value or a name card
+// reads).
+func (a *attempt) reindexReviews() bool {
+	if a.sentExtract {
+		return true
+	}
+	for _, s := range a.applied {
+		if s.Added+s.Changed+s.Removed > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // report is the job's report: each call's result, the ingest report cut to
@@ -1333,7 +1353,7 @@ const (
 // of each alias carried to it (store ListFoundryCarriedAliases: a resolve
 // that chose an entity, saved while another load was current), at most
 // carriedAliasesPerJob of them and until askingDocumentsPerJob are owed, as
-// SettleFoundryResolve owes them for one settled against the load; the
+// store.SettleFoundryReviews owes them for one settled against the load; the
 // store, in its transaction, has no Helix to read them from. One read of the
 // load's reviews a type and name (ontologyagent.AskingQuery, the read the
 // API makes, one lookup of the engine's index of reviews by name), every
@@ -1578,6 +1598,9 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	for _, docID := range remove {
 		removing[docID] = true
 	}
+	// From here the engine may change the load's reviews: its sweep at the
+	// run's end, the value decisions sent.
+	a.sentExtract = true
 	raw, err := r.agent.Extract(ctx, body, resolved.Key, func(e json.RawMessage) error {
 		switch name, _ := ontologyagent.EventName(e); name {
 		case "artifact":
@@ -2030,7 +2053,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 	extraction.SettlesNames = a.replayed[event.DocID]
 	// What became of each name decision is the document's, kept on its row;
 	// the store also records a resolve's word on its own document on the
-	// load's copy the load waits to settle (SettleFoundryResolve).
+	// load's copy the load waits to settle (store.SettleFoundryReviews).
 	refused := 0
 	for _, n := range event.Names {
 		nameOutcomes.WithLabelValues(string(n.Decision), string(n.Outcome.Kind), string(n.Outcome.Reason)).Inc()

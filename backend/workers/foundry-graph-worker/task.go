@@ -25,6 +25,7 @@ import (
 	"go.uber.org/dig"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -84,7 +85,14 @@ type jobQueue interface {
 	ParkFoundryGraphJob(ctx context.Context, jobID, workerID string, until time.Time) (bool, error)
 }
 
-// Task runs queued graph jobs one at a time.
+// Task runs queued graph jobs one at a time: its agent sidecar and work
+// volume are sized for one load's snapshots. A deployment runs more jobs at
+// once with more replicas of the worker, each with its own sidecar. The
+// claim (ClaimFoundryGraphJob, FOR UPDATE SKIP LOCKED) hands each job to one
+// worker, an ontology has at most one live job, and renewLease stops an
+// attempt before its lease could lapse, so no two workers ever write one
+// load. Each job boosts only its own database (boost), and the proxy sends
+// a query the gateway rate limited (429) again with backoff.
 type Task struct {
 	deps  Deps
 	cfg   config.GraphConfig
@@ -96,6 +104,10 @@ type Task struct {
 	workerID string
 	now      func() time.Time
 	worker   tasks.Worker
+	// reviews keeps the review cards index beside the jobs, and advice
+	// asks the model about the cards the rules leave undecided.
+	reviews *indexer
+	advice  *advisor
 	// refreshLag records how long a refresh load waited for its first claim.
 	refreshLag prometheus.Observer
 }
@@ -109,6 +121,10 @@ func New(d Deps) (*Task, error) {
 		return nil, errors.New("foundry-graph-worker: foundry.graph.load_rate_limit is set, but the host has no rate-limit boosts")
 	}
 	resolver, err := ai.NewResolver(d.Cfg, d.DB, d.Plans)
+	if err != nil {
+		return nil, fmt.Errorf("foundry-graph-worker: %w", err)
+	}
+	catalog, err := ai.VendoredCatalog()
 	if err != nil {
 		return nil, fmt.Errorf("foundry-graph-worker: %w", err)
 	}
@@ -141,13 +157,22 @@ func New(d Deps) (*Task, error) {
 			MaxResponseBytes: graphproxy.MaxResponseBytes,
 		},
 	}
+	t.reviews = newIndexer(d.DB, d.Databases, t.runner.gateway, workerID)
+	t.advice = &advisor{
+		db: d.DB, dbs: d.Databases, gateway: t.runner.gateway, ai: resolver, plans: resolver.Plans, local: d.Cfg.Host.Local,
+		models: llm.NewFor, catalog: catalog, cfg: d.Cfg.Foundry.Reviews.Advise, workerID: workerID, now: time.Now,
+		readGap: reviewReadGap, retryWait: adviceRetryWait,
+	}
 	return t, nil
 }
 
 func (t *Task) Name() string { return Name }
 
-// Start claims jobs every PollInterval and, beside them, sweeps lapsed load
-// boosts every boost.SweepEvery, so a long job doesn't hold the sweep up.
+// Start claims jobs every PollInterval and, beside them, keeps the review
+// cards index every PollInterval (review_cards.go), advises review cards
+// while foundry.reviews.advise is on (review_advice.go), and sweeps lapsed load
+// boosts every boost.SweepEvery, so a long job holds neither up; Stop waits
+// for both.
 // First it removes what attempts staged under the work dir's jobs/: each
 // attempt removes its own as it ends, but one a worker that died (an OOM
 // kill) left, documents and the profiles People enrichment chose, would stay
@@ -158,6 +183,20 @@ func (t *Task) Start(ctx context.Context) error {
 	}
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
 		var sweeping sync.WaitGroup
+		if t.reviews != nil {
+			sweeping.Add(1)
+			go func() {
+				defer sweeping.Done()
+				tasks.Tick(ctx, t.cfg.PollInterval, t.reviews.tick)
+			}()
+		}
+		if t.advice != nil && t.advice.cfg.Enabled {
+			sweeping.Add(1)
+			go func() {
+				defer sweeping.Done()
+				tasks.Tick(ctx, t.cfg.PollInterval, t.advice.tick)
+			}()
+		}
 		if t.boosts != nil {
 			sweeping.Add(1)
 			go func() {
@@ -416,7 +455,7 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, jobID 
 // internal error is Helix's bug: it is logged as an error, for on-call, and
 // gets ontologyagent.InternalAttempts attempts at most.
 func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attempt, err error, stopping bool) model.FoundryGraphJobOutcome {
-	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress}
+	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress, ReindexReviews: a.reindexReviews()}
 	if err == nil {
 		outcome.Status = model.FoundryGraphJobSucceeded
 		return outcome

@@ -8,9 +8,17 @@ export const automationPaths = {
   // The overview: the workspace's runs of the last days and its workflows.
   automations: () => "/workflows",
   // A new one: Founder's composer, or, from a template (TEMPLATES'
-  // ids, "blank" from scratch), a draft on the full canvas.
-  newAutomation: (template?: string) =>
-    "/workflows/new" + (template ? "?template=" + enc(template) : ""),
+  // ids, "blank" from scratch), a draft on the full canvas, on the
+  // ontology named when the workspace lists it.
+  newAutomation: (template?: string, ontologyId?: string) =>
+    "/workflows/new" +
+    (template
+      ? "?" +
+        new URLSearchParams({
+          template,
+          ...(ontologyId && { ontology: ontologyId }),
+        }).toString()
+      : ""),
   // One workflow on its canvas: the page the Helix MCP's tools link to
   // (its `url`), where its owner edits and approves it. Its Runs and
   // Settings are tabs (?tab=).

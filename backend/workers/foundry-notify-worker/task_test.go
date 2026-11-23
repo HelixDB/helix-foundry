@@ -439,6 +439,35 @@ func TestFoundryNotifyWorkerEmails(t *testing.T) {
 			},
 			links: []string{siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1"},
 		},
+		"a run of reviews waiting": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				return reviewsNotice(`{"summary":"1,214 to review in its ontology's current load.","count":1214}`)
+			},
+			subject: "Weekly invoices: Overdue invoices this week",
+			text: []string{
+				"Hi Ada,\n\n1,214 to review in “Sales graph”. Start reviewing: " + siteURL + "/ontology/ont-1/review?workspace=ws-1\n\nOverdue invoices this week",
+				"See every step of the run: " + siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1",
+			},
+			links: []string{siteURL + "/ontology/ont-1/review?workspace=ws-1", siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1"},
+		},
+		"a run of reviews waiting by hand": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				return reviewsNotice(`{"summary":"Run by hand."}`)
+			},
+			subject: "Weekly invoices: Overdue invoices this week",
+			text:    []string{"Hi Ada,\n\nOverdue invoices this week"},
+			links:   []string{siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1"},
+		},
+		"a run of reviews waiting on an ontology since deleted": {
+			setup: func() (*outboxStore, *model.FoundryNotification) {
+				box, n := reviewsNotice(`{"summary":"60 to review in its ontology's current load.","count":60}`)
+				delete(box.ontologies, "ont-1")
+				return box, n
+			},
+			subject: "Weekly invoices: Overdue invoices this week",
+			text:    []string{"Hi Ada,\n\nOverdue invoices this week"},
+			links:   []string{siteURL + "/workflows/auto-1/runs/run-1?workspace=ws-1"},
+		},
 		"an automation that paused itself": {
 			setup: func() (*outboxStore, *model.FoundryNotification) {
 				return automationNotice(model.FoundryNotifyAutomationPaused)
@@ -902,6 +931,18 @@ func automationNotice(kind model.FoundryNotificationKind) (*outboxStore, *model.
 				Output: []byte(`{"summary":"Three invoices are overdue, from Globex. See https://evil.example/pay for more.","pending":1}`)},
 		},
 	}}
+	return box, n
+}
+
+// reviewsNotice is automationNotice's run, its trigger reviews_waiting on
+// the Sales graph, which gave output.
+func reviewsNotice(output string) (*outboxStore, *model.FoundryNotification) {
+	box, n := automationNotice(model.FoundryNotifyAutomationRun)
+	notice := box.notices["subject-1"]
+	notice.Run.Spec = []byte(strings.Replace(string(notice.Run.Spec), `{"kind":"manual"}`,
+		`{"kind":"reviews_waiting","ontology_id":"ont-1","at_least":50}`, 1))
+	notice.Earlier[0].Output = []byte(output)
+	box.ontologies["ont-1"] = &model.FoundryOntology{ID: "ont-1", WorkspaceID: "ws-1", Name: "Sales graph"}
 	return box, n
 }
 

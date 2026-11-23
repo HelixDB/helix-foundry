@@ -38,7 +38,7 @@ const foundryAutomationRunColumns = `id, automation_id, workspace_id, owner_user
 const foundryAutomationNodeColumns = `run_id, node_id, status, output, error, turn_id, notification_id, job_id, usd_micros, started_at, finished_at`
 
 // foundryAutomationEventKinds are the triggers that find ended work.
-const foundryAutomationEventKinds = `('sync_finished', 'load_ready', 'document_arrived', 'generation_finished')`
+const foundryAutomationEventKinds = `('sync_finished', 'load_ready', 'document_arrived', 'generation_finished', 'reviews_waiting')`
 
 // foundryAutomationLookBack bounds how long before an event trigger's cursor
 // the work it looks for was created: no sync, load or generation runs longer,
@@ -813,6 +813,13 @@ ORDER BY checked_at IS NOT NULL, checked_at, id LIMIT ?`, every.Microseconds(), 
 // A sync or a load an automation's run started, or a document a sync it
 // started wrote, comes with that run (FoundryAutomationEnded.Cause), read by
 // its primary key, so the trigger can tell work its own automation set off.
+//
+// reviews_waiting reads state, not ended work: zero rows, or one, the
+// ontology's current load with its open review cards (Rows), once its review
+// index is whole and its count fresh (counted_at = dirty_at), at the later of
+// its dirty_at and the cursor, so the cursor never moves back. It ignores
+// settle and limit, and returns the row whatever the cursor names: the worker
+// decides whether it fires.
 func (s *mysqlDB) FindFoundryAutomationEnded(ctx context.Context, a *model.FoundryAutomation, settle time.Duration, limit int) ([]model.FoundryAutomationEnded, error) {
 	if a.Status != model.FoundryAutomationActive || a.Cursor == nil || a.TriggerTarget == nil {
 		return nil, fmt.Errorf("foundry automation %s watches nothing", a.ID)
@@ -822,8 +829,42 @@ func (s *mysqlDB) FindFoundryAutomationEnded(ctx context.Context, a *model.Found
   JSON_EXTRACT(r.trigger_event, '$.caused_by_automations')`
 	const causeless = `NULL, NULL, NULL, NULL`
 	const byRun = ` LEFT JOIN foundry_automation_runs r ON r.id = w.started_by_automation_run_id`
+	scan := func(r rowScanner) (model.FoundryAutomationEnded, error) {
+		var e model.FoundryAutomationEnded
+		var rowsSynced, depth sql.NullInt64
+		var runID, automationID, chain sql.NullString
+		if err := r.Scan(&e.Cursor.At, &e.Cursor.ID, &e.Outcome, &rowsSynced, &runID, &depth, &automationID, &chain); err != nil {
+			return e, err
+		}
+		if rowsSynced.Valid {
+			e.Rows = &rowsSynced.Int64
+		}
+		if !runID.Valid {
+			return e, nil
+		}
+		// A run deleted since (pruned, or its automation's) leaves the depth.
+		e.Cause = &model.FoundryAutomationCause{RunID: runID.String, AutomationID: automationID.String, Depth: int(depth.Int64)}
+		if chain.Valid {
+			if err := json.Unmarshal([]byte(chain.String), &e.Cause.Chain); err != nil {
+				return e, fmt.Errorf("foundry automation run %s: its chain: %w", runID.String, err)
+			}
+		}
+		return e, nil
+	}
 	var q string
 	switch a.TriggerKind {
+	case "reviews_waiting":
+		// The review row is rl: byRun's r is the automation run.
+		rows, err := s.db.QueryContext(ctx, `SELECT GREATEST(rl.dirty_at, CAST(? AS DATETIME(6))), rl.load_id, '', rl.open_cards, `+caused+`
+FROM foundry_ontologies o
+JOIN foundry_review_loads rl ON rl.load_id = o.current_load_id
+JOIN foundry_loads w ON w.id = rl.load_id`+byRun+`
+WHERE o.id=? AND o.workspace_id=? AND o.deleted_at IS NULL AND `+foundryReviewIndexed("rl")+` AND rl.counted_at = rl.dirty_at`,
+			a.Cursor.At.UTC(), *a.TriggerTarget, a.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		return scanAll(rows, scan)
 	case "sync_finished":
 		q = `SELECT w.finished_at, w.id, w.status, w.rows_synced, ` + caused + ` FROM connector_syncs w` + byRun + `
 WHERE w.connector_id=? AND w.workspace_id=? AND w.created_at >= ? AND w.status IN ('succeeded', 'failed')`
@@ -850,28 +891,7 @@ ORDER BY ` + end + `, w.id LIMIT ?`
 	if err != nil {
 		return nil, err
 	}
-	return scanAll(rows, func(r rowScanner) (model.FoundryAutomationEnded, error) {
-		var e model.FoundryAutomationEnded
-		var rowsSynced, depth sql.NullInt64
-		var runID, automationID, chain sql.NullString
-		if err := r.Scan(&e.Cursor.At, &e.Cursor.ID, &e.Outcome, &rowsSynced, &runID, &depth, &automationID, &chain); err != nil {
-			return e, err
-		}
-		if rowsSynced.Valid {
-			e.Rows = &rowsSynced.Int64
-		}
-		if !runID.Valid {
-			return e, nil
-		}
-		// A run deleted since (pruned, or its automation's) leaves the depth.
-		e.Cause = &model.FoundryAutomationCause{RunID: runID.String, AutomationID: automationID.String, Depth: int(depth.Int64)}
-		if chain.Valid {
-			if err := json.Unmarshal([]byte(chain.String), &e.Cause.Chain); err != nil {
-				return e, fmt.Errorf("foundry automation run %s: its chain: %w", runID.String, err)
-			}
-		}
-		return e, nil
-	})
+	return scanAll(rows, scan)
 }
 
 // TouchFoundryAutomation records that the automation looked for ended work.

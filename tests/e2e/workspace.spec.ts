@@ -90,6 +90,7 @@ test("shows the workspace and opens settings from the account menu", async ({
     /^API sources<?\$[\d.]+ of \$20\.00$/,
     /^Questions<?\$[\d.]+ of \$30\.00$/,
     /^Run assessments<?\$[\d.]+ of \$20\.00$/,
+    /^Review suggestions<?\$[\d.]+ of \$10\.00$/,
   ]);
   await page.getByRole("menuitem", { name: "Settings" }).click();
   await expect(page).toHaveURL(/\/settings$/);

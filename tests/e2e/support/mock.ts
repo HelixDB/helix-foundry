@@ -63,6 +63,7 @@ export const mock = {
     nameInPlace?:
       | "written"
       | "not_replayed"
+      | "unconfirmed"
       | "bound"
       | "collides"
       | "not_asked";
@@ -73,6 +74,22 @@ export const mock = {
     documentLinked?: "adjudicated" | "legal_form" | "part_name" | "own_name";
     // Sentences stating a relationship no link covers are "unmatched" reviews.
     documentUnmatched?: boolean;
+    // Random labels of earlier held claims in a score band, the reader's own
+    // (mock/routes/reviews.ts): `right` of `right + wrong`.
+    seedReviewLabels?: {
+      band: "0.9" | "0.8" | "0.7" | "0.6" | "low";
+      right: number;
+      wrong: number;
+    };
+    // The next n settles are refused: the claim reads differently now.
+    settleRefusals?: number;
+    // Founder's model's advice on review cards (mock/review-advice.ts): off,
+    // no card carries it; a rationale, every advice's, as sent.
+    reviewModelAdvice?: boolean;
+    reviewModelAdviceRationale?: string;
+    // The review cards index is still first being built
+    // (mock/routes/review-cards.ts): reviews_waiting workflows fire on none.
+    reviewIndexing?: boolean;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"
@@ -548,6 +565,14 @@ export async function startContractsLoad(page: Page) {
 }
 
 /**
+ * A contract beside the seeded one whose load asks people to decide: held
+ * claims, a value in conflict with the table (GBP), a name in no row that
+ * blocks a claim (Umbrella Holdings), and relationships the ontology lacks.
+ */
+export const HEDGED =
+  "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n";
+
+/**
  * Uploads the seeded contract (and `more` with it) into General, makes
  * Customer contracts' version 3 current and loads it from the overview,
  * waiting on the load's page for the end: its current load reads Stripe's
@@ -752,4 +777,21 @@ export async function uploadInData(
     await expect(uploadCard(page, f.name)).toContainText(
       /Uploaded|Already uploaded/,
     );
+}
+
+/**
+ * Uploads `n` contracts into General, each naming `name` (a company the
+ * Stripe rows don't hold): each is a review of the name in its document,
+ * which a link in one of them settles in all.
+ */
+export async function uploadNaming(page: Page, name: string, n: number) {
+  await uploadInData(
+    page,
+    Array.from({ length: n }, (_, i) =>
+      file(
+        `naming-${i + 1}.md`,
+        `# Order form ${i + 1}\n\n${name} signed order form ${i + 1}.\n`,
+      ),
+    ),
+  );
 }

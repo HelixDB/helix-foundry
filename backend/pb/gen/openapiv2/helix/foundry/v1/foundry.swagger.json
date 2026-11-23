@@ -4927,6 +4927,92 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-cards": {
+      "get": {
+        "summary": "The review walk's cards of the ontology's current load, a page at a\ntime in the walk's order: names, held claims and values to decide, or\nfor information.",
+        "operationId": "FoundryService_ListFoundryReviewCards",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryReviewCardsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "lane",
+            "description": "DECIDE when unset.\n\n - FOUNDRY_REVIEW_LANE_DECIDE: To decide.\n - FOUNDRY_REVIEW_LANE_FYI: For information: a name only the model linked, or a value whose table\nrow's value stands.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "FOUNDRY_REVIEW_LANE_UNSPECIFIED",
+              "FOUNDRY_REVIEW_LANE_DECIDE",
+              "FOUNDRY_REVIEW_LANE_FYI"
+            ],
+            "default": "FOUNDRY_REVIEW_LANE_UNSPECIFIED"
+          },
+          {
+            "name": "kind",
+            "description": "These kinds only; none is every kind. A held claim waiting on an open\nname is listed on the name's card, unless names are left out.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FOUNDRY_REVIEW_CARD_KIND_UNSPECIFIED",
+                "FOUNDRY_REVIEW_CARD_KIND_NAME",
+                "FOUNDRY_REVIEW_CARD_KIND_CLAIM",
+                "FOUNDRY_REVIEW_CARD_KIND_VALUE"
+              ]
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "type",
+            "description": "A card's type, or either end's of a held claim.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "documentId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "pageToken",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-decisions": {
       "get": {
         "operationId": "FoundryService_ListFoundryReviewDecisions",
@@ -4970,6 +5056,17 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          },
+          {
+            "name": "ids",
+            "description": "Only these decisions, at most 100, never with page_token: each listed\nonce while the ontology holds it. One missing was removed, or replaced\n(a changed choice is a new decision under a new id). With\ninclude_withdraws, a removed approval whose withdraw the current load\nshows comes back as that withdraw, under its id.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
           }
         ],
         "tags": [
@@ -5105,6 +5202,88 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-spot-checks": {
+      "get": {
+        "summary": "The current load's spot checks, as drawn, with what may be re-checked\nand the decisions and labels at their places. Read only.",
+        "operationId": "FoundryService_ListFoundryReviewSpotChecks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryReviewSpotChecksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-spot-checks:draw": {
+      "post": {
+        "summary": "Tops the current load's spot checks up to five not yet labelled: each\ndrawn once, the same for everyone, and never changed. Idempotent. While\nthe load's index is first being built (indexing) it draws none.",
+        "operationId": "FoundryService_DrawFoundryReviewSpotChecks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryReviewSpotChecksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDrawFoundryReviewSpotChecksBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews": {
       "get": {
         "summary": "The reviews the ontology's current load holds, as SettleFoundryReview\nreads them: each with what settles it. Read from the load's database as\nthe caller, a page at a time, or by review key.",
@@ -5202,6 +5381,51 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/FoundryServiceSettleFoundryReviewBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews:batchSettle": {
+      "post": {
+        "summary": "Settles up to 100 reviews of the current load in one transaction, each\nas SettleFoundryReview settles one: an item refused (it reads differently\nnow, another person decided it, ...) says why, and the rest are saved.\nThe whole batch is refused, saving nothing, when its fields are invalid,\ntwo items decide one thing, load_id isn't the current load, or the graph\ncan't be read.",
+        "operationId": "FoundryService_BatchSettleFoundryReviews",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1BatchSettleFoundryReviewsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceBatchSettleFoundryReviewsBody"
             }
           }
         ],
@@ -6328,6 +6552,37 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/review-summary": {
+      "get": {
+        "summary": "What each ontology's current load asks a person to decide: its open\nreview cards, counted by the graph worker's index. A restricted member\ngets none.",
+        "operationId": "FoundryService_GetFoundryReviewSummary",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetFoundryReviewSummaryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/sign-ins": {
       "post": {
         "summary": "Connecting a connector by signing in at its provider: started by a user\nor their agent, authorized and finished in that user's browser. Only\nkinds whose ConnectorKind.sign_in is true.",
@@ -6909,6 +7164,22 @@
         }
       }
     },
+    "FoundryReviewPrecisionBand": {
+      "type": "object",
+      "properties": {
+        "band": {
+          "type": "string"
+        },
+        "right": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "total": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
     "FoundryServiceAddFoundryDashboardQuestionVisualBody": {
       "type": "object",
       "properties": {
@@ -7028,6 +7299,27 @@
         "name": {
           "type": "string",
           "description": "The install's name, as its owner calls it: 1 to 128 bytes of text."
+        }
+      }
+    },
+    "FoundryServiceBatchSettleFoundryReviewsBody": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string",
+          "description": "The load the reviews were read from, which must be the current load."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewSettleItem"
+          },
+          "description": "1 to 100, each deciding something no other item decides. Every item is\nranked: a random spot check is settled one at a time."
+        },
+        "expectOpen": {
+          "type": "boolean",
+          "description": "Refuse an item whose card another person decided already (DECIDED),\nnever replacing their decision. One's own earlier decision is settled\nagain. A card closed only through another document's link of the name\nis not decided."
         }
       }
     },
@@ -7301,6 +7593,15 @@
     "FoundryServiceDismissFoundryHealFindingBody": {
       "type": "object",
       "description": "DismissFoundryHealFindingRequest dismisses an open finding by its\nfingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has\nno finding of; FAILED_PRECONDITION for one superseded. One already\ndismissed is returned as it is."
+    },
+    "FoundryServiceDrawFoundryReviewSpotChecksBody": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        }
+      },
+      "description": "DrawFoundryReviewSpotChecksRequest draws the spot checks of load_id,\nwhich must be the current load (FAILED_PRECONDITION otherwise)."
     },
     "FoundryServiceExecuteFoundryAgentActionBody": {
       "type": "object",
@@ -8050,6 +8351,19 @@
         "redirectUrl": {
           "type": "string",
           "description": "redirect_uri with the code and the state, where the site sends the\nbrowser."
+        }
+      }
+    },
+    "v1BatchSettleFoundryReviewsResponse": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewSettleResult"
+          },
+          "description": "One result an item, in the items' order."
         }
       }
     },
@@ -9647,6 +9961,10 @@
         "timeZone": {
           "type": "string",
           "description": "The IANA time zone the person's browser names (America/New_York): the\nAssistant's default for a schedule. One that isn't a zone Go's database\nhas, or longer than 64 characters, is dropped, never refused."
+        },
+        "reviewCardId": {
+          "type": "string",
+          "description": "The review card open in the review walk (64 lowercase hexadecimal\ncharacters), of the current load of ontology_id, which it requires.\nFounder is told the card's review, so it can recommend a choice."
         }
       },
       "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."
@@ -9896,7 +10214,7 @@
         },
         "triggerKind": {
           "type": "string",
-          "description": "Its trigger's kind (schedule, sync_finished, load_ready,\ndocument_arrived, generation_finished or manual) and the connector,\nontology or document set an event trigger listens to."
+          "description": "Its trigger's kind (schedule, sync_finished, load_ready,\ndocument_arrived, generation_finished, reviews_waiting or manual) and the\nconnector, ontology or document set an event trigger listens to."
         },
         "triggerTarget": {
           "type": "string"
@@ -12423,6 +12741,50 @@
       },
       "description": "A review a load holds: something its documents state that it didn't write\nas it stands. Its text and values come from documents: untrusted."
     },
+    "v1FoundryReviewCard": {
+      "type": "object",
+      "properties": {
+        "cardId": {
+          "type": "string",
+          "description": "Stable across reindexes and a review keyed again: the SHA-256 of its\ndecision's identity, in hexadecimal."
+        },
+        "lane": {
+          "$ref": "#/definitions/v1FoundryReviewLane"
+        },
+        "docId": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The facts its decisions write."
+        },
+        "name": {
+          "$ref": "#/definitions/v1FoundryReviewNameCard"
+        },
+        "claim": {
+          "$ref": "#/definitions/v1FoundryReviewClaimCard"
+        },
+        "value": {
+          "$ref": "#/definitions/v1FoundryReviewValueCard"
+        },
+        "modelAdvice": {
+          "$ref": "#/definitions/v1FoundryReviewModelAdvice",
+          "description": "Founder's model's suggestion, on a name or value card of the decide lane\nthe rules leave undecided, once the model picked one of its choices."
+        }
+      },
+      "description": "A card of the review walk: a name, a held claim or a value. Its reviews\nare read from the load by review key."
+    },
+    "v1FoundryReviewCardKind": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_REVIEW_CARD_KIND_UNSPECIFIED",
+        "FOUNDRY_REVIEW_CARD_KIND_NAME",
+        "FOUNDRY_REVIEW_CARD_KIND_CLAIM",
+        "FOUNDRY_REVIEW_CARD_KIND_VALUE"
+      ],
+      "default": "FOUNDRY_REVIEW_CARD_KIND_UNSPECIFIED"
+    },
     "v1FoundryReviewChoice": {
       "type": "object",
       "properties": {
@@ -12443,6 +12805,39 @@
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
+    },
+    "v1FoundryReviewCite": {
+      "type": "object",
+      "properties": {
+        "docId": {
+          "type": "string"
+        },
+        "span": {
+          "$ref": "#/definitions/v1FoundryReviewSpan"
+        }
+      },
+      "description": "A place in a document a suggestion cites."
+    },
+    "v1FoundryReviewClaimCard": {
+      "type": "object",
+      "properties": {
+        "reviewKey": {
+          "type": "string"
+        },
+        "band": {
+          "type": "string",
+          "description": "Its score band: 0.9, 0.8, 0.7, 0.6, low or none."
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewDecision"
+          },
+          "description": "The saved decisions at its place that don't decide it: an approval of\nwhat it said before asks to be read again."
+        }
+      },
+      "description": "A held claim, approved or rejected on its own."
     },
     "v1FoundryReviewDecision": {
       "type": "object",
@@ -12519,6 +12914,42 @@
         }
       }
     },
+    "v1FoundryReviewDraw": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "string",
+          "format": "int64"
+        },
+        "band": {
+          "type": "string"
+        },
+        "docId": {
+          "type": "string"
+        },
+        "span": {
+          "$ref": "#/definitions/v1FoundryReviewSpan"
+        },
+        "link": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "format": "double"
+        },
+        "held": {
+          "$ref": "#/definitions/v1FoundryReviewHeldDraw"
+        },
+        "quote": {
+          "$ref": "#/definitions/v1FoundryReviewQuoteDraw"
+        },
+        "done": {
+          "type": "boolean",
+          "description": "Someone labelled its place at random, in any load."
+        }
+      },
+      "description": "A spot check of a load, at its place: a held claim or a fact's quote."
+    },
     "v1FoundryReviewEntity": {
       "type": "object",
       "properties": {
@@ -12537,6 +12968,21 @@
         }
       },
       "description": "An entity a review concerns, by the stored identity its candidates and\nentity_key name it by: its entity_key, or a type without a key's\nnorm_name; exactly one is set."
+    },
+    "v1FoundryReviewHeldDraw": {
+      "type": "object",
+      "properties": {
+        "claimKey": {
+          "type": "string"
+        },
+        "statementHash": {
+          "type": "string"
+        },
+        "reviewKey": {
+          "type": "string",
+          "description": "Its review while the load's cards hold its claim; empty once its card\nis gone (its approval written): it is read from its place then."
+        }
+      }
     },
     "v1FoundryReviewLabel": {
       "type": "object",
@@ -12615,6 +13061,156 @@
         }
       }
     },
+    "v1FoundryReviewLane": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_REVIEW_LANE_UNSPECIFIED",
+        "FOUNDRY_REVIEW_LANE_DECIDE",
+        "FOUNDRY_REVIEW_LANE_FYI"
+      ],
+      "default": "FOUNDRY_REVIEW_LANE_UNSPECIFIED",
+      "description": "Where a card goes in the review walk.\n\n - FOUNDRY_REVIEW_LANE_DECIDE: To decide.\n - FOUNDRY_REVIEW_LANE_FYI: For information: a name only the model linked, or a value whose table\nrow's value stands."
+    },
+    "v1FoundryReviewModelAdvice": {
+      "type": "object",
+      "properties": {
+        "choice": {
+          "$ref": "#/definitions/v1FoundryReviewChoice"
+        },
+        "rationale": {
+          "type": "string",
+          "description": "One or two sentences, at most 300 characters: plain text, never markup,\nsanitized of control and bidi characters."
+        },
+        "cites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewCite"
+          },
+          "description": "The quotes it stands on, at least one."
+        },
+        "offered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewChoice"
+          },
+          "description": "The card's choices the model was offered, in order."
+        }
+      },
+      "description": "Founder's model's suggestion for a review card: one of the card's choices\nwhen it was written, with why, from the quotes it cites. Unmeasured and\nnever batched: a person takes it as any other choice. Show it only while\nthe card's choices are still `offered`."
+    },
+    "v1FoundryReviewNameCard": {
+      "type": "object",
+      "properties": {
+        "reviewKey": {
+          "type": "string",
+          "description": "The review its choice settles."
+        },
+        "reviewKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The settling review first, then up to 199 more in document order."
+        },
+        "reviewCount": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Every review of the name in the document."
+        },
+        "blocked": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Accepted claims it blocks, written once it is settled."
+        },
+        "held": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewClaimCard"
+          },
+          "description": "The held claims that wait on it, each approved on its own."
+        },
+        "type": {
+          "type": "string"
+        },
+        "normName": {
+          "type": "string"
+        }
+      },
+      "description": "A name of a document: every review of it shares one resolve decision."
+    },
+    "v1FoundryReviewNameDecisions": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "normName": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "choices": {
+          "type": "integer",
+          "format": "int32",
+          "description": "How many different choices they make (an entity each, or not in the data)."
+        },
+        "newest": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewDecision"
+          },
+          "description": "The newest, at most 20, with what became of each in the current load."
+        }
+      },
+      "description": "The resolve decisions of one name across the ontology's documents."
+    },
+    "v1FoundryReviewPrecision": {
+      "type": "object",
+      "properties": {
+        "bands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FoundryReviewPrecisionBand"
+          }
+        },
+        "rechecksAgreed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "rechecksTotal": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "How often the spot checks of each band were right, and how often\nre-checks agreed."
+    },
+    "v1FoundryReviewQuoteDraw": {
+      "type": "object",
+      "properties": {
+        "factKey": {
+          "type": "string"
+        }
+      }
+    },
+    "v1FoundryReviewRecheck": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "$ref": "#/definitions/v1FoundryReviewDecision"
+        },
+        "label": {
+          "$ref": "#/definitions/v1FoundryReviewLabel"
+        }
+      },
+      "description": "A decision or a label a second person may re-check."
+    },
     "v1FoundryReviewSettle": {
       "type": "string",
       "enum": [
@@ -12626,6 +13222,61 @@
       ],
       "default": "FOUNDRY_REVIEW_SETTLE_UNSPECIFIED",
       "description": "What settles a review (SettleFoundryReview's decision).\n\n - FOUNDRY_REVIEW_SETTLE_UNSPECIFIED: No decision settles it: a conflict on a link that holds many values, or\na reason the backend doesn't settle.\n - FOUNDRY_REVIEW_SETTLE_RESOLVE: resolve: link its name to one of its candidates, or say it is not in\nthe data.\n - FOUNDRY_REVIEW_SETTLE_PROP: prop: choose the property's value, or remove it.\n - FOUNDRY_REVIEW_SETTLE_RELEASE: release or reject the statement it holds back, by its statement_hash.\n - FOUNDRY_REVIEW_SETTLE_STALE: A reason a decision settles, on a review missing what the backend reads\nof it (a load from before decisions): a new load writes it again."
+    },
+    "v1FoundryReviewSettleItem": {
+      "type": "object",
+      "properties": {
+        "reviewId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/v1FoundryReviewChoice"
+        }
+      }
+    },
+    "v1FoundryReviewSettleRefusal": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "$ref": "#/definitions/v1FoundryReviewSettleRefusalReason"
+        },
+        "message": {
+          "type": "string",
+          "description": "A sentence for people; never parsed."
+        },
+        "decided": {
+          "$ref": "#/definitions/v1FoundryReviewDecision",
+          "description": "The decision that decided it: DECIDED only."
+        }
+      }
+    },
+    "v1FoundryReviewSettleRefusalReason": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_UNSPECIFIED",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_FULL",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_INVALID",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_NOT_FOUND"
+      ],
+      "default": "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_UNSPECIFIED",
+      "description": " - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE: The load or the review reads differently now: read the cards again.\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED: Another person decided it (decided).\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_FULL: The ontology holds the most value decisions a load can be sent.\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_INVALID: This choice can't settle this review (an entity not in the load, a\nvalue of another type, a choice of another kind, ...).\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_NOT_FOUND: The current load holds no such review."
+    },
+    "v1FoundryReviewSettleResult": {
+      "type": "object",
+      "properties": {
+        "reviewId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/v1FoundryReviewDecision",
+          "description": "Saved, as stored, with what the current load holds of it."
+        },
+        "refused": {
+          "$ref": "#/definitions/v1FoundryReviewSettleRefusal"
+        }
+      }
     },
     "v1FoundryReviewSpan": {
       "type": "object",
@@ -12644,6 +13295,69 @@
         }
       }
     },
+    "v1FoundryReviewSpotChecksResponse": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        },
+        "draws": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewDraw"
+          },
+          "description": "In the order drawn."
+        },
+        "rechecks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewRecheck"
+          },
+          "description": "What the caller may re-check: someone else's decisions and labels,\nsampled, at places the caller has said nothing of."
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewDecision"
+          },
+          "description": "The decisions and labels at the drawn places, any load's labels."
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewLabel"
+          }
+        }
+      }
+    },
+    "v1FoundryReviewSummary": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        },
+        "open": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Open cards to decide, at most 10,000; more says there are more."
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "indexing": {
+          "type": "boolean",
+          "description": "The load's index is still first being built (no pass has indexed every\ndocument yet): open may be too low. Documents owed again later don't\nset it."
+        }
+      },
+      "description": "An ontology's current load and how many cards it asks to decide."
+    },
     "v1FoundryReviewValue": {
       "type": "object",
       "properties": {
@@ -12659,6 +13373,15 @@
         }
       },
       "description": "One value documents state for a prop_conflict's property."
+    },
+    "v1FoundryReviewValueCard": {
+      "type": "object",
+      "properties": {
+        "reviewKey": {
+          "type": "string"
+        }
+      },
+      "description": "A value documents state differently."
     },
     "v1FoundrySlack": {
       "type": "object",
@@ -13120,10 +13843,11 @@
         "FOUNDRY_USAGE_TASK_LOADS",
         "FOUNDRY_USAGE_TASK_API_SOURCES",
         "FOUNDRY_USAGE_TASK_QUESTIONS",
-        "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS"
+        "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS",
+        "FOUNDRY_USAGE_TASK_REVIEW_ADVICE"
       ],
       "default": "FOUNDRY_USAGE_TASK_UNSPECIFIED",
-      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd.\n - FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS: Workflow runs' assessments charged this month (the ontology agent's\nAssess, on the questions model), capped by\nfoundry.workflows.assess.monthly_usd, apart from questions'."
+      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd.\n - FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS: Workflow runs' assessments charged this month (the ontology agent's\nAssess, on the questions model), capped by\nfoundry.workflows.assess.monthly_usd, apart from questions'.\n - FOUNDRY_USAGE_TASK_REVIEW_ADVICE: Review advice charged this month: Founder's model's suggestions on the\nreview cards the rules leave undecided, on the verify model, capped by\nfoundry.reviews.advise.monthly_usd, apart from every other task's."
     },
     "v1FoundryWorkflow": {
       "type": "object",
@@ -13732,6 +14456,19 @@
         }
       }
     },
+    "v1GetFoundryReviewSummaryResponse": {
+      "type": "object",
+      "properties": {
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewSummary"
+          },
+          "description": "One per live ontology with a current load."
+        }
+      }
+    },
     "v1GetMyFoundryAccessResponse": {
       "type": "object",
       "properties": {
@@ -14237,6 +14974,41 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryRelayLink"
           }
+        }
+      }
+    },
+    "v1ListFoundryReviewCardsResponse": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string"
+        },
+        "indexing": {
+          "type": "boolean",
+          "description": "The load's index is still first being built: more cards may come, and\nthe walk is not done when it runs out."
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewCard"
+          },
+          "description": "At most 50, in the walk's order."
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewNameDecisions"
+          },
+          "description": "The decisions, across the ontology's documents, of each name the page's\nname cards are of."
+        },
+        "precision": {
+          "$ref": "#/definitions/v1FoundryReviewPrecision",
+          "description": "The spot checks' precision, on the first page only."
+        },
+        "nextPageToken": {
+          "type": "string"
         }
       }
     },

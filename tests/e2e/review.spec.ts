@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import {
+  HEDGED,
   expect,
   file,
   mock,
@@ -10,27 +11,27 @@ import {
 
 // The Review page (/ontology/:id/review): one sub-link of the open
 // ontology, two tabs, each counting what is open in it. Facts (the
-// default) is the review queue, Ontology the suggestions; the tab is in the
-// URL, and the old Suggestions page's address opens the Ontology tab.
+// default) is the review walkthrough, Ontology the suggestions; the tab is
+// in the URL, and the old Suggestions page's address opens the Ontology tab.
 
 const O = "/ontology/ont_acme_contracts";
-// Held claims, a value in conflict and a name in no row, beside the
-// contract's facts (review-queue.spec.ts).
-const HEDGED =
-  "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n";
 
 const tab = (page: Page, name: "Facts" | "Ontology") =>
     page.getByRole("tab", { name: new RegExp(`^${name}`) }),
   countOf = (page: Page, name: "Facts" | "Ontology") =>
     tab(page, name).locator(".hf-tab-count"),
-  queueCards = (page: Page) =>
-    page.getByRole("list", { name: "Review queue" }).locator(":scope > li"),
+  walkCard = (page: Page) => page.getByRole("article"),
   suggestionCards = (page: Page) =>
     page.getByRole("list", { name: "Suggestions" }).locator(":scope > li"),
   reviewLink = (page: Page) =>
     page
       .getByRole("list", { name: "Pages" })
       .getByRole("link", { name: /^Review/ });
+
+const decideLane = (page: Page) =>
+  page
+    .getByRole("radiogroup", { name: "Lane" })
+    .getByRole("radio", { name: /^Decide/ });
 
 test("switches between Facts and Ontology, each with its open count, the tab in the URL", async ({
   page,
@@ -50,26 +51,31 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
   await expect(page.getByRole("tab")).toHaveText([/^Facts/, /^Ontology/]);
   await expect(tab(page, "Facts")).toHaveAttribute("aria-selected", "true");
   await expect(
-    page.getByText(/^Names and values the current load couldn’t settle/),
+    page.getByText(/^What the current load couldn’t settle on its own/),
   ).toBeVisible();
 
-  // Facts counts the queue's cards, and one fewer once one is decided.
-  await expect(queueCards(page).first()).toBeVisible();
-  const cards = await queueCards(page).count();
-  await expect(countOf(page, "Facts")).toHaveText(String(cards));
-  // The panel's link counts what both tabs hold.
+  // Facts counts the cards to decide, as the walk's Decide lane does, and
+  // one fewer once one is decided.
+  await expect(walkCard(page)).toBeVisible();
+  await expect(countOf(page, "Facts")).toHaveText(/^\d+$/);
+  const cards = Number(await countOf(page, "Facts").textContent());
+  await expect(decideLane(page)).toHaveText(new RegExp(`^Decide\\s*${cards}$`));
+  // The panel's link counts what each tab holds, apart, and says each part.
   await expect(reviewLink(page)).toHaveAccessibleName(
-    `Review, ${cards + 4} open`,
+    `Review: ${cards} cards to decide, 4 ontology suggestions`,
   );
-  await queueCards(page)
-    .filter({ hasText: "may have signed" })
-    .filter({ hasNotText: "Random check" })
-    .first()
+  await expect(reviewLink(page).locator(".hf-nav-badge")).toHaveText(
+    `${cards} · 4`,
+  );
+  await walkCard(page)
     .getByRole("button", { name: "Approve", exact: true })
     .click();
   await expect(countOf(page, "Facts")).toHaveText(String(cards - 1));
+  await expect(decideLane(page)).toHaveText(
+    new RegExp(`^Decide\\s*${cards - 1}$`),
+  );
   await expect(reviewLink(page)).toHaveAccessibleName(
-    `Review, ${cards + 3} open`,
+    `Review: ${cards - 1} cards to decide, 4 ontology suggestions`,
   );
 
   // Ontology: its own line under the heading, its suggestions, in the URL.
@@ -80,7 +86,7 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
     page.getByText(/^What audits of the current load found/),
   ).toBeVisible();
   await expect(suggestionCards(page)).toHaveCount(4);
-  await expect(queueCards(page)).toHaveCount(0);
+  await expect(walkCard(page)).toHaveCount(0);
   // Facts keeps its count from the other tab.
   await expect(countOf(page, "Facts")).toHaveText(String(cards - 1));
   // A refresh keeps the tab.
@@ -91,8 +97,10 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
   await tab(page, "Ontology").focus();
   await page.keyboard.press("ArrowLeft");
   await expect(tab(page, "Facts")).toHaveAttribute("aria-selected", "true");
-  await expect(page).toHaveURL(new RegExp(`${O}/review$`));
-  await expect(queueCards(page).first()).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`${O}/review(\\?card=[0-9a-f]{64})?$`),
+  );
+  await expect(walkCard(page)).toBeVisible();
 });
 
 test("opens the Ontology tab from the old Suggestions address, keeping its query", async ({

@@ -1,9 +1,13 @@
 import type {
+  BatchSettleReviewsRequest,
+  BatchSettleReviewsResponse,
   DeleteReviewDecisionResponse,
+  FoundryReviewChoice,
+  FoundryReviewSettleRefusal,
+  FoundryReviewSettleResult,
+  ReviewSettleRefusalReason,
   FoundryReviewDecision,
-  FoundryReviewLabel,
   ListReviewDecisionsResponse,
-  ListReviewLabelsResponse,
   ReviewDecisionResponse,
   ReviewLabelResponse,
   SettleReviewLabelRequest,
@@ -77,51 +81,8 @@ export const reviewQueries = {
       return decisions;
     },
   }),
-  // What the Review page last counted open on its Facts tab, for the
-  // current load it read: the Ontologies panel's Review link shows it,
-  // since counting reads the load's reviews from its database, which the
-  // panel, on every page, can't afford. Only the page writes it; nothing
-  // fetches it.
-  openFacts: (ws: string, o: string) => ({
-    queryKey: [ws, "ontology", o, "review-open-facts"],
-    staleTime: Infinity,
-    enabled: false,
-    queryFn: ({ client }: { client: QueryClient }) =>
-      client.getQueryData<OpenFacts>([
-        ws,
-        "ontology",
-        o,
-        "review-open-facts",
-      ]) ?? null,
-  }),
 };
-
-/** The Facts tab's open count, and the load it was counted on. */
-export type OpenFacts = { loadId: string; open: number };
-// Every label of the ontology, a page (100) at a time: what the review queue
-// measures precision from, and leaves out of its draws.
-export const labelQueries = {
-  list: (ws: string, o: string) => ({
-    queryKey: [ws, "ontology", o, "review-labels"],
-    staleTime: 30_000,
-    queryFn: async () => {
-      const labels: FoundryReviewLabel[] = [];
-      const seen = new Set<string>();
-      let token = "";
-      do {
-        const page = await api<ListReviewLabelsResponse>(
-          `${base(ws, o)}/review-labels${token ? `?pageToken=${enc(token)}` : ""}`,
-        );
-        labels.push(...(page.labels || []));
-        token = page.nextPageToken || "";
-        if (seen.has(token)) throw new Error("Labels repeated a page.");
-        seen.add(token);
-      } while (token);
-      return labels;
-    },
-  }),
-};
-/** Keeps a person's word on a claim the review queue drew (or re-checks). */
+/** Keeps a person's word on a claim the review walk drew (or re-checks). */
 export const settleLabel = async (
   ws: string,
   o: string,
@@ -129,6 +90,55 @@ export const settleLabel = async (
 ) => {
   return api<ReviewLabelResponse>(`${base(ws, o)}/review-labels`, body);
 };
+const kindOf = (d: FoundryReviewChoice) =>
+  d.prop ? "prop" : d.release ? "release" : d.reject ? "reject" : "resolve";
+/**
+ * Settles up to 100 reviews of the current load `loadId` in one call, each
+ * as settleReview settles one; with `expectOpen`, one another person decided
+ * is refused (DECIDED). The results, one an item in the items' order: the
+ * decision saved, or why it was refused (refusalReason). A batch the API
+ * refuses whole (another current load, bad fields) throws.
+ */
+export const settleReviews = async (
+  ws: string,
+  o: string,
+  body: BatchSettleReviewsRequest,
+): Promise<FoundryReviewSettleResult[]> => {
+  const r = await api<BatchSettleReviewsResponse>(
+    `${base(ws, o)}/reviews:batchSettle`,
+    body,
+  );
+  const results = r.results ?? [];
+  if (results.length !== body.items.length)
+    throw new Error("The settle answered for other reviews than it was sent.");
+  results.forEach((x, i) => {
+    if (x.decision)
+      trackEvent("review_settled", { kind: kindOf(body.items[i]!.decision) });
+  });
+  return results;
+};
+/**
+ * Why an item of a batch settle was refused, by its reason alone (never its
+ * message); one this build doesn't know reads as INVALID, which shows the
+ * message on its card.
+ *
+ * @example
+ * refusalReason({ reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED" }); // "DECIDED"
+ */
+export function refusalReason(
+  r: FoundryReviewSettleRefusal | undefined,
+): ReviewSettleRefusalReason {
+  const name = (r?.reason ?? "").replace(
+    "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_",
+    "",
+  );
+  return name === "STALE" ||
+    name === "DECIDED" ||
+    name === "FULL" ||
+    name === "NOT_FOUND"
+    ? name
+    : "INVALID";
+}
 export const settleReview = async (
   ws: string,
   o: string,
@@ -139,15 +149,7 @@ export const settleReview = async (
     `${base(ws, o)}/reviews/${enc(reviewId)}:settle`,
     body,
   );
-  trackEvent("review_settled", {
-    kind: body.decision.prop
-      ? "prop"
-      : body.decision.release
-        ? "release"
-        : body.decision.reject
-          ? "reject"
-          : "resolve",
-  });
+  trackEvent("review_settled", { kind: kindOf(body.decision) });
   return r;
 };
 export const deleteReviewDecision = async (

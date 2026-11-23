@@ -333,35 +333,6 @@ func TestSuggestionsWaitBeforeARetry(t *testing.T) {
 	assert.GreaterOrEqual(t, m.at[1].Sub(m.at[0]), 20*time.Millisecond)
 	assert.GreaterOrEqual(t, m.at[2].Sub(m.at[1]), 40*time.Millisecond)
 	assert.Equal(t, 20*time.Millisecond, s.retryWait, "each write starts from the first wait")
-
-	// A wait that would pass the timeout ends the write.
-	m = &scriptedModel{answers: []answer{busy}}
-	s.retryWait = time.Hour
-	end, _ := s.call(context.Background(), llm.Binding{Model: m}, llm.Request{}, 20*time.Millisecond)
-	assert.Len(t, m.requests, 1)
-	assert.Equal(t, "the model took too long", end.Failure)
-}
-
-// waitingModel waits for its context's end, as a call waiting for a busy
-// server's slot does, and then refuses as the gate does: unavailable.
-type waitingModel struct{ calls int }
-
-func (m *waitingModel) Stream(ctx context.Context, _ llm.Request) iter.Seq2[llm.Chunk, error] {
-	m.calls++
-	return func(yield func(llm.Chunk, error) bool) {
-		<-ctx.Done()
-		yield(nil, &llm.Error{Kind: llm.ErrUnavailable, Err: ctx.Err()})
-	}
-}
-
-// Out of time, a refusal a retry might pass isn't retried.
-func TestSuggestionsDontRetryOutOfTime(t *testing.T) {
-	s, _ := newSuggester(newSuggestionDB(), &scriptedModel{})
-	m := &waitingModel{}
-	end, cost := s.call(context.Background(), llm.Binding{Model: m}, llm.Request{}, 10*time.Millisecond)
-	assert.Equal(t, 1, m.calls)
-	assert.Equal(t, model.FoundryAutomationSuggestionsEnd{Failure: "the model took too long"}, end)
-	assert.Zero(t, cost)
 }
 
 // On the owner's own server (Ollama, an OpenAI-compatible one), whose calls

@@ -27,7 +27,8 @@ type owedRebuild struct {
 // left to queue or wait for: no rebuild queued or under way, none held
 // back by another live job, none that failed to queue. One whose rebuilds
 // keep ending without replacing its load is given up on after
-// store.MaxFoundryRebuilds, and logged. Until a row is done each call tries
+// store.MaxFoundryRebuilds, and logged; a sample's load is never reloaded
+// (store.FoundryRebuildSample). Until a row is done each call tries
 // again (Rebuilds calls it while one is owed), and what a call already
 // queued is not queued twice. It reports whether a row is still owed. Only
 // reading or marking the rows fails it; every ontology it couldn't queue is
@@ -61,6 +62,9 @@ func RebuildOwedLoads(ctx context.Context, db *sql.DB, st store.Store, logger *s
 		if len(got.GaveUp) > 0 {
 			log.Warn("current loads an earlier release wrote whose reloads keep failing are not reloaded again; load them again by hand",
 				"ontologies", got.GaveUp)
+		}
+		if len(got.Samples) > 0 {
+			log.Info("the sample's loads are not reloaded: Helix converted their datetimes exactly", "ontologies", got.Samples)
 		}
 		if err != nil || len(got.Queued)+len(got.UnderWay)+len(got.Busy) > 0 {
 			if err != nil || len(got.Busy) > 0 {

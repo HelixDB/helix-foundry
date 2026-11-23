@@ -38,7 +38,7 @@ const (
 
 // FoundryReviewDecision is an ontology-wide override, applied from the next
 // load; a release also joins the current load's list as it is settled, and a
-// resend job applies it there (SettleFoundryReleases). Resolve identifies a
+// resend job applies it there (store.SettleFoundryReviews). Resolve identifies a
 // document name; a nil EntityKey means not in data.
 // Prop identifies an entity property and carries a JSON scalar (including null).
 // Release identifies one review of a document holding a claim back, by its
@@ -47,7 +47,7 @@ const (
 // engine's to read from the document. Reject identifies a review as a
 // release does, and is a person's word that what it states is wrong: it
 // goes to no engine and no load's list, and a claim has a release or a
-// reject, never both (store.SettleFoundryReject). Validate guards this sum
+// reject, never both (store.SettleFoundryReviews). Validate guards this sum
 // type at every storage boundary.
 type FoundryReviewDecision struct {
 	ID              string
@@ -69,7 +69,7 @@ type FoundryReviewDecision struct {
 	// them back into the decision.
 	DocumentIDs []string
 	// Applied is what became of the decision in the ontology's current load,
-	// which ListFoundryReviewDecisions and SettleFoundryReleases read: nil
+	// which ListFoundryReviewDecisions and store.SettleFoundryReviews read: nil
 	// when that load's list doesn't hold it, or no job has reported on it.
 	Applied *FoundryDecisionApplied
 	// Drawn is how the review queue showed the card the decision was made
@@ -569,4 +569,77 @@ func FoundryNormName(name string) string {
 		}
 	}
 	return strings.TrimSuffix(string(out), " ")
+}
+
+// FoundrySettle is one item of a batch settle (store.SettleFoundryReviews):
+// a decision read from a review, and, for a resolve, how the load the review
+// was read from holds its name. Name is set exactly when D is a resolve
+// (Validate).
+type FoundrySettle struct {
+	D    *FoundryReviewDecision
+	Name FoundryNameLink
+}
+
+// FoundryNameLink is how the reviewed load holds a resolve's name: exactly
+// one of FoundryNameAsking and FoundryNameLinked, so a name can't be both.
+type FoundryNameLink interface{ foundryNameLink() }
+
+// FoundryNameAsking: the load links the name to no one yet, and its reviews
+// ask about it. Documents are the other documents whose reviews ask about it,
+// which an alias reaches when they are sent again (contract 4.22.0); "not in
+// data" names none.
+type FoundryNameAsking struct{ Documents []string }
+
+// FoundryNameLinked: the load links the name already (adjudicated,
+// legal_form, part_name, own_name), so the decision is the next load's while
+// that load is current: the engine would say bound.
+type FoundryNameLinked struct{}
+
+func (FoundryNameAsking) foundryNameLink() {}
+func (FoundryNameLinked) foundryNameLink() {}
+
+// Validate checks the decision, and that a resolve, and only a resolve, says
+// how its load holds its name. A withdraw is no person's decision to settle.
+func (s FoundrySettle) Validate() error {
+	if s.D == nil {
+		return fmt.Errorf("a settle needs its decision")
+	}
+	if err := s.D.Validate(); err != nil {
+		return err
+	}
+	if s.D.Kind == FoundryReviewWithdraw {
+		return fmt.Errorf("a withdraw is not settled")
+	}
+	if (s.Name != nil) != (s.D.Kind == FoundryReviewResolve) {
+		return fmt.Errorf("decision %s: a resolve, and only a resolve, says how its load holds the name", s.D.ID)
+	}
+	return nil
+}
+
+// FoundrySettleReason is why one item of a batch settle was refused: a
+// closed set, named as the API's FoundryReviewSettleRefusalReason.
+type FoundrySettleReason int
+
+const (
+	// FoundrySettleStale: the load or the review reads differently now (the
+	// current load changed, or its version no longer takes the decision).
+	FoundrySettleStale FoundrySettleReason = iota + 1
+	// FoundrySettleDecided: another person decided the card (expect open).
+	FoundrySettleDecided
+	// FoundrySettleFull: the ontology holds the most value decisions a load
+	// can be sent.
+	FoundrySettleFull
+	// FoundrySettleInvalid: this choice can't settle this review.
+	FoundrySettleInvalid
+	// FoundrySettleNotFound: the load holds no such review.
+	FoundrySettleNotFound
+)
+
+// FoundrySettleRefusal is one refused item: why (Reason), the error a single
+// settle answers with (Err), and for FoundrySettleDecided the decision that
+// decided it.
+type FoundrySettleRefusal struct {
+	Reason  FoundrySettleReason
+	Err     error
+	Decided *FoundryReviewDecision
 }

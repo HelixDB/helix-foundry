@@ -10,7 +10,6 @@ import {
   type Ast,
   type DynamicQueryRequest,
   type ReadEntry,
-  type ReadParam,
 } from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
@@ -1563,155 +1562,119 @@ export function snippet(text: string, start: number, end: number) {
 // ---------------------------------------------------------------- A load's reviews
 
 /**
- * The review queue's reads of one load (../reviews/queue.ts): every review
- * the load holds, a page at a time in the database's order, each with the
- * entities it concerns, as a document's reviews are read; and its documents'
- * quotes of facts (a fact's evidence in a section) in a score range,
- * counted, and read one at a time at offsets the queue draws at random.
- * Offset paging reads every row before its page, so the reviews read stop
- * at `reviews`, and the page says how many it left.
+ * The review walk's reads of the current load (../reviews/cards.ts): the
+ * reviews its cards name, by key (at most REVIEWS_BY_KEY a read), each with
+ * the entities it concerns, as a document's reviews are read, with the
+ * reviews of names the load linked on less than a name in the held claims'
+ * documents (nameLinksRequest's), which say what holds a claim. None for no
+ * key.
+ *
+ * @example
+ * reviewsByKeyRequest(scope, cardKeys(page.cards), claimDocs(page.cards));
  */
-export const QUEUE_READ = Object.freeze({
-  page: 500,
-  reviews: 5000,
-});
-
-/** A score range: from (inclusive) and below (exclusive), either open. */
-export type ScoreRange = { from?: number; below?: number };
-
-const sectionsIn = (scope: Scope): Ast => nodesOf(scope, N.Section);
-/**
- * The load's quotes of facts in documents: a fact's evidence (it has a fact
- * key, where a property's quote has none) in a section. No index serves it:
- * it walks the load's sections' quotes and reviews, so a request reads it
- * once, into a variable its entries filter.
- */
-const factQuotes = (scope: Scope): Ast =>
-  where(step("in", sectionsIn(scope), E.FROM_SECTION), {
-    and: {
-      predicates: [
-        label(N.Evidence),
-        { not: { predicate: { is_null: { property: "fact_key" } } } },
-      ],
-    },
-  });
-/** Of `input`, those scored in `range`, whose bounds are the parameters `from` and `below`. */
-const scoredIn = (
-  input: Ast,
-  range: ScoreRange,
-  from: string,
-  below: string,
-): Ast => {
-  const predicates: Ast[] = [
-    ...(range.from === undefined
-      ? []
-      : [
-          { gte: { left: { property: "confidence" }, right: { param: from } } },
-        ]),
-    ...(range.below === undefined
-      ? []
-      : [
-          { lt: { left: { property: "confidence" }, right: { param: below } } },
-        ]),
-  ];
-  return predicates.length ? where(input, { and: { predicates } }) : input;
-};
-const rangeParams = (
-  range: ScoreRange,
-  from: string,
-  below: string,
-): Record<string, ReadParam> => ({
-  ...(range.from === undefined
-    ? {}
-    : { [from]: { value: range.from, type: "f64" as const } }),
-  ...(range.below === undefined
-    ? {}
-    : { [below]: { value: range.below, type: "f64" as const } }),
-});
-
-/** How many reviews a load holds: a bitmap count. */
-export function loadReviewCountRequest(scope: Scope): DynamicQueryRequest {
-  return readRequest("foundry_queue_reviews_count", [
-    { name: "reviews", root: { count: { input: nodesOf(scope, N.Review) } } },
-  ]);
-}
-
-/** loadReviewCountRequest's answer; none when missing. */
-export function parseLoadReviewCount(body: unknown): number {
-  const n = int(isRecord(body) ? body.reviews : undefined);
-  return n !== undefined && n >= 0 ? n : 0;
-}
-
-/**
- * How many quotes of facts the load holds in each of `ranges` (by name):
- * the quotes read once, then counted in each range.
- */
-export function quoteCountsRequest(
+export function reviewsByKeyRequest(
   scope: Scope,
-  ranges: Readonly<Record<string, ScoreRange>>,
-): DynamicQueryRequest {
-  const named = Object.entries(ranges);
+  keys: readonly string[],
+  docs: readonly string[] = [],
+): DynamicQueryRequest | null {
+  if (!keys.length) return null;
   return readRequest(
-    "foundry_queue_quote_counts",
+    "foundry_reviews_by_key",
     [
-      { name: "facts", root: factQuotes(scope), returned: false },
-      ...named.map(([, range], i) => ({
-        name: `quotes_${i}`,
-        root: {
-          count: {
-            input: scoredIn(v("facts"), range, `from_${i}`, `below_${i}`),
+      {
+        name: "review_nodes",
+        root: nodesOf(scope, N.Review, {
+          is_in: {
+            value: { property: "review_key" },
+            values: { param: "keys" },
           },
-        },
+        }),
+        returned: false,
+      },
+      { name: "reviews", root: values(v("review_nodes"), REVIEW_FIELDS) },
+      ...concernedEntries,
+      ...docs.map((_, i) => ({
+        name: `links_${i}`,
+        root: values(
+          nodesOf(scope, N.Review, propIs("doc_id", `doc_${i}`), {
+            is_in: {
+              value: { property: "reason" },
+              values: { param: "weak_links" },
+            },
+          }),
+          [
+            "doc_id",
+            "section",
+            "start",
+            "reason",
+            "review_key",
+            "type",
+            "norm_name",
+          ],
+        ),
       })),
     ],
-    Object.assign(
-      {},
-      ...named.map(([, range], i) =>
-        rangeParams(range, `from_${i}`, `below_${i}`),
-      ),
-    ),
-  );
-}
-
-/** quoteCountsRequest's answer, by range name; a count missing reads as none. */
-export function parseQuoteCounts(
-  body: unknown,
-  ranges: readonly string[],
-): Record<string, number> {
-  const data = isRecord(body) ? body : {};
-  return Object.fromEntries(
-    ranges.map((name, i) => {
-      const n = int(data[`quotes_${i}`]);
-      return [name, n !== undefined && n >= 0 ? n : 0];
-    }),
-  );
-}
-
-/** One page (from 0) of a load's reviews, QUEUE_READ.page at a time, with the entities they concern. */
-export function loadReviewsRequest(
-  scope: Scope,
-  page: number,
-): DynamicQueryRequest {
-  const start = Math.max(0, Math.floor(page)) * QUEUE_READ.page;
-  return readRequest("foundry_queue_reviews", [
     {
-      name: "review_nodes",
-      root: {
-        range: {
-          input: nodesOf(scope, N.Review),
-          start: { literal: start },
-          end: { literal: start + QUEUE_READ.page },
-        },
-      },
-      returned: false,
+      keys: { value: [...keys], type: { array: "string" } },
+      ...Object.fromEntries(
+        docs.map((d, i) => [`doc_${i}`, { value: d, type: "string" }]),
+      ),
+      ...(docs.length
+        ? { weak_links: { value: [...WEAK_LINKS], type: { array: "string" } } }
+        : {}),
     },
-    { name: "reviews", root: values(v("review_nodes"), REVIEW_FIELDS) },
-    ...concernedEntries,
-  ]);
+  );
+}
+
+/** How many review keys one reviewsByKeyRequest names. */
+export const REVIEWS_BY_KEY = 200;
+
+/**
+ * The reviews of `docs` (each an index lookup by `doc_id`) starting at one
+ * of `starts`, with the entities they concern: what a spot check of a held
+ * claim, or a re-check, shows while the load holds its claim back, and
+ * whether another reading of its place makes it one no approval writes
+ * (markDiffering). The caller keeps those at its places. None for no
+ * document.
+ */
+export function reviewsAtRequest(
+  scope: Scope,
+  docs: readonly string[],
+  starts: readonly number[],
+): DynamicQueryRequest | null {
+  if (!docs.length) return null;
+  return readRequest(
+    "foundry_reviews_at",
+    [
+      {
+        name: "review_nodes",
+        root: nodesOf(
+          scope,
+          N.Review,
+          {
+            is_in: { value: { property: "doc_id" }, values: { param: "docs" } },
+          },
+          {
+            is_in: {
+              value: { property: "start" },
+              values: { param: "starts" },
+            },
+          },
+        ),
+        returned: false,
+      },
+      { name: "reviews", root: values(v("review_nodes"), REVIEW_FIELDS) },
+      ...concernedEntries,
+    ],
+    {
+      docs: { value: [...docs], type: { array: "string" } },
+      starts: { value: [...starts], type: { array: "i64" } },
+    },
+  );
 }
 
 /**
- * loadReviewsRequest's answer: the reviews of documents, each at its
+ * A read of reviews' answer (reviewsByKeyRequest, reviewsAtRequest): the reviews of documents, each at its
  * stored place, with what settles it (a review of a table's rows has no
  * document, and is left out). Nothing in it is trusted.
  */
@@ -1754,96 +1717,6 @@ export type FactQuote = Span & {
   quote: string;
   confidence?: number;
 };
-
-/**
- * The quotes of facts scored in `range` at `offsets` among the load's (in
- * the order its sections are read), each with its section's ordinal: one
- * entry each.
- */
-export function rangeQuotesRequest(
-  scope: Scope,
-  range: ScoreRange,
-  offsets: readonly number[],
-): DynamicQueryRequest {
-  return readRequest(
-    "foundry_queue_quotes_at",
-    [
-      {
-        name: "band",
-        root: scoredIn(factQuotes(scope), range, "from", "below"),
-        returned: false,
-      },
-      ...offsets.flatMap((at, i): ReadEntry[] => {
-        const o = Math.max(0, Math.floor(at));
-        return [
-          {
-            name: `q_${i}`,
-            root: {
-              range: {
-                input: v("band"),
-                start: { literal: o },
-                end: { literal: o + 1 },
-              },
-            },
-            returned: false,
-          },
-          {
-            name: `quote_${i}`,
-            root: values(v(`q_${i}`), [
-              "doc_id",
-              "fact_key",
-              "link",
-              "start",
-              "end",
-              "quote",
-              "confidence",
-            ]),
-          },
-          {
-            name: `section_${i}`,
-            root: values(step("out", v(`q_${i}`), E.FROM_SECTION), ["ordinal"]),
-          },
-        ];
-      }),
-    ],
-    rangeParams(range, "from", "below"),
-  );
-}
-
-/** rangeQuotesRequest's answer, one per offset: undefined where none read. */
-export function parseRangeQuotes(
-  body: unknown,
-  count: number,
-): (FactQuote | undefined)[] {
-  const data = isRecord(body) ? body : {};
-  return Array.from({ length: count }, (_, i) => {
-    const q = rows(data[`quote_${i}`])[0],
-      section = int(rows(data[`section_${i}`])[0]?.ordinal);
-    if (!q || section === undefined) return undefined;
-    const documentId = str(q.doc_id),
-      factKey = str(q.fact_key),
-      link = str(q.link),
-      start = int(q.start),
-      end = int(q.end);
-    return documentId &&
-      factKey &&
-      link &&
-      start !== undefined &&
-      end !== undefined &&
-      start < end
-      ? {
-          documentId,
-          factKey,
-          link,
-          section,
-          start,
-          end,
-          quote: str(q.quote) || "",
-          confidence: num(q.confidence),
-        }
-      : undefined;
-  });
-}
 
 /**
  * The ends of each quote's fact (by its link and key, index-backed), named

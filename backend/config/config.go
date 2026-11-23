@@ -105,6 +105,7 @@ type Foundry struct {
 	Reminders   RemindersConfig   `koanf:"reminders"`
 	Heal        HealConfig        `koanf:"heal"`
 	Workflows   WorkflowsConfig   `koanf:"workflows"`
+	Reviews     ReviewsConfig     `koanf:"reviews"`
 	Agent       AssistantConfig   `koanf:"agent"`
 	Dashboards  DashboardsConfig  `koanf:"dashboards"`
 	Automations AutomationsConfig `koanf:"automations"`
@@ -252,6 +253,48 @@ func (w WorkflowAssessConfig) validate() error {
 	case w.Lease < 30*time.Second:
 		// Renewed every third of it; shorter would lapse on a slow renewal.
 		return fmt.Errorf("foundry.workflows.assess.lease must be at least 30s")
+	}
+	return nil
+}
+
+// ReviewsConfig drives the review walk's cards beyond the index the graph
+// worker keeps of them.
+type ReviewsConfig struct {
+	Advise ReviewAdviceConfig `koanf:"advise"`
+}
+
+// ReviewAdviceConfig drives review advice: the graph worker's advisor
+// (workers/foundry-graph-worker review_advice.go) asks the workspace's
+// verify model about the cards of a current load the rules leave undecided,
+// and the walk shows its pick as unmeasured. Hosted, it advises only on
+// Helix's Claude for a workspace on a sold plan; locally, on the install's
+// model, unless its .env turns it off. Off by default.
+type ReviewAdviceConfig struct {
+	Enabled bool `koanf:"enabled"`
+	// MonthlyUSD is a workspace's monthly budget for advice, apart from
+	// Founder's, questions' and loads'. A batch is sent only while what the
+	// month spent plus the batch's worst case fits it; replicas advising
+	// loads of one workspace at once can each pass that check, so a month
+	// may pass it by a batch's worst case a replica.
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	// MaxPerLoad is how many cards one claim of a load sends at most; a
+	// load owed again (made current, or new cards indexed) may send more.
+	MaxPerLoad int `koanf:"max_per_load"`
+	// CardsPerCall is how many cards one call is sent, 1 to 10.
+	CardsPerCall int `koanf:"cards_per_call"`
+}
+
+// MonthlyMicros is MonthlyUSD in millionths of a US dollar.
+func (r ReviewAdviceConfig) MonthlyMicros() int64 { return int64(math.Round(r.MonthlyUSD * 1e6)) }
+
+func (r ReviewAdviceConfig) validate() error {
+	switch {
+	case r.MonthlyUSD < 0 || math.IsNaN(r.MonthlyUSD):
+		return fmt.Errorf("foundry.reviews.advise.monthly_usd must not be negative")
+	case r.CardsPerCall < 1 || r.CardsPerCall > 10:
+		return fmt.Errorf("foundry.reviews.advise.cards_per_call must be 1 to 10")
+	case r.MaxPerLoad < r.CardsPerCall:
+		return fmt.Errorf("foundry.reviews.advise.max_per_load must be at least cards_per_call")
 	}
 	return nil
 }
@@ -2334,6 +2377,12 @@ func (c *Config) validateRoles(roles Roles) error {
 			return err
 		}
 	}
+	// The graph worker advises; the API reports advice's cap.
+	if roles.GraphWorker || roles.API {
+		if err := f.Reviews.Advise.validate(); err != nil {
+			return err
+		}
+	}
 	if roles.AskWorker {
 		a := f.Ask
 		switch {
@@ -2735,7 +2784,11 @@ func Defaults() Config {
 			FeedTTL: 24 * time.Hour, FeedBatch: 500, FeedBatchBytes: 4 << 20, FeedMaxRows: 100_000,
 		},
 		Bot: SlackBotConfig{PerHour: 120, PerUserPerHour: 20, ProposalTTL: 24 * time.Hour},
-	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
+	}, Reviews: ReviewsConfig{Advise: ReviewAdviceConfig{
+		MonthlyUSD:   10,
+		MaxPerLoad:   200,
+		CardsPerCall: 5,
+	}}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
 		Enabled:      true,
 		MonthlyUSD:   20,
 		MaxUSD:       1,

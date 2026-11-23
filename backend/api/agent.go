@@ -47,6 +47,9 @@ const (
 // agentIDPattern is an id a page context may name.
 var agentIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
+// reviewCardIDPattern is a review card's id as the API writes it.
+var reviewCardIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 // agentPrincipal is whom the call is for: a person signed in
 // (foundrymodel.AgentPerson), never a key, an agent, or a person the host
 // sent on as a grantee (SourceGrantee: one the host's own check refused, who
@@ -137,7 +140,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	g, grantee := access.GranteeFrom(ctx)
 	token := req.GetClientToken()
 	page := foundryagent.PageContext{OntologyID: req.GetPageContext().GetOntologyId(), LoadID: req.GetPageContext().GetLoadId(),
-		DashboardID: req.GetPageContext().GetDashboardId(), NewAutomation: req.GetPageContext().GetNewAutomation()}
+		DashboardID: req.GetPageContext().GetDashboardId(), NewAutomation: req.GetPageContext().GetNewAutomation(),
+		ReviewCardID: req.GetPageContext().GetReviewCardId()}
 	// A browser's zone Go's database lacks is dropped: the Assistant asks then.
 	if _, err := automation.Zone(req.GetPageContext().GetTimeZone()); err == nil {
 		page.TimeZone = req.GetPageContext().GetTimeZone()
@@ -150,6 +154,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 	case page.OntologyID != "" && !agentIDPattern.MatchString(page.OntologyID), page.LoadID != "" && !agentIDPattern.MatchString(page.LoadID),
 		page.LoadID != "" && page.OntologyID == "", page.DashboardID != "" && !agentIDPattern.MatchString(page.DashboardID):
 		return nil, status.Error(codes.InvalidArgument, "page_context names a load of an ontology, or a dashboard, by their ids")
+	case page.ReviewCardID != "" && (page.OntologyID == "" || !reviewCardIDPattern.MatchString(page.ReviewCardID)):
+		return nil, status.Error(codes.InvalidArgument, "page_context names a review card by its 64 lowercase hexadecimal characters, with its ontology")
 	}
 	if grantee {
 		if page, err = s.granteePage(ctx, g, page); err != nil {
@@ -321,7 +327,8 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 
 // granteePage is page as g may name it to Founder: an ontology whose current
 // load its grants cover, that load, and a pinned dashboard; anything else,
-// and a new automation, is dropped, so Founder never reads a name the
+// a new automation and a review card (the walk is an owner's or admin's),
+// is dropped, so Founder never reads a name the
 // grantee can't see. The time zone, the person's own, stays.
 func (s *Service) granteePage(ctx context.Context, g access.Grantee, page foundryagent.PageContext) (foundryagent.PageContext, error) {
 	out := foundryagent.PageContext{TimeZone: page.TimeZone}
@@ -878,7 +885,7 @@ func agentTurnToProto(t *foundrymodel.FoundryAgentTurn) *foundryv1.FoundryAgentT
 	var page foundryagent.PageContext
 	if len(t.PageContext) > 0 && json.Unmarshal(t.PageContext, &page) == nil {
 		out.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: page.OntologyID, LoadId: page.LoadID, DashboardId: page.DashboardID,
-			NewAutomation: page.NewAutomation, TimeZone: page.TimeZone}
+			NewAutomation: page.NewAutomation, TimeZone: page.TimeZone, ReviewCardId: page.ReviewCardID}
 	}
 	if t.Error != nil {
 		out.Error = *t.Error

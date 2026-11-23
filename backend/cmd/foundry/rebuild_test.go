@@ -63,7 +63,7 @@ func TestRebuildLoadsOverADatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := out.String(); got != "queued 0 reloads: \nalready reloading, 0: \nheld back by a live job, 0 (run again once it ends): \n"+
-		"given up after 3 reloads that failed, 0 (load each again by hand): \n" {
+		"given up after 3 reloads that failed, 0 (load each again by hand): \nsamples not reloaded, 0 (a queued reload of one withdrawn): \n" {
 		t.Fatalf("output %q", got)
 	}
 }

@@ -7,7 +7,13 @@ import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
 import { useOntology } from "../ontology/scope";
 import type { Naming } from "../explore/naming";
-import { reviewQueries, settleReview } from "./api";
+import {
+  deleteReviewDecision,
+  refusalReason,
+  reviewQueries,
+  settleReviews,
+} from "./api";
+import { createOutbox } from "./outbox";
 import {
   approvable,
   approveAllText,
@@ -26,8 +32,8 @@ type Review = Settleable & {
   suggestedLink?: string;
 };
 
-/** How many approvals Approve all has in flight at once. */
-const APPROVE_AT_ONCE = 4;
+/** The most approvals one request of Approve all carries. */
+const PER_REQUEST = 25;
 
 /**
  * A page's reviews as items of its Needs review list, grouped by reason
@@ -73,13 +79,17 @@ export function ReviewGroups<R extends Review>({
 
 /**
  * Approves every held claim of a group a person could approve on its card now
- * (approvable), once they confirm, by the same settle call a card sends, each
- * bound to its own card's statement. Offered for two or more: one card has its
- * own Approve. Each approval saved shows on its card at once; one that fails
- * leaves its card as it is, and the result says why. The backend applies
- * approvals that land together in one job, so the load writes them in one go.
- * Claims of a link that holds one value are left out, as an approval decides
- * what such a link holds, and the dialog says so.
+ * (approvable), once they confirm, each bound to its own card's statement,
+ * through one outbox (PER_REQUEST a request, one in flight) on the load the
+ * page shows, expecting each card open: a claim a teammate decided first
+ * keeps their decision, and the result says how many. Offered for two or
+ * more: one card has its own Approve. Each approval saved shows on its card
+ * at once; one that fails leaves its card as it is, and the result says
+ * why. "Undo these N" removes only the approvals this person saved. The
+ * backend applies approvals that land together in one job, so the load
+ * writes them in one go. Claims of a link that holds one value are left
+ * out, as an approval decides what such a link holds, and the dialog says
+ * so.
  */
 function ApproveAll({
   reviews,
@@ -90,13 +100,15 @@ function ApproveAll({
   load?: FoundryLoad;
   naming: Naming;
 }) {
-  const { id: ws, role } = useWorkspace();
+  const { id: ws, role, user } = useWorkspace();
   const { id: o } = useOntology();
   const qc = useQueryClient();
   const decisions = useQuery(reviewQueries.list(ws, o));
   const [confirming, setConfirming] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number }>();
   const [result, setResult] = useState("");
+  // The approvals this person saved in the last run, which Undo removes.
+  const [mine, setMine] = useState<readonly FoundryReviewDecision[]>([]);
   if (!canManage(role)) return null;
   // Saved decisions decide what is already approved, so none is offered
   // until they're read. A link of a version that isn't known holds one
@@ -108,59 +120,100 @@ function ApproveAll({
   // Those it would approve but leaves to their cards: the claims of links
   // that hold one value.
   const own = saved ? leftToCards(reviews, saved, single) : 0;
+  const listKey = reviewQueries.list(ws, o).queryKey;
   const run = async (
     cards: readonly Extract<Settle, { kind: "release" }>[],
   ) => {
+    if (!load) return;
     setConfirming(false);
     setResult("");
+    setMine([]);
     setProgress({ done: 0, total: cards.length });
-    const failed: string[] = [];
-    let next = 0,
-      done = 0;
-    // A few senders share one queue, so a long contract's approvals don't all
-    // go at once: a loop each, as a pool needs.
-    const send = async () => {
-      while (next < cards.length) {
-        const s = cards[next++]!;
-        try {
-          const { decision } = await settleReview(ws, o, s.reviewId, {
-            decision: {
-              release: { statementHash: s.hash },
-            },
-          });
-          // Its card reads saved, and the count drops, as each one lands.
-          qc.setQueryData<FoundryReviewDecision[]>(
-            reviewQueries.list(ws, o).queryKey,
-            (saved) =>
-              saved &&
-              decision && [
-                ...saved.filter((d) => d.id !== decision.id),
-                decision,
-              ],
-          );
-        } catch (e) {
-          failed.push((e as Error).message);
-        }
-        done += 1;
-        setProgress({ done, total: cards.length });
-      }
-    };
+    const box = createOutbox(
+      (items: readonly Extract<Settle, { kind: "release" }>[]) =>
+        settleReviews(ws, o, {
+          loadId: load.id,
+          items: items.map((s) => ({
+            reviewId: s.reviewId,
+            decision: { release: { statementHash: s.hash } },
+          })),
+          expectOpen: true,
+        }),
+      { max: PER_REQUEST },
+    );
+    let done = 0;
     try {
-      await Promise.all(
-        Array.from({ length: Math.min(APPROVE_AT_ONCE, cards.length) }, send),
+      const answers = await Promise.allSettled(
+        cards.map(async (s) => {
+          const r = await box
+            .push(s)
+            .finally(() =>
+              setProgress({ done: (done += 1), total: cards.length }),
+            );
+          const decision = r.decision;
+          // Its card reads saved, and the count drops, as each one lands.
+          if (decision)
+            qc.setQueryData<FoundryReviewDecision[]>(
+              listKey,
+              (saved) =>
+                saved && [
+                  ...saved.filter((d) => d.id !== decision.id),
+                  decision,
+                ],
+            );
+          return r;
+        }),
       );
-      await qc.invalidateQueries({
-        queryKey: reviewQueries.list(ws, o).queryKey,
-      });
+      const saved = answers.flatMap((a) =>
+        a.status === "fulfilled" && a.value.decision ? [a.value.decision] : [],
+      );
+      // Those a teammate decided first: their decision stands.
+      const others = answers.flatMap((a) =>
+        a.status === "fulfilled" &&
+        !a.value.decision &&
+        refusalReason(a.value.refused) === "DECIDED"
+          ? [a.value.refused?.decided?.kind]
+          : [],
+      );
+      const failed = answers.flatMap((a) =>
+        a.status === "rejected"
+          ? [(a.reason as Error).message]
+          : !a.value.decision && refusalReason(a.value.refused) !== "DECIDED"
+            ? [a.value.refused?.message || "refused"]
+            : [],
+      );
+      setMine(saved.filter((d) => d.decidedByUserId === user.id));
+      setResult(
+        [
+          `${saved.length} approved`,
+          others.length &&
+            `${plural(others.length, "was", "were")} already ${
+              others.every((k) => k === "release") ? "approved" : "decided"
+            } by others`,
+          failed.length &&
+            `${failed.length} couldn’t be: ${[...new Set(failed)].join("; ")}`,
+        ]
+          .filter(Boolean)
+          .join(", ") + ".",
+      );
+      await qc.invalidateQueries({ queryKey: listKey });
     } finally {
       setProgress(undefined);
-      setResult(
-        `${cards.length - failed.length} approved` +
-          (failed.length
-            ? `, ${failed.length} couldn’t be: ${[...new Set(failed)].join("; ")}`
-            : ""),
-      );
     }
+  };
+  const undo = async () => {
+    const taking = mine;
+    setMine([]);
+    const out = await Promise.allSettled(
+      taking.map((d) => deleteReviewDecision(ws, o, d.id)),
+    );
+    const failed = out.filter((r) => r.status === "rejected").length;
+    setResult(
+      failed
+        ? `Took back ${taking.length - failed} of ${plural(taking.length, "approval")}; ${failed} couldn’t be.`
+        : `Took back ${plural(taking.length, "approval")}.`,
+    );
+    await qc.invalidateQueries({ queryKey: [ws, "ontology", o] });
   };
   return (
     <>
@@ -181,7 +234,16 @@ function ApproveAll({
           Approving {progress.done} of {progress.total}…
         </p>
       ) : (
-        result && <p role="status">{result}</p>
+        result && (
+          <div className="dc-review-actions">
+            <p role="status">{result}</p>
+            {mine.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => void undo()}>
+                Undo these {mine.length}
+              </Button>
+            )}
+          </div>
+        )
       )}
       {confirming && ready.length > 0 && (
         <ConfirmDialog

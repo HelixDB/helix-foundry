@@ -68,7 +68,14 @@ const chosenKey = (ws: string) =>
 export function NewAutomationPage() {
   const [params] = useSearchParams();
   const template = params.get("template");
-  return template ? <DraftPage templateId={template} /> : <NewChat />;
+  return template ? (
+    <DraftPage
+      templateId={template}
+      ontologyId={params.get("ontology") ?? undefined}
+    />
+  ) : (
+    <NewChat />
+  );
 }
 
 function NewChat() {

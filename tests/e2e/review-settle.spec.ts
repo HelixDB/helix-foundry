@@ -40,10 +40,10 @@ async function openDocument(page: Page) {
 }
 const reviews = (page: Page) =>
   page.getByRole("list", { name: "Needs review" });
-/** Settles the open document's review as Not in data, from its Needs review tab. */
+/** Settles the open document's review as no Customer we have, from its Needs review tab. */
 async function settleNotInData(page: Page) {
   await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await choose(page.getByLabel("Link this name to"), "Not a Customer we have");
   await page.getByRole("button", { name: "Settle review" }).click();
   await expect(
     page.getByText(
@@ -177,18 +177,19 @@ test("carries a name's choice to other documents, and says what came of each", a
       ),
     ).toBeVisible();
   };
-  // Not in data says it's for this document only.
+  // Saying a name is no Customer we have says what that does, for this
+  // document only.
   await open("names-one.md", /^Needs review/);
   await choose(
     page
       .locator("li.dc-review")
       .filter({ hasText: "Initechh LLC signed" })
       .getByLabel("Link this name to"),
-    "Not in data",
+    "Not a Customer we have",
   );
   await expect(
     page.getByText(
-      "Not in data is for this document only: in this load at once, and in later loads.",
+      "“initechh llc” isn’t a Customer in your data: it stays unlinked in this document and no Customer is made. Facts and held claims that name it here are dropped. This applies to this load at once, and to later loads.",
     ),
   ).toBeVisible();
   await settle("Globexx Corporation signed", "Globex Corporation");
@@ -241,7 +242,7 @@ test("settles not-in-data without creating an entity or link", async ({
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
-  ).toContainText("Not in data");
+  ).toContainText("→ not a Customer we have");
   await page.getByRole("tab", { name: /^Entities/ }).click();
   await expect(
     page.getByRole("region", { name: "Customer", exact: true }),
@@ -1400,7 +1401,7 @@ test("members can read candidate reviews but cannot settle or remove decisions",
   ).toHaveCount(0);
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
-  ).toContainText("Not in data");
+  ).toContainText("→ not a Customer we have");
 });
 
 test("reconciles a decision removed elsewhere without keeping the saved status", async ({
@@ -1410,7 +1411,7 @@ test("reconciles a decision removed elsewhere without keeping the saved status",
   await openDocument(page);
   await settleNotInData(page);
   const decisions = page.getByRole("list", { name: "Saved decisions" });
-  await expect(decisions).toContainText("Not in data");
+  await expect(decisions).toContainText("→ not a Customer we have");
   // Other failures leave the saved row available to retry.
   const pattern = "**/papi/**/review-decisions/*";
   await page.route(pattern, (route) =>
@@ -1467,7 +1468,7 @@ test("settles while saved decisions are still being read", async ({ page }) => {
   });
   await openDocument(page);
   await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await choose(page.getByLabel("Link this name to"), "Not a Customer we have");
   const sent = page.waitForResponse(
     (r) => r.request().method() === "POST" && /:settle$/.test(r.url()),
   );
@@ -1649,7 +1650,7 @@ test("says plainly that a load built before names could be applied at once leave
   const doc = await openDocument(page);
   await page.goto(`${doc}?tab=review`);
   await mock.configure({ loadStepMs: 600, nameInPlace: "not_replayed" });
-  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await choose(page.getByLabel("Link this name to"), "Not a Customer we have");
   await page.getByRole("button", { name: "Settle review" }).click();
   await expect(
     page.getByText(

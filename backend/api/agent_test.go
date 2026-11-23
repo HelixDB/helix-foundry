@@ -586,10 +586,30 @@ func TestSendFoundryAgentMessage(t *testing.T) {
 			"bad page":       func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "x y" },
 			"load, no owner": func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.OntologyId = "" },
 			"bad dashboard":  func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.DashboardId = "a/b" },
+			"a card that isn't hex": func(r *foundryv1.SendFoundryAgentMessageRequest) {
+				r.PageContext.ReviewCardId = strings.Repeat("G", 64)
+			},
+			"a card in capitals": func(r *foundryv1.SendFoundryAgentMessageRequest) {
+				r.PageContext.ReviewCardId = strings.Repeat("AB", 32)
+			},
+			"a short card": func(r *foundryv1.SendFoundryAgentMessageRequest) { r.PageContext.ReviewCardId = "ab" },
+			"a card, no ontology": func(r *foundryv1.SendFoundryAgentMessageRequest) {
+				r.PageContext = &foundryv1.FoundryAgentPageContext{ReviewCardId: strings.Repeat("ab", 32)}
+			},
 		} {
 			_, err := send(f, mutate)
 			assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
 		}
+	})
+	t.Run("a review card the person decides", func(t *testing.T) {
+		f := newAgentFixture(t)
+		card := strings.Repeat("ab", 32)
+		resp, err := send(f, func(r *foundryv1.SendFoundryAgentMessageRequest) {
+			r.PageContext = &foundryv1.FoundryAgentPageContext{OntologyId: "ont-1", ReviewCardId: card}
+		})
+		require.NoError(t, err)
+		assert.Equal(t, card, resp.GetTurn().GetPageContext().GetReviewCardId(), "the thread echoes it")
+		assert.JSONEq(t, `{"ontology_id":"ont-1","review_card_id":"`+card+`"}`, string(f.store.turns[resp.GetTurn().GetId()].PageContext))
 	})
 	t.Run("a dashboard the person looks at", func(t *testing.T) {
 		f := newAgentFixture(t)

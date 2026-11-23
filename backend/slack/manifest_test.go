@@ -14,8 +14,8 @@ import (
 )
 
 // The apps are made from the manifests: each asks for exactly the scopes
-// and events the bot needs under its stamp's flags (prod: the data connector
-// and unmentioned follow-ups off, so no channel history; dev: both on),
+// and events the bot needs under its stamp's flags (prod: unmentioned
+// follow-ups on, the data connector off; dev: both on),
 // keeps token rotation and org-wide installs off, and sends Slack's
 // requests to its stamp's door.
 func TestManifests(t *testing.T) {
@@ -24,7 +24,7 @@ func TestManifests(t *testing.T) {
 		redirects    []any
 		feed, follow bool
 	}{
-		"prod.yaml": {name: "Helix Foundry", ingest: "https://ingest.helix-db.com", redirects: []any{"https://foundry.helix-db.com/slack/installed"}},
+		"prod.yaml": {name: "Helix Foundry", ingest: "https://ingest.helix-db.com", redirects: []any{"https://foundry.helix-db.com/slack/installed"}, follow: true},
 		"dev.yaml": {name: "Helix Foundry (dev)", ingest: "https://ingest.dev.helix-db.com", redirects: []any{
 			"https://dev.foundry.helix-db.com/slack/installed", "https://local.foundry.helix-db.com:3000/slack/installed"}, feed: true, follow: true},
 	} {

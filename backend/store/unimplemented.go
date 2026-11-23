@@ -10,6 +10,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/agentquestion"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/events"
+	"github.com/helixdb/helix-foundry/backend/reviewcards"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -65,26 +66,9 @@ func (u Unimplemented) SettleFoundryReviewDecision(context.Context, string, *mod
 	u.unimplemented("SettleFoundryReviewDecision")
 	return nil
 }
-func (u Unimplemented) SettleFoundryReleases(context.Context, string, string, []*model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryReleases")
-	return false, nil
-}
-func (u Unimplemented) SettleFoundryResolve(context.Context, string, string, *model.FoundryReviewDecision, []string, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryResolve")
-	return false, nil
-}
-func (u Unimplemented) SettleFoundryBoundResolve(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryBoundResolve")
-	return false, nil
-}
-
-func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryValue")
-	return false, nil
-}
-func (u Unimplemented) SettleFoundryReject(context.Context, string, string, *model.FoundryReviewDecision) error {
-	u.unimplemented("SettleFoundryReject")
-	return nil
+func (u Unimplemented) SettleFoundryReviews(context.Context, string, string, string, []*model.FoundrySettle, bool, *model.FoundryGraphJob) ([]*model.FoundrySettleRefusal, bool, error) {
+	u.unimplemented("SettleFoundryReviews")
+	return nil, false, nil
 }
 func (u Unimplemented) ListFoundryDecisionsApplied(context.Context, string, []string) (map[string]model.FoundryDecisionApplied, error) {
 	u.unimplemented("ListFoundryDecisionsApplied")
@@ -1270,6 +1254,10 @@ func (u Unimplemented) CountFoundryWorkflowVerdicts(context.Context, []string) (
 	u.unimplemented("CountFoundryWorkflowVerdicts")
 	return nil, nil
 }
+func (u Unimplemented) SumFoundryReviewAdviceSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryReviewAdviceSpend")
+	return 0, nil
+}
 func (u Unimplemented) SumFoundryWorkflowAssessmentSpend(context.Context, string, time.Time) (int64, error) {
 	u.unimplemented("SumFoundryWorkflowAssessmentSpend")
 	return 0, nil
@@ -2301,5 +2289,137 @@ func (u Unimplemented) RequestFoundrySlackAccess(context.Context, *model.SlackAc
 
 func (u Unimplemented) DeleteFoundrySlackAccessRequest(context.Context, string, string) error {
 	u.unimplemented("DeleteFoundrySlackAccessRequest")
+	return nil
+}
+
+// The review cards index.
+func (u Unimplemented) ListFoundryClaimDecisions(context.Context, string, []string) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryClaimDecisions")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryReviewSummaries(context.Context, string) ([]model.FoundryReviewSummary, error) {
+	u.unimplemented("ListFoundryReviewSummaries")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewIndexing(context.Context, string) (bool, error) {
+	u.unimplemented("FoundryReviewIndexing")
+	return false, nil
+}
+func (u Unimplemented) ListFoundryReviewCards(context.Context, string, string, model.FoundryReviewCardFilter, *model.FoundryReviewCardCursor, int) ([]*model.FoundryReviewListedCard, error) {
+	u.unimplemented("ListFoundryReviewCards")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryReviewNameDecisions(context.Context, string, [][2]string) ([]*model.FoundryReviewNameDecisions, error) {
+	u.unimplemented("ListFoundryReviewNameDecisions")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewPrecision(context.Context, string) (model.FoundryReviewPrecision, error) {
+	u.unimplemented("FoundryReviewPrecision")
+	return model.FoundryReviewPrecision{}, nil
+}
+func (u Unimplemented) ListFoundryReviewRechecks(context.Context, string, string, int) ([]*model.FoundryReviewDecision, []*model.FoundryReviewLabel, error) {
+	u.unimplemented("ListFoundryReviewRechecks")
+	return nil, nil, nil
+}
+func (u Unimplemented) ListFoundryReviewLabelsAt(context.Context, string, []model.FoundryReviewDraw) ([]*model.FoundryReviewLabel, error) {
+	u.unimplemented("ListFoundryReviewLabelsAt")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryReviewDraws(context.Context, string, string) ([]model.FoundryReviewDraw, error) {
+	u.unimplemented("ListFoundryReviewDraws")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewDrawPools(context.Context, string) ([6]reviewcards.Pool, error) {
+	u.unimplemented("FoundryReviewDrawPools")
+	return [6]reviewcards.Pool{}, nil
+}
+func (u Unimplemented) FoundryReviewQuoteDocuments(context.Context, string, int, int, int) ([]string, error) {
+	u.unimplemented("FoundryReviewQuoteDocuments")
+	return nil, nil
+}
+func (u Unimplemented) FoundryReviewPlacesTaken(context.Context, string, string, string) (map[string]bool, error) {
+	u.unimplemented("FoundryReviewPlacesTaken")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryReviewCard(context.Context, string, reviewcards.ID) (*reviewcards.Card, bool, error) {
+	u.unimplemented("GetFoundryReviewCard")
+	return nil, false, nil
+}
+func (u Unimplemented) ListFoundryReviewDecisionsByID(context.Context, string, []string, bool) ([]*model.FoundryReviewDecision, error) {
+	u.unimplemented("ListFoundryReviewDecisionsByID")
+	return nil, nil
+}
+func (u Unimplemented) RequestFoundryReviewPasses(context.Context) (int, error) {
+	u.unimplemented("RequestFoundryReviewPasses")
+	return 0, nil
+}
+func (u Unimplemented) AdvanceFoundryReviewPasses(context.Context) (int, error) {
+	u.unimplemented("AdvanceFoundryReviewPasses")
+	return 0, nil
+}
+func (u Unimplemented) RecountFoundryReviewLoads(context.Context, int) (int, error) {
+	u.unimplemented("RecountFoundryReviewLoads")
+	return 0, nil
+}
+func (u Unimplemented) ClearFoundryReviewLoads(context.Context, int) (int, error) {
+	u.unimplemented("ClearFoundryReviewLoads")
+	return 0, nil
+}
+func (u Unimplemented) ParkFoundryReviewLoad(context.Context, string) error {
+	u.unimplemented("ParkFoundryReviewLoad")
+	return nil
+}
+func (u Unimplemented) ReserveFoundryReviewRead(context.Context, string, time.Duration) (time.Duration, error) {
+	u.unimplemented("ReserveFoundryReviewRead")
+	return 0, nil
+}
+func (u Unimplemented) ClaimFoundryReviewDocuments(context.Context, string, time.Duration) ([]model.FoundryReviewClaim, error) {
+	u.unimplemented("ClaimFoundryReviewDocuments")
+	return nil, nil
+}
+func (u Unimplemented) StoreFoundryReviewDocuments(context.Context, string, model.FoundryReviewClaim, []model.FoundryReviewIndexed) (bool, error) {
+	u.unimplemented("StoreFoundryReviewDocuments")
+	return false, nil
+}
+func (u Unimplemented) BackOffFoundryReviewDocument(context.Context, string, string, string) (bool, error) {
+	u.unimplemented("BackOffFoundryReviewDocument")
+	return false, nil
+}
+func (u Unimplemented) BackOffFoundryReviewLoad(context.Context, string) error {
+	u.unimplemented("BackOffFoundryReviewLoad")
+	return nil
+}
+func (u Unimplemented) ClaimFoundryReviewAdvice(context.Context, string, time.Duration) (*model.FoundryReviewAdviceClaim, error) {
+	u.unimplemented("ClaimFoundryReviewAdvice")
+	return nil, nil
+}
+func (u Unimplemented) RenewFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, time.Duration) (bool, error) {
+	u.unimplemented("RenewFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) FinishFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, model.FoundryReviewAdviceStop,
+	time.Duration) (bool, error) {
+	u.unimplemented("FinishFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) BackOffFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim,
+	model.FoundryReviewAdviceFailure) (bool, bool, error) {
+	u.unimplemented("BackOffFoundryReviewAdvice")
+	return false, false, nil
+}
+func (u Unimplemented) StoreFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, []model.FoundryReviewAdviceRow) (bool, error) {
+	u.unimplemented("StoreFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) ChargeFoundryReviewAdvice(context.Context, string, int64) error {
+	u.unimplemented("ChargeFoundryReviewAdvice")
+	return nil
+}
+func (u Unimplemented) DrawFoundryHeldClaim(context.Context, string, int, int) (bool, error) {
+	u.unimplemented("DrawFoundryHeldClaim")
+	return false, nil
+}
+func (u Unimplemented) InsertFoundryReviewQuoteDraw(context.Context, model.FoundryReviewDraw) error {
+	u.unimplemented("InsertFoundryReviewQuoteDraw")
 	return nil
 }

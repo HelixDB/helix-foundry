@@ -1,0 +1,974 @@
+{
+ "cases": [
+  {
+   "name": "two candidates, no decisions",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "tied_candidates"
+  },
+  {
+   "name": "two candidates, one not found",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "tied_candidates"
+  },
+  {
+   "name": "one candidate found",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null
+  },
+  {
+   "name": "one candidate not found",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [],
+    "concerned": []
+   },
+   "settles": true,
+   "why": null
+  },
+  {
+   "name": "no candidates",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [],
+    "concerned": []
+   },
+   "settles": true,
+   "why": null
+  },
+  {
+   "name": "a precedent of an entity found",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null,
+   "names": {
+    "total": 1,
+    "choices": 1,
+    "newest": [
+     {
+      "docId": "doc_b",
+      "entityKey": "k1"
+     }
+    ]
+   }
+  },
+  {
+   "name": "a precedent of not in data",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null,
+   "names": {
+    "total": 2,
+    "choices": 1,
+    "newest": [
+     {
+      "docId": "doc_b"
+     },
+     {
+      "docId": "doc_c"
+     }
+    ]
+   }
+  },
+  {
+   "name": "a precedent of an entity the read didn't find",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "tied_candidates",
+   "names": {
+    "total": 1,
+    "choices": 1,
+    "newest": [
+     {
+      "docId": "doc_b",
+      "entityKey": "k9"
+     }
+    ]
+   }
+  },
+  {
+   "name": "decisions of this document only",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "tied_candidates",
+   "names": {
+    "total": 1,
+    "choices": 1,
+    "newest": [
+     {
+      "docId": "doc_a",
+      "entityKey": "k1"
+     }
+    ]
+   }
+  },
+  {
+   "name": "decisions making two choices",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "tied_candidates",
+   "names": {
+    "total": 2,
+    "choices": 2,
+    "newest": [
+     {
+      "docId": "doc_b",
+      "entityKey": "k1"
+     },
+     {
+      "docId": "doc_c",
+      "entityKey": "k2"
+     }
+    ]
+   }
+  },
+  {
+   "name": "a name for information",
+   "kind": "name",
+   "lane": "fyi",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null
+  },
+  {
+   "name": "a name without its normalized name",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "ambiguous",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": false,
+   "why": null
+  },
+  {
+   "name": "a name of a reason no resolve settles",
+   "kind": "name",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 1,
+      "review_key": "r1",
+      "reason": "low_confidence",
+      "type": "Customer",
+      "doc_id": "doc_a",
+      "section": 0,
+      "start": 4,
+      "end": 10,
+      "candidates": [
+       "k1",
+       "k2"
+      ],
+      "quote": "Globex signed the order form.",
+      "norm_name": "globex"
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 1,
+      "$to": 11
+     },
+     {
+      "$from": 1,
+      "$to": 12
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 11,
+      "$label": "Customer",
+      "entity_key": "k1",
+      "name": "Globex k1"
+     },
+     {
+      "$id": 12,
+      "$label": "Customer",
+      "entity_key": "k2",
+      "name": "Globex k2"
+     }
+    ]
+   },
+   "settles": false,
+   "why": null
+  },
+  {
+   "name": "a two-thirds majority",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"12 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 3}}, {\"value\": \"12 months\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 4}}, {\"value\": \"24 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 2, \"end\": 5}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null
+  },
+  {
+   "name": "an even split",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"12 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 3}}, {\"value\": \"24 months\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 4}}, {\"value\": \"12 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 2, \"end\": 5}}, {\"value\": \"24 months\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 3, \"end\": 6}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "values_split"
+  },
+  {
+   "name": "three values",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"12 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 3}}, {\"value\": \"24 months\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 4}}, {\"value\": \"36 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 2, \"end\": 5}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "values_split"
+  },
+  {
+   "name": "two quotes",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"12 months\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 3}}, {\"value\": \"24 months\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 4}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "few_quotes"
+  },
+  {
+   "name": "an integer and a number are two values",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": 5, \"doc_id\": \"d1\", \"quote\": \"five\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 5.0, \"doc_id\": \"d2\", \"quote\": \"five\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 5, \"doc_id\": \"d3\", \"quote\": \"five\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null
+  },
+  {
+   "name": "a quote that doesn't read leaves too few",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"a\", \"doc_id\": \"doc_a\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 5}}, {\"value\": \"b\", \"doc_id\": \"doc_a\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 5}}, {\"value\": \"a\", \"doc_id\": \"\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 5}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": "few_quotes"
+  },
+  {
+   "name": "a value of an entity the read didn't find",
+   "kind": "value",
+   "lane": "decide",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"a\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 3}}, {\"value\": \"b\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 4}}, {\"value\": \"c\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 2, \"end\": 5}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [],
+    "concerned": []
+   },
+   "settles": false,
+   "why": null
+  },
+  {
+   "name": "a value for information",
+   "kind": "value",
+   "lane": "fyi",
+   "key": "r1",
+   "read": {
+    "reviews": [
+     {
+      "$id": 2,
+      "review_key": "r1",
+      "reason": "prop_conflict",
+      "type": "Contract",
+      "entity_key": "ck1",
+      "prop": "term",
+      "doc_id": "doc_a",
+      "section": 1,
+      "start": 0,
+      "end": 9,
+      "values": "[{\"value\": \"a\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 3}}, {\"value\": \"b\", \"doc_id\": \"doc_1\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 4}}, {\"value\": \"c\", \"doc_id\": \"doc_0\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 2, \"end\": 5}}]",
+      "quote": "The term is 12 months."
+     }
+    ],
+    "review_concerns": [
+     {
+      "$from": 2,
+      "$to": 21
+     }
+    ],
+    "concerned": [
+     {
+      "$id": 21,
+      "$label": "Contract",
+      "entity_key": "ck1",
+      "name": "Order form 3"
+     }
+    ]
+   },
+   "settles": true,
+   "why": null
+  }
+ ]
+}

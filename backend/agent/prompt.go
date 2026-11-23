@@ -10,7 +10,7 @@ import (
 
 // PromptVersion names the system prompt, so a change to it is a change of
 // version: transcripts don't record which prompt they ran under.
-const PromptVersion = "assistant-18"
+const PromptVersion = "assistant-19"
 
 // systemPrompt is Founder's standing instructions. It names nothing of
 // a workspace, so every workspace's turns share one cached prefix up to it.
@@ -45,6 +45,7 @@ Uploading a document and making an API source are done in Foundry, not here. To 
 Building an ontology goes step by step, each the person's click: create_ontology, then generate_ontology, then, once the generation is done, set_current_version with the version it drafted, then create_load. A generation can stop to ask questions only the person can answer (status needs_input; helix_foundry_get_generation lists them). Relay them with helix_foundry_ask_person {generation: {ontology_id, generation_id}}: Foundry asks them exactly as the ontology agent wrote them, its recommended answers marked, so don't retype or summarize them; say in a sentence that the draft needs their answers. When they send their answers, Foundry gives them to the generation, which drafts again, and you are told so with their answers: say in a sentence that the draft carries on from them. Never answer for them. They can also answer on the generation's page in Foundry; questions left unanswered are left to the ontology agent, which takes its recommended answers when they fall due.
 
 Settling a review: read it with helix_foundry_list_reviews, say what it is (the name or statement, the document's words) and what each choice would do, and prepare the one the person chooses. A resolve links the name to one of its candidates or says it is no one in the data; a prop sets the property to one of the values its documents state, or removes it; a release approves the statement it holds back, which the current load then writes, and a reject says it is wrong.
+When <page_context> has review, the person is deciding that card in the review walk. If review.open is false, say it has been decided and recommend nothing. Otherwise read it with helix_foundry_list_reviews {review_keys: [review.review_key]} (and helix_foundry_list_review_decisions for the name's earlier choices), recommend exactly one choice and say why in two sentences from the evidence: the document's words, the candidates, earlier decisions, and the rule's suggestion when the person's message names one, saying when you disagree. Prepare settle_review only when they ask, one at a time.
 
 Dashboards:
 - A dashboard is tiles of typed queries over ontologies' loads, shown as tables and charts. It holds queries, never data: whoever views it reads each tile as themselves.
@@ -172,6 +173,10 @@ type PageContext struct {
 	// TimeZone is the IANA zone the person's browser names, checked by
 	// automation.Zone before it is kept.
 	TimeZone string `json:"time_zone,omitempty"`
+	// ReviewCardID is the review card the person is deciding in the review
+	// walk, of OntologyID's current load: 64 lowercase hexadecimal
+	// characters.
+	ReviewCardID string `json:"review_card_id,omitempty"`
 }
 
 // shownPage is a page context checked against the workspace, with the names
@@ -186,6 +191,20 @@ type shownPage struct {
 	CreatingAutomation bool `json:"creating_workflow,omitempty"`
 	// TimeZone is the person's own time zone, as their browser names it.
 	TimeZone string `json:"time_zone,omitempty"`
+	// Review is the review card the person is deciding, as the ontology's
+	// current load's index holds it.
+	Review *shownReview `json:"review,omitempty"`
+}
+
+// shownReview is a review card of the page: its id, the review to read
+// (helix_foundry_list_reviews {review_keys}), what it decides, its document,
+// and whether it is still open (no decision decides it).
+type shownReview struct {
+	CardID     string `json:"card_id"`
+	ReviewKey  string `json:"review_key"`
+	Kind       string `json:"kind"`
+	DocumentID string `json:"document_id"`
+	Open       bool   `json:"open"`
 }
 
 // messageText is a person's message as the model reads it: what they were

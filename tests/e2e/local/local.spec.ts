@@ -1767,7 +1767,32 @@ test("runs a workflow, which notes what it found where it can't email", async ({
   page,
 }) => {
   await configure({ agentStepMs: 60, automationStepMs: 100 });
+  // The reviews digest is an email and nothing else: this install sends
+  // none, so it isn't offered, not even while the list saying so is read.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(
+    (url) => url.pathname.endsWith("/foundry/automations") && !url.search,
+    async (route) => {
+      await held;
+      await route.continue();
+    },
+  );
   await page.goto("/workflows");
+  const templates = page.getByRole("list", { name: "Templates" });
+  const digest = templates.getByRole("link", {
+    name: /^Email me when reviews wait/,
+  });
+  await expect(
+    templates.getByRole("link", { name: /^Weekly summary/ }),
+  ).toBeVisible();
+  expect(await digest.count()).toBe(0);
+  const listed = page.waitForResponse(
+    (r) => r.url().endsWith("/foundry/automations") && r.ok(),
+  );
+  release();
+  await listed;
+  await expect(digest).toHaveCount(0);
   // A new one starts with Founder here too, or from scratch.
   await page.getByRole("link", { name: "New workflow" }).first().click();
   await expect(

@@ -396,6 +396,30 @@ func TestCreateAutomationChecksItsSpec(t *testing.T) {
 	require.Equal(t, "FOUNDRY_AUTOMATION_LIMIT", reasonOf(err))
 }
 
+// A reviews_waiting trigger listens to an ontology of the workspace: stored
+// with its kind and the ontology as its target; another workspace's ontology,
+// or one deleted, is refused.
+func TestCreateAutomationOnReviewsWaiting(t *testing.T) {
+	s, store := automationService(t)
+	onReviews := func(ontology string) string {
+		return `{"v":1,"nodes":[` +
+			`{"id":"start","kind":"trigger","config":{"kind":"reviews_waiting","ontology_id":"` + ontology + `","at_least":50},"position":{"x":0,"y":0}},` +
+			`{"id":"mail","kind":"notify","config":{"message":"Reviews are waiting"},"position":{"x":200,"y":0}}],` +
+			`"edges":[{"from":"start","to":"mail"}]}`
+	}
+	a := createAutomation(t, s, site("user-ada"), onReviews("ont-1"))
+	require.Equal(t, "reviews_waiting", a.GetTriggerKind())
+	stored := store.automations[a.GetId()]
+	require.Equal(t, "reviews_waiting", stored.TriggerKind)
+	require.Equal(t, "ont-1", *stored.TriggerTarget)
+	for _, ontology := range []string{"ont-9", "ont-gone"} {
+		_, err := s.CreateFoundryAutomation(site("user-ada"), &foundryv1.CreateFoundryAutomationRequest{WorkspaceId: "ws-1", Name: "x",
+			SpecJson: onReviews(ontology), ClientToken: "t-" + ontology})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), ontology)
+		require.Contains(t, status.Convert(err).Message(), "the ontology "+ontology, ontology)
+	}
+}
+
 func TestApproveAutomationIsTheOwnersClickInTheSite(t *testing.T) {
 	s, store := automationService(t)
 	a := createAutomation(t, s, site("user-ada"), weeklyAutomation)

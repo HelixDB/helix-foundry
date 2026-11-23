@@ -46,13 +46,14 @@ func (s *mysqlDB) countRemovedFoundryDocuments(ctx context.Context, loadID strin
 
 // RecordFoundryDocumentRemoval forgets a deleted document of the job's load
 // once the agent took it out of the graph: its membership and extraction,
-// while workerID holds the lease. ErrNotFound means the lease was lost.
+// while workerID holds the lease, and owes its review cards a rebuild, which
+// drops them. ErrNotFound means the lease was lost.
 func (s *mysqlDB) RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		var loadID string
-		if err := tx.db.QueryRowContext(ctx, `SELECT load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
-			Scan(&loadID); err != nil {
+		var ontologyID, loadID string
+		if err := tx.db.QueryRowContext(ctx, `SELECT ontology_id, load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
+			Scan(&ontologyID, &loadID); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
@@ -68,8 +69,11 @@ func (s *mysqlDB) RecordFoundryDocumentRemoval(ctx context.Context, jobID, worke
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_extractions WHERE load_id=? AND document_id=?`, loadID, documentID); err != nil {
 			return err
 		}
-		_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_documents WHERE load_id=? AND document_id=?`, loadID, documentID)
-		return err
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_documents WHERE load_id=? AND document_id=?`, loadID, documentID); err != nil {
+			return err
+		}
+		// Its review cards go once the indexer finds it gone from the graph.
+		return tx.oweFoundryReviewDocument(ctx, ontologyID, loadID, documentID)
 	})
 }
 

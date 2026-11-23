@@ -1,0 +1,99 @@
+{
+ "cases": [
+  {
+   "name": "text, boolean and numbers",
+   "raw": "[{\"value\": \"12 months\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": true, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 12, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 12.5, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": false, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}}]",
+   "quotes": 5,
+   "choices": [
+    {
+     "text": "12 months"
+    },
+    {
+     "boolean": true
+    },
+    {
+     "integer": "12"
+    },
+    {
+     "number": 12.5
+    },
+    {
+     "boolean": false
+    }
+   ]
+  },
+  {
+   "name": "an integer past 2^53 keeps every digit",
+   "raw": "[{\"value\": 9007199254740993, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": -12, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}}]",
+   "quotes": 2,
+   "choices": [
+    {
+     "integer": "9007199254740993"
+    },
+    {
+     "integer": "-12"
+    }
+   ]
+  },
+  {
+   "name": "a decimal point or an exponent is a number",
+   "raw": "[{\"value\": 5.0, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 5, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 1E3, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 1.00, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}}]",
+   "quotes": 4,
+   "choices": [
+    {
+     "number": 5
+    },
+    {
+     "integer": "5"
+    },
+    {
+     "number": 1000
+    },
+    {
+     "number": 1
+    }
+   ]
+  },
+  {
+   "name": "each value once, in the order it first appears",
+   "raw": "[{\"value\": \"a\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"b\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"a\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 1.0, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": 1.00, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}}]",
+   "quotes": 5,
+   "choices": [
+    {
+     "text": "a"
+    },
+    {
+     "text": "b"
+    },
+    {
+     "number": 1
+    }
+   ]
+  },
+  {
+   "name": "quotes that don't read are left out",
+   "raw": "[{\"value\": \"ok\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"no doc\", \"doc_id\": \"\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"no doc_id\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"empty span\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 3, \"end\": 3}},{\"value\": \"negative\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": -1, \"start\": 0, \"end\": 1}},{\"value\": \"fraction\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 1.5, \"end\": 4}},{\"value\": null, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": {\"a\": 1}, \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": [1], \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"no quote\", \"doc_id\": \"d\", \"span\": {\"section\": 0, \"start\": 0, \"end\": 1}},{\"value\": \"no span\", \"doc_id\": \"d\", \"quote\": \"q\"},\"not an object\",{\"value\": \"whole float offsets\", \"doc_id\": \"d\", \"quote\": \"q\", \"span\": {\"section\": 0, \"start\": 2.0, \"end\": 4}}]",
+   "quotes": 2,
+   "choices": [
+    {
+     "text": "ok"
+    },
+    {
+     "text": "whole float offsets"
+    }
+   ]
+  },
+  {
+   "name": "not an array",
+   "raw": "{\"value\": 1}",
+   "quotes": 0,
+   "choices": []
+  },
+  {
+   "name": "not JSON",
+   "raw": "[{\"value\": 1",
+   "quotes": 0,
+   "choices": []
+  }
+ ]
+}

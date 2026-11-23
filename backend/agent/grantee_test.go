@@ -126,7 +126,7 @@ func TestOnlyAGranteeIsToldItReadsOnly(t *testing.T) {
 	assert.Contains(t, granteePrompt, "an owner or admin does it in Foundry")
 	assert.Contains(t, granteePrompt, "the limit on their questions about the data, not your own budget")
 	assert.NotContains(t, granteePrompt, "Analyst")
-	assert.Equal(t, "assistant-18", PromptVersion)
+	assert.Equal(t, "assistant-19", PromptVersion)
 }
 
 // Access that can't be read fails the attempt closed, to retry: no model

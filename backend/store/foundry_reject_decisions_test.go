@@ -22,7 +22,7 @@ func (f resendFixture) rejected(doc string, n int, hash string) *model.FoundryRe
 // reject settles a rejection against the fixture's load.
 func (f resendFixture) reject(t *testing.T, d *model.FoundryReviewDecision) {
 	t.Helper()
-	require.NoError(t, f.db.SettleFoundryReject(context.Background(), f.ontology.WorkspaceID, f.load, d))
+	require.NoError(t, settleReject(f.db, context.Background(), f.ontology.WorkspaceID, f.load, d))
 }
 
 // kinds are the ontology's saved decisions' kinds, by id.
@@ -100,12 +100,12 @@ func TestFoundryReject(t *testing.T) {
 
 	// Only a reject is settled this way, against the load its review was
 	// read from.
-	assert.Error(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, f.held(f.b, 1, readA)))
+	assert.Error(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, f.held(f.b, 1, readA)))
 	late := f.rejected(f.b, 1, readA)
-	assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, late), store.ErrConflict, "the load changed since the review was read")
-	assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, id26("another-workspace"), id26("FJ-XNOW2"), late), store.ErrNotFound)
+	assert.ErrorIs(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, late), store.ErrConflict, "the load changed since the review was read")
+	assert.ErrorIs(t, settleReject(f.db, ctx, id26("another-workspace"), id26("FJ-XNOW2"), late), store.ErrNotFound)
 	bad := f.rejected(f.b, 1, strings.Repeat("XY", 32))
-	assert.Error(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, id26("FJ-XNOW2"), bad), "a hash the engine wouldn't take")
+	assert.Error(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, id26("FJ-XNOW2"), bad), "a hash the engine wouldn't take")
 
 	// Removed: the decision is gone, and nothing was ever in a load.
 	f.remove(t, "x", d)
@@ -168,7 +168,7 @@ func TestFoundryRejectAndApprovalExcludeEachOther(t *testing.T) {
 	require.NoError(t, err)
 	f.sent(t, job, owed[0], 1, written(fact))
 	f.end(t, job, "xboth3", model.FoundryGraphJobSucceeded)
-	assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, f.rejected(f.b, 0, readA)), store.ErrConflict)
+	assert.ErrorIs(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, f.rejected(f.b, 0, readA)), store.ErrConflict)
 	assert.Equal(t, model.FoundryReviewRelease, f.kinds(t)[fact.ID])
 	assert.Equal(t, map[string]string{fact.ID: "written"}, f.applied(t, fact))
 	// Another claim of that document is still one to reject.
@@ -293,7 +293,7 @@ func TestFoundryRejectTakesTheApprovalFromEveryLoad(t *testing.T) {
 		require.True(t, f.approve(t, "1", x))
 		no := f.rejected(f.a, 0, readA)
 		job := f.claim(t)
-		assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict)
+		assert.ErrorIs(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict)
 		assert.Equal(t, map[string]model.FoundryReviewDecisionKind{x.ID: model.FoundryReviewRelease}, f.kinds(t))
 		assert.Equal(t, map[string]string{x.ID: "pending"}, f.copies(t, f.load))
 
