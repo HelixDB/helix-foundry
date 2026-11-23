@@ -355,13 +355,22 @@ func (a *advisor) sort(ctx context.Context, c model.FoundryReviewAdviceClaim, bi
 	return ask, done, true
 }
 
-// cardKeys are the reviews a card is read by: a name's settling review and
-// the next of its quotes, a value's review.
+// cardKeys are the reviews a card is read by: its settling review first,
+// and a name's next quotes.
 func cardKeys(card *reviewcards.Card) []string {
-	if card.Kind != reviewcards.KindName || len(card.ReviewKeys) == 0 {
-		return []string{card.ReviewKey}
+	keys := []string{card.ReviewKey}
+	if card.Kind != reviewcards.KindName {
+		return keys
 	}
-	return card.ReviewKeys[:min(len(card.ReviewKeys), reviewadvice.MaxNameQuotes)]
+	for _, k := range card.ReviewKeys {
+		if len(keys) == reviewadvice.MaxNameQuotes {
+			break
+		}
+		if k != card.ReviewKey {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 // readReviews reads keys of the claim's load in one gateway read, paced as
