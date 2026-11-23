@@ -817,8 +817,8 @@ func TestDecodeAskEvent(t *testing.T) {
 			`{"event":"started","model":"claude-sonnet-5-5","provider":"anthropic"}`: AskStartedEvent{
 				Model: ModelRef{Provider: KindAnthropic, Name: "claude-sonnet-5-5"},
 			},
-			`{"event":"tool_call","call_id":"c1","tool":"query","input":{"start":{"type":"Customer"}}}`: AskToolCallEvent{
-				CallID: "c1", Tool: "query", Input: json.RawMessage(`{"start":{"type":"Customer"}}`),
+			`{"event":"tool_call","call_id":"c1","tool":"query","input":{"query":{"start":{"type":"Customer"}}}}`: AskToolCallEvent{
+				CallID: "c1", Tool: "query", Input: json.RawMessage(`{"query":{"start":{"type":"Customer"}}}`),
 			},
 			`{"event":"tool_result","call_id":"c1","summary":"2 rows","evidence_id":"e1"}`: AskToolResultEvent{
 				CallID: "c1", Summary: "2 rows", EvidenceID: "e1",

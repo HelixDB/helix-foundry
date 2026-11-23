@@ -138,7 +138,7 @@ describe("the event reducer", () => {
         ev(3, result("a", "e1", "1 Customer: Globex")),
         ev(1, { event: "started", model: "claude-sonnet-5-5" }),
         ev(2, call("a", "find_entities", { type: "Customer" })),
-        ev(4, call("b", "query", INVOICES)),
+        ev(4, call("b", "query", { query: INVOICES })),
       ],
     });
     expect(s.lastSeq).toBe(4);
@@ -155,6 +155,20 @@ describe("the event reducer", () => {
           evidenceId: "e1",
         },
       },
+      {
+        callId: "b",
+        tool: "query",
+        input: { query: INVOICES },
+        query: INVOICES,
+      },
+    ]);
+  });
+
+  it("reads a query call stored before 4.31.0, its input the query itself", () => {
+    const s = reduceEvents(EMPTY_STREAM, {
+      events: [ev(1, call("b", "query", INVOICES))],
+    });
+    expect(s.steps).toEqual([
       { callId: "b", tool: "query", input: INVOICES, query: INVOICES },
     ]);
   });
@@ -216,7 +230,7 @@ describe("the event reducer", () => {
         ev(2, { event: "mystery" }),
         ev(3, { event: "tool_call", tool: "query" }),
         ev(4, failed("x", "query: failed", "too_broad: more than 20,000")),
-        ev(5, call("q", "query", { start: {} })),
+        ev(5, call("q", "query", { query: { start: {} } })),
         ev(6, call("z", "answer", { blocks: [], citations: [] })),
         ev(7, ended("z", "answer: ended the question")),
       ],
@@ -234,7 +248,7 @@ describe("the event reducer", () => {
         },
       },
       // A query input that isn't a typed query keeps its JSON only.
-      { callId: "q", tool: "query", input: { start: {} } },
+      { callId: "q", tool: "query", input: { query: { start: {} } } },
       {
         callId: "z",
         tool: "answer",
@@ -273,7 +287,7 @@ describe("the event reducer", () => {
   it("gives a second result of one call id its own step", () => {
     const s = reduceEvents(EMPTY_STREAM, {
       events: [
-        ev(1, call("a", "query", INVOICES)),
+        ev(1, call("a", "query", { query: INVOICES })),
         ev(2, result("a", "e1", "first")),
         ev(3, result("a", "e2", "second")),
       ],
@@ -289,7 +303,7 @@ describe("the event reducer", () => {
         ev(1, { event: "started", model: "claude-sonnet-5-5" }),
         ev(2, call("a", "describe_type")),
         ev(3, result("a", "e1", "describe_type: Customer")),
-        ev(4, call("b", "query", INVOICES)),
+        ev(4, call("b", "query", { query: INVOICES })),
         ev(5, "not json"),
       ],
     });
@@ -329,9 +343,9 @@ describe("the event reducer", () => {
   it("shows a read the model repeats as a repeat of the step that recorded it", () => {
     const s = reduceEvents(EMPTY_STREAM, {
       events: [
-        ev(1, call("a", "query", INVOICES)),
+        ev(1, call("a", "query", { query: INVOICES })),
         ev(2, result("a", "e1", "query: 3 of 40 rows")),
-        ev(3, call("b", "query", INVOICES)),
+        ev(3, call("b", "query", { query: INVOICES })),
         ev(4, result("b", "e1", "query: as e1")),
       ],
     });

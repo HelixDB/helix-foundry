@@ -527,7 +527,7 @@ func failedResult(reason ontologyagent.AskFailure) string {
 // agent refused, and the answer that ended the question, which has neither.
 var askEvents = []string{
 	`{"event":"started","model":"claude-sonnet-5-5","provider":"anthropic"}`,
-	`{"event":"tool_call","call_id":"c1","tool":"query","input":{"start":{"type":"Customer"}}}`,
+	`{"event":"tool_call","call_id":"c1","tool":"query","input":{"query":{"start":{"type":"Customer"}}}}`,
 	`{"event":"tool_result","call_id":"c1","evidence_id":"e1","summary":"2 rows"}`,
 	`{"event":"tool_call","call_id":"c2","tool":"find_entities","input":{"type":"Planet","by":"name","value":"Mars"}}`,
 	"{\"event\":\"tool_result\",\"call_id\":\"c2\",\"summary\":\"find_entities\",\"error\":\"no type `Planet`\"}",

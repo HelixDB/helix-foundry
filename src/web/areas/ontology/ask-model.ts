@@ -238,7 +238,7 @@ const position = (x: unknown) => {
 };
 
 /**
- * A typed ontology query (the `query` tool's input), or undefined when the
+ * A typed ontology query (the `query` tool's `query`), or undefined when the
  * shape isn't one: the page then shows its JSON only.
  */
 export function parseQuery(x: unknown): OntologyQuery | undefined {
@@ -834,6 +834,19 @@ export const EMPTY_STREAM: AskStream = {
 };
 
 /**
+ * The typed query a `query` call ran: its input's `query` (contract 4.31.0),
+ * or the input itself, as events an engine before 4.31.0 wrote hold it.
+ *
+ * @example
+ * queryInput({ query: { start: { type: "Customer" } } })?.start.type; // "Customer"
+ * queryInput({ start: { type: "Customer" } })?.start.type; // "Customer"
+ * queryInput({ query: {} }); // undefined
+ */
+export function queryInput(x: unknown): OntologyQuery | undefined {
+  return isRecord(x) && "query" in x ? parseQuery(x.query) : parseQuery(x);
+}
+
+/**
  * Folds a page of polled events into the stream, in seq order. An event at
  * or before `lastSeq` was folded already (a poll that overlapped) and is
  * skipped; a result without its call is kept as a step of its own. A
@@ -895,8 +908,8 @@ export function reduceEvents(
                 callId: ev.call_id,
                 tool: ev.tool,
                 input: ev.input,
-                ...(ev.tool === "query" && parseQuery(ev.input)
-                  ? { query: parseQuery(ev.input) }
+                ...(ev.tool === "query" && queryInput(ev.input)
+                  ? { query: queryInput(ev.input) }
                   : {}),
               },
             ],
