@@ -835,15 +835,31 @@ export const EMPTY_STREAM: AskStream = {
 
 /**
  * The typed query a `query` call ran: its input's `query` (contract 4.31.0),
- * or the input itself, as events an engine before 4.31.0 wrote hold it.
+ * or the input itself, as events an engine before 4.31.0 wrote hold it. The
+ * engine reads a `query` or its `return` a model wrote as a string of its
+ * JSON, as the event keeps it, so this does too.
  *
  * @example
  * queryInput({ query: { start: { type: "Customer" } } })?.start.type; // "Customer"
  * queryInput({ start: { type: "Customer" } })?.start.type; // "Customer"
+ * queryInput({ query: '{"start": {"type": "Customer"}}' })?.start.type; // "Customer"
  * queryInput({ query: {} }); // undefined
  */
 export function queryInput(x: unknown): OntologyQuery | undefined {
-  return isRecord(x) && "query" in x ? parseQuery(x.query) : parseQuery(x);
+  const json = (v: unknown): unknown => {
+    if (typeof v !== "string") return v;
+    try {
+      return JSON.parse(v) as unknown;
+    } catch {
+      return undefined;
+    }
+  };
+  const q = isRecord(x) && "query" in x ? json(x.query) : x;
+  return parseQuery(
+    isRecord(q) && typeof q.return === "string"
+      ? { ...q, return: json(q.return) }
+      : q,
+  );
 }
 
 /**

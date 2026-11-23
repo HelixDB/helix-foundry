@@ -164,6 +164,27 @@ describe("the event reducer", () => {
     ]);
   });
 
+  it("reads a query, or its return, a model wrote as a string of its JSON", () => {
+    const { return: ret, ...rest } = INVOICES;
+    const s = reduceEvents(EMPTY_STREAM, {
+      events: [
+        ev(1, call("a", "query", { query: JSON.stringify(INVOICES) })),
+        ev(
+          2,
+          call("b", "query", {
+            query: { ...rest, return: JSON.stringify(ret) },
+          }),
+        ),
+        ev(3, call("c", "query", { query: "{not json" })),
+      ],
+    });
+    expect(s.steps.map((st) => st.query)).toEqual([
+      INVOICES,
+      INVOICES,
+      undefined,
+    ]);
+  });
+
   it("reads a query call stored before 4.31.0, its input the query itself", () => {
     const s = reduceEvents(EMPTY_STREAM, {
       events: [ev(1, call("b", "query", INVOICES))],
