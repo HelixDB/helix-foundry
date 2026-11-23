@@ -1,4 +1,5 @@
 import type {
+  DecisionApplied,
   FoundryReviewChoice,
   FoundryReviewDecision,
 } from "../../../shared/wfe";
@@ -40,7 +41,11 @@ export type Outcome =
   // document asking about it at once.
   | { kind: "covered"; by: string }
   // Decided by someone else meanwhile.
-  | { kind: "elsewhere" };
+  | { kind: "elsewhere" }
+  // A link this walk took back that the current load keeps (a name's link
+  // applies in place, and removing it only stops it from the next load): on
+  // the card linked, and on the cards it covered.
+  | { kind: "taken_back" };
 
 /**
  * A walk of a load's cards: their keys in order, the card shown (`at`; the
@@ -74,7 +79,12 @@ export type WalkAction =
   | { type: "skip" }
   | { type: "back" }
   | { type: "jump"; key: string }
-  | { type: "undone"; keys: readonly string[] }
+  // Moves to the next card, or past the last, marking nothing (a member's
+  // Next).
+  | { type: "next" }
+  // The keys' choices taken back; `kept`, those whose link the current load
+  // keeps.
+  | { type: "undone"; keys: readonly string[]; kept?: ReadonlySet<string> }
   // The current load refused these keys' links in place (they apply from
   // the next load): the cards each covered are to decide again.
   | { type: "uncover"; by: ReadonlySet<string> }
@@ -263,16 +273,20 @@ const nextOpen = (
  *   when it is, or the walk is past the end), and a refusal uncovers what
  *   the choice covered;
  * - `skip` marks the current card skipped (unless decided) and goes to the
- *   next to decide; `back` and `jump` move without changing anything;
- * - `undone` forgets the outcomes of the keys (and what they covered), drops
+ *   next to decide; `next`, `back` and `jump` move without changing
+ *   anything;
+ * - `undone` forgets the outcomes of the keys (and what they covered), or,
+ *   for those `kept`, marks them and what they covered taken back, drops
  *   them from the undo stack and shows the first of them again;
  * - `uncover` opens again the cards that the keys' choices covered;
  * - `rebase` takes a new order: on the same load every outcome stays (a
  *   filter, or a refresh), and each card of the old order gone from the
  *   queue (`gone`) keeps its place, after the card before it that the new
- *   order has, marked decided elsewhere unless this walk decided it; on
+ *   order has, marked decided elsewhere unless this walk decided it, and a
+ *   card decided elsewhere that is back in the order is to decide again; on
  *   another load only the outcomes of keys in the order and of choices
- *   still sending, whose answers are yet to come, stay; the card shown
+ *   still sending, whose answers are yet to come, stay, less links taken
+ *   back (the new load asks again); the card shown
  *   stays if it is still in the order, else the next of the old order that
  *   is, else the first to decide.
  * An action that changes nothing returns the walk itself.
@@ -378,6 +392,8 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
         : w.outcomes;
       return { ...w, outcomes, at: nextOpen(w.order, outcomes, w.at + 1) };
     }
+    case "next":
+      return w.at < w.order.length ? { ...w, at: w.at + 1 } : w;
     case "back":
       return w.at > 0 ? { ...w, at: w.at - 1 } : w;
     case "jump": {
@@ -385,11 +401,18 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
       return at < 0 || at === w.at ? w : { ...w, at };
     }
     case "undone": {
-      const gone = new Set(a.keys);
+      const gone = new Set(a.keys),
+        kept = a.kept ?? new Set<string>();
       const outcomes = new Map(
-        [...w.outcomes].filter(
-          ([k, o]) => !gone.has(k) && !(o.kind === "covered" && gone.has(o.by)),
-        ),
+        [...w.outcomes].flatMap(([k, o]): [string, Outcome][] => {
+          const of = (keys: ReadonlySet<string>) =>
+            keys.has(k) || (o.kind === "covered" && keys.has(o.by));
+          return of(kept)
+            ? [[k, { kind: "taken_back" }]]
+            : of(gone)
+              ? []
+              : [[k, o]];
+        }),
       );
       const first = w.order.findIndex((k) => gone.has(k));
       return {
@@ -414,9 +437,15 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
         inOrder = new Set(a.order);
       const outcomes = new Map(
         [...w.outcomes].filter(
-          ([k, o]) => same || inOrder.has(k) || o.kind === "sending",
+          ([k, o]) =>
+            (same || inOrder.has(k) || o.kind === "sending") &&
+            (same || o.kind !== "taken_back"),
         ),
       );
+      // Back in the queue: someone else's decision was removed, or no
+      // longer settles it.
+      for (const k of a.order)
+        if (outcomes.get(k)?.kind === "elsewhere") outcomes.delete(k);
       // The cards gone from the queue, by the card of the new order they
       // follow (null: before the first).
       const stays = new Map<string | null, string[]>();
@@ -452,6 +481,54 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
       };
     }
   }
+}
+
+/**
+ * Whether the current load links a saved resolve's name to its record now:
+ * pending or written by the decisions last read (`read`: each one's
+ * `applied`, by id), or, before they hold it, as foreseen (`foreseen`: its
+ * choice applies now). A name marked not in data, or another decision,
+ * links nothing.
+ *
+ * @example
+ * linkedNow(resolveDecision, new Map([[resolveDecision.id, { status: "written" }]]), false); // true
+ * linkedNow(resolveDecision, new Map(), true); // true: not read yet, foreseen
+ */
+export function linkedNow(
+  decision: FoundryReviewDecision,
+  read: ReadonlyMap<string, DecisionApplied | null | undefined>,
+  foreseen: boolean,
+): boolean {
+  if (decision.kind !== "resolve" || !decision.entityKey) return false;
+  if (!read.has(decision.id)) return foreseen;
+  const status = read.get(decision.id)?.status;
+  return status === "pending" || status === "written";
+}
+
+/**
+ * The cards whose saved link the decisions read since (`read`) say the
+ * current load doesn't hold (refused, missed, its job failed, or not held
+ * at all), so what each covered is to decide again. A link not read yet
+ * still covers.
+ *
+ * @example
+ * notLinked(walk.outcomes, new Map([[decision.id, { status: "unconfirmed" }]])); // Set { "a" }
+ */
+export function notLinked(
+  outcomes: ReadonlyMap<string, Outcome>,
+  read: ReadonlyMap<string, DecisionApplied | null | undefined>,
+): Set<string> {
+  return new Set(
+    [...outcomes].flatMap(([k, o]) =>
+      o.kind === "saved" &&
+      o.decision.kind === "resolve" &&
+      o.decision.entityKey &&
+      read.has(o.decision.id) &&
+      !linkedNow(o.decision, read, false)
+        ? [k]
+        : [],
+    ),
+  );
 }
 
 /** The key of the card shown; null past the last. */

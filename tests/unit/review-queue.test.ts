@@ -667,6 +667,30 @@ describe("buildQueue", () => {
     expect(queuePins(grown, pins).drawn).toEqual(pins.drawn);
   });
 
+  it("pins a name's held claims as ranked, so linking the name never draws them", () => {
+    const n = name("n", "acme 1");
+    const waiting = held(1, { named: false, confidence: 0.72 });
+    // One ranked card, the name, so one draw: a fact of the top band, the
+    // held claim staying on the name's card.
+    const first = build([n, waiting], { quotes: { "0.9": 40 } });
+    expect(first.cards.find((c) => c.drawn === "random")?.kind).toBe("quote");
+    expect(
+      first.cards
+        .find((c): c is NameCard => c.kind === "name")
+        ?.held.map((c) => c.key),
+    ).toEqual(["held-1"]);
+    const pins = queuePins(first);
+    expect([...pins.ranked]).toEqual(["held-1"]);
+    // The name linked in place: the claim stands on its own. Without the
+    // pins it is the band's only claim and would be drawn; with them it
+    // stays ranked, where the walk shows it.
+    const linked = [held(1, { confidence: 0.72 })];
+    const drawn = (q: ReturnType<typeof build>) =>
+      q.cards.find((c) => c.key === "held-1")?.drawn;
+    expect(drawn(build(linked, { quotes: {} }))).toBe("random");
+    expect(drawn(build(linked, { quotes: {}, pins }))).toBe("ranked");
+  });
+
   it("keeps an earlier read's draws of facts while their band has quotes", () => {
     const claims = Array.from({ length: 9 }, (_, n) =>
       held(n, { confidence: 0.72 }),

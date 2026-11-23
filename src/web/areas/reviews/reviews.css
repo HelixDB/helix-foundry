@@ -297,7 +297,7 @@
   border-color: var(--hf-danger);
   background: var(--hf-danger);
 }
-.rv-dot[data-state="elsewhere"] {
+.rv-dot:is([data-state="elsewhere"], [data-state="taken_back"]) {
   border-color: var(--hf-muted);
   background: var(--hf-muted);
 }

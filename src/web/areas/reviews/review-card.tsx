@@ -259,14 +259,21 @@ function OutcomeLine({
     case "covered":
       return (
         <p role="status" className="rv-outcome">
-          Settled by your link{coveredBy ? ` of ${coveredBy}` : ""}: the load
-          links this name in every document asking about it.
+          Settled by your link{coveredBy ? ` ${coveredBy}` : ""}: the load links
+          this name in every document asking about it.
         </p>
       );
     case "elsewhere":
       return (
         <p role="status" className="rv-outcome">
           Decided by someone else meanwhile.
+        </p>
+      );
+    case "taken_back":
+      return (
+        <p role="status" className="rv-outcome">
+          Link taken back. This load keeps it; the next load asks about this
+          name again.
         </p>
       );
   }
@@ -388,41 +395,34 @@ export function ReviewCard({
         choices={choices}
         coveredBy={coveredBy}
       />
-      {readOnly ? (
-        <p className="on-muted">Owners and admins settle reviews.</p>
-      ) : (
-        open && (
-          <ul className="rv-choices" aria-label="Choices">
-            {layout.primary && (
-              <li>
-                <Button
-                  variant="primary"
-                  aria-keyshortcuts="Enter"
-                  onClick={() => onCommand({ kind: "accept" })}
-                >
-                  {layout.primary.kind === "link"
-                    ? `Link to ${layout.primary.label}`
-                    : layout.primary.kind === "value"
-                      ? `Use ${layout.primary.label}`
-                      : layout.primary.label}{" "}
-                  <Kbd>
-                    <CornerDownLeft size={12} />
-                  </Kbd>
-                </Button>
-              </li>
-            )}
-            {layout.rest.map(({ choice, key }) => (
-              <li key={choice.id}>
-                <Button
-                  aria-keyshortcuts={key}
-                  onClick={() => onChoose(choice)}
-                >
-                  {key && <Kbd>{key}</Kbd>} {choice.label}
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )
+      {!readOnly && open && (
+        <ul className="rv-choices" aria-label="Choices">
+          {layout.primary && (
+            <li>
+              <Button
+                variant="primary"
+                aria-keyshortcuts="Enter"
+                onClick={() => onCommand({ kind: "accept" })}
+              >
+                {layout.primary.kind === "link"
+                  ? `Link to ${layout.primary.label}`
+                  : layout.primary.kind === "value"
+                    ? `Use ${layout.primary.label}`
+                    : layout.primary.label}{" "}
+                <Kbd>
+                  <CornerDownLeft size={12} />
+                </Kbd>
+              </Button>
+            </li>
+          )}
+          {layout.rest.map(({ choice, key }) => (
+            <li key={choice.id}>
+              <Button aria-keyshortcuts={key} onClick={() => onChoose(choice)}>
+                {key && <Kbd>{key}</Kbd>} {choice.label}
+              </Button>
+            </li>
+          ))}
+        </ul>
       )}
       {/* What a held claim's approval writes, its score and how it's
           stated, after its choices: the suggestion says why already, and a

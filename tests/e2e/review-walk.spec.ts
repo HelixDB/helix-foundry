@@ -228,26 +228,16 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   const facts = page
     .getByRole("tab", { name: /^Facts/ })
     .locator(".hf-tab-count");
-  await expect(facts).toHaveText(/^\d+$/);
-  const left = Number(await facts.textContent());
-  await expect(lane(page, "Decide")).toHaveText(
-    new RegExp(`^Decide\\s*${left}$`),
-  );
+  await expect(facts).toHaveText("1");
+  await expect(lane(page, "Decide")).toHaveText(/^Decide\s*1$/);
   await page
     .getByRole("list", { name: "Pages" })
     .getByRole("link", { name: "Overview" })
     .click();
   await expect(page).toHaveURL(new RegExp(`${O}$`));
-  if (left)
-    await expect(
-      page.getByText(`${left} ${left === 1 ? "card" : "cards"} to decide`, {
-        exact: true,
-      }),
-    ).toBeVisible();
-  else
-    await expect(
-      page.getByRole("link", { name: "Start reviewing" }),
-    ).toHaveCount(0);
+  await expect(
+    page.getByText("1 card to decide", { exact: true }),
+  ).toBeVisible();
 });
 
 /** Three documents name Umbrella Holdings; the walk opens on the first. */
@@ -304,6 +294,15 @@ test("a link to a name settles every document asking about it, which go to Cover
   await expect(covered.getByRole("listitem").first()).toContainText(
     /settled by your link in naming-\d\.md/,
   );
+  // Each covered card says so too, in the same words.
+  await lane(page, "Decide").click();
+  await page
+    .getByRole("region", { name: "All caught up" })
+    .getByRole("button", { name: "Back" })
+    .click();
+  await expect(card(page).locator(".rv-outcome")).toHaveText(
+    /^Settled by your link in naming-\d\.md: the load links this name in every document asking about it\.$/,
+  );
   // The load linked the name in place: a fresh walk has none of the three
   // to decide, and covers none, once its job has run.
   await expect(async () => {
@@ -315,6 +314,28 @@ test("a link to a name settles every document asking about it, which go to Cover
       page.getByRole("heading", { level: 2, name: "Nothing to decide" }),
     ).toBeVisible({ timeout: 3000 });
   }).toPass({ timeout: 20_000 });
+});
+
+test("undoing a link the load applied in place shows it taken back, not to decide again", async ({
+  page,
+}) => {
+  await naming(page, "written");
+  await page.keyboard.press("z");
+  await expect(
+    toast(page, "Choice removed: it stops applying from the next load."),
+  ).toBeVisible();
+  // The load keeps the link, so the card and the two it covered aren't
+  // asked again here: settling them would find no review once its job ran.
+  await expect(heading(page)).toContainText("names “Umbrella Holdings");
+  await expect(card(page).locator(".rv-outcome")).toHaveText(
+    "Link taken back. This load keeps it; the next load asks about this name again.",
+  );
+  await expect(choiceButtons(page)).toHaveCount(0);
+  await expect(lane(page, "Decide")).toHaveText(/^Decide\s*0$/);
+  await expect(progress(page)).toHaveText(
+    "3 of 3 · 0 accepted · 0 changed · 0 skipped · 3 taken back",
+  );
+  await expect(progress(page)).not.toContainText("elsewhere");
 });
 
 test("a link the load can't apply in place waits for the next load, and its other documents are to decide again", async ({
@@ -476,7 +497,11 @@ test("members read the cards, with Next and the reading keys, but no choices", a
   await signIn(page, "alan@example.com");
   await page.goto(`${O}/review`);
   const { first, other } = await claims(page);
-  await expect(card(page)).toContainText("Owners and admins settle reviews.");
+  // Said once, above the walk, not again on the card.
+  await expect(page.getByText("Owners and admins settle reviews.")).toHaveCount(
+    1,
+  );
+  await expect(card(page)).not.toContainText("Owners and admins settle");
   for (const name of [/^Accept/, /Approve/, /Reject/, /^Undo/])
     await expect(card(page).getByRole("button", { name })).toHaveCount(0);
   const settles: Request[] = [];
@@ -494,6 +519,14 @@ test("members read the cards, with Next and the reading keys, but no choices", a
   await expect(heading(page)).toContainText(first);
   await card(page).getByRole("button", { name: /^Next/ }).click();
   await expect(heading(page)).toContainText(other);
+  // Next on to the last card, then past it to the finish and its spot
+  // checks.
+  for (let i = 0; i < 3; i += 1)
+    await card(page).getByRole("button", { name: /^Next/ }).click();
+  await expect(
+    page.getByRole("heading", { level: 3, name: "Spot checks" }),
+  ).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
   expect(settles).toHaveLength(0);
   await expect(progress(page)).toHaveText(
     "0 of 4 · 0 accepted · 0 changed · 0 skipped",

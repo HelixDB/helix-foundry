@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { FoundryReviewChoice, FoundryReviewDecision } from "@/shared/wfe";
+import type {
+  DecisionApplied,
+  FoundryReviewChoice,
+  FoundryReviewDecision,
+} from "@/shared/wfe";
 import type { Advice } from "@/web/areas/reviews/advice";
 import type {
   DecidedCard,
@@ -13,6 +17,8 @@ import {
   batchTakes,
   current,
   drawnLike,
+  linkedNow,
+  notLinked,
   SPOT_CHECKS,
   progress,
   undecided,
@@ -438,6 +444,62 @@ describe("walkReducer", () => {
     expect(run(w, { type: "jump", key: "a" })).toBe(w);
     expect(run(w, { type: "jump", key: "z" })).toBe(w);
   });
+  it("keeps a link the current load holds taken back, with what it covered, on undo", () => {
+    const w = run(walkOf(["a", "b", "c", "d"]), {
+      type: "decide",
+      key: "a",
+      choice: approve,
+      how: "accepted",
+      covers: ["b", "c"],
+    });
+    const undone = run(w, {
+      type: "undone",
+      keys: ["a"],
+      kept: new Set(["a"]),
+    });
+    for (const k of ["a", "b", "c"])
+      expect(undone.outcomes.get(k)).toEqual({ kind: "taken_back" });
+    expect(current(undone)).toBe("a");
+    expect(undone.undo).toEqual([]);
+    // Not to decide, so not counted, and the walk passes over them.
+    expect(undecided(undone.order, undone.outcomes)).toBe(1);
+    expect(progress(undone).left).toBe(1);
+    expect(current(run(undone, { type: "skip" }))).toBe("d");
+    // Gone from the queue once the load's job ran: still this walk's own.
+    const read = run(undone, {
+      type: "rebase",
+      loadId: "L",
+      order: ["d"],
+      gone: new Set(["a", "b", "c"]),
+    });
+    for (const k of ["a", "b", "c"])
+      expect(read.outcomes.get(k)).toEqual({ kind: "taken_back" });
+    // Still in the queue meanwhile: still taken back.
+    const still = run(undone, {
+      type: "rebase",
+      loadId: "L",
+      order: ["a", "b", "c", "d"],
+      gone: new Set(),
+    });
+    expect(still.outcomes.get("b")).toEqual({ kind: "taken_back" });
+    // The next load asks about the name again.
+    const next = run(undone, {
+      type: "rebase",
+      loadId: "L2",
+      order: ["a", "b", "c", "d"],
+      gone: new Set(),
+    });
+    expect(next.outcomes.size).toBe(0);
+  });
+  it("moves to the next card, then past the last, marking nothing", () => {
+    const w = run(walkOf(["a", "b"]), { type: "next" });
+    expect(current(w)).toBe("b");
+    const end = run(w, { type: "next" });
+    expect(current(end)).toBeNull();
+    expect(end.at).toBe(2);
+    expect(end.outcomes.size).toBe(0);
+    expect(run(end, { type: "next" })).toBe(end);
+  });
   it("forgets undone keys it never had", () => {
     const w = walkOf(["a", "b"], { at: 1 });
     expect(current(run(w, { type: "undone", keys: ["z"] }))).toBe("b");
@@ -505,6 +567,31 @@ describe("walkReducer", () => {
     });
     expect(refused.order).toEqual(["x", "a", "y"]);
     expect(refused.outcomes.get("b")?.kind).toBe("refused");
+  });
+  it("opens a card decided elsewhere again once it is back in the queue", () => {
+    const w = walkOf(["a", "b", "c"], { at: 2 });
+    const gone = run(w, {
+      type: "rebase",
+      loadId: "L",
+      order: ["a", "c"],
+      gone: new Set(["b"]),
+    });
+    expect(gone.outcomes.get("b")).toEqual({ kind: "elsewhere" });
+    expect(undecided(gone.order, gone.outcomes)).toBe(2);
+    // The other person's decision was removed, or no longer settles it.
+    const back = run(gone, {
+      type: "rebase",
+      loadId: "L",
+      order: ["a", "b", "c"],
+      gone: new Set(),
+    });
+    expect(back.outcomes.has("b")).toBe(false);
+    expect(back.order).toEqual(["a", "b", "c"]);
+    expect(current(back)).toBe("c");
+    expect(undecided(back.order, back.outcomes)).toBe(3);
+    // Choices show again: deciding it sends.
+    const decided = run(back, { type: "jump", key: "b" }, decide("b"));
+    expect(decided.outcomes.get("b")?.kind).toBe("sending");
   });
   it("rebases onto the next card of the old order still in the new", () => {
     const w = walkOf(["a", "b", "c"], { at: 1 });
@@ -721,5 +808,67 @@ describe("batchReason", () => {
     expect(batchReason({ kind: "none", why: "unscored" }, "Approve", 2)).toBe(
       null,
     );
+  });
+});
+
+describe("linkedNow and notLinked", () => {
+  const link = resolveDecision("d-1", { entityKey: "scus_1" });
+  const notInData = resolveDecision("d-2");
+  const saved = (d: FoundryReviewDecision): Outcome => ({
+    kind: "saved",
+    decision: d,
+    how: "accepted",
+  });
+  it("says whether the current load links the name now, as last read or foreseen", () => {
+    const read = (status?: DecisionApplied["status"]) =>
+      new Map<string, DecisionApplied | null>([
+        [link.id, status === undefined ? null : { status }],
+      ]);
+    expect(linkedNow(link, read("pending"), false)).toBe(true);
+    expect(linkedNow(link, read("written"), false)).toBe(true);
+    for (const status of ["refused", "missed", "unconfirmed", ""] as const)
+      expect(linkedNow(link, read(status), true)).toBe(false);
+    // Listed, with nothing the load made of it: not held.
+    expect(linkedNow(link, read(undefined), true)).toBe(false);
+    // Not read yet: as foreseen.
+    expect(linkedNow(link, new Map(), true)).toBe(true);
+    expect(linkedNow(link, new Map(), false)).toBe(false);
+    // Not in data, or another decision, links nothing.
+    expect(
+      linkedNow(
+        notInData,
+        new Map([[notInData.id, { status: "written" }]]),
+        true,
+      ),
+    ).toBe(false);
+    expect(linkedNow(decision("r"), new Map(), true)).toBe(false);
+  });
+  it("names the saved links the load doesn't hold, once read", () => {
+    const other = resolveDecision("d-3", { entityKey: "scus_2" });
+    const outcomes = new Map<string, Outcome>([
+      ["a", saved(link)],
+      ["b", saved(other)],
+      ["c", saved(notInData)],
+      ["d", { kind: "sending", choice: approve, how: "chosen" }],
+      ["e", saved(resolveDecision("d-4", { entityKey: "scus_3" }))],
+    ]);
+    const read = new Map([
+      [link.id, { status: "unconfirmed" as const }],
+      [other.id, { status: "written" as const }],
+      [notInData.id, { status: "refused" as const }],
+    ]);
+    // e isn't read yet: it still covers.
+    expect([...notLinked(outcomes, read)]).toEqual(["a"]);
+    // Uncovering what a covers opens it again.
+    const covered = walkOf(["a", "x", "y"], {}, [
+      ["a", saved(link)],
+      ["x", { kind: "covered", by: "a" }],
+    ]);
+    const opened = run(covered, {
+      type: "uncover",
+      by: notLinked(covered.outcomes, read),
+    });
+    expect(opened.outcomes.has("x")).toBe(false);
+    expect(undecided(opened.order, opened.outcomes)).toBe(2);
   });
 });

@@ -66,6 +66,8 @@ import {
   batchTakes,
   current,
   drawnLike,
+  linkedNow,
+  notLinked,
   progress,
   undecided,
   walkOrder,
@@ -277,8 +279,11 @@ export function useWalk() {
     },
     /**
      * Takes the last choice or batch back: removes what each saved (a
-     * choice still sending first finishes) and forgets it. What it says, or
-     * null with nothing to take back or an undo already running.
+     * choice still sending first finishes) and forgets it, but a name's link
+     * the current load holds (linkedNow, by the decisions as last read)
+     * stays in that load, so its cards and those it covered show it taken
+     * back rather than to decide. What it says, or null with nothing to take
+     * back or an undo already running.
      */
     undo: async (): Promise<{ text: string; error: boolean } | null> => {
       const keys = now.current.undo.at(-1);
@@ -304,13 +309,33 @@ export function useWalk() {
           }),
         );
         const gone = removed.flatMap((r) => (r.ok ? [r.key] : []));
+        const read = new Map(
+          (
+            qc.getQueryData<FoundryReviewDecision[]>(
+              reviewQueries.list(ws, o).queryKey,
+            ) ?? []
+          ).map((d) => [d.id, d.applied]),
+        );
+        const kept = new Set(
+          removed.flatMap((r) =>
+            r.ok &&
+            r.decision &&
+            linkedNow(
+              r.decision,
+              read,
+              made.current.get(r.key)?.effect.kind === "applies_now",
+            )
+              ? [r.key]
+              : [],
+          ),
+        );
         if (gone.length) {
           const out = now.current.outcomes.get(gone[0]!);
           trackEvent("review_undone", {
             kind:
               out && "how" in out && out.how === "batch" ? "batch" : "choice",
           });
-          dispatch({ type: "undone", keys: gone });
+          dispatch({ type: "undone", keys: gone, kept });
         }
         await refresh(true);
         const failed = removed.flatMap((r) => (r.ok ? [] : [r.error]));
@@ -448,7 +473,6 @@ export function ReviewWalkthrough({
   useEffect(() => {
     api.rebase(load.id, order);
   }, [load.id, order]);
-  // The types and documents the filters offer: every card's to decide.
   // The types and documents the filters offer: every one this visit's reads
   // of the load had a card of, so the row stays as it was while cards are
   // decided and leave the queue, to the finish.
@@ -520,19 +544,19 @@ export function ReviewWalkthrough({
       : null;
   })();
   const batch = useMemo(() => {
-    if (!key || !manage) return null;
-    const openKeys = w.order.filter((k) => {
-      const x = w.outcomes.get(k);
-      return !x || x.kind === "refused";
-    });
+    if (!key || !manage || !open) return null;
+    // As the batch takes them (batchTakes): skipped cards too.
+    const openKeys = w.order.filter((k) => undecided([k], w.outcomes) > 0);
     return batchOf(openKeys, order.advice, key);
-  }, [key, manage, w, order.advice]);
+  }, [key, manage, open, w, order.advice]);
   const p = progress(w);
   // What the current load made of each choice saved in this walk, by the
   // decisions read since (the decision a settle answers is read before its
   // job runs). A name's link it refused in place (a load read before names
-  // could be settled so) applies from the next load, and settles none of
-  // the other documents now: their cards are to decide again.
+  // could be settled so) applies from the next load (`notInPlace`, for the
+  // finish); a link it doesn't hold, refused or not (its job failed),
+  // settles none of the other documents now: their cards are to decide
+  // again.
   const appliedOf = useMemo(
     () => new Map((q.decisions.data ?? []).map((d) => [d.id, d.applied])),
     [q.decisions.data],
@@ -550,9 +574,13 @@ export function ReviewWalkthrough({
       ),
     [w.outcomes, appliedOf],
   );
+  const uncover = useMemo(
+    () => notLinked(w.outcomes, appliedOf),
+    [w.outcomes, appliedOf],
+  );
   useEffect(() => {
-    if (notInPlace.size) api.dispatch({ type: "uncover", by: notInPlace });
-  }, [notInPlace]);
+    if (uncover.size) api.dispatch({ type: "uncover", by: uncover });
+  }, [uncover]);
 
   const [dialog, setDialog] = useState<
     | { kind: "help" }
@@ -632,10 +660,9 @@ export function ReviewWalkthrough({
         return choose(choices.find((x) => x.kind === c.kind));
       case "skip": {
         moved.current = true;
-        const next = w.order[w.at + 1];
-        // A member only reads: the next card, marking nothing skipped.
-        if (manage) api.dispatch({ type: "skip" });
-        else if (next !== undefined) api.dispatch({ type: "jump", key: next });
+        // A member only reads: the next card (the finish after the last),
+        // marking nothing skipped.
+        api.dispatch({ type: manage ? "skip" : "next" });
         return;
       }
       case "back":
@@ -688,9 +715,10 @@ export function ReviewWalkthrough({
     const by = x?.kind === "covered" ? api.made.get(x.by)?.card : undefined;
     return by ? `in ${docName(by.review.documentId)}` : undefined;
   };
-  const elsewhere = [...w.outcomes.values()].filter(
-    (x) => x.kind === "elsewhere",
-  ).length;
+  const ofKind = (kind: "elsewhere" | "taken_back") =>
+    [...w.outcomes.values()].filter((x) => x.kind === kind).length;
+  const elsewhere = ofKind("elsewhere"),
+    takenBack = ofKind("taken_back");
   // Around the card shown; past the last, only the cards still to decide
   // (skipped ones too), none once every card is decided.
   const start = Math.max(0, w.at - 2);
@@ -802,6 +830,7 @@ export function ReviewWalkthrough({
           · {formatNumber(p.skipped)} skipped
           {p.covered > 0 && ` · ${formatNumber(p.covered)} covered`}
           {elsewhere > 0 && ` · ${formatNumber(elsewhere)} decided elsewhere`}
+          {takenBack > 0 && ` · ${formatNumber(takenBack)} taken back`}
         </p>
         <div className="rv-meter" aria-hidden>
           <span
@@ -993,14 +1022,16 @@ export function ReviewWalkthrough({
           onClose={() => setDialog(null)}
         >
           <dl className="rv-keys">
-            {SHORTCUTS.filter(([, , decides]) => manage || !decides).map(
-              ([keys, what]) => (
-                <div key={what}>
-                  <dt>{keys}</dt>
-                  <dd>{what}</dd>
-                </div>
-              ),
-            )}
+            {SHORTCUTS.filter(
+              ([, what, decides]) =>
+                (manage || !decides) &&
+                (shell.assistant.available || what !== ASK_FOUNDER),
+            ).map(([keys, what]) => (
+              <div key={what}>
+                <dt>{keys}</dt>
+                <dd>{what}</dd>
+              </div>
+            ))}
           </dl>
         </Dialog>
       )}
@@ -1008,6 +1039,7 @@ export function ReviewWalkthrough({
   );
 }
 
+const ASK_FOUNDER = "Ask Founder";
 /** The walk's keys, what each does, and whether it decides (owners and admins only). */
 const SHORTCUTS: readonly (readonly [ReactNode, string, boolean])[] = [
   [<kbd>⏎</kbd>, "Accept Founder’s suggestion", true],
@@ -1025,7 +1057,7 @@ const SHORTCUTS: readonly (readonly [ReactNode, string, boolean])[] = [
   [<kbd>Z</kbd>, "Undo the last choice", true],
   [<kbd>G</kbd>, "Accept all like this", true],
   [<kbd>O</kbd>, "Open the document", false],
-  [<kbd>F</kbd>, "Ask Founder", false],
+  [<kbd>F</kbd>, ASK_FOUNDER, false],
   [<kbd>?</kbd>, "These shortcuts", false],
 ];
 
