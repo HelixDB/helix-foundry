@@ -238,7 +238,7 @@ const position = (x: unknown) => {
 };
 
 /**
- * A typed ontology query (the `query` tool's input), or undefined when the
+ * A typed ontology query (the `query` tool's `query`), or undefined when the
  * shape isn't one: the page then shows its JSON only.
  */
 export function parseQuery(x: unknown): OntologyQuery | undefined {
@@ -834,6 +834,35 @@ export const EMPTY_STREAM: AskStream = {
 };
 
 /**
+ * The typed query a `query` call ran: its input's `query` (contract 4.31.0),
+ * or the input itself, as events an engine before 4.31.0 wrote hold it. The
+ * engine reads a `query` or its `return` a model wrote as a string of its
+ * JSON, as the event keeps it, so this does too.
+ *
+ * @example
+ * queryInput({ query: { start: { type: "Customer" } } })?.start.type; // "Customer"
+ * queryInput({ start: { type: "Customer" } })?.start.type; // "Customer"
+ * queryInput({ query: '{"start": {"type": "Customer"}}' })?.start.type; // "Customer"
+ * queryInput({ query: {} }); // undefined
+ */
+export function queryInput(x: unknown): OntologyQuery | undefined {
+  const json = (v: unknown): unknown => {
+    if (typeof v !== "string") return v;
+    try {
+      return JSON.parse(v) as unknown;
+    } catch {
+      return undefined;
+    }
+  };
+  const q = isRecord(x) && "query" in x ? json(x.query) : x;
+  return parseQuery(
+    isRecord(q) && typeof q.return === "string"
+      ? { ...q, return: json(q.return) }
+      : q,
+  );
+}
+
+/**
  * Folds a page of polled events into the stream, in seq order. An event at
  * or before `lastSeq` was folded already (a poll that overlapped) and is
  * skipped; a result without its call is kept as a step of its own. A
@@ -895,8 +924,8 @@ export function reduceEvents(
                 callId: ev.call_id,
                 tool: ev.tool,
                 input: ev.input,
-                ...(ev.tool === "query" && parseQuery(ev.input)
-                  ? { query: parseQuery(ev.input) }
+                ...(ev.tool === "query" && queryInput(ev.input)
+                  ? { query: queryInput(ev.input) }
                   : {}),
               },
             ],

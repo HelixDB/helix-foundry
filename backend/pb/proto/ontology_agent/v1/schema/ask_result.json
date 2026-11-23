@@ -517,7 +517,7 @@
           "type": "string"
         },
         "value": {
-          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from today). None for\n`is_null` and `not_null`.",
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from today; a datetime's at its midnight\nUTC); for a datetime also a UTC period (`2026`, `2026-03`, `2026-03-14`), as its span\n(`!=` refused). None for `is_null` and `not_null`.",
           "default": null
         }
       },
@@ -635,7 +635,7 @@
       "description": "A number from two properties of the entity: none where either has none, a date isn't to the\nday, or it isn't finite (a ratio by zero). A column shows none as `null`, an order puts it\nwith the absent, and an aggregate skips it and counts it in `skipped`.",
       "oneOf": [
         {
-          "description": "Days from the first date or datetime to the second (a date from its midnight UTC).",
+          "description": "Days from the first date or datetime to the second (a date from its midnight UTC). Either\nmay be a time: `today`, `today-30d`, an ISO date or an RFC 3339 instant.",
           "type": "object",
           "properties": {
             "days_between": {
