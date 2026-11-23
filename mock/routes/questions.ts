@@ -1427,7 +1427,12 @@ function partAnswer(
   return {
     events: [
       ...profiled,
-      { event: "tool_call", call_id: "toolu_01", tool: "query", input: { query } },
+      {
+        event: "tool_call",
+        call_id: "toolu_01",
+        tool: "query",
+        input: { query },
+      },
       {
         event: "tool_result",
         call_id: "toolu_01",
