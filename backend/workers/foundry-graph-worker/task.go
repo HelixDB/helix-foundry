@@ -103,6 +103,8 @@ type Task struct {
 	workerID string
 	now      func() time.Time
 	worker   tasks.Worker
+	// reviews keeps the review cards index beside the jobs.
+	reviews *indexer
 	// refreshLag records how long a refresh load waited for its first claim.
 	refreshLag prometheus.Observer
 }
@@ -148,13 +150,16 @@ func New(d Deps) (*Task, error) {
 			MaxResponseBytes: graphproxy.MaxResponseBytes,
 		},
 	}
+	t.reviews = newIndexer(d.DB, d.Databases, t.runner.gateway, workerID)
 	return t, nil
 }
 
 func (t *Task) Name() string { return Name }
 
-// Start claims jobs every PollInterval and, beside them, sweeps lapsed load
-// boosts every boost.SweepEvery, so a long job doesn't hold the sweep up.
+// Start claims jobs every PollInterval and, beside them, keeps the review
+// cards index every PollInterval (review_cards.go) and sweeps lapsed load
+// boosts every boost.SweepEvery, so a long job holds neither up; Stop waits
+// for both.
 // First it removes what attempts staged under the work dir's jobs/: each
 // attempt removes its own as it ends, but one a worker that died (an OOM
 // kill) left, documents and the profiles People enrichment chose, would stay
@@ -165,6 +170,13 @@ func (t *Task) Start(ctx context.Context) error {
 	}
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
 		var sweeping sync.WaitGroup
+		if t.reviews != nil {
+			sweeping.Add(1)
+			go func() {
+				defer sweeping.Done()
+				tasks.Tick(ctx, t.cfg.PollInterval, t.reviews.tick)
+			}()
+		}
 		if t.boosts != nil {
 			sweeping.Add(1)
 			go func() {
@@ -423,7 +435,7 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, jobID 
 // internal error is Helix's bug: it is logged as an error, for on-call, and
 // gets ontologyagent.InternalAttempts attempts at most.
 func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attempt, err error, stopping bool) model.FoundryGraphJobOutcome {
-	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress}
+	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress, ReindexReviews: a.reindexReviews()}
 	if err == nil {
 		outcome.Status = model.FoundryGraphJobSucceeded
 		return outcome

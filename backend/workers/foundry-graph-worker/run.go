@@ -175,6 +175,8 @@ type attempt struct {
 	ingestDone bool
 	// applied is what an apply's Ingest did to each stream, once it is done.
 	applied []ontologyagent.AppliedStream
+	// sentExtract means the attempt sent the agent an Extract.
+	sentExtract bool
 	// ingestViolations is how many violation records this attempt's Ingest
 	// left open, once its report counted them: every update records it on
 	// the load (FoundryGraphJobUpdate.IngestViolations).
@@ -232,6 +234,22 @@ const (
 // as any failure does.
 func (a *attempt) starting(now time.Time) bool {
 	return a.proxy != nil && a.proxy.Starting() && now.Before(a.ontologyCreated.Add(startingWindow))
+}
+
+// reindexReviews reports whether the attempt may have changed the load's
+// reviews past the documents it recorded: it sent an Extract, or an apply's
+// Ingest changed rows (stored values and entities a value or a name card
+// reads).
+func (a *attempt) reindexReviews() bool {
+	if a.sentExtract {
+		return true
+	}
+	for _, s := range a.applied {
+		if s.Added+s.Changed+s.Removed > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // report is the job's report: each call's result, the ingest report cut to
@@ -1578,6 +1596,9 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	for _, docID := range remove {
 		removing[docID] = true
 	}
+	// From here the engine may change the load's reviews: its sweep at the
+	// run's end, the value decisions sent.
+	a.sentExtract = true
 	raw, err := r.agent.Extract(ctx, body, resolved.Key, func(e json.RawMessage) error {
 		switch name, _ := ontologyagent.EventName(e); name {
 		case "artifact":
