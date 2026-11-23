@@ -1,9 +1,10 @@
 # Helix's distributed Slack app "Helix Foundry", production. Create or update
 # the app from this file; slack/manifest_test.go keeps its scopes and events
 # equal to what the bot needs with prod's flags (slack.Required with
-# foundry.slack.feed and foundry.slack.follow off): no channel history until
-# Slack confirms the data connector in writing. Turning them on changes this
-# file, the test's flags and the chart together.
+# foundry.slack.follow on and foundry.slack.feed off): channel message events
+# and history, so a reply in a thread the bot answered reaches it without a
+# mention, but no data connector until Slack confirms it in writing. Changing
+# a flag changes this file, the test's flags and the chart together.
 display_information:
   name: Helix Foundry
   description: Ask your Foundry ontologies and act on them from Slack.
@@ -37,6 +38,8 @@ oauth_config:
       - channels:read
       - groups:read
       - mpim:read
+      - channels:history
+      - groups:history
 settings:
   event_subscriptions:
     request_url: https://ingest.helix-db.com/v1/slack/events
@@ -46,6 +49,8 @@ settings:
       - app_uninstalled
       - tokens_revoked
       - agent_session_stopped
+      - message.channels
+      - message.groups
   interactivity:
     is_enabled: true
     request_url: https://ingest.helix-db.com/v1/slack/interactivity
