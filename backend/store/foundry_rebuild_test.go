@@ -468,6 +468,147 @@ func TestFoundryRebuildSamples(t *testing.T) {
 		assert.Equal(t, model.FoundryGraphJobQueued, live.Status)
 	})
 
+	// What came while a rebuild waited was left to its end: a delete it
+	// went ahead of, an approval's resend, documents to extract, a refresh.
+	// Withdrawing it queues each, or leaves it owed, as that end would have.
+	t.Run("queues what waited for a withdrawn rebuild", func(t *testing.T) {
+		// queuedSample writes a customer's earlier load with tag, runs
+		// meanwhile, queues its rebuild, runs waiting, then makes it a
+		// sample's and runs the rebuild again, which withdraws it.
+		queuedSample := func(t *testing.T, tag string, meanwhile, waiting func(f foundryFixture)) foundryFixture {
+			t.Helper()
+			ctx := context.Background()
+			db := newTestStore(t)
+			f := earlierLoad(t, db, id26("FWS-"+tag), tag, false)
+			meanwhile(f)
+			done, err := db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(tag))
+			require.NoError(t, err)
+			require.Equal(t, store.FoundryRebuildQueued, done)
+			waiting(f)
+			sampled(t, tag)
+			got, err := store.RebuildFoundryLoads(ctx, db, cutover)
+			require.NoError(t, err)
+			require.Equal(t, store.FoundryRebuilds{Samples: []string{f.ontology.ID}}, got)
+			rebuild, err := db.GetFoundryGraphJob(ctx, f.ontology.ID, id26("RB-"+tag))
+			require.NoError(t, err)
+			require.Equal(t, model.FoundryGraphJobCancelled, rebuild.Status)
+			return f
+		}
+		nothing := func(foundryFixture) {}
+
+		t.Run("a delete it went ahead of", func(t *testing.T) {
+			ctx := context.Background()
+			var older string
+			f := queuedSample(t, "RWD", func(f foundryFixture) {
+				older = *f.ontologyNow(t).CurrentLoadID
+				second := loadJob(f.ontology, "R2RWD")
+				second.VersionID = id26("FV-RRWD")
+				require.NoError(t, f.db.CreateFoundryLoad(ctx, second))
+				f.loaded(t, "w-RWD2")
+				earlier(t, second.LoadID)
+				require.NoError(t, f.db.DeleteFoundryLoad(ctx, f.ontology.WorkspaceID, f.ontology.ID, older, id26("FN-D-RWD")))
+			}, nothing)
+			del, err := f.db.GetFoundryGraphJob(ctx, f.ontology.ID, id26("FN-D-RWD"))
+			require.NoError(t, err)
+			assert.Equal(t, model.FoundryGraphJobCancelled, del.Status, "the rebuild went ahead of it")
+			live := f.liveJob(t)
+			require.NotNil(t, live, "the delete resumes")
+			assert.Equal(t, model.FoundryGraphJobDelete, live.Kind)
+			assert.Equal(t, older, live.LoadID)
+			assert.Equal(t, model.FoundryLoadDeleted, f.loadStatus(t, id26("RB-RWD")))
+		})
+
+		t.Run("an approval's resend and a refresh", func(t *testing.T) {
+			ctx := context.Background()
+			f := queuedSample(t, "RWS", nothing, func(f foundryFixture) {
+				// As queueFoundryResendBehind owes it behind a live job, and a
+				// rebuild that went ahead of an apply owes its refresh.
+				_, err := testDB.ExecContext(ctx, `INSERT INTO foundry_load_resends (load_id, document_id, reason) VALUES (?, ?, ?)`,
+					*f.ontologyNow(t).CurrentLoadID, id26("FD-RWS"), string(model.FoundryResendApproval))
+				require.NoError(t, err)
+				_, err = testDB.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NOW(6) WHERE id=?`, f.ontology.ID)
+				require.NoError(t, err)
+			})
+			live := f.liveJob(t)
+			require.NotNil(t, live, "the resend is queued")
+			assert.Equal(t, model.FoundryGraphJobResend, live.Kind)
+			assert.Equal(t, *f.ontologyNow(t).CurrentLoadID, live.LoadID)
+			assert.NotNil(t, f.ontologyNow(t).RefreshDueAt, "the refresh stays owed, for the next tick")
+			assert.Equal(t, model.FoundryLoadDeleted, f.loadStatus(t, id26("RB-RWS")))
+		})
+
+		// The extract's budget is a worker's to read: the load is left to a
+		// delete job, whose end queues it.
+		t.Run("documents to extract", func(t *testing.T) {
+			f := queuedSample(t, "RWX", nothing, func(f foundryFixture) {
+				f.uploaded(t, "RWX")
+				require.True(t, f.ontologyNow(t).ExtractOwed, "the upload waits for the rebuild's end")
+			})
+			current := *f.ontologyNow(t).CurrentLoadID
+			rebuild := id26("RB-RWX")
+			assert.Equal(t, model.FoundryLoadDeleting, f.loadStatus(t, rebuild))
+			live := f.liveJob(t)
+			require.NotNil(t, live)
+			assert.Equal(t, model.FoundryGraphJobDelete, live.Kind)
+			assert.Equal(t, rebuild, live.LoadID)
+
+			job, finish := f.finish(t, "w-RWX", "RWX", model.FoundryGraphJobSucceeded)
+			require.Equal(t, model.FoundryGraphJobDelete, job.Kind)
+			require.Equal(t, model.FoundryGraphJobEnded, finish)
+			assert.Equal(t, model.FoundryLoadDeleted, f.loadStatus(t, rebuild))
+			assert.False(t, f.ontologyNow(t).ExtractOwed)
+			live = f.liveJob(t)
+			require.NotNil(t, live, "the extract is queued")
+			assert.Equal(t, model.FoundryGraphJobExtract, live.Kind)
+			assert.Equal(t, current, live.LoadID)
+		})
+	})
+
+	// A worker's claim and the withdrawal both lock the rebuild's job row:
+	// whichever goes first, a running rebuild's load is never deleted.
+	t.Run("never withdraws a rebuild a worker claims at once", func(t *testing.T) {
+		ctx := context.Background()
+		db := newTestStore(t)
+		for i := range 6 {
+			tag := fmt.Sprintf("RWR%d", i+1)
+			f := earlierLoad(t, db, id26("FWS-"+tag), tag, false)
+			done, err := db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(tag))
+			require.NoError(t, err)
+			require.Equal(t, store.FoundryRebuildQueued, done)
+			sampled(t, tag)
+			var claimed *model.FoundryGraphJob
+			var withdrew store.FoundryRebuild
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				job, err := db.ClaimFoundryGraphJob(ctx, "w-"+tag, time.Minute)
+				assert.NoError(t, err)
+				claimed = job
+			}()
+			go func() {
+				defer wg.Done()
+				done, err := db.QueueFoundryRebuild(ctx, f.ontology.WorkspaceID, f.ontology.ID, cutover, rebuildJob(tag+"b"))
+				assert.NoError(t, err)
+				withdrew = done
+			}()
+			wg.Wait()
+			rebuild := id26("RB-" + tag)
+			job, err := db.GetFoundryGraphJob(ctx, f.ontology.ID, rebuild)
+			require.NoError(t, err)
+			if claimed != nil {
+				assert.Equal(t, rebuild, claimed.ID)
+				assert.Equal(t, store.FoundryRebuildUnderWay, withdrew)
+				assert.Equal(t, model.FoundryGraphJobRunning, job.Status)
+				assert.Equal(t, model.FoundryLoadWriting, f.loadStatus(t, rebuild))
+				continue
+			}
+			assert.Equal(t, store.FoundryRebuildSample, withdrew)
+			assert.Equal(t, model.FoundryGraphJobCancelled, job.Status)
+			assert.Equal(t, model.FoundryLoadDeleted, f.loadStatus(t, rebuild))
+		}
+	})
+
 	// A run over a mix queues only the customers' loads, and withdraws the
 	// samples' rebuilds an earlier run queued ahead of them, so workers
 	// claim the customers' rebuilds and nothing else.

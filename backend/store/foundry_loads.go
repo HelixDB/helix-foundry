@@ -246,8 +246,11 @@ const MaxFoundryRebuilds = 3
 // A sample's load is never rebuilt (FoundryRebuildSample). A rebuild of it
 // that is queued and never started is withdrawn: cancelled, and its load,
 // of which nothing reached the database, deleted at once, so no job of it
-// is left in the queue. One that started runs to its end
-// (FoundryRebuildUnderWay).
+// is left in the queue. What a job's end would have queued is queued then:
+// a resend the current load owes, or a delete a load waits for. While the
+// ontology owes an extract, whose budget only a worker knows, the load is
+// left to a delete job instead, whose end queues it. One that started runs
+// to its end (FoundryRebuildUnderWay).
 func (s *mysqlDB) QueueFoundryRebuild(ctx context.Context, workspaceID, ontologyID string, before time.Time,
 	job *model.FoundryGraphJob) (FoundryRebuild, error) {
 	var done FoundryRebuild
@@ -289,13 +292,30 @@ WHERE l.id=?`, *o.CurrentLoadID).Scan(&versionID, &createdAt, &sample); err != n
 			if err := tx.cancelLiveFoundryGraphJob(ctx, o.ID, "a sample's load is not rebuilt"); err != nil {
 				return err
 			}
+			// What arrived while it waited was left to its end
+			// (queueAfterFoundryGraphJob), so it is queued now. An owed
+			// extract waits on a budget only a worker knows: the load is
+			// left to a delete job, whose end queues the extract.
+			if o.ExtractOwed {
+				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting', finished_at=NOW(6)
+WHERE id=? AND status='writing'`, live.LoadID); err != nil {
+					return err
+				}
+				return tx.queueNextFoundryDelete(ctx, o, id.New())
+			}
 			// It never started, so nothing of its load reached the database:
 			// the load is deleted here, with no delete job to wait for.
 			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleted', deleted_at=NOW(6), finished_at=NOW(6)
 WHERE id=? AND status='writing'`, live.LoadID); err != nil {
 				return err
 			}
-			return tx.dropFoundryLoadRows(ctx, live.LoadID)
+			if err := tx.dropFoundryLoadRows(ctx, live.LoadID); err != nil {
+				return err
+			}
+			if queued, err := tx.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: id.New()}, 0, true); err != nil || queued {
+				return err
+			}
+			return tx.queueNextFoundryDelete(ctx, o, id.New())
 		}
 		switch {
 		case live == nil, live.Kind == model.FoundryGraphJobDelete:
