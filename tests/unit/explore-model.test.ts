@@ -1173,6 +1173,37 @@ describe("an entity's page, laid out", () => {
     expect(propertyViews({ name: "x", note: "" }, [], [])).toEqual([]);
   });
 
+  it("agrees on a datetime's quote, both read back as Helix's DateTime", () => {
+    // The stored value and the evidence's are both DateTimes, rendered as
+    // `…mmmZ`: one instant reads the same on both sides.
+    const q = (value: string, documentId: string): PropEvidence => ({
+      prop: "signed_at",
+      value,
+      documentId,
+      section: 0,
+      start: 0,
+      end: 1,
+      quote: value,
+    });
+    const [view] = propertyViews(
+      { signed_at: "2026-03-14T08:30:00.000Z" },
+      [],
+      [
+        q("2026-03-14T08:30:00.000Z", "d1"),
+        q("2026-03-14T08:30:00.001Z", "d2"),
+      ],
+    );
+    expect([
+      view!.value,
+      view!.quotes.map((x) => x.documentId),
+      view!.others.map((o) => [o.value, o.quotes.length]),
+    ]).toEqual([
+      "2026-03-14T08:30:00.000Z",
+      ["d1"],
+      [["2026-03-14T08:30:00.001Z", 1]],
+    ]);
+  });
+
   it("compares values as the load does, and keeps the layout's props out", () => {
     expect(sameValue(" A  b ", "a b")).toBe(true);
     expect(sameValue("ﬁle", "file")).toBe(true);

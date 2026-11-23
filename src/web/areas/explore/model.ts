@@ -10,6 +10,7 @@ import {
   type Ast,
   type DynamicQueryRequest,
   type ReadEntry,
+  type ReadParam,
 } from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
@@ -1615,13 +1616,17 @@ const scoredIn = (
   ];
   return predicates.length ? where(input, { and: { predicates } }) : input;
 };
-const rangeParams = (range: ScoreRange, from: string, below: string) => ({
+const rangeParams = (
+  range: ScoreRange,
+  from: string,
+  below: string,
+): Record<string, ReadParam> => ({
   ...(range.from === undefined
     ? {}
-    : { [from]: { value: range.from, type: "f64" } }),
+    : { [from]: { value: range.from, type: "f64" as const } }),
   ...(range.below === undefined
     ? {}
-    : { [below]: { value: range.below, type: "f64" } }),
+    : { [below]: { value: range.below, type: "f64" as const } }),
 });
 
 /** How many reviews a load holds: a bitmap count. */

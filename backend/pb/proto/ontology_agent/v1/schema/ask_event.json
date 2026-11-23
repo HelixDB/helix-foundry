@@ -39,7 +39,7 @@
           "const": "tool_call"
         },
         "input": {
-          "description": "Its input as the model wrote it; a query is the typed query itself."
+          "description": "Its input as the model wrote it; a query is the typed query itself. A `helix_query`\nread is shown as written, before its tests of a datetime against text become tests\nof an instant kept to the millisecond; one testing a datetime's text (`contains`,\n`ends_with`, or text that names no time) is refused, its result an error."
         },
         "tool": {
           "description": "The tool.",

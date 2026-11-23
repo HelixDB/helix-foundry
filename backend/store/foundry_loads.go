@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/helixdb/helix-foundry/backend/store/model"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // FoundryLoadRefusal is why a load can't be made current or deleted now,
@@ -175,12 +177,224 @@ WHERE l.id=? AND o.refresh_cause_run_id IS NOT NULL`, job.LoadID); err != nil {
 	return queued, err
 }
 
+// FoundryRebuild is what QueueFoundryRebuild did for one ontology.
+type FoundryRebuild int
+
+const (
+	// FoundryRebuildQueued is a rebuild queued: a refresh load of the current
+	// load's version, which replaces that load once it holds every document
+	// the current load held.
+	FoundryRebuildQueued FoundryRebuild = iota + 1
+	// FoundryRebuildNotOwed is an ontology with no current load, or whose
+	// current load was created at or after the cutover: nothing to rebuild.
+	FoundryRebuildNotOwed
+	// FoundryRebuildUnderWay is an ontology whose live job is a rebuild
+	// already: a refresh load of its current load created at or after the
+	// cutover, by this engine.
+	FoundryRebuildUnderWay
+	// FoundryRebuildBusy is an ontology with another live job: queue it
+	// again once that ends.
+	FoundryRebuildBusy
+	// FoundryRebuildGaveUp is an ontology whose current load
+	// MaxFoundryRebuilds rebuilds ended without replacing: none is queued
+	// again. A load a person starts, or a refresh, still replaces it.
+	FoundryRebuildGaveUp
+)
+
+// MaxFoundryRebuilds is how many rebuilds of one current load may end
+// without replacing it (failed, or partial without everything it held)
+// before QueueFoundryRebuild queues no more: each loads every table again,
+// and one that can't succeed (a database that refuses writes, documents
+// with no budget left to read) would do so on every run.
+const MaxFoundryRebuilds = 3
+
+// QueueFoundryRebuild queues a rebuild of the ontology's current load, with
+// job's id, when that load was created before `before`: a full refresh load
+// of its version, as QueueFoundryRefresh queues with apply off, whatever the
+// ontology's refresh setting or when its refresh is due. A refresh loads the
+// tables again, replays the saved extractions of the documents the current
+// load holds (at no model cost unless the engine, its prompts or its models
+// changed), and replaces the current load only once it holds them all
+// (FinishFoundryGraphJob), so a rebuild that fails leaves the load it
+// rebuilds current. It is how loads an earlier engine wrote are written
+// again by this one (RebuildFoundryLoads); its job's client token is
+// model.FoundryRebuildToken and its id.
+//
+// A live apply gives way, as it does to a person's load: it is cancelled,
+// the current load keeps what it wrote, and the ontology owes the refresh
+// again, which runs once the rebuild ends (an apply to the rebuilt load, or
+// to the old one if the rebuild failed). A live delete gives way as to any
+// load (CreateFoundryLoad). Any other live job queues nothing: a refresh of
+// the current load created at or after before is the rebuild
+// (FoundryRebuildUnderWay), any other holds it back (FoundryRebuildBusy), an
+// earlier engine's refresh included, since what it writes is that engine's.
+// Nor does it queue one for a current load created at or after before
+// (FoundryRebuildNotOwed, the rebuild's once it is current), or once
+// MaxFoundryRebuilds rebuilds of the current load ended without replacing
+// it (FoundryRebuildGaveUp; a cancelled one doesn't count), so running it
+// again is safe. A refresh the ontology owes stays owed. ErrNotFound means
+// the ontology is not live.
+func (s *mysqlDB) QueueFoundryRebuild(ctx context.Context, workspaceID, ontologyID string, before time.Time,
+	job *model.FoundryGraphJob) (FoundryRebuild, error) {
+	var done FoundryRebuild
+	err := s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, ontologyID)
+		if err != nil {
+			return err
+		}
+		done = FoundryRebuildNotOwed
+		if o.CurrentLoadID == nil {
+			return nil
+		}
+		var versionID string
+		var createdAt time.Time
+		if err := tx.db.QueryRowContext(ctx, `SELECT version_id, created_at FROM foundry_loads WHERE id=?`, *o.CurrentLoadID).
+			Scan(&versionID, &createdAt); err != nil {
+			return fmt.Errorf("read current load %s: %w", *o.CurrentLoadID, err)
+		}
+		if !createdAt.Before(before) {
+			return nil
+		}
+		live, err := tx.liveFoundryGraphJob(ctx, o.ID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case live == nil, live.Kind == model.FoundryGraphJobDelete:
+		case live.Kind == model.FoundryGraphJobApply:
+			if err := tx.cancelLiveFoundryGraphJob(ctx, o.ID, "a rebuild of the load went first; the refresh runs after it"); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=COALESCE(refresh_due_at, NOW(6)) WHERE id=?`,
+				o.ID); err != nil {
+				return err
+			}
+		case live.Kind == model.FoundryGraphJobLoad:
+			done = FoundryRebuildBusy
+			var origin string
+			var refreshes sql.NullString
+			var liveCreated time.Time
+			if err := tx.db.QueryRowContext(ctx, `SELECT origin, refreshes_load_id, created_at FROM foundry_loads WHERE id=?`, live.LoadID).
+				Scan(&origin, &refreshes, &liveCreated); err != nil {
+				return fmt.Errorf("read live load %s: %w", live.LoadID, err)
+			}
+			if origin == string(model.FoundryLoadByRefresh) && refreshes.String == *o.CurrentLoadID && !liveCreated.Before(before) {
+				done = FoundryRebuildUnderWay
+			}
+			return nil
+		default:
+			done = FoundryRebuildBusy
+			return nil
+		}
+		// Every rebuild of the current load that ended did so without
+		// replacing it: one that did would have made a load created since
+		// before current.
+		var ended int
+		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_load_jobs j JOIN foundry_loads l ON l.id = j.load_id
+WHERE l.ontology_id=? AND l.refreshes_load_id=? AND j.id = l.id AND j.client_token LIKE ? AND j.active_key IS NULL AND j.status<>'cancelled'`,
+			o.ID, *o.CurrentLoadID, model.FoundryRebuildToken+"%").Scan(&ended); err != nil {
+			return fmt.Errorf("count rebuilds of %s: %w", *o.CurrentLoadID, err)
+		}
+		if ended >= MaxFoundryRebuilds {
+			done = FoundryRebuildGaveUp
+			return nil
+		}
+		token := model.FoundryRebuildToken + job.ID
+		job.ClientToken = &token
+		if err := tx.queueFullFoundryRefresh(ctx, o, versionID, job); err != nil {
+			return err
+		}
+		done = FoundryRebuildQueued
+		return nil
+	})
+	return done, err
+}
+
+// ListFoundryRebuilds returns up to limit live ontologies whose current load
+// was created before `before`, by id after afterID (empty starts at the
+// first): those QueueFoundryRebuild would rebuild. One a live job holds
+// back stays listed, so a caller pages past it.
+func (s *mysqlDB) ListFoundryRebuilds(ctx context.Context, before time.Time, afterID string, limit int) ([]*model.FoundryOntology, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+foundryOntologyColumns+` FROM foundry_ontologies o
+WHERE o.deleted_at IS NULL AND o.id > ?
+  AND EXISTS (SELECT 1 FROM foundry_loads l WHERE l.id = o.current_load_id AND l.created_at < ?)
+ORDER BY o.id LIMIT ?`, afterID, before.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, scanFoundryOntology)
+}
+
+// FoundryRebuilds is what RebuildFoundryLoads did, by ontology: the
+// rebuilds it queued, those an earlier run queued that are still live,
+// those another live job held back, which a later run queues once it ends,
+// and those it gave up on (FoundryRebuildGaveUp), whose earlier-engine load
+// stays current until a person loads the ontology again. Once Queued,
+// UnderWay and Busy are all empty, nothing is left to queue or to wait for.
+type FoundryRebuilds struct {
+	Queued   []string
+	UnderWay []string
+	Busy     []string
+	GaveUp   []string
+}
+
+// rebuildPage is how many ontologies RebuildFoundryLoads reads at a time.
+const rebuildPage = 100
+
+// RebuildFoundryLoads queues a rebuild (QueueFoundryRebuild) of the current
+// load of every live ontology whose current load was created before
+// `before`: the cutover to an engine that writes the graph differently, such
+// as the one that writes Helix's typed DateTime. Hosted runs it once per
+// stamp after that engine is deployed; a standalone install runs it at its
+// first start of such a release, and `foundry rebuild-loads` runs it on
+// demand. It reads the ontologies a page at a time by id, and goes on past
+// one it can't queue, returning every such failure joined. Running it again
+// queues the rebuilds a live job held back (Busy) and those of rebuilds that
+// failed, up to MaxFoundryRebuilds a load (GaveUp after), none for a rebuild
+// still live (UnderWay), and none for a load a rebuild already replaced.
+func RebuildFoundryLoads(ctx context.Context, db Store, before time.Time) (FoundryRebuilds, error) {
+	var out FoundryRebuilds
+	var failed []error
+	for after := ""; ; {
+		owed, err := db.ListFoundryRebuilds(ctx, before, after, rebuildPage)
+		if err != nil {
+			return out, errors.Join(append(failed, fmt.Errorf("list ontologies to rebuild: %w", err))...)
+		}
+		for _, o := range owed {
+			done, err := db.QueueFoundryRebuild(ctx, o.WorkspaceID, o.ID, before, &model.FoundryGraphJob{ID: id.New()})
+			switch {
+			case errors.Is(err, ErrNotFound):
+				// Deleted since it was listed.
+			case err != nil:
+				failed = append(failed, fmt.Errorf("rebuild ontology %s: %w", o.ID, err))
+			case done == FoundryRebuildQueued:
+				out.Queued = append(out.Queued, o.ID)
+			case done == FoundryRebuildUnderWay:
+				out.UnderWay = append(out.UnderWay, o.ID)
+			case done == FoundryRebuildBusy:
+				out.Busy = append(out.Busy, o.ID)
+			case done == FoundryRebuildGaveUp:
+				out.GaveUp = append(out.GaveUp, o.ID)
+			}
+		}
+		if len(owed) < rebuildPage {
+			return out, errors.Join(failed...)
+		}
+		after = owed[len(owed)-1].ID
+	}
+}
+
 // queueFullFoundryRefresh queues job as a refresh load of versionID that
-// replaces the ontology's current load. The caller holds the ontology's lock.
+// replaces the ontology's current load, with job's client token, else
+// "refresh:" and its id. The caller holds the ontology's lock.
 func (s *mysqlDB) queueFullFoundryRefresh(ctx context.Context, o *model.FoundryOntology, versionID string, job *model.FoundryGraphJob) error {
-	token := "refresh:" + job.ID
+	if job.ClientToken == nil {
+		token := "refresh:" + job.ID
+		job.ClientToken = &token
+	}
 	job.WorkspaceID, job.OntologyID, job.VersionID, job.LoadID = o.WorkspaceID, o.ID, versionID, job.ID
-	job.Kind, job.Phase, job.ClientToken = model.FoundryGraphJobLoad, model.FoundryGraphJobProvisioning, &token
+	job.Kind, job.Phase = model.FoundryGraphJobLoad, model.FoundryGraphJobProvisioning
 	job.Origin, job.RefreshesLoadID = model.FoundryLoadByRefresh, o.CurrentLoadID
 	return s.createFoundryLoad(ctx, job)
 }

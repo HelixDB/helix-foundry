@@ -64,6 +64,7 @@ func ExampleFoundryPropType_DecisionValue() {
 	}{
 		{FoundryPropDate, `"2026-03"`},
 		{FoundryPropDateTime, `"2026-03-14T09:30:00+01:00"`},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00.250999Z"`},
 		{FoundryPropString, `"  signed "`},
 		{FoundryPropInteger, `null`},
 		{FoundryPropInteger, `"12"`},
@@ -76,6 +77,7 @@ func ExampleFoundryPropType_DecisionValue() {
 	// Output:
 	// "2026-03" false
 	// "2026-03-14T08:30:00Z" false
+	// "2026-03-14T08:30:00.250Z" false
 	// "signed" false
 	// null false
 	//  true
@@ -230,11 +232,30 @@ func TestFoundryDecisionValue(t *testing.T) {
 		{FoundryPropDate, `"+026"`, ``},
 		{FoundryPropDate, `"no"`, ``},
 		{FoundryPropDateTime, `"2026-10-19T20:00:00Z"`, `"2026-10-19T20:00:00Z"`},
+		{FoundryPropDateTime, `"2026-10-19T20:00:00.000Z"`, `"2026-10-19T20:00:00Z"`},
+		{FoundryPropDateTime, `" 2026-10-19T20:00:00Z "`, `"2026-10-19T20:00:00Z"`},
 		{FoundryPropDateTime, `"2026-03-14T09:30:00.25+01:00"`, `"2026-03-14T08:30:00.250Z"`},
-		{FoundryPropDateTime, `"2026-03-14T08:30:00.0001Z"`, `"2026-03-14T08:30:00.000100Z"`},
-		{FoundryPropDateTime, `"2026-03-14T08:30:00.000000001Z"`, `"2026-03-14T08:30:00.000000001Z"`},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00.5Z"`, `"2026-03-14T08:30:00.500Z"`},
+		// Kept to the millisecond, as Helix's DateTime holds it: finer digits
+		// are dropped, never rounded.
+		{FoundryPropDateTime, `"2026-03-14T08:30:00.0001Z"`, `"2026-03-14T08:30:00Z"`},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00.000000001Z"`, `"2026-03-14T08:30:00Z"`},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00.123999Z"`, `"2026-03-14T08:30:00.123Z"`},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00.999999999Z"`, `"2026-03-14T08:30:00.999Z"`},
+		// Before 1970 the millisecond is floored too.
+		{FoundryPropDateTime, `"1969-12-31T23:59:59.9995Z"`, `"1969-12-31T23:59:59.999Z"`},
+		// An offset is taken off, across a day and a year.
+		{FoundryPropDateTime, `"2026-12-31T23:30:00-01:00"`, `"2027-01-01T00:30:00Z"`},
+		{FoundryPropDateTime, `"2026-03-14T00:30:00+01:30"`, `"2026-03-13T23:00:00Z"`},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00-00:00"`, `"2026-03-14T08:30:00Z"`},
+		// The UTC year has four digits: 0000 to 9999 once the offset is off.
+		{FoundryPropDateTime, `"0000-01-01T00:00:00Z"`, `"0000-01-01T00:00:00Z"`},
+		{FoundryPropDateTime, `"0000-01-01T01:00:00+01:00"`, `"0000-01-01T00:00:00Z"`},
+		{FoundryPropDateTime, `"9999-12-31T23:59:59.999999Z"`, `"9999-12-31T23:59:59.999Z"`},
 		{FoundryPropDateTime, `"0000-01-01T00:30:00+01:00"`, ``},
 		{FoundryPropDateTime, `"9999-12-31T23:30:00-01:00"`, ``},
+		{FoundryPropDateTime, `"2026-03-14T08:30:00"`, ``},
+		{FoundryPropDateTime, `"2026-02-30T08:30:00Z"`, ``},
 		{FoundryPropDateTime, `"2026-10-19"`, ``},
 		{FoundryPropDateTime, `1`, ``},
 		{FoundryPropString, `null`, `null`},
@@ -302,6 +323,16 @@ props = { name = "string" }`)
 		{"Seat", "i42|t2026-03-14", false},
 		{"Seat", "i42|t2026-03-14T09:30:00+01:00", false},
 		{"Seat", "i42|t2026-03-14T08:30:00.25Z", false},
+		// A key's datetime is kept to the millisecond, with no zero fraction:
+		// one the engine wrote finer than that, or Helix's rendering, is no
+		// encoding the engine makes now.
+		{"Seat", "i42|t2026-03-14T08:30:00.000Z", false},
+		{"Seat", "i42|t2026-03-14T08:30:00.000100Z", false},
+		{"Seat", "i42|t2026-03-14T08:30:00.250900Z", false},
+		{"Seat", "i42|t2026-03-14T08:30:00.000000001Z", false},
+		{"Seat", "i42|t0000-01-01T00:00:00Z", true},
+		{"Seat", "i42|t9999-12-31T23:59:59.999Z", true},
+		{"Seat", "i42|t1969-12-31T23:59:59.999Z", true},
 		{"Seat", "x1|t2026-03-14T08:30:00Z", false},
 		// A float or boolean can't key; the engine refuses such a type.
 		{"Score", "s1.5", false},

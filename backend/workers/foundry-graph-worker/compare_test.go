@@ -144,6 +144,27 @@ func TestRebuildDrift(t *testing.T) {
 		}
 	})
 
+	// A rebuild of a load an earlier engine wrote differs by how the engines
+	// write, not by what the applies did: it is not compared.
+	t.Run("leaves a rebuild of an earlier engine's load alone", func(t *testing.T) {
+		h := newHarness(t)
+		applied := time.Now()
+		job := rebuildJob(h, &applied)
+		token := model.FoundryRebuildToken + job.ID
+		job.ClientToken = &token
+		h.agent.compare = func(string) string { return compared(t, factDiffers) }
+		drifted := testutil.ToFloat64(rebuilds.WithLabelValues("drifted"))
+		if outcome := h.run(t, job); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+		if len(h.agent.compares) != 0 {
+			t.Fatalf("compares = %v", h.agent.compares)
+		}
+		if got := testutil.ToFloat64(rebuilds.WithLabelValues("drifted")) - drifted; got != 0 {
+			t.Fatalf("drifted rebuilds = %v", got)
+		}
+	})
+
 	// The comparison only measures: an agent that can't compare fails nothing.
 	t.Run("finishes the rebuild when the comparison fails", func(t *testing.T) {
 		h := newHarness(t)

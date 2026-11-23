@@ -1031,7 +1031,10 @@ describe("source matrix", () => {
     ]);
     expect(row("Invoice").cells).toEqual([
       null,
-      { role: "creates", props: ["amount_due", "invoice_id", "status"] },
+      {
+        role: "creates",
+        props: ["amount_due", "created_at", "invoice_id", "status"],
+      },
       null,
     ]);
     expect(m.links).toEqual([

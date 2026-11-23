@@ -47,6 +47,13 @@ const (
 	FoundryLoadByRefresh FoundryLoadOrigin = "refresh"
 )
 
+// FoundryRebuildToken prefixes the client token of a rebuild's load job
+// (store.QueueFoundryRebuild): a refresh load that writes again, with a
+// later engine, a current load an earlier one wrote. Telling it from other
+// refreshes, the graph worker doesn't measure it as apply drift, and the
+// store counts the rebuilds of a load that ended without replacing it.
+const FoundryRebuildToken = "rebuild:"
+
 // FoundryLoadStatus is where a load is in its life.
 type FoundryLoadStatus string
 

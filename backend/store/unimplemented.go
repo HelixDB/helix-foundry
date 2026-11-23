@@ -805,6 +805,14 @@ func (u Unimplemented) QueueFoundryRefresh(context.Context, string, string, *mod
 	u.unimplemented("QueueFoundryRefresh")
 	return false, nil
 }
+func (u Unimplemented) QueueFoundryRebuild(context.Context, string, string, time.Time, *model.FoundryGraphJob) (FoundryRebuild, error) {
+	u.unimplemented("QueueFoundryRebuild")
+	return 0, nil
+}
+func (u Unimplemented) ListFoundryRebuilds(context.Context, time.Time, string, int) ([]*model.FoundryOntology, error) {
+	u.unimplemented("ListFoundryRebuilds")
+	return nil, nil
+}
 func (u Unimplemented) ListFoundryRereads(context.Context, []string, string, int) ([]*model.FoundryOntology, error) {
 	u.unimplemented("ListFoundryRereads")
 	return nil, nil
