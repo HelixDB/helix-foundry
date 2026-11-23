@@ -18725,8 +18725,8 @@ type FoundryAutomation struct {
 	ApprovedSpecRevision int64                  `protobuf:"varint,12,opt,name=approved_spec_revision,json=approvedSpecRevision,proto3" json:"approved_spec_revision,omitempty"`
 	ApprovedAt           *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=approved_at,json=approvedAt,proto3" json:"approved_at,omitempty"`
 	// Its trigger's kind (schedule, sync_finished, load_ready,
-	// document_arrived, generation_finished or manual) and the connector,
-	// ontology or document set an event trigger listens to.
+	// document_arrived, generation_finished, reviews_waiting or manual) and the
+	// connector, ontology or document set an event trigger listens to.
 	TriggerKind   string `protobuf:"bytes,14,opt,name=trigger_kind,json=triggerKind,proto3" json:"trigger_kind,omitempty"`
 	TriggerTarget string `protobuf:"bytes,15,opt,name=trigger_target,json=triggerTarget,proto3" json:"trigger_target,omitempty"`
 	// An active schedule's next time.

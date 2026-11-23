@@ -10214,7 +10214,7 @@
         },
         "triggerKind": {
           "type": "string",
-          "description": "Its trigger's kind (schedule, sync_finished, load_ready,\ndocument_arrived, generation_finished or manual) and the connector,\nontology or document set an event trigger listens to."
+          "description": "Its trigger's kind (schedule, sync_finished, load_ready,\ndocument_arrived, generation_finished, reviews_waiting or manual) and the\nconnector, ontology or document set an event trigger listens to."
         },
         "triggerTarget": {
           "type": "string"

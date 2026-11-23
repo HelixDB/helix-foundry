@@ -3366,8 +3366,8 @@ message FoundryAutomation {
   int64 approved_spec_revision = 12;
   google.protobuf.Timestamp approved_at = 13;
   // Its trigger's kind (schedule, sync_finished, load_ready,
-  // document_arrived, generation_finished or manual) and the connector,
-  // ontology or document set an event trigger listens to.
+  // document_arrived, generation_finished, reviews_waiting or manual) and the
+  // connector, ontology or document set an event trigger listens to.
   string trigger_kind = 14;
   string trigger_target = 15;
   // An active schedule's next time.
