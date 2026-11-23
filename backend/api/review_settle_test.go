@@ -27,6 +27,8 @@ type batchGraph struct {
 	// limits are the count each review read asked for.
 	limits []int
 	reads  map[string]int
+	// asking is the documents whose reviews ask about any name read.
+	asking []string
 }
 
 func (g *batchGraph) ReadQuery(_ context.Context, _ string, query []byte) (int, []byte, error) {
@@ -36,6 +38,9 @@ func (g *batchGraph) ReadQuery(_ context.Context, _ string, query []byte) (int, 
 	switch {
 	case strings.Contains(q, `"properties":["doc_id","reason","entity_key"]`):
 		g.reads["asking"]++
+		for _, doc := range g.asking {
+			items = append(items, map[string]any{"doc_id": doc, "reason": "unresolved"})
+		}
 	case strings.Contains(q, `"FoundryReview"`):
 		g.reads["reviews"]++
 		var parsed struct {
@@ -231,6 +236,30 @@ func TestBatchSettleSaves(t *testing.T) {
 	}
 	if db.readsAtSave != len(*g.queries) {
 		t.Fatalf("%d reads after the save", len(*g.queries)-db.readsAtSave)
+	}
+}
+
+// A batch reads a name's asking documents once, for its links: "not in
+// data" of the same name in another document is handed none, so it owes no
+// resend of them, whichever item comes first.
+func TestBatchSettleNotInDataAsksNone(t *testing.T) {
+	reviews := map[string]string{
+		"linked": nameReview,
+		"none":   `{"reason":"unresolved","type":"Customer","doc_id":"doc-b","norm_name":"variant"}`,
+	}
+	link, none := settleItem("linked", resolveChoice("customer-1")), settleItem("none", noneChoice())
+	for name, items := range map[string][]*foundryv1.FoundryReviewSettleItem{"link first": {link, none}, "not in data first": {none, link}} {
+		t.Run(name, func(t *testing.T) {
+			s, db, g := batchService(t, reviews, "customer-1")
+			g.asking = []string{"doc-c", "doc-d"}
+			if _, err := s.BatchSettleFoundryReviews(ports.WithActor(context.Background(), reviewer), batchRequest(true, items...)); err != nil {
+				t.Fatal(err)
+			}
+			none, saved := db.askingOf["doc-b"]
+			if g.reads["asking"] != 1 || !slices.Equal(db.askingOf["doc-a"], g.asking) || !saved || none != nil {
+				t.Fatalf("reads %v, asking %v", g.reads, db.askingOf)
+			}
+		})
 	}
 }
 

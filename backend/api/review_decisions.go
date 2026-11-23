@@ -338,7 +338,14 @@ func (s *Service) settleReviews(ctx context.Context, o *foundrymodel.FoundryOnto
 		if it.d.Kind == foundrymodel.FoundryReviewResolve {
 			item.Name = foundrymodel.FoundryNameLinked{}
 			if ontologyagent.AsksAboutName(text(it.review, "reason")) {
-				item.Name = foundrymodel.FoundryNameAsking{Documents: asking[[2]string{it.d.Type, *it.d.NormName}]}
+				// Only a link reaches the other documents asking about the
+				// name (as an alias): "not in data" names none, though
+				// another item of the batch read them.
+				var docs []string
+				if it.d.EntityKey != nil {
+					docs = asking[[2]string{it.d.Type, *it.d.NormName}]
+				}
+				item.Name = foundrymodel.FoundryNameAsking{Documents: docs}
 			}
 		}
 		batch, at = append(batch, item), append(at, i)

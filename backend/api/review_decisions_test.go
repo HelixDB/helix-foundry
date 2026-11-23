@@ -54,6 +54,8 @@ type decisionStore struct {
 	// askingReviews what the read of a name's reviews answers.
 	asking        []string
 	askingReviews string
+	// askingOf is the documents each resolve was handed, by its document.
+	askingOf map[string][]string
 	// batches are the sizes of the batches settled, expectOpen the last's;
 	// decidedBy is who decided first when saveErr says another did.
 	batches    []int
@@ -128,6 +130,10 @@ func (s *decisionStore) SettleFoundryReviews(_ context.Context, ws, o, load stri
 			if asking, ok := it.Name.(foundrymodel.FoundryNameAsking); ok {
 				d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
 				s.asking, owes = asking.Documents, true
+				if s.askingOf == nil {
+					s.askingOf = map[string][]string{}
+				}
+				s.askingOf[*d.DocID] = asking.Documents
 			}
 		default:
 			d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
