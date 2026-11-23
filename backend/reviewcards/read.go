@@ -74,11 +74,8 @@ func ParseRead(body []byte, docIDs []string) (Read, error) {
 			DocID      string   `json:"doc_id"`
 			Confidence *float64 `json:"confidence"`
 		} `json:"evidence"`
-		Reviews  []map[string]json.RawMessage `json:"reviews"`
-		Concerns []struct {
-			From int64 `json:"$from"`
-			To   int64 `json:"$to"`
-		} `json:"review_concerns"`
+		Reviews   []map[string]json.RawMessage `json:"reviews"`
+		Concerns  []edge                       `json:"review_concerns"`
 		Concerned []map[string]json.RawMessage `json:"concerned"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -102,9 +99,26 @@ func ParseRead(body []byte, docIDs []string) (Read, error) {
 			q[BandOf(score(e.Confidence))]++
 		}
 	}
-	// The entities: an ontology's, by the identity a review names it by.
+	for _, r := range parseReviews(response.Reviews, response.Concerns, response.Concerned) {
+		if read.Present[r.DocID] {
+			read.Reviews[r.DocID] = append(read.Reviews[r.DocID], r)
+		}
+	}
+	return read, nil
+}
+
+// edge is an edge of a read: its ends' ids.
+type edge struct {
+	From int64 `json:"$from"`
+	To   int64 `json:"$to"`
+}
+
+// parseReviews reads a read's reviews, each once, with the entities each
+// concerns (an ontology's, by the identity a review names it by), nothing
+// of which is trusted.
+func parseReviews(reviews []map[string]json.RawMessage, concerns []edge, concernedRows []map[string]json.RawMessage) []*Review {
 	entities := map[int64]Entity{}
-	for _, e := range response.Concerned {
+	for _, e := range concernedRows {
 		var id int64
 		label, key, norm := text(e["$label"]), text(e["entity_key"]), text(e["norm_name"])
 		if json.Unmarshal(e["$id"], &id) != nil || label == "" || strings.HasPrefix(label, "Foundry") || (key != "") == (norm != "") {
@@ -119,13 +133,14 @@ func ParseRead(body []byte, docIDs []string) (Read, error) {
 		entities[id] = Entity{Type: label, Key: key + norm, Props: props}
 	}
 	concerned := map[int64][]Entity{}
-	for _, c := range response.Concerns {
+	for _, c := range concerns {
 		if e, ok := entities[c.To]; ok {
 			concerned[c.From] = append(concerned[c.From], e)
 		}
 	}
-	seen = map[int64]bool{}
-	for _, item := range response.Reviews {
+	var out []*Review
+	seen := map[int64]bool{}
+	for _, item := range reviews {
 		var id int64
 		if json.Unmarshal(item["$id"], &id) != nil || seen[id] {
 			continue
@@ -136,10 +151,7 @@ func ParseRead(body []byte, docIDs []string) (Read, error) {
 			NormName: text(item["norm_name"]), EntityKey: text(item["entity_key"]), Prop: text(item["prop"]), Values: text(item["values"]),
 			SuggestedLink: text(item["suggested_link"]), Statement: text(item["statement"]), ClaimKey: text(item["claim_key"]),
 			Claim: text(item["claim"]), Section: offset(item["section"]), Start: offset(item["start"]), End: offset(item["end"]),
-			Confidence: confidence(item["confidence"]), Concerned: concerned[id],
-		}
-		if !read.Present[r.DocID] {
-			continue
+			Confidence: confidence(item["confidence"]), Quote: text(item["quote"]), Concerned: concerned[id],
 		}
 		var candidates []any
 		_ = json.Unmarshal(item["candidates"], &candidates) // best-effort: candidates that don't read are none
@@ -148,9 +160,58 @@ func ParseRead(body []byte, docIDs []string) (Read, error) {
 				r.Candidates = append(r.Candidates, key)
 			}
 		}
-		read.Reviews[r.DocID] = append(read.Reviews[r.DocID], r)
+		out = append(out, r)
 	}
-	return read, nil
+	return out
+}
+
+// MaxReviewsByKey is how many review keys one ReviewsByKeyQuery names, as
+// the site's reviewsByKeyRequest reads them.
+const MaxReviewsByKey = 200
+
+// ReviewsByKeyQuery reads load loadID's reviews of keys (at most
+// MaxReviewsByKey) with the entities they concern, every property each, as
+// the site's reviewsByKeyRequest does, and the quote each is of.
+func ReviewsByKeyQuery(loadID string, keys []string) ([]byte, error) {
+	if len(keys) == 0 || len(keys) > MaxReviewsByKey {
+		return nil, fmt.Errorf("reviewcards: a read of %d review keys", len(keys))
+	}
+	nodes := map[string]any{"nodes_where": map[string]any{"predicate": map[string]any{"and": map[string]any{"predicates": []any{
+		eq("$label", "FoundryReview"), eq("foundry_load", loadID),
+		map[string]any{"is_in": map[string]any{"value": map[string]string{"property": "review_key"}, "values": map[string]string{"param": "keys"}}},
+	}}}}}
+	concerns := func(step string) map[string]any {
+		return map[string]any{step: map[string]any{"input": ref("review_nodes"), "label": "FOUNDRY_CONCERNS"}}
+	}
+	entries := []any{
+		entry("review_nodes", nodes),
+		entry("reviews", map[string]any{"values": map[string]any{"input": ref("review_nodes"), "properties": append(slices.Clone(reviewFields), "quote")}}),
+		entry("review_concerns", map[string]any{"edge_properties": map[string]any{"input": concerns("out_e")}}),
+		entry("concerned", map[string]any{"value_map": map[string]any{"input": map[string]any{"dedup": map[string]any{"input": concerns("out")}}}}),
+	}
+	return json.Marshal(map[string]any{"request_type": "read", "query_name": "foundry_reviews_by_key", "query": map[string]any{"read": map[string]any{
+		"entries": entries, "returns": []string{"reviews", "review_concerns", "concerned"}}},
+		"parameters": map[string]any{"keys": keys}, "parameter_types": map[string]any{"keys": map[string]string{"array": "string"}}})
+}
+
+// ParseReviewsByKey reads ReviewsByKeyQuery's answer, nothing in which is
+// trusted: each review of keys, by its key (the first read of a key).
+func ParseReviewsByKey(body []byte, keys []string) (map[string]*Review, error) {
+	var response struct {
+		Reviews   []map[string]json.RawMessage `json:"reviews"`
+		Concerns  []edge                       `json:"review_concerns"`
+		Concerned []map[string]json.RawMessage `json:"concerned"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("reviewcards: read reviews by key: %w", err)
+	}
+	out := map[string]*Review{}
+	for _, r := range parseReviews(response.Reviews, response.Concerns, response.Concerned) {
+		if _, ok := out[r.Key]; !ok && slices.Contains(keys, r.Key) {
+			out[r.Key] = r
+		}
+	}
+	return out, nil
 }
 
 // Quote is a quote of a fact in a document, at its place, as a spot check

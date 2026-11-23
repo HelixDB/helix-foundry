@@ -182,69 +182,22 @@ func (s *suggester) write(ctx context.Context, row *model.FoundryAutomationSugge
 	s.finish(ctx, row, end)
 }
 
-// call makes the write's calls within timeout: one, and up to two more
-// after an answer Parse keeps nothing of, or, after a growing wait, a
-// refusal a retry may pass. It returns the end to record, and what every
-// call cost.
+// call makes the write's calls within timeout (llm.CallTool): one, and up
+// to two more after an answer Parse keeps nothing of, or, after a growing
+// wait, a refusal a retry may pass. It returns the end to record, and what
+// every call cost.
 func (s *suggester) call(ctx context.Context, b llm.Binding, req llm.Request, timeout time.Duration) (model.FoundryAutomationSuggestionsEnd, int64) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var cost int64
-	why := ""
-	wait, next := time.Duration(0), s.retryWait
-	for range suggestionCalls {
-		if wait > 0 {
-			select {
-			case <-time.After(wait):
-			case <-ctx.Done():
-				return model.FoundryAutomationSuggestionsEnd{Failure: "the model took too long"}, cost
-			}
-		}
-		var input json.RawMessage
-		var failed error
-		for chunk, err := range b.Model.Stream(ctx, req) {
-			if err != nil {
-				failed = err
-				break
-			}
-			switch c := chunk.(type) {
-			case llm.ToolUse:
-				if c.Name == suggest.ToolName && input == nil {
-					input = c.Input
-				}
-			case llm.Usage:
-				cost += b.Pricer.Micros(c)
-			}
-		}
-		var refused *llm.Error
-		wait = 0
-		switch {
-		case failed != nil && ctx.Err() != nil:
-			// Out of time, waiting for the server or its answer: no retry
-			// can pass.
-			return model.FoundryAutomationSuggestionsEnd{Failure: "the model took too long"}, cost
-		case failed != nil && errors.As(failed, &refused) && refused.Retryable():
-			why = "the model provider couldn't answer: " + string(refused.Kind)
-			wait, next = next, 2*next
-			continue
-		case failed != nil && errors.As(failed, &refused):
-			return model.FoundryAutomationSuggestionsEnd{Failure: "the model provider refused: " + string(refused.Kind)}, cost
-		case failed != nil:
-			return model.FoundryAutomationSuggestionsEnd{Failure: "the model call failed"}, cost
-		}
-		kept, err := suggest.Parse(input)
-		if err != nil {
-			why = "the model's answer wasn't usable"
-			log.From(ctx).Info("automation suggestions: an answer Parse kept nothing of", "err", err)
-			continue
-		}
-		raw, err := json.Marshal(kept)
-		if err != nil {
-			return model.FoundryAutomationSuggestionsEnd{Failure: "the suggestions couldn't be stored"}, cost
-		}
-		return model.FoundryAutomationSuggestionsEnd{Suggestions: raw}, cost
+	kept, cost, failure := llm.CallTool(ctx, b, req, suggest.ToolName, suggestionCalls, s.retryWait, suggest.Parse)
+	if failure != "" {
+		return model.FoundryAutomationSuggestionsEnd{Failure: failure}, cost
 	}
-	return model.FoundryAutomationSuggestionsEnd{Failure: why}, cost
+	raw, err := json.Marshal(kept)
+	if err != nil {
+		return model.FoundryAutomationSuggestionsEnd{Failure: "the suggestions couldn't be stored"}, cost
+	}
+	return model.FoundryAutomationSuggestionsEnd{Suggestions: raw}, cost
 }
 
 // charge enters what a write's calls spent in the workspace's ledger, with

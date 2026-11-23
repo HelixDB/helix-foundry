@@ -31,7 +31,10 @@ type Review struct {
 	Start         *int64   `json:"start"`
 	End           *int64   `json:"end"`
 	Confidence    *float64 `json:"confidence"`
-	Concerned     []Entity `json:"concerned,omitempty"`
+	// Quote is the words of the document the review is about, read only by
+	// ReviewsByKeyQuery: no card keeps it.
+	Quote     string   `json:"quote,omitempty"`
+	Concerned []Entity `json:"concerned,omitempty"`
 }
 
 // Entity is an entity a review concerns: its type, its stored identity (an

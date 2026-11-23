@@ -41,6 +41,9 @@ func TestValidateRoles(t *testing.T) {
 	if c := valid(); c.Validate(every) != nil {
 		t.Fatalf("defaults for every role: %v", c.Validate(every))
 	}
+	if c := valid(); c.Foundry.Reviews.Advise.Enabled {
+		t.Fatal("review advice is on by default")
+	}
 	// Off, the heal worker's settings aren't read; on, the defaults serve.
 	if c := valid(); c.Foundry.Heal.Enabled {
 		t.Fatal("heal is on by default")
@@ -85,6 +88,13 @@ func TestValidateRoles(t *testing.T) {
 			c.Foundry.Automations.Enabled, c.Foundry.Automations.Lease = true, MinAutomationLease-time.Second
 		}, Roles{AutomationWorker: true}, "lease at least 4m0s"},
 		"the heal worker's every": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
+		"review advice's month":   {func(c *Config) { c.Foundry.Reviews.Advise.MonthlyUSD = -1 }, Roles{GraphWorker: true}, "advise.monthly_usd"},
+		"review advice's cards a call": {func(c *Config) { c.Foundry.Reviews.Advise.CardsPerCall = 11 }, Roles{GraphWorker: true},
+			"cards_per_call must be 1 to 10"},
+		"review advice's no cards a call": {func(c *Config) { c.Foundry.Reviews.Advise.CardsPerCall = 0 }, Roles{API: true},
+			"cards_per_call must be 1 to 10"},
+		"review advice's cards a load": {func(c *Config) { c.Foundry.Reviews.Advise.MaxPerLoad = c.Foundry.Reviews.Advise.CardsPerCall - 1 },
+			Roles{GraphWorker: true}, "max_per_load must be at least cards_per_call"},
 		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
 			"foundry.graph.agent.addr"},
 		"the heal worker's timeout": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.HelixTimeoutSecs = true, 0 }, Roles{HealWorker: true},
