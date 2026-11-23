@@ -16,7 +16,7 @@ import (
 // A load owes the engine a document again (foundry_load_resends) when
 // something of the document that the load holds changed after its commit: a
 // person's approval of a claim its review holds back, which joins the load's
-// decisions as it is settled (SettleFoundryReleases). A resend job sends each
+// decisions as it is settled (settleRelease). A resend job sends each
 // owed document again, and the engine writes what the approval releases from
 // the review the load keeps, asking no model (contract 4.17.0; through
 // 4.16.0 it replayed the document's saved extraction); the document never
@@ -27,7 +27,7 @@ import (
 //
 // A load owes the engine its own decisions again (model.FoundryResendDecisions,
 // a row that names no document) when its list of value decisions changed: a
-// person chose a value of a property (SettleFoundryValue) or took a choice
+// person chose a value of a property (settleValue) or took a choice
 // back (DeleteFoundryReviewDecision). Every Extract of a load carries all of
 // its value decisions, and the engine sets each and withdraws those it is no
 // longer sent, so the same job answers it, with an Extract of no documents
@@ -38,7 +38,7 @@ import (
 // never by the order it arrived in, so a load it was applied to in place
 // holds what a rebuild with the same decisions holds. The engine keeps a
 // decision once, by its id, so a property decided again with another value
-// is a new decision (SettleFoundryValue). One taken back stays in the list,
+// is a new decision (settleValue). One taken back stays in the list,
 // marked removed and sent in no Extract, until the request ends: the load
 // holds its value until then, and the access rules read the list.
 //
@@ -198,7 +198,7 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 // list already has a decision for, by its key or by the statement at its
 // place (as the engine binds a release), is left as it is, whatever its id;
 // so is a decision the list holds a copy of under the key its claim had
-// before it was approved again (SettleFoundryReleases).
+// before it was approved again (settleRelease).
 //
 // A release of a claim the ontology holds a rejection of (foundryClaimAt) is
 // never carried, and a copy of one the list has not written goes: the load
@@ -211,7 +211,7 @@ WHERE t.load_id=? AND t.kind='release' AND (`+where+`) AND `+foundryMayHaveWritt
 // claim the ontology holds a rejection of (withdrawFoundryReleases): one the
 // load may have written becomes a withdraw, which the resend sends, and the
 // rest are deleted. Removing or replacing a decision takes it from the load
-// that is current then (DeleteFoundryReviewDecision, SettleFoundryReleases),
+// that is current then (DeleteFoundryReviewDecision, settleRelease),
 // so a copy is left behind in a load that was not: one being written then,
 // which copied the approval as it was created and may have written it, or
 // one made current again later. So is a copy an older binary's removal
@@ -373,9 +373,9 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 // this one's writing, which its creation could not copy. It runs only as a
 // load becomes current (makeFoundryLoadCurrent). A resolve that asks about a
 // name, settled while this load was current, joined the list then
-// (SettleFoundryResolve) and is held by id. One of a name this load links
+// (settleResolve) and is held by id. One of a name this load links
 // already, settled while it was current, was the next load's then
-// (SettleFoundryBoundResolve) and its list holds no copy of it as chosen:
+// (settleResolve, a name its load links already) and its list holds no copy of it as chosen:
 // nothing records which load was current when, so made current again
 // (another load current between) the load gets it as any other it lacks.
 // The engine refuses it on its own document (bound), which its card shows,
@@ -402,7 +402,7 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 // DeleteFoundryReviewDecision); and a copy of a name of a document (type,
 // document and name) that is not the decision that stands goes, whatever
 // became of it, as the engine refuses an Extract that decides a name twice:
-// one under another id (SettleFoundryResolve), or under its id with another
+// one under another id (settleResolve), or under its id with another
 // entity (a name the load links already, chosen again: its decision keeps its
 // id, SettleFoundryReviewDecision). A copy the list holds by id of the same
 // choice is left as it is.
@@ -454,7 +454,7 @@ const foundryAliasUnread = `EXISTS (SELECT 1 FROM foundry_load_decisions c WHERE
 
 // ListFoundryCarriedAliases reads at most limit aliases carried to a load
 // whose asking documents are yet to be owed (carryFoundryResolves,
-// SettleFoundryResolve or SettleFoundryBoundResolve from another load), in
+// settleResolve from another load), in
 // id order: resolves that chose
 // an entity, carried, with no job's word on them, whose document is owed a
 // resend for a name. A resend job of the load reads them before it reads
@@ -949,7 +949,7 @@ WHERE load_id=? AND document_id=?`, n, n, loadID, docID)
 
 // recordFoundryNameOutcomes records what the engine said of the resolve
 // decisions of document docID that the load waits to settle in place
-// (SettleFoundryResolve): each on the load's copy, by its id, of that
+// (settleResolve): each on the load's copy, by its id, of that
 // document, while it waits (model.FoundryNameApplied). Only a run that read
 // the document with its saved model work says it
 // (FoundryDocumentExtraction.SettlesNames); a failed event leaves the copy

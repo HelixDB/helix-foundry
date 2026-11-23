@@ -69,22 +69,35 @@ const (
 )
 
 // openFoundryReviewCard is the SQL condition, over the card with alias c,
-// that it is open: the only definition of "open". A held claim is decided by
-// a rejection at its place under its key or of the statement it reads, or
-// an approval of the statement it reads now (an approval of what it said
-// before is not: the load refuses it, and the card asks to be read again),
-// as foundryClaimAt reads a claim; a name or a value by a decision of its
-// identity (identity_key, the decisions' own expression). A held claim a
-// spot check drew is that spot check, not a card to decide.
+// that it is open: no decision decides it (foundryDecidesCard) and no spot
+// check drew it, the only definition of "open". A held claim a spot check
+// drew is that spot check, not a card to decide. The two kinds of card are
+// read apart, so each reads its own index.
 func openFoundryReviewCard(c string) string {
-	return `(CASE ` + c + `.kind WHEN 'release' THEN NOT EXISTS (SELECT 1 FROM foundry_review_decisions d
-  WHERE d.ontology_id=` + c + `.ontology_id AND d.kind IN ('release', 'reject') AND d.doc_id=` + c + `.doc_id
-    AND d.claim_section=` + c + `.claim_section AND d.claim_start=` + c + `.claim_start AND d.claim_end=` + c + `.claim_end
-    AND (d.statement_hash=` + c + `.statement_hash OR (d.kind='reject' AND d.claim_key=` + c + `.claim_key)))
- ELSE NOT EXISTS (SELECT 1 FROM foundry_review_decisions d WHERE d.ontology_id=` + c + `.ontology_id AND d.identity_key=` + c + `.identity_key) END
+	return `(CASE ` + c + `.kind WHEN 'release' THEN NOT EXISTS (SELECT 1 FROM foundry_review_decisions d WHERE ` + foundryDecidesCard("d", c, true) + `)
+ ELSE NOT EXISTS (SELECT 1 FROM foundry_review_decisions d WHERE ` + foundryDecidesCard("d", c, false) + `) END
  AND NOT EXISTS (SELECT 1 FROM foundry_review_draws w WHERE w.load_id=` + c + `.load_id AND w.kind='held'
   AND w.doc_id=` + c + `.doc_id AND w.claim_section=` + c + `.claim_section AND w.claim_start=` + c + `.claim_start
   AND w.claim_end=` + c + `.claim_end AND w.claim_key=` + c + `.claim_key))`
+}
+
+// foundryDecidesCard is the SQL condition that decision d decides card c
+// (aliases), of a held claim (claim) or of a name or a value: the only
+// definition of deciding a card, which openFoundryReviewCard and a settle
+// that expects its card open (foundryDecidedElsewhere) both read. A held
+// claim is decided by a rejection at its place under its key or of the
+// statement it reads, or an approval of the statement it reads now (an
+// approval of what it said before is not: the load refuses it, and the card
+// asks to be read again), as foundryClaimAt reads a claim; a name or a value
+// by a decision of its identity (identity_key, the decisions' own
+// expression). Another document's link of a name (an alias) decides no card.
+func foundryDecidesCard(d, c string, claim bool) string {
+	if !claim {
+		return d + `.ontology_id=` + c + `.ontology_id AND ` + d + `.identity_key=` + c + `.identity_key`
+	}
+	return d + `.ontology_id=` + c + `.ontology_id AND ` + d + `.kind IN ('release', 'reject') AND ` + d + `.doc_id=` + c + `.doc_id
+    AND ` + d + `.claim_section=` + c + `.claim_section AND ` + d + `.claim_start=` + c + `.claim_start AND ` + d + `.claim_end=` + c + `.claim_end
+    AND (` + d + `.statement_hash=` + c + `.statement_hash OR (` + d + `.kind='reject' AND ` + d + `.claim_key=` + c + `.claim_key))`
 }
 
 // foundryReviewPlaceFree is the SQL condition that no spot check of load
@@ -734,6 +747,23 @@ WHERE c.load_id=? AND c.doc_id IN (`+idPlaceholders(len(docs))+`) AND c.on_card 
 		}
 	}
 	return listed, nil
+}
+
+// GetFoundryReviewCard reads one card of load loadID by its id, and whether
+// it is open (openFoundryReviewCard). ErrNotFound means the load's index
+// holds no such card.
+func (s *mysqlDB) GetFoundryReviewCard(ctx context.Context, loadID string, cardID reviewcards.ID) (*reviewcards.Card, bool, error) {
+	row := s.db.QueryRowContext(ctx, "SELECT "+foundryReviewCardColumns+", "+openFoundryReviewCard("c")+` FROM foundry_review_cards c
+WHERE c.load_id=? AND c.card_id=?`, loadID, cardID[:])
+	var open bool
+	card, err := scanFoundryReviewCard(extraScanner{row, []any{&open}})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, ErrNotFound
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return card, open, nil
 }
 
 // ListFoundryReviewNameDecisions reads, for each name (type and normalized

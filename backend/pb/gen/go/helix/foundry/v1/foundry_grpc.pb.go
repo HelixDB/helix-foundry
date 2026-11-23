@@ -84,6 +84,7 @@ const (
 	FoundryService_AnswerOntologyGeneration_FullMethodName              = "/helix.foundry.v1.FoundryService/AnswerOntologyGeneration"
 	FoundryService_CancelOntologyGeneration_FullMethodName              = "/helix.foundry.v1.FoundryService/CancelOntologyGeneration"
 	FoundryService_SettleFoundryReview_FullMethodName                   = "/helix.foundry.v1.FoundryService/SettleFoundryReview"
+	FoundryService_BatchSettleFoundryReviews_FullMethodName             = "/helix.foundry.v1.FoundryService/BatchSettleFoundryReviews"
 	FoundryService_ListFoundryReviews_FullMethodName                    = "/helix.foundry.v1.FoundryService/ListFoundryReviews"
 	FoundryService_ListFoundryReviewDecisions_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundryReviewDecisions"
 	FoundryService_DeleteFoundryReviewDecision_FullMethodName           = "/helix.foundry.v1.FoundryService/DeleteFoundryReviewDecision"
@@ -300,6 +301,13 @@ type FoundryServiceClient interface {
 	AnswerOntologyGeneration(ctx context.Context, in *AnswerOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
 	CancelOntologyGeneration(ctx context.Context, in *CancelOntologyGenerationRequest, opts ...grpc.CallOption) (*OntologyGenerationResponse, error)
 	SettleFoundryReview(ctx context.Context, in *SettleFoundryReviewRequest, opts ...grpc.CallOption) (*FoundryReviewDecisionResponse, error)
+	// Settles up to 100 reviews of the current load in one transaction, each
+	// as SettleFoundryReview settles one: an item refused (it reads differently
+	// now, another person decided it, ...) says why, and the rest are saved.
+	// The whole batch is refused, saving nothing, when its fields are invalid,
+	// two items decide one thing, load_id isn't the current load, or the graph
+	// can't be read.
+	BatchSettleFoundryReviews(ctx context.Context, in *BatchSettleFoundryReviewsRequest, opts ...grpc.CallOption) (*BatchSettleFoundryReviewsResponse, error)
 	// The reviews the ontology's current load holds, as SettleFoundryReview
 	// reads them: each with what settles it. Read from the load's database as
 	// the caller, a page at a time, or by review key.
@@ -1290,6 +1298,16 @@ func (c *foundryServiceClient) SettleFoundryReview(ctx context.Context, in *Sett
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FoundryReviewDecisionResponse)
 	err := c.cc.Invoke(ctx, FoundryService_SettleFoundryReview_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) BatchSettleFoundryReviews(ctx context.Context, in *BatchSettleFoundryReviewsRequest, opts ...grpc.CallOption) (*BatchSettleFoundryReviewsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchSettleFoundryReviewsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_BatchSettleFoundryReviews_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2482,6 +2500,13 @@ type FoundryServiceServer interface {
 	AnswerOntologyGeneration(context.Context, *AnswerOntologyGenerationRequest) (*OntologyGenerationResponse, error)
 	CancelOntologyGeneration(context.Context, *CancelOntologyGenerationRequest) (*OntologyGenerationResponse, error)
 	SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error)
+	// Settles up to 100 reviews of the current load in one transaction, each
+	// as SettleFoundryReview settles one: an item refused (it reads differently
+	// now, another person decided it, ...) says why, and the rest are saved.
+	// The whole batch is refused, saving nothing, when its fields are invalid,
+	// two items decide one thing, load_id isn't the current load, or the graph
+	// can't be read.
+	BatchSettleFoundryReviews(context.Context, *BatchSettleFoundryReviewsRequest) (*BatchSettleFoundryReviewsResponse, error)
 	// The reviews the ontology's current load holds, as SettleFoundryReview
 	// reads them: each with what settles it. Read from the load's database as
 	// the caller, a page at a time, or by review key.
@@ -3028,6 +3053,9 @@ func (UnimplementedFoundryServiceServer) CancelOntologyGeneration(context.Contex
 }
 func (UnimplementedFoundryServiceServer) SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleFoundryReview not implemented")
+}
+func (UnimplementedFoundryServiceServer) BatchSettleFoundryReviews(context.Context, *BatchSettleFoundryReviewsRequest) (*BatchSettleFoundryReviewsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchSettleFoundryReviews not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryReviews(context.Context, *ListFoundryReviewsRequest) (*ListFoundryReviewsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryReviews not implemented")
@@ -4521,6 +4549,24 @@ func _FoundryService_SettleFoundryReview_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FoundryServiceServer).SettleFoundryReview(ctx, req.(*SettleFoundryReviewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_BatchSettleFoundryReviews_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchSettleFoundryReviewsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).BatchSettleFoundryReviews(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_BatchSettleFoundryReviews_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).BatchSettleFoundryReviews(ctx, req.(*BatchSettleFoundryReviewsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6731,6 +6777,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleFoundryReview",
 			Handler:    _FoundryService_SettleFoundryReview_Handler,
+		},
+		{
+			MethodName: "BatchSettleFoundryReviews",
+			Handler:    _FoundryService_BatchSettleFoundryReviews_Handler,
 		},
 		{
 			MethodName: "ListFoundryReviews",

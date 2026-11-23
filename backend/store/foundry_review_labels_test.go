@@ -65,7 +65,7 @@ func TestFoundryDecisionDrawn(t *testing.T) {
 	// A draw the store doesn't know is refused, as the column's CHECK does.
 	bad := f.held(f.b, 0, readA)
 	bad.Drawn = ptr(model.FoundryReviewDrawn("lucky"))
-	_, err = f.db.SettleFoundryReleases(ctx, f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{bad}, &model.FoundryGraphJob{ID: id26("RS-bad")})
+	_, err = settleReleases(f.db, ctx, f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{bad}, &model.FoundryGraphJob{ID: id26("RS-bad")})
 	assert.Error(t, err)
 }
 

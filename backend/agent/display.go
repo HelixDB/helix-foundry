@@ -13,6 +13,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/dashboard"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/reviewcards"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -340,6 +341,7 @@ type Reads interface {
 	ListFoundryDashboards(ctx context.Context, workspaceID string, pinnedOnly bool) ([]*model.FoundryDashboard, error)
 	GetFoundryAutomation(ctx context.Context, workspaceID, id string) (*model.FoundryAutomation, error)
 	ListFoundryAutomations(ctx context.Context, workspaceID string) ([]*model.FoundryAutomation, error)
+	GetFoundryReviewCard(ctx context.Context, loadID string, cardID reviewcards.ID) (*reviewcards.Card, bool, error)
 }
 
 // Cards draws the cards of actions prepared in one workspace for one

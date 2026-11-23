@@ -117,14 +117,14 @@ func TestFoundryRejectWaitsForAnApprovalSavedUnderAnotherKey(t *testing.T) {
 	require.True(t, f.approve(t, "1", approved))
 	no := keyed(f.rejected(f.a, 0, readA), "cd", "MKRUN-no")
 	job := f.claim(t)
-	assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict)
+	assert.ErrorIs(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict)
 	assert.Equal(t, map[string]string{approved.ID: "pending"}, f.copies(t, f.load))
 
 	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
 	require.NoError(t, err)
 	f.sent(t, job, owed[0], 1, written(approved))
 	f.end(t, job, "written", model.FoundryGraphJobSucceeded)
-	assert.ErrorIs(t, f.db.SettleFoundryReject(ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict, "the load wrote it")
+	assert.ErrorIs(t, settleReject(f.db, ctx, f.ontology.WorkspaceID, f.load, no), store.ErrConflict, "the load wrote it")
 	assert.Equal(t, map[string]string{approved.ID: "written"}, f.copies(t, f.load))
 }
 

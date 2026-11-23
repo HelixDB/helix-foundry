@@ -66,26 +66,9 @@ func (u Unimplemented) SettleFoundryReviewDecision(context.Context, string, *mod
 	u.unimplemented("SettleFoundryReviewDecision")
 	return nil
 }
-func (u Unimplemented) SettleFoundryReleases(context.Context, string, string, []*model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryReleases")
-	return false, nil
-}
-func (u Unimplemented) SettleFoundryResolve(context.Context, string, string, *model.FoundryReviewDecision, []string, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryResolve")
-	return false, nil
-}
-func (u Unimplemented) SettleFoundryBoundResolve(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryBoundResolve")
-	return false, nil
-}
-
-func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
-	u.unimplemented("SettleFoundryValue")
-	return false, nil
-}
-func (u Unimplemented) SettleFoundryReject(context.Context, string, string, *model.FoundryReviewDecision) error {
-	u.unimplemented("SettleFoundryReject")
-	return nil
+func (u Unimplemented) SettleFoundryReviews(context.Context, string, string, string, []*model.FoundrySettle, bool, *model.FoundryGraphJob) ([]*model.FoundrySettleRefusal, bool, error) {
+	u.unimplemented("SettleFoundryReviews")
+	return nil, false, nil
 }
 func (u Unimplemented) ListFoundryDecisionsApplied(context.Context, string, []string) (map[string]model.FoundryDecisionApplied, error) {
 	u.unimplemented("ListFoundryDecisionsApplied")
@@ -2353,6 +2336,10 @@ func (u Unimplemented) FoundryReviewQuoteDocuments(context.Context, string, int,
 func (u Unimplemented) FoundryReviewPlacesTaken(context.Context, string, string, string) (map[string]bool, error) {
 	u.unimplemented("FoundryReviewPlacesTaken")
 	return nil, nil
+}
+func (u Unimplemented) GetFoundryReviewCard(context.Context, string, reviewcards.ID) (*reviewcards.Card, bool, error) {
+	u.unimplemented("GetFoundryReviewCard")
+	return nil, false, nil
 }
 func (u Unimplemented) ListFoundryReviewDecisionsByID(context.Context, string, []string, bool) ([]*model.FoundryReviewDecision, error) {
 	u.unimplemented("ListFoundryReviewDecisionsByID")

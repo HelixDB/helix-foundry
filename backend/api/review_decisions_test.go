@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"reflect"
@@ -34,12 +35,10 @@ type decisionStore struct {
 	saved    []*foundrymodel.FoundryReviewDecision
 	saveErr  error
 	deleted  string
-	// releasedTo is the load SettleFoundryReleases or SettleFoundryValue
-	// applied its decisions to, or SettleFoundryBoundResolve read its review
-	// from, and resends the resend jobs they and
-	// DeleteFoundryReviewDecision were handed; rejectedOn is the load
-	// SettleFoundryReject read its review from; applied is what
-	// ListFoundryDecisionsApplied answers.
+	// releasedTo is the load a release, a value or a resolve was read from,
+	// and resends the resend jobs a settle and DeleteFoundryReviewDecision
+	// were handed; rejectedOn is the load a reject was read from; applied is
+	// what ListFoundryDecisionsApplied answers.
 	releasedTo string
 	rejectedOn string
 	resends    []*foundrymodel.FoundryGraphJob
@@ -48,13 +47,22 @@ type decisionStore struct {
 	// with.
 	labels   []*foundrymodel.FoundryReviewLabel
 	labelErr error
-	// firstApprover, when set, is who SettleFoundryReleases says approved
+	// firstApprover, when set, is who a release's settle says approved
 	// the statement first, as the store keeps them.
 	firstApprover string
-	// asking is the documents SettleFoundryResolve was handed besides its
-	// own, and askingReviews what the read of a name's reviews answers.
+	// asking is the documents a resolve was handed besides its own, and
+	// askingReviews what the read of a name's reviews answers.
 	asking        []string
 	askingReviews string
+	// batches are the sizes of the batches settled, expectOpen the last's;
+	// decidedBy is who decided first when saveErr says another did.
+	batches    []int
+	expectOpen bool
+	decidedBy  *foundrymodel.FoundryReviewDecision
+	// queries are the graph's reads so far, and readsAtSave how many there
+	// were when the batch was saved.
+	queries     *[]string
+	readsAtSave int
 }
 
 func (s *decisionStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
@@ -76,74 +84,64 @@ func (s *decisionStore) GetOntologyVersion(_ context.Context, o, id string) (*fo
 	return s.version, nil
 }
 
-// SettleFoundryBoundResolve saves d for the next load: the load it was read
-// from is current here.
-func (s *decisionStore) SettleFoundryBoundResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision,
-	_ *foundrymodel.FoundryGraphJob) (bool, error) {
-	if ws != s.ontology.WorkspaceID {
-		return false, foundrystore.ErrNotFound
+// SettleFoundryReviews settles each item as the store would here, where the
+// load each was read from is current: a resolve of a name the load asks
+// about, a value and a release apply to that load by resend; a name it links
+// already is the next load's; a reject is only saved. saveErr refuses each
+// item with it, as the store refuses an item (a stale load, the value cap,
+// another person's decision), or fails the batch with any other error.
+func (s *decisionStore) SettleFoundryReviews(_ context.Context, ws, o, load string, items []*foundrymodel.FoundrySettle, expectOpen bool,
+	resend *foundrymodel.FoundryGraphJob) ([]*foundrymodel.FoundrySettleRefusal, bool, error) {
+	if ws != s.ontology.WorkspaceID || o != s.ontology.ID {
+		return nil, false, foundrystore.ErrNotFound
 	}
-	if s.saveErr != nil {
-		return false, s.saveErr
+	if s.queries != nil {
+		s.readsAtSave = len(*s.queries)
 	}
-	d.DecidedAt = time.Now()
-	s.saved, s.releasedTo = append(s.saved, d), load
-	return false, nil
-}
-func (s *decisionStore) SettleFoundryResolve(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision, docs []string,
-	resend *foundrymodel.FoundryGraphJob) (bool, error) {
-	if ws != s.ontology.WorkspaceID {
-		return false, foundrystore.ErrNotFound
-	}
-	if s.saveErr != nil {
-		return false, s.saveErr
-	}
-	d.DecidedAt = time.Now()
-	d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
-	s.saved, s.releasedTo, s.resends, s.asking = append(s.saved, d), load, append(s.resends, resend), docs
-	return true, nil
-}
-func (s *decisionStore) SettleFoundryReleases(_ context.Context, ws, load string, ds []*foundrymodel.FoundryReviewDecision,
-	resend *foundrymodel.FoundryGraphJob) (bool, error) {
-	if ws != s.ontology.WorkspaceID {
-		return false, foundrystore.ErrNotFound
-	}
-	if s.saveErr != nil {
-		return false, s.saveErr
-	}
-	for _, d := range ds {
-		d.DecidedAt = time.Now()
-		d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
-		if s.firstApprover != "" {
-			d.DecidedByUserID, d.Drawn = s.firstApprover, nil
+	s.batches, s.expectOpen = append(s.batches, len(items)), expectOpen
+	refusals := make([]*foundrymodel.FoundrySettleRefusal, len(items))
+	owes := false
+	for i, it := range items {
+		if err := it.Validate(); err != nil {
+			return nil, false, err
 		}
+		switch {
+		case errors.Is(s.saveErr, foundrystore.ErrConflict):
+			refusals[i] = &foundrymodel.FoundrySettleRefusal{Reason: foundrymodel.FoundrySettleStale, Err: s.saveErr}
+			continue
+		case errors.Is(s.saveErr, foundrystore.FoundryValueDecisionsFull):
+			refusals[i] = &foundrymodel.FoundrySettleRefusal{Reason: foundrymodel.FoundrySettleFull, Err: s.saveErr}
+			continue
+		case errors.Is(s.saveErr, foundrystore.FoundryReviewDecidedElsewhere):
+			refusals[i] = &foundrymodel.FoundrySettleRefusal{Reason: foundrymodel.FoundrySettleDecided, Err: s.saveErr, Decided: s.decidedBy}
+			continue
+		case s.saveErr != nil:
+			return nil, false, s.saveErr
+		}
+		d := it.D
+		d.DecidedAt = time.Now()
+		switch d.Kind {
+		case foundrymodel.FoundryReviewReject:
+			s.rejectedOn = load
+		case foundrymodel.FoundryReviewResolve:
+			s.releasedTo = load
+			if asking, ok := it.Name.(foundrymodel.FoundryNameAsking); ok {
+				d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+				s.asking, owes = asking.Documents, true
+			}
+		default:
+			d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+			if s.firstApprover != "" && d.Kind == foundrymodel.FoundryReviewRelease {
+				d.DecidedByUserID, d.Drawn = s.firstApprover, nil
+			}
+			s.releasedTo, owes = load, true
+		}
+		s.saved = append(s.saved, d)
 	}
-	s.saved, s.releasedTo, s.resends = append(s.saved, ds...), load, append(s.resends, resend)
-	return true, nil
-}
-func (s *decisionStore) SettleFoundryValue(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision,
-	resend *foundrymodel.FoundryGraphJob) (bool, error) {
-	if ws != s.ontology.WorkspaceID {
-		return false, foundrystore.ErrNotFound
+	if owes {
+		s.resends = append(s.resends, resend)
 	}
-	if s.saveErr != nil {
-		return false, s.saveErr
-	}
-	d.DecidedAt = time.Now()
-	d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
-	s.saved, s.releasedTo, s.resends = append(s.saved, d), load, append(s.resends, resend)
-	return true, nil
-}
-func (s *decisionStore) SettleFoundryReject(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision) error {
-	if ws != s.ontology.WorkspaceID {
-		return foundrystore.ErrNotFound
-	}
-	if s.saveErr != nil {
-		return s.saveErr
-	}
-	d.DecidedAt = time.Now()
-	s.saved, s.rejectedOn = append(s.saved, d), load
-	return nil
+	return refusals, owes, nil
 }
 func (s *decisionStore) ListFoundryDecisionsApplied(_ context.Context, o string, ids []string) (map[string]foundrymodel.FoundryDecisionApplied, error) {
 	if o != s.ontology.ID {
@@ -212,6 +210,9 @@ func reviewService(t *testing.T, review string) (*Service, *decisionStore, *[]st
 		}
 		response := review
 		switch {
+		case strings.Contains(string(query), `{"left":{"property":"review_key"}`):
+			// A settle's read of reviews by key.
+			response = keyed(review)
 		case strings.Contains(string(query), `"properties":["doc_id","reason","entity_key"]`):
 			response = cmp.Or(db.askingReviews, `{"items":[]}`)
 		case len(queries) > 1:
@@ -219,7 +220,27 @@ func reviewService(t *testing.T, review string) (*Service, *decisionStore, *[]st
 		}
 		return 200, []byte(response), nil
 	})
+	db.queries = &queries
 	return &Service{deps: &runtimeDeps{DB: db, Graph: graph}}, db, &queries
+}
+
+// keyed is a graph's answer of reviews with each review's key, review-1
+// where it has none, as the load stores it: a settle maps reviews back by
+// key. An answer that isn't one is left as it is.
+func keyed(answer string) string {
+	var out map[string]json.RawMessage
+	var items []map[string]any
+	if json.Unmarshal([]byte(answer), &out) != nil || json.Unmarshal(out["items"], &items) != nil {
+		return answer
+	}
+	for _, item := range items {
+		if _, ok := item["review_key"]; !ok {
+			item["review_key"] = "review-1"
+		}
+	}
+	out["items"], _ = json.Marshal(items)
+	raw, _ := json.Marshal(out)
+	return string(raw)
 }
 
 func resolveChoice(key string) *foundryv1.FoundryReviewChoice {
@@ -891,7 +912,7 @@ func TestSettleFoundryReviewReadFailures(t *testing.T) {
 	calls := 0
 	s.deps.Graph = graphFunc(func(context.Context, string, []byte) (int, []byte, error) {
 		calls++
-		body := review
+		body := keyed(review)
 		if calls > 1 {
 			body = `{"items":[]}`
 		}

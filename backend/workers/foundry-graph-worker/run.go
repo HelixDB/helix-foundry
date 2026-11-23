@@ -1351,7 +1351,7 @@ const (
 // of each alias carried to it (store ListFoundryCarriedAliases: a resolve
 // that chose an entity, saved while another load was current), at most
 // carriedAliasesPerJob of them and until askingDocumentsPerJob are owed, as
-// SettleFoundryResolve owes them for one settled against the load; the
+// store.SettleFoundryReviews owes them for one settled against the load; the
 // store, in its transaction, has no Helix to read them from. One read of the
 // load's reviews a type and name (ontologyagent.AskingQuery, the read the
 // API makes, one lookup of the engine's index of reviews by name), every
@@ -2051,7 +2051,7 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 	extraction.SettlesNames = a.replayed[event.DocID]
 	// What became of each name decision is the document's, kept on its row;
 	// the store also records a resolve's word on its own document on the
-	// load's copy the load waits to settle (SettleFoundryResolve).
+	// load's copy the load waits to settle (store.SettleFoundryReviews).
 	refused := 0
 	for _, n := range event.Names {
 		nameOutcomes.WithLabelValues(string(n.Decision), string(n.Outcome.Kind), string(n.Outcome.Reason)).Inc()

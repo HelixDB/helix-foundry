@@ -45,7 +45,7 @@ func (f resendFixture) held(doc string, n int, hash string) *model.FoundryReview
 // approve settles releases against the current load, as resend job RS-<tag>.
 func (f resendFixture) approve(t *testing.T, tag string, ds ...*model.FoundryReviewDecision) bool {
 	t.Helper()
-	queued, err := f.db.SettleFoundryReleases(context.Background(), f.ontology.WorkspaceID, f.load, ds,
+	queued, err := settleReleases(f.db, context.Background(), f.ontology.WorkspaceID, f.load, ds,
 		&model.FoundryGraphJob{ID: id26("RS-" + tag), RequestedByUserID: ptr(id26("user"))})
 	require.NoError(t, err)
 	return queued
@@ -342,7 +342,7 @@ func TestFoundryReleaseApprovedAgainKeepsItsTime(t *testing.T) {
 	settle := func(d *model.FoundryReviewDecision, by string) {
 		t.Helper()
 		d.DecidedByUserID = id26(by)
-		_, err := f.db.SettleFoundryReleases(ctx, f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{d},
+		_, err := settleReleases(f.db, ctx, f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{d},
 			&model.FoundryGraphJob{ID: id26("RS-time-" + by), RequestedByUserID: &d.DecidedByUserID})
 		require.NoError(t, err)
 	}
@@ -475,7 +475,7 @@ func TestFoundryReleaseTwoApproversAtOnce(t *testing.T) {
 			defer wg.Done()
 			d := f.held(f.a, 0, readA)
 			d.ID, d.DecidedByUserID = id26("two-"+string(rune('a'+i))), id26("user-"+string(rune('a'+i)))
-			q, err := f.db.SettleFoundryReleases(context.Background(), f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{d},
+			q, err := settleReleases(f.db, context.Background(), f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{d},
 				&model.FoundryGraphJob{ID: id26("RS-two-" + string(rune('a'+i))), RequestedByUserID: &d.DecidedByUserID})
 			assert.NoError(t, err)
 			queued[i], ids[i] = q, d.ID
@@ -671,7 +671,7 @@ func TestFoundryResendRefusals(t *testing.T) {
 func TestFoundryReleaseOfAnotherLoad(t *testing.T) {
 	f := newResendFixture(t, "ROTHER")
 	d := f.held(f.a, 0, readA)
-	_, err := f.db.SettleFoundryReleases(context.Background(), f.ontology.WorkspaceID, id26("another-load"), []*model.FoundryReviewDecision{d},
+	_, err := settleReleases(f.db, context.Background(), f.ontology.WorkspaceID, id26("another-load"), []*model.FoundryReviewDecision{d},
 		&model.FoundryGraphJob{ID: id26("RS-1")})
 	assert.ErrorIs(t, err, store.ErrConflict)
 	assert.Empty(t, f.decisionIDs(t))
@@ -680,7 +680,7 @@ func TestFoundryReleaseOfAnotherLoad(t *testing.T) {
 	// Only releases are applied this way.
 	resolve := &model.FoundryReviewDecision{ID: id26("res"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewResolve, Type: "Customer",
 		DocID: &f.a, NormName: ptr("acme"), DecidedByUserID: id26("user")}
-	_, err = f.db.SettleFoundryReleases(context.Background(), f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{resolve},
+	_, err = settleReleases(f.db, context.Background(), f.ontology.WorkspaceID, f.load, []*model.FoundryReviewDecision{resolve},
 		&model.FoundryGraphJob{ID: id26("RS-2")})
 	assert.Error(t, err)
 	assert.Empty(t, f.decisionIDs(t))

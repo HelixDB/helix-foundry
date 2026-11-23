@@ -151,6 +151,7 @@ type ReadStore interface {
 	FoundryReviewQuoteDocuments(ctx context.Context, loadID string, band, target, limit int) ([]string, error)
 	FoundryReviewPlacesTaken(ctx context.Context, ontologyID, loadID, docID string) (map[string]bool, error)
 	ListFoundryReviewDecisionsByID(ctx context.Context, ontologyID string, ids []string, withdraws bool) ([]*model.FoundryReviewDecision, error)
+	GetFoundryReviewCard(ctx context.Context, loadID string, cardID reviewcards.ID) (card *reviewcards.Card, open bool, err error)
 
 	// Foundry document sets, documents and the Data layout, per workspace
 	GetFoundryDocumentSet(ctx context.Context, workspaceID, id string) (*model.FoundryDocumentSet, error)
@@ -427,15 +428,8 @@ type Store interface {
 	CancelOntologyGeneration(ctx context.Context, ontologyID, id string) error
 	ListOntologyGenerationsAskedBefore(ctx context.Context, asked time.Time, limit int) ([]*model.OntologyGeneration, error)
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
-	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
-		resend *model.FoundryGraphJob) (queued bool, err error)
-	SettleFoundryResolve(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision, documentIDs []string,
-		resend *model.FoundryGraphJob) (bool, error)
-	SettleFoundryBoundResolve(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
-		resend *model.FoundryGraphJob) (bool, error)
-	SettleFoundryValue(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
-		resend *model.FoundryGraphJob) (queued bool, err error)
-	SettleFoundryReject(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision) error
+	SettleFoundryReviews(ctx context.Context, workspaceID, ontologyID, loadID string, items []*model.FoundrySettle, expectOpen bool,
+		resend *model.FoundryGraphJob) (refusals []*model.FoundrySettleRefusal, queued bool, err error)
 	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
 	ListFoundryCarriedAliases(ctx context.Context, loadID string, limit int) ([]*model.FoundryReviewDecision, error)

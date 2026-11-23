@@ -344,6 +344,18 @@ service FoundryService {
       body: "*"
     };
   }
+  // Settles up to 100 reviews of the current load in one transaction, each
+  // as SettleFoundryReview settles one: an item refused (it reads differently
+  // now, another person decided it, ...) says why, and the rest are saved.
+  // The whole batch is refused, saving nothing, when its fields are invalid,
+  // two items decide one thing, load_id isn't the current load, or the graph
+  // can't be read.
+  rpc BatchSettleFoundryReviews(BatchSettleFoundryReviewsRequest) returns (BatchSettleFoundryReviewsResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/reviews:batchSettle"
+      body: "*"
+    };
+  }
   // The reviews the ontology's current load holds, as SettleFoundryReview
   // reads them: each with what settles it. Read from the load's database as
   // the caller, a page at a time, or by review key.
@@ -2032,6 +2044,57 @@ message SettleFoundryReviewRequest {
 }
 message FoundryReviewDecisionResponse {
   FoundryReviewDecision decision = 1;
+}
+message BatchSettleFoundryReviewsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  // The load the reviews were read from, which must be the current load.
+  string load_id = 3;
+  // 1 to 100, each deciding something no other item decides. Every item is
+  // ranked: a random spot check is settled one at a time.
+  repeated FoundryReviewSettleItem items = 4;
+  // Refuse an item whose card another person decided already (DECIDED),
+  // never replacing their decision. One's own earlier decision is settled
+  // again. A card closed only through another document's link of the name
+  // is not decided.
+  bool expect_open = 5;
+}
+message FoundryReviewSettleItem {
+  string review_id = 1;
+  FoundryReviewChoice decision = 2;
+}
+message BatchSettleFoundryReviewsResponse {
+  // One result an item, in the items' order.
+  repeated FoundryReviewSettleResult results = 1;
+}
+message FoundryReviewSettleResult {
+  string review_id = 1;
+  oneof result {
+    // Saved, as stored, with what the current load holds of it.
+    FoundryReviewDecision decision = 2;
+    FoundryReviewSettleRefusal refused = 3;
+  }
+}
+enum FoundryReviewSettleRefusalReason {
+  FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_UNSPECIFIED = 0;
+  // The load or the review reads differently now: read the cards again.
+  FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE = 1;
+  // Another person decided it (decided).
+  FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED = 2;
+  // The ontology holds the most value decisions a load can be sent.
+  FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_FULL = 3;
+  // This choice can't settle this review (an entity not in the load, a
+  // value of another type, a choice of another kind, ...).
+  FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_INVALID = 4;
+  // The current load holds no such review.
+  FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_NOT_FOUND = 5;
+}
+message FoundryReviewSettleRefusal {
+  FoundryReviewSettleRefusalReason reason = 1;
+  // A sentence for people; never parsed.
+  string message = 2;
+  // The decision that decided it: DECIDED only.
+  FoundryReviewDecision decided = 3;
 }
 message ListFoundryReviewsRequest {
   string workspace_id = 1;

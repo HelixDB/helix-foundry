@@ -45,7 +45,7 @@ const (
 // only count it stale. No alias is stored. The list is what the load holds
 // now: the choices the ontology held when the load was created, and the
 // approvals and value decisions settled against it or carried to it since
-// (store.SettleFoundryReleases, store.SettleFoundryValue), and the withdraws
+// (store.SettleFoundryReviews), and the withdraws
 // of approvals taken back that wait (store.DeleteFoundryReviewDecision); a
 // name settled after the load started waits for the next load. Each goes with its id and
 // when it was settled (foundry_load_decisions.decided_at), so the load tells

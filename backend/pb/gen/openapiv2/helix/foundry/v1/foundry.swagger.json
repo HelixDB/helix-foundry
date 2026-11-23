@@ -5389,6 +5389,51 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews:batchSettle": {
+      "post": {
+        "summary": "Settles up to 100 reviews of the current load in one transaction, each\nas SettleFoundryReview settles one: an item refused (it reads differently\nnow, another person decided it, ...) says why, and the rest are saved.\nThe whole batch is refused, saving nothing, when its fields are invalid,\ntwo items decide one thing, load_id isn't the current load, or the graph\ncan't be read.",
+        "operationId": "FoundryService_BatchSettleFoundryReviews",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1BatchSettleFoundryReviewsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceBatchSettleFoundryReviewsBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/versions": {
       "get": {
         "operationId": "FoundryService_ListOntologyVersions",
@@ -7257,6 +7302,27 @@
         }
       }
     },
+    "FoundryServiceBatchSettleFoundryReviewsBody": {
+      "type": "object",
+      "properties": {
+        "loadId": {
+          "type": "string",
+          "description": "The load the reviews were read from, which must be the current load."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewSettleItem"
+          },
+          "description": "1 to 100, each deciding something no other item decides. Every item is\nranked: a random spot check is settled one at a time."
+        },
+        "expectOpen": {
+          "type": "boolean",
+          "description": "Refuse an item whose card another person decided already (DECIDED),\nnever replacing their decision. One's own earlier decision is settled\nagain. A card closed only through another document's link of the name\nis not decided."
+        }
+      }
+    },
     "FoundryServiceCancelFoundryAgentTurnBody": {
       "type": "object",
       "description": "CancelFoundryAgentTurnRequest ends the caller's queued or running turn. One\nthat ended otherwise is FAILED_PRECONDITION."
@@ -8285,6 +8351,19 @@
         "redirectUrl": {
           "type": "string",
           "description": "redirect_uri with the code and the state, where the site sends the\nbrowser."
+        }
+      }
+    },
+    "v1BatchSettleFoundryReviewsResponse": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewSettleResult"
+          },
+          "description": "One result an item, in the items' order."
         }
       }
     },
@@ -9882,6 +9961,10 @@
         "timeZone": {
           "type": "string",
           "description": "The IANA time zone the person's browser names (America/New_York): the\nAssistant's default for a schedule. One that isn't a zone Go's database\nhas, or longer than 64 characters, is dropped, never refused."
+        },
+        "reviewCardId": {
+          "type": "string",
+          "description": "The review card open in the review walk (64 lowercase hexadecimal\ncharacters), of the current load of ontology_id, which it requires.\nFounder is told the card's review, so it can recommend a choice."
         }
       },
       "description": "FoundryAgentPageContext is what the person was looking at as they sent a\nmessage: ids only, each checked to be the workspace's before the agent is\ntold of it."
@@ -13094,6 +13177,61 @@
       ],
       "default": "FOUNDRY_REVIEW_SETTLE_UNSPECIFIED",
       "description": "What settles a review (SettleFoundryReview's decision).\n\n - FOUNDRY_REVIEW_SETTLE_UNSPECIFIED: No decision settles it: a conflict on a link that holds many values, or\na reason the backend doesn't settle.\n - FOUNDRY_REVIEW_SETTLE_RESOLVE: resolve: link its name to one of its candidates, or say it is not in\nthe data.\n - FOUNDRY_REVIEW_SETTLE_PROP: prop: choose the property's value, or remove it.\n - FOUNDRY_REVIEW_SETTLE_RELEASE: release or reject the statement it holds back, by its statement_hash.\n - FOUNDRY_REVIEW_SETTLE_STALE: A reason a decision settles, on a review missing what the backend reads\nof it (a load from before decisions): a new load writes it again."
+    },
+    "v1FoundryReviewSettleItem": {
+      "type": "object",
+      "properties": {
+        "reviewId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/v1FoundryReviewChoice"
+        }
+      }
+    },
+    "v1FoundryReviewSettleRefusal": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "$ref": "#/definitions/v1FoundryReviewSettleRefusalReason"
+        },
+        "message": {
+          "type": "string",
+          "description": "A sentence for people; never parsed."
+        },
+        "decided": {
+          "$ref": "#/definitions/v1FoundryReviewDecision",
+          "description": "The decision that decided it: DECIDED only."
+        }
+      }
+    },
+    "v1FoundryReviewSettleRefusalReason": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_UNSPECIFIED",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_FULL",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_INVALID",
+        "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_NOT_FOUND"
+      ],
+      "default": "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_UNSPECIFIED",
+      "description": " - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE: The load or the review reads differently now: read the cards again.\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED: Another person decided it (decided).\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_FULL: The ontology holds the most value decisions a load can be sent.\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_INVALID: This choice can't settle this review (an entity not in the load, a\nvalue of another type, a choice of another kind, ...).\n - FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_NOT_FOUND: The current load holds no such review."
+    },
+    "v1FoundryReviewSettleResult": {
+      "type": "object",
+      "properties": {
+        "reviewId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/definitions/v1FoundryReviewDecision",
+          "description": "Saved, as stored, with what the current load holds of it."
+        },
+        "refused": {
+          "$ref": "#/definitions/v1FoundryReviewSettleRefusal"
+        }
+      }
     },
     "v1FoundryReviewSpan": {
       "type": "object",
