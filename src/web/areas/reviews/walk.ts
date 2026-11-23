@@ -12,6 +12,7 @@ import {
   settleOf,
   type Advice,
   type AdviceContext,
+  type Decidable,
 } from "./advice";
 import { formatNumber } from "../../kit/util";
 import { BAND_TEXT, type QueueCard } from "./queue";
@@ -240,6 +241,23 @@ export function drawnLike(
 }
 
 /**
+ * What a choice on `card` decides, as the backend's settleKey reads it, so
+ * one request of the walk's outbox never carries two of one (the backend
+ * refuses such a batch whole): a card's own key, as a name's or a held
+ * claim's card is its decision's identity, but a value's entity and
+ * property, which each document's card of that value shares.
+ *
+ * @example
+ * decides(valueCard); // "value\u001fCustomer\u001fc1\u001fcurrency", whichever document
+ */
+export function decides(card: Decidable): string {
+  const s = settleOf(card);
+  return s.kind === "prop"
+    ? ["value", s.type, s.entityKey, s.prop].join("\u001f")
+    : card.key;
+}
+
+/**
  * Whether a batch takes the card `key` now: in the walk's order and still to
  * decide (or skipped). A card decided meanwhile, here or elsewhere, covered
  * by a link, or no longer in the walk is left as it is.
@@ -273,8 +291,8 @@ const nextOpen = (
  *   when it is, or the walk is past the end), and a refusal uncovers what
  *   the choice covered;
  * - `decided_elsewhere` marks a card still sending decided by another
- *   person (their decision kept), uncovers what its choice covered and drops
- *   it from the undo stack;
+ *   person (their decision kept) and uncovers what its choice covered; it
+ *   keeps its undo entry, so undoing it changes nothing but the stack;
  * - `adopt` takes the person's decision saved elsewhere on an open card as
  *   chosen here: one undo, and the walk moves on when it is the card shown;
  * - `skip` marks the current card skipped (unless decided) and goes to the
@@ -282,7 +300,8 @@ const nextOpen = (
  *   anything;
  * - `undone` forgets the outcomes of the keys (and what they covered), or,
  *   for those `kept`, marks them and what they covered taken back, drops
- *   them from the undo stack and shows the first of them again;
+ *   them from the undo stack and shows the first of them again; a key
+ *   decided elsewhere keeps its outcome and only leaves the stack;
  * - `uncover` opens again the cards that the keys' choices covered;
  * - `extend` adds a page's keys after the order (those not in it), the
  *   card shown staying; past the end, the first of them is shown;
@@ -398,13 +417,10 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
           ([, c]) => !(c.kind === "covered" && c.by === a.key),
         ),
       ).set(a.key, { kind: "elsewhere", decision: a.decision });
-      return {
-        ...w,
-        outcomes,
-        undo: w.undo
-          .map((e) => e.filter((k) => k !== a.key))
-          .filter((e) => e.length),
-      };
+      // It stays in its undo entry, as a refused choice does: the toast's
+      // Undo and Z take back this choice, which changes nothing (undone),
+      // never the one before it.
+      return { ...w, outcomes };
     }
     case "adopt": {
       const i = w.order.indexOf(a.key),
@@ -441,18 +457,24 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
     case "undone": {
       const gone = new Set(a.keys),
         kept = a.kept ?? new Set<string>();
+      // A card another person decided first stays theirs: it only leaves
+      // the undo stack.
       const outcomes = new Map(
         [...w.outcomes].flatMap(([k, o]): [string, Outcome][] => {
           const of = (keys: ReadonlySet<string>) =>
             keys.has(k) || (o.kind === "covered" && keys.has(o.by));
-          return of(kept)
-            ? [[k, { kind: "taken_back" }]]
-            : of(gone)
-              ? []
-              : [[k, o]];
+          return o.kind === "elsewhere"
+            ? [[k, o]]
+            : of(kept)
+              ? [[k, { kind: "taken_back" }]]
+              : of(gone)
+                ? []
+                : [[k, o]];
         }),
       );
-      const first = w.order.findIndex((k) => gone.has(k));
+      const first = w.order.findIndex(
+        (k) => gone.has(k) && outcomes.get(k)?.kind !== "elsewhere",
+      );
       return {
         ...w,
         outcomes,

@@ -68,6 +68,7 @@ import {
   batchOf,
   batchTakes,
   current,
+  decides,
   drawnLike,
   linkedNow,
   notLinked,
@@ -112,14 +113,27 @@ type Sending = {
   effect: Effect;
 };
 
-/** What the backend answered a choice, or that Stop or Undo took it back unsent. */
+/**
+ * What the backend answered a choice (saved, refused, or refused as another
+ * person decided its card first, with their decision), or that Stop or Undo
+ * took it back unsent.
+ */
 type Answer =
   | { kind: "saved"; decision: FoundryReviewDecision }
   | { kind: "refused"; message: string }
+  | { kind: "elsewhere"; message: string; decision?: FoundryReviewDecision }
   | { kind: "cancelled" };
 
-/** A choice in the outbox: its card, and the review it settles. */
-type Item = { key: string; reviewId: string; choice: FoundryReviewChoice };
+/**
+ * A choice in the outbox: its card, the review it settles, and what it
+ * decides (walk.ts `decides`), of which a request carries one.
+ */
+type Item = {
+  key: string;
+  reviewId: string;
+  choice: FoundryReviewChoice;
+  decides: string;
+};
 
 /** What became of one item of a batch, in the items' order. */
 export type BatchResult = { item: Sending; answer: Answer };
@@ -272,31 +286,31 @@ export function useWalk() {
           }
           const reason = refusalReason(r.refused),
             message = r.refused?.message || "The choice was refused.";
-          if (reason === "DECIDED")
+          if (reason === "DECIDED") {
             dispatch({
               type: "decided_elsewhere",
               key,
               decision: r.refused?.decided,
             });
-          else {
-            if (reason === "FULL") setStopped(message);
-            // The load or the review reads otherwise now: the cards are read
-            // again, and a stale card is to choose again.
-            if (reason === "STALE" || reason === "NOT_FOUND")
-              void qc.invalidateQueries({
-                queryKey: [ws, "ontology", o, "review-cards"],
-              });
-            dispatch({
-              type: "refused",
-              key,
-              message,
-              retry: reason === "STALE",
-            });
+            return { kind: "elsewhere", message, decision: r.refused?.decided };
           }
+          if (reason === "FULL") setStopped(message);
+          // The load or the review reads otherwise now: the cards are read
+          // again, and a stale card is to choose again.
+          if (reason === "STALE" || reason === "NOT_FOUND")
+            void qc.invalidateQueries({
+              queryKey: [ws, "ontology", o, "review-cards"],
+            });
+          dispatch({
+            type: "refused",
+            key,
+            message,
+            retry: reason === "STALE",
+          });
           return { kind: "refused", message };
         });
       },
-      { max: PER_REQUEST },
+      { max: PER_REQUEST, key: (it) => it.decides },
     );
     outboxes.current.set(loadId, box);
     return box;
@@ -311,6 +325,7 @@ export function useWalk() {
           key,
           reviewId: settleOf(s.card).reviewId,
           choice: s.choice,
+          decides: decides(s.card),
         });
       } catch (e) {
         if (e instanceof Cancelled) return { kind: "cancelled" };
@@ -418,10 +433,14 @@ export function useWalk() {
      * left saved) and forgotten, but a name's link
      * the current load holds (linkedNow, by the decisions as last read)
      * stays in that load, so its cards and those it covered show it taken
-     * back rather than to decide. What it says, or null with nothing to take
-     * back or an undo already running.
+     * back rather than to decide. A choice refused as another person decided
+     * its card first stays theirs: there is nothing to take back, and it
+     * says who (`nameOf`, by user id). What it says, or null with nothing to
+     * take back or an undo already running.
      */
-    undo: async (): Promise<{ text: string; error: boolean } | null> => {
+    undo: async (
+      nameOf: (userId: string | undefined) => string,
+    ): Promise<{ text: string; error: boolean } | null> => {
       const keys = now.current.undo.at(-1);
       if (!keys || undoing.current) return null;
       undoing.current = true;
@@ -434,6 +453,8 @@ export function useWalk() {
               out?.kind === "saved" || out?.kind === "unconfirmed"
                 ? ({ kind: "saved", decision: out.decision } as const)
                 : await sends.current.get(key);
+            if (answer?.kind === "elsewhere")
+              return { key, ok: true, theirs: answer } as const;
             if (answer?.kind !== "saved") return { key, ok: true } as const;
             // Another person's decision is theirs to take back.
             if (answer.decision.decidedByUserId !== user.id)
@@ -448,7 +469,13 @@ export function useWalk() {
             }
           }),
         );
+        // Gone from the undo stack; those another person decided keep their
+        // outcome (the reducer's undone), and only the rest are taken back.
         const gone = removed.flatMap((r) => (r.ok ? [r.key] : []));
+        const theirs = removed.flatMap((r) =>
+          r.ok && "theirs" in r ? [r.theirs] : [],
+        );
+        const ours = removed.length - theirs.length;
         const read = new Map(
           qc
             .getQueriesData<FoundryReviewDecision[]>({ queryKey: decidedKey })
@@ -470,10 +497,11 @@ export function useWalk() {
         );
         if (gone.length) {
           const out = now.current.outcomes.get(gone[0]!);
-          trackEvent("review_undone", {
-            kind:
-              out && "how" in out && out.how === "batch" ? "batch" : "choice",
-          });
+          if (ours)
+            trackEvent("review_undone", {
+              kind:
+                out && "how" in out && out.how === "batch" ? "batch" : "choice",
+            });
           dispatch({ type: "undone", keys: gone, kept });
         }
         await refresh(true);
@@ -486,11 +514,13 @@ export function useWalk() {
         const [one] = removed;
         return {
           text:
-            removed.length > 1
-              ? `Took back ${plural(removed.length, "choice")}.`
-              : one?.ok && one.decision
-                ? UNDONE[one.decision.kind]
-                : "Choice cancelled.",
+            ours === 0
+              ? `Already decided by ${theirs.length > 1 ? "others" : nameOf(theirs[0]?.decision?.decidedByUserId)}: their decision stands.`
+              : removed.length > 1
+                ? `Took back ${plural(ours, "choice")}${theirs.length ? `; ${formatNumber(theirs.length)} already decided by others` : ""}.`
+                : one?.ok && "decision" in one && one.decision
+                  ? UNDONE[one.decision.kind]
+                  : "Choice cancelled.",
           error: false,
         };
       } finally {
@@ -798,7 +828,7 @@ export function ReviewWalkthrough({
   }, [key, synced, dialog]);
 
   const undo = async () => {
-    const r = await api.undo();
+    const r = await api.undo(memberName);
     if (!r) return;
     moved.current = true;
     say(r.text, false, r.error);
@@ -939,17 +969,16 @@ export function ReviewWalkthrough({
       (x) => x.kind === "elsewhere" && !!x.decision,
     ),
   });
-  const decidedBy = (() => {
-    const by =
-      outcome?.kind === "elsewhere"
-        ? outcome.decision?.decidedByUserId
-        : undefined;
-    if (!by) return undefined;
+  const memberName = (by: string | undefined) => {
     const m = members.data?.pages
       .flatMap((p) => p.members || [])
-      .find((m) => m.user?.id === by)?.user;
+      .find((m) => by && m.user?.id === by)?.user;
     return m?.displayName || m?.email || "a teammate";
-  })();
+  };
+  const decidedBy =
+    outcome?.kind === "elsewhere" && outcome.decision
+      ? memberName(outcome.decision.decidedByUserId)
+      : undefined;
   // Members move, open and ask with keys too; deciding needs `manage`.
   useWalkKeys(on, synced && lane === "decide", layout.numbered.length);
 
@@ -1304,13 +1333,13 @@ export function ReviewWalkthrough({
               key: item.card.key,
               ...(answer.kind === "cancelled"
                 ? { stopped: true }
-                : answer.kind === "refused"
+                : answer.kind === "refused" || answer.kind === "elsewhere"
                   ? { failed: answer.message }
                   : {}),
             }));
           }}
           undo={async () => {
-            const r = await api.undo();
+            const r = await api.undo(memberName);
             if (r) say(r.text, false, r.error);
           }}
           onClose={() => setDialog(null)}

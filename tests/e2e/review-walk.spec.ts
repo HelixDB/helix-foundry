@@ -833,7 +833,7 @@ test("a retried choice after a dropped answer keeps one decision, the person's",
   expect(saved[0]!.id).toBe(result.decision.id);
 });
 
-test("two admins on one card: the second is told who decided it, and their Undo removes nothing of the first's", async ({
+test("two admins on one card: the second is told who decided it, and their Undo removes nothing, not even their own choice before it", async ({
   page,
   browser,
 }) => {
@@ -841,7 +841,7 @@ test("two admins on one card: the second is told who decided it, and their Undo 
     ...MEASURED(40),
     alanRole: "WORKSPACE_ROLE_ADMIN",
   });
-  const { first } = await claims(page);
+  const { first, other } = await claims(page);
   // Alan opens the walk too: everyone walks one order, so his first card
   // is Ada's.
   const alanContext = await browser.newContext();
@@ -849,32 +849,51 @@ test("two admins on one card: the second is told who decided it, and their Undo 
   await signIn(alan, "alan@example.com");
   await alan.goto(`${O}/review`);
   await expect(heading(alan)).toContainText(first);
-  // Ada approves it first.
+  // Alan approves the first card; Ada skips it and approves the next.
+  const his = alan.waitForResponse((r) => isBatch(r.request()));
+  await alan.keyboard.press("Enter");
+  const mine = (await (await his).json()).results[0].decision;
+  expect(mine.decidedByUserId).toBe("usr_alan");
+  await expect(heading(alan)).toContainText(other);
+  await page.keyboard.press("s");
+  await expect(heading(page)).toContainText(other);
   const sent = page.waitForResponse((r) => isBatch(r.request()));
   await page.keyboard.press("Enter");
   const ada = (await (await sent).json()).results[0].decision;
   expect(ada.decidedByUserId).toBe("usr_ada");
-  // Alan's approval is refused, naming her; hers stands.
-  const refused = alan.waitForResponse((r) => isBatch(r.request()));
-  await alan.keyboard.press("Enter");
-  expect((await (await refused).json()).results[0].refused).toMatchObject({
-    reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
-    decided: { id: ada.id },
-  });
-  await alan.keyboard.press("ArrowLeft");
-  await expect(heading(alan)).toContainText(first);
-  await expect(card(alan).locator(".rv-outcome")).toHaveText(
-    "Decided by Ada Lovelace. Their choice stands; yours wasn’t saved.",
-  );
-  await expect(progress(alan)).toContainText("1 decided elsewhere");
-  // Alan's Undo has nothing of his to take back: nothing is removed.
+  // Alan's approval of it is refused, naming her; he presses Z while it is
+  // in flight. His choice is hers, so Undo has nothing to take back: his
+  // approval of the first card stays, and nothing is removed.
   const removes: Request[] = [];
   alan.on("request", (r) => {
     if (isRemove(r)) removes.push(r);
   });
+  await alan.route("**/papi/**/reviews:batchSettle", async (route: Route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  const refused = alan.waitForResponse((r) => isBatch(r.request()));
+  await alan.keyboard.press("Enter");
+  await expect(toast(alan, "Approved")).toBeVisible();
   await alan.keyboard.press("z");
-  await expect(card(alan).locator(".rv-outcome")).toContainText("Decided by");
-  expect(removes).toHaveLength(0);
+  expect((await (await refused).json()).results[0].refused).toMatchObject({
+    reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
+    decided: { id: ada.id },
+  });
+  await expect(
+    toast(alan, "Already decided by Ada Lovelace: their decision stands."),
+  ).toBeVisible();
+  await alan.keyboard.press("ArrowLeft");
+  await expect(heading(alan)).toContainText(other);
+  await expect(card(alan).locator(".rv-outcome")).toHaveText(
+    "Decided by Ada Lovelace. Their choice stands; yours wasn’t saved.",
+  );
+  await expect(progress(alan)).toContainText("1 decided elsewhere");
+  // A second Z takes back his own approval, the choice before it.
+  await alan.keyboard.press("z");
+  await expect(heading(alan)).toContainText(first);
+  await expect.poll(() => removes.length).toBe(1);
+  expect(removes[0]!.url()).toContain(mine.id);
   await alanContext.close();
   const saved = await releases(page);
   expect(saved.map((d) => [d.id, d.decidedByUserId])).toEqual([

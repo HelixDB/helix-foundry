@@ -12,6 +12,7 @@ import {
   batchTakes,
   changedElsewhere,
   current,
+  decides,
   drawnLike,
   linkedNow,
   notLinked,
@@ -298,7 +299,16 @@ describe("walkReducer", () => {
     expect(run(w, { type: "sent", key: "b", decision: decision("b") })).toBe(w);
   });
   it("keeps another person's decision when theirs came first, uncovering what the choice covered", () => {
-    const w = run(walkOf(["a", "b", "c"]), {
+    const earlier = run(
+      run(walkOf(["a", "b", "c"]), {
+        type: "jump",
+        key: "c",
+      }),
+      { type: "decide", key: "c", choice: approve, how: "chosen" },
+      { type: "sent", key: "c", decision: decision("c") },
+      { type: "jump", key: "a" },
+    );
+    const w = run(earlier, {
       type: "decide",
       key: "a",
       choice: approve,
@@ -316,8 +326,15 @@ describe("walkReducer", () => {
       decision: theirs,
     });
     expect(decided.outcomes.has("b")).toBe(false);
-    expect(decided.undo).toEqual([]);
-    expect(progress(decided).left).toBe(2);
+    // Its undo entry stays the last: undoing it changes nothing but the
+    // stack, never taking back the choice before it.
+    expect(decided.undo).toEqual([["c"], ["a"]]);
+    expect(progress(decided).left).toBe(1);
+    const undone = run(decided, { type: "undone", keys: ["a"] });
+    expect(undone.outcomes.get("a")).toEqual(decided.outcomes.get("a"));
+    expect(undone.outcomes.get("c")?.kind).toBe("saved");
+    expect(undone.undo).toEqual([["c"]]);
+    expect(undone.at).toBe(decided.at);
     // Only a choice still sending.
     expect(run(decided, { type: "decided_elsewhere", key: "a" })).toBe(decided);
   });
@@ -598,6 +615,20 @@ describe("walkReducer", () => {
       gone: new Set(),
     });
     expect(current(r)).toBe("c");
+  });
+});
+
+describe("decides", () => {
+  it("is a card's own key, but one key for every document's card of a value", () => {
+    const value = valueCard([{ text: "a" }, { text: "b" }]);
+    const another = valueCard([{ text: "a" }, { text: "b" }], { id: "v-2" });
+    another.review = { ...another.review, documentId: "doc-2" };
+    expect(decides(value)).toBe(decides(another));
+    expect(decides(value)).toBe("value\u001fCustomer\u001fc1\u001fcurrency");
+    const name = nameCard("umbrella"),
+      claim = heldCard(1);
+    expect(decides(name)).toBe(name.key);
+    expect(decides(claim)).toBe(claim.key);
   });
 });
 

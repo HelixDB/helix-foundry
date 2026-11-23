@@ -31,8 +31,12 @@ export type Outbox<T, R> = {
  * An outbox over `send`, which answers each item of a request in its order.
  * One request is in flight at a time, of at most `max` items, in the order
  * pushed; items pushed in one tick go together, and those pushed while a
- * request is in flight wait for the next. An answer of another length
- * rejects every item of its request, as a failed request does.
+ * request is in flight wait for the next. With `key`, a request never holds
+ * two items of one key: a later one waits for the next request, so the
+ * backend, which refuses a batch deciding one thing twice, saves them in
+ * turn (the later replacing the earlier), as separate calls would. An
+ * answer of another length rejects every item of its request, as a failed
+ * request does.
  *
  * @example
  * const box = createOutbox(async (ns: readonly number[]) => ns.map((n) => n * 2), { max: 25 });
@@ -40,7 +44,7 @@ export type Outbox<T, R> = {
  */
 export function createOutbox<T, R>(
   send: (items: readonly T[]) => Promise<readonly R[]>,
-  o: { max: number },
+  o: { max: number; key?: (item: T) => string },
 ): Outbox<T, R> {
   if (o.max < 1)
     throw new Error("An outbox sends at least one item a request.");
@@ -54,7 +58,19 @@ export function createOutbox<T, R>(
     scheduled = false;
   const flush = async () => {
     if (flying || !queue.length) return;
-    const batch = queue.splice(0, o.max);
+    // The first `max` items in order, each key once; the rest keep their
+    // places for the next request.
+    const keys = new Set<string>(),
+      batch: Queued[] = [];
+    for (let i = 0; i < queue.length && batch.length < o.max; ) {
+      const k = o.key?.(queue[i]!.item);
+      if (k !== undefined && keys.has(k)) {
+        i += 1;
+        continue;
+      }
+      if (k !== undefined) keys.add(k);
+      batch.push(...queue.splice(i, 1));
+    }
     flying = batch.length;
     try {
       const answers = await send(batch.map((q) => q.item));

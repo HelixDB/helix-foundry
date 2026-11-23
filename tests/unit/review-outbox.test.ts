@@ -88,6 +88,30 @@ describe("createOutbox", () => {
     expect(r.requests).toEqual([[1], [2, 4]]);
     expect(box.cancel(() => true)).toEqual([]);
   });
+  it("never sends two items of one key together: the later waits its turn, in order", async () => {
+    const r = recorder();
+    // Odd and even numbers share a key apiece, except 5, which has its own.
+    const box = createOutbox(r.send, {
+      max: 3,
+      key: (n) => (n === 5 ? "five" : String(n % 2)),
+    });
+    const answers = [1, 3, 2, 4, 5, 6].map((n) => box.push(n));
+    await tick();
+    expect(r.requests).toEqual([[1, 2, 5]]);
+    r.answer(0);
+    await tick();
+    expect(r.requests).toEqual([
+      [1, 2, 5],
+      [3, 4],
+    ]);
+    r.answer(1);
+    await tick();
+    expect(r.requests).toEqual([[1, 2, 5], [3, 4], [6]]);
+    r.answer(2);
+    expect(await Promise.all(answers)).toEqual(
+      [1, 3, 2, 4, 5, 6].map((n) => `ok ${n}`),
+    );
+  });
   it("sends at least one item a request", () => {
     expect(() => createOutbox(async () => [], { max: 0 })).toThrow();
   });

@@ -1609,7 +1609,6 @@ export const messageIntent = (ws: string, text: string, ontologyId = "") =>
   messageRoute({ ws, text, page: ontologyId ? { ontologyId } : null }, true)
     .intent;
 
-/** What the agent does with a person's message. */
 /**
  * A message sent from the review walk (the page context's reviewCardId, a
  * card of the ontology's current load): Founder reads the card's review and
@@ -1657,6 +1656,7 @@ function reviewAdvice(a: Ask): Step[] | undefined {
   ];
 }
 
+/** What the agent does with a person's message. */
 function messageScript(a: Ask, who: Who): Step[] {
   if (who === "grantee") return granteeScript(a);
   const advice = reviewAdvice(a);
