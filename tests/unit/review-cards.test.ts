@@ -9,6 +9,7 @@ import {
   claimDocs,
   heldCardId,
   reviewReads,
+  withOwnDecisions,
 } from "@/web/areas/reviews/cards";
 import { cardsQuery } from "@/web/areas/reviews/cards-api";
 import type { QueueReview } from "@/web/areas/reviews/queue";
@@ -24,7 +25,12 @@ import {
   type ClaimDecision,
   type Review,
 } from "../../mock/review-cards";
-import { heldCard, nameCard, valueCard } from "./__fixtures__/review-cards";
+import {
+  heldCard,
+  nameCard,
+  resolveDecision,
+  valueCard,
+} from "./__fixtures__/review-cards";
 
 // The review cards index's rules have two homes: the backend's
 // (backend/reviewcards) and the mock's (mock/review-cards.ts). The
@@ -327,5 +333,50 @@ describe("cardsQuery", () => {
     expect(cardsQuery({ lane: "fyi", kinds: [], type: "A B" }, "L:x")).toBe(
       "lane=FOUNDRY_REVIEW_LANE_FYI&type=A+B&pageToken=L%3Ax",
     );
+  });
+});
+
+describe("withOwnDecisions", () => {
+  const read = [
+    {
+      type: "Customer",
+      normName: "umbrella holdings",
+      total: 1,
+      choices: 1,
+      newest: [resolveDecision("d-1", { entityKey: "scus_1" })],
+    },
+  ];
+  it("folds the walk's own decisions into the names read, newest first", () => {
+    const same = resolveDecision("d-2", { doc: "doc-3", entityKey: "scus_1" });
+    expect(withOwnDecisions(read, [same])).toEqual([
+      { ...read[0], total: 2, choices: 1, newest: [same, read[0]!.newest[0]] },
+    ]);
+    const other = resolveDecision("d-3", { doc: "doc-3" });
+    expect(withOwnDecisions(read, [other])[0]).toMatchObject({
+      total: 2,
+      choices: 2,
+    });
+  });
+  it("adds a name the read had none of, and reads one it has again in place", () => {
+    const mine = resolveDecision("d-9", { normName: "initech" });
+    expect(withOwnDecisions(read, [mine])[1]).toEqual({
+      type: "Customer",
+      normName: "initech",
+      total: 1,
+      choices: 1,
+      newest: [mine],
+    });
+    const applied = {
+      ...read[0]!.newest[0]!,
+      applied: { status: "written" as const },
+    };
+    expect(withOwnDecisions(read, [applied])).toEqual([
+      { ...read[0], newest: [applied] },
+    ]);
+    // Only resolves; the read is left as it was.
+    expect(
+      withOwnDecisions(read, [{ ...applied, kind: "prop" } as never]),
+    ).toEqual(read);
+    expect(read[0]!.total).toBe(1);
   });
 });

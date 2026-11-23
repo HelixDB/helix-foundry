@@ -206,6 +206,8 @@ describe("mock source grants", () => {
       `DELETE ${F}/agent/threads/{id}`,
       `GET ${F}/agent/turns/{id}/events`,
       `POST ${F}/agent/turns/{id}:cancel`,
+      // Review cards: the summary, which answers it with none.
+      `GET ${F}/review-summary`,
       // Slack: the install, and its own link.
       `GET ${F}/slack`,
       `POST ${F}/slack/links:preview`,

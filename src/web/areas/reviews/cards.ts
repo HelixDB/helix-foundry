@@ -2,6 +2,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type {
   FoundryReviewCard,
+  FoundryReviewDecision,
+  FoundryReviewNameDecisions,
   ListFoundryReviewCardsResponse,
 } from "../../../shared/wfe";
 import { REVIEWS_BY_KEY } from "../explore/model";
@@ -177,4 +179,50 @@ export function reviewReads(
       }),
     );
   });
+}
+
+/**
+ * The index's decisions of each name (`names`, read with a page of cards),
+ * with the walk's own saved since (`own`, read by id) folded in, newest
+ * first, so a name decided in this walk is a precedent for the next card of
+ * it, and a link of it covers the other documents asking. A choice the
+ * names read doesn't list counts as another choice: the index may hold
+ * more decisions of the name than it sent.
+ *
+ * @example
+ * withOwnDecisions(page.names, decided.data); // the names, the walk's own included
+ */
+export function withOwnDecisions(
+  names: readonly FoundryReviewNameDecisions[],
+  own: readonly FoundryReviewDecision[],
+): FoundryReviewNameDecisions[] {
+  const choice = (d: FoundryReviewDecision) =>
+    (d.kind === "resolve" && d.entityKey) || "";
+  const out = new Map(
+    names.map((n) => [
+      JSON.stringify([n.type, n.normName]),
+      { ...n, newest: [...(n.newest ?? [])] },
+    ]),
+  );
+  for (const d of own) {
+    if (d.kind !== "resolve") continue;
+    const at = JSON.stringify([d.type, d.normName]);
+    const n = out.get(at) ?? {
+      type: d.type,
+      normName: d.normName,
+      total: 0,
+      choices: 0,
+      newest: [],
+    };
+    const i = n.newest.findIndex((x) => x.id === d.id);
+    if (i >= 0) n.newest[i] = d;
+    else {
+      if (!n.newest.some((x) => choice(x) === choice(d)))
+        n.choices = (n.choices ?? 0) + 1;
+      n.total = (n.total ?? 0) + 1;
+      n.newest.unshift(d);
+    }
+    out.set(at, n);
+  }
+  return [...out.values()];
 }

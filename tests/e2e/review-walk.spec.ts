@@ -102,12 +102,12 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   await makeContractsCurrent(page);
   await startContractsLoad(page);
   await expect(page).toHaveURL(/\/loads\/load_/);
-  // Another page's dock says the load left reviews, and opens them; it
-  // names no count until the Review page has counted the cards to decide.
+  // Another page's dock says the load left cards to decide, as many as the
+  // review cards index counts, and opens them.
   await page.goto("/data");
   const dock = page.getByRole("region", { name: "Jobs in progress" });
   await expect(dock).toContainText("Data loaded", { timeout: 30_000 });
-  await dock.getByRole("link", { name: "Review", exact: true }).click();
+  await dock.getByRole("link", { name: "Review 4", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${O}/review$`));
   const { first, other } = await claims(page);
   await expect(heading(page)).toHaveText(
@@ -218,26 +218,28 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   );
   await done.getByRole("button", { name: "Go through 1 skipped" }).click();
   await expect(heading(page)).toContainText(first);
-  // The overview says what the load's documents left (a fresh page has
-  // counted no cards), and starts the walk too; back from the walk, it says
-  // the walk's count of cards still to decide: the one skipped.
-  await page.goto(O);
-  await expect(page.getByText(/^\d+ reviews waiting$/)).toBeVisible();
-  await page.getByRole("link", { name: "Start reviewing" }).click();
-  await expect(page).toHaveURL(new RegExp(`${O}/review$`));
-  const facts = page
-    .getByRole("tab", { name: /^Facts/ })
-    .locator(".hf-tab-count");
-  await expect(facts).toHaveText("1");
-  await expect(lane(page, "Decide")).toHaveText(/^Decide\s*1$/);
+  // Every count is the index's: the card skipped, unless the finish drew it
+  // as a spot check, which is then no card to decide.
+  await page.goto(`${O}/review`);
+  await expect(lane(page, "Decide")).toHaveText(/^Decide\s*[01]$/);
+  const n = Number(
+    /(\d+)$/.exec((await lane(page, "Decide").textContent())!)![1],
+  );
   await page
     .getByRole("list", { name: "Pages" })
     .getByRole("link", { name: "Overview" })
     .click();
   await expect(page).toHaveURL(new RegExp(`${O}$`));
-  await expect(
-    page.getByText("1 card to decide", { exact: true }),
-  ).toBeVisible();
+  if (n) {
+    await expect(
+      page.getByText("1 card to decide", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Start reviewing" }).click();
+    await expect(page).toHaveURL(new RegExp(`${O}/review$`));
+  } else
+    await expect(
+      page.getByRole("link", { name: "Start reviewing" }),
+    ).toHaveCount(0);
 });
 
 /** Three documents name Umbrella Holdings; the walk opens on the first. */

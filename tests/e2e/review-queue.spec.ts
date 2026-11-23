@@ -9,12 +9,12 @@ import {
   uploadAndLoadContract,
 } from "./support/mock";
 
-// The review queue (/ontology/:id/review, the Review page's Facts tab), as
-// the walkthrough takes it: the decisions writing the most facts first,
-// each card's evidence before its score, values a table keeps for
-// information, and about one card in ten drawn at random from a score band,
-// which waits for the finish as a spot check, each decision saying how its
-// card was drawn (review-walk.spec.ts walks the cards).
+// The review cards (/ontology/:id/review, the Review page's Facts tab), as
+// the walkthrough takes them from the index: the decisions writing the most
+// facts first, each card's evidence before its score, values a table keeps
+// for information, and spot checks drawn at random from every score band at
+// the finish, each decision saying how its card was drawn
+// (review-walk.spec.ts walks the cards).
 
 const O = "/ontology/ont_acme_contracts";
 // Two held claims, a value in conflict, a name in no row that blocks a
@@ -86,10 +86,6 @@ test("walks what writes facts first, evidence before the score, values a table k
       .getByRole("listitem")
       .filter({ hasText: "A value the table keeps" }),
   ).toHaveCount(1);
-  // What isn't in the queue, and why.
-  await expect(
-    page.getByText(/Not in the queue: .*no decision settles here/),
-  ).toBeVisible();
   // The random draws wait for the finish, where they can be skipped.
   await finish(page);
   await expect(spot(page).getByText("Random check").first()).toBeVisible();
@@ -100,7 +96,7 @@ test("walks what writes facts first, evidence before the score, values a table k
   await expect(spot(page)).toBeVisible();
 });
 
-test("a decision from the walk says it was ranked, and read again its card has left the queue", async ({
+test("a decision from the walk says it was ranked, and read again its card has left the walk", async ({
   page,
 }) => {
   await queued(page);
@@ -119,7 +115,6 @@ test("a decision from the walk says it was ranked, and read again its card has l
   await page.reload();
   await expect(card(page)).toBeVisible();
   await expect.poll(async () => rail(page).count()).toBe(before - 1);
-  await expect(page.getByText(/Not in the queue: 1 decided/)).toBeVisible();
 });
 
 test("labels an accepted fact drawn at random, which changes nothing and counts in the random checks", async ({
@@ -155,7 +150,7 @@ test("labels an accepted fact drawn at random, which changes nothing and counts 
   ).toContainText(/0\.9 and above\s*1\s*1/);
 });
 
-// An id the queue offers a second person (reviews/queue.ts rechecks: one in
+// An id the index offers a second person (reviewcards.Rechecked: one in
 // twenty, by a hash of the id).
 function sampledId() {
   for (let i = 0; ; i++) {
@@ -169,8 +164,8 @@ test("offers a second person a re-check of another's queue decision, with what t
   page,
 }) => {
   await queued(page);
-  // Ada rejects a held claim from the queue; the decisions read names it
-  // as another person's, drawn for a re-check.
+  // Ada rejects a held claim from the walk; the spot checks read name it as
+  // another person's, drawn for a re-check.
   const held = card(page);
   await expect(held).toContainText("may have signed");
   const saved = page.waitForResponse(
@@ -180,14 +175,19 @@ test("offers a second person a re-check of another's queue decision, with what t
   const decision = (await (await saved).json()).decision;
   await expect(page.locator(".rv-toast")).toContainText("Rejected.");
   const id = sampledId();
-  await page.route(/\/review-decisions(\?.*)?$/, async (route) => {
+  await page.route(/\/review-spot-checks(:draw)?$/, async (route) => {
     const response = await route.fetch();
     const json = await response.json();
-    json.decisions = (json.decisions ?? []).map((d: { id: string }) =>
-      d.id === decision.id
-        ? { ...d, id, decidedByUserId: "usr_alan", drawn: "ranked" }
-        : d,
-    );
+    json.rechecks = [
+      {
+        decision: {
+          ...decision,
+          id,
+          decidedByUserId: "usr_alan",
+          drawn: "ranked",
+        },
+      },
+    ];
     await route.fulfill({ response, json });
   });
   await page.route(/\/review-labels$/, async (route) => {

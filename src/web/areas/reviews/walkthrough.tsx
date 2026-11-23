@@ -149,7 +149,11 @@ export function useWalk() {
   // queue (decided, here or elsewhere) still shows in its place.
   const seen = useRef(new Map<string, { card: QueueCard; advice?: Advice }>());
   // The order last taken, which a page read after it extends.
-  const last = useRef<{ loadId: string; order: readonly string[] }>(undefined);
+  const last = useRef<{
+    loadId: string;
+    order: readonly string[];
+    filter: string;
+  }>(undefined);
   const undoing = useRef(false);
   // The choices still sending when a new load became current.
   const [changed, setChanged] = useState<readonly string[] | null>(null);
@@ -168,6 +172,28 @@ export function useWalk() {
       size_bucket: sizeBucket(p.accepted + p.chosen),
     });
   }, [finished, state.loadId]);
+  // The cards this walk closed (a choice sending or saved, a name a link
+  // covered, a link taken back the load keeps) come off the summary's count
+  // as they close, and go back on as they open again, until it is read
+  // again: the walk's own choices are what the index hasn't counted yet.
+  const closed = [...state.outcomes.values()].filter(
+    (x) =>
+      x.kind === "sending" ||
+      x.kind === "saved" ||
+      x.kind === "covered" ||
+      x.kind === "taken_back",
+  ).length;
+  const taken = useRef({ loadId: "", closed: 0 });
+  useEffect(() => {
+    const t = taken.current;
+    if (t.loadId !== state.loadId) {
+      taken.current = { loadId: state.loadId, closed };
+      return;
+    }
+    if (closed === t.closed) return;
+    adjustSummary(qc, ws, o, state.loadId, closed - t.closed);
+    t.closed = closed;
+  }, [closed, state.loadId]);
   useEffect(() => {
     if (!sending) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -203,8 +229,6 @@ export function useWalk() {
           { decision: s.choice, drawn: "ranked" },
         );
         dispatch({ type: "sent", key, decision });
-        // One card fewer to decide, until the summary is counted again.
-        adjustSummary(qc, ws, o, now.current.loadId, 1);
         return { kind: "saved", decision };
       } catch (e) {
         const message = (e as Error).message;
@@ -305,13 +329,6 @@ export function useWalk() {
           }),
         );
         const gone = removed.flatMap((r) => (r.ok ? [r.key] : []));
-        adjustSummary(
-          qc,
-          ws,
-          o,
-          now.current.loadId,
-          -removed.filter((r) => r.ok && r.decision).length,
-        );
         const read = new Map(
           qc
             .getQueriesData<FoundryReviewDecision[]>({ queryKey: decidedKey })
@@ -368,22 +385,26 @@ export function useWalk() {
      * same load, cards the index no longer lists, or now covered by a link,
      * keep their places. A card missing past the last the read still lists
      * may only have moved to a page not read yet, so it is dropped, not
-     * marked decided elsewhere.
+     * marked decided elsewhere; so is every card another of the index's
+     * filters (`filter`) leaves out, which keeps what became of it.
      */
     rebase: (
       loadId: string,
       { decide: order, cards: inQueue, advice, covered }: WalkOrder,
       more: boolean,
+      filter: string,
     ) => {
       const w = now.current,
         moved = w.loadId !== "" && w.loadId !== loadId,
         cover = new Set(covered);
       const before = last.current;
-      last.current = { loadId, order };
+      last.current = { loadId, order, filter };
+      const refiltered = before?.filter !== filter;
       for (const [k, card] of inQueue)
         seen.current.set(k, { card, advice: advice.get(k) });
       if (
         before?.loadId === loadId &&
+        !refiltered &&
         w.loadId === loadId &&
         before.order.length < order.length &&
         before.order.every((k, i) => order[i] === k)
@@ -415,7 +436,8 @@ export function useWalk() {
           w.loadId === loadId
             ? w.order.filter(
                 (k, i) =>
-                  (!inQueue.has(k) && (!more || i < listed)) || cover.has(k),
+                  (!refiltered && !inQueue.has(k) && (!more || i < listed)) ||
+                  cover.has(k),
               )
             : [],
         ),
@@ -457,7 +479,6 @@ export function ReviewWalkthrough({
 }) {
   const { id: ws, role } = useWorkspace(),
     { id: o } = useOntology();
-  const qc = useQueryClient();
   const shell = useShell();
   const docName = useDocumentNames(ws, "A document");
   const { naming, walk: api } = q;
@@ -479,8 +500,9 @@ export function ReviewWalkthrough({
     );
   const { single, ctx } = q;
   const order = q.all!;
+  const filterKey = JSON.stringify([kind ?? "", type, doc]);
   useEffect(() => {
-    api.rebase(load.id, order, q.hasMore);
+    api.rebase(load.id, order, q.hasMore, filterKey);
   }, [load.id, order]);
   // The types and documents the filters offer: every one this visit's reads
   // of the load had a card of, so the row stays as it was while cards are
@@ -724,6 +746,23 @@ export function ReviewWalkthrough({
   // Members move, open and ask with keys too; deciding needs `manage`.
   useWalkKeys(on, synced && lane === "decide", layout.numbered.length);
 
+  // The FYI lane as this visit first read it: a card settled here keeps its
+  // place, saying what was saved, though the index no longer lists it.
+  const fyiSeen = useRef<{ load: string; keys: string[] }>(undefined);
+  const [fyiHere, setFyiHere] = useState<ReadonlySet<string>>(new Set());
+  if (fyiSeen.current?.load !== load.id)
+    fyiSeen.current = { load: load.id, keys: [] };
+  for (const k of order.fyi)
+    if (!fyiSeen.current.keys.includes(k)) fyiSeen.current.keys.push(k);
+  const fyiKeys = fyiSeen.current.keys.filter(
+    (k) => order.fyi.includes(k) || fyiHere.has(k),
+  );
+  const fyiCards = new Map(
+    fyiKeys.flatMap((k) => {
+      const c = cardOf(k);
+      return c ? [[k, c] as const] : [];
+    }),
+  );
   const covered = [
     ...new Set([
       ...order.covered,
@@ -780,7 +819,7 @@ export function ReviewWalkthrough({
           ? q.open
           : undecided(w.order, w.outcomes),
     },
-    { value: "fyi", label: "FYI", count: order.fyi.length },
+    { value: "fyi", label: "FYI", count: fyiKeys.length },
     { value: "covered", label: "Covered", count: covered.length },
   ];
 
@@ -884,15 +923,11 @@ export function ReviewWalkthrough({
       ) : lane === "fyi" ? (
         <>
           <FyiCards
-            keys={order.fyi}
-            cards={order.cards}
+            keys={fyiKeys}
+            cards={fyiCards}
             load={load}
             naming={naming}
-            settled={() =>
-              void qc.invalidateQueries({
-                queryKey: [ws, "ontology", o, "review-cards", load.id],
-              })
-            }
+            settled={(k) => setFyiHere((now) => new Set(now).add(k))}
           />
           {q.fyi.hasNextPage && (
             <Button

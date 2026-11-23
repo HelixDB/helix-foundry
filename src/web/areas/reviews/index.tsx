@@ -34,7 +34,13 @@ import { useNaming } from "../explore/use-naming";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import { adviceContext } from "./advice";
-import { cardsOf, reviewReads, type NameLink, type ReviewRead } from "./cards";
+import {
+  cardsOf,
+  reviewReads,
+  withOwnDecisions,
+  type NameLink,
+  type ReviewRead,
+} from "./cards";
 import {
   ADVICE_PAGES,
   cardQueries,
@@ -51,19 +57,20 @@ const KINDS: readonly CardKind[] = ["name", "claim", "value"];
 type Read = UseQueryResult<{ reviews: QueueReview[]; links: NameLink[] }>;
 
 /**
- * Each page's cards, once all its reviews are read, in order: the pages
- * read so far from the first, so the walk never shows a later card before
- * an earlier one.
+ * Each page's cards, once all its reviews are read, in order, and how many
+ * pages that is: the pages read so far from the first, so the walk never
+ * shows a later card before an earlier one, nor a walk before its first
+ * page.
  */
 function pageCards(
   pages: readonly ListFoundryReviewCardsResponse[],
   plan: readonly ReviewRead[],
   read: readonly Read[],
-): QueueCard[] {
+): { cards: QueueCard[]; pages: number } {
   const out: QueueCard[] = [];
   for (const [i, p] of pages.entries()) {
     const mine = plan.flatMap((r, j) => (r.page === i ? [read[j]] : []));
-    if (mine.some((r) => !r?.data)) break;
+    if (mine.some((r) => !r?.data)) return { cards: out, pages: i };
     const reviews = new Map(
       mine.flatMap((r) =>
         r!.data!.reviews.map(
@@ -83,7 +90,7 @@ function pageCards(
       ),
     );
   }
-  return out;
+  return { cards: out, pages: pages.length };
 }
 
 /**
@@ -174,54 +181,6 @@ export function useReviewCards() {
     () => (link: string) => !naming.version || naming.oneValued.has(link),
     [naming],
   );
-  // What Founder's rules read: the index's names and claim decisions of the
-  // cards read, and the first page's precision.
-  const first = decidePages?.[0];
-  const ctx = useMemo(
-    () =>
-      adviceContext({
-        names: (decidePages ?? []).flatMap((p) => p.names ?? []),
-        claims: (decidePages ?? []).flatMap((p) =>
-          (p.cards ?? []).flatMap((c) => [
-            ...(c.claim?.decisions ?? []),
-            ...(c.name?.held ?? []).flatMap((h) => h.decisions ?? []),
-          ]),
-        ),
-        precision: {
-          bands: (first?.precision?.bands ?? []).flatMap((b) => {
-            const band = asBand(b.band);
-            return band
-              ? [{ band, right: b.right ?? 0, total: b.total ?? 0 }]
-              : [];
-          }),
-          rechecks: {
-            agreed: first?.precision?.rechecksAgreed ?? 0,
-            total: first?.precision?.rechecksTotal ?? 0,
-          },
-        },
-        single,
-        user: user.id,
-      }),
-    [decidePages, first, single, user.id],
-  );
-  const all = useMemo(
-    () =>
-      decidePages && fyiPages
-        ? walkOrder([...decideCards, ...fyiCards], ctx, advice)
-        : undefined,
-    [decidePages, fyiPages, decideCards, fyiCards, ctx, advice],
-  );
-  // The advice filters read a few pages, then say where they stopped.
-  const pageCount = decidePages?.length ?? 0;
-  useEffect(() => {
-    if (
-      advice !== "any" &&
-      decide.hasNextPage &&
-      !decide.isFetchingNextPage &&
-      pageCount < ADVICE_PAGES
-    )
-      void decide.fetchNextPage();
-  }, [advice, decide.hasNextPage, decide.isFetchingNextPage, pageCount]);
   const walk = useWalk();
   // The walk's own decisions, read by id for what became of each.
   const ids = useMemo(
@@ -238,6 +197,63 @@ export function useReviewCards() {
     [walk.state.outcomes, walk.state.loadId, loadId],
   );
   const decided = useQuery(cardQueries.decided(ws, o, ids));
+  const own = useMemo(() => decided.data ?? [], [decided.data]);
+  // What Founder's rules read: the index's names and claim decisions of the
+  // cards read, and the first page's precision.
+  const first = decidePages?.[0];
+  const ctx = useMemo(
+    () =>
+      adviceContext({
+        names: withOwnDecisions(
+          (decidePages ?? []).flatMap((p) => p.names ?? []),
+          own,
+        ),
+        claims: [
+          ...(decidePages ?? []).flatMap((p) =>
+            (p.cards ?? []).flatMap((c) => [
+              ...(c.claim?.decisions ?? []),
+              ...(c.name?.held ?? []).flatMap((h) => h.decisions ?? []),
+            ]),
+          ),
+          ...own,
+        ],
+        precision: {
+          bands: (first?.precision?.bands ?? []).flatMap((b) => {
+            const band = asBand(b.band);
+            return band
+              ? [{ band, right: b.right ?? 0, total: b.total ?? 0 }]
+              : [];
+          }),
+          rechecks: {
+            agreed: first?.precision?.rechecksAgreed ?? 0,
+            total: first?.precision?.rechecksTotal ?? 0,
+          },
+        },
+        single,
+        user: user.id,
+      }),
+    [decidePages, first, single, user.id, own],
+  );
+  // The walk starts once each lane's first page is read; a later page joins
+  // it once its reviews are.
+  const all = useMemo(
+    () =>
+      decideCards.pages && fyiCards.pages
+        ? walkOrder([...decideCards.cards, ...fyiCards.cards], ctx, advice)
+        : undefined,
+    [decideCards, fyiCards, ctx, advice],
+  );
+  // The advice filters read a few pages, then say where they stopped.
+  const pageCount = decidePages?.length ?? 0;
+  useEffect(() => {
+    if (
+      advice !== "any" &&
+      decide.hasNextPage &&
+      !decide.isFetchingNextPage &&
+      pageCount < ADVICE_PAGES
+    )
+      void decide.fetchNextPage();
+  }, [advice, decide.hasNextPage, decide.isFetchingNextPage, pageCount]);
   // Within ten cards of the last read, the next page is read.
   const toGo = walk.state.order.length - walk.state.at;
   useEffect(() => {
@@ -282,7 +298,9 @@ export function useReviewCards() {
     // The advice filters stopped at ADVICE_PAGES with more to read.
     adviceCapped:
       advice !== "any" && !!decide.hasNextPage && pageCount >= ADVICE_PAGES,
-    hasMore: !!decide.hasNextPage,
+    // More cards than the walk has: pages not read yet, or not rendered.
+    hasMore:
+      !!decide.hasNextPage || decideCards.pages < (decidePages?.length ?? 0),
     decided: decided as UseQueryResult<FoundryReviewDecision[]>,
     spot,
     indexing,
