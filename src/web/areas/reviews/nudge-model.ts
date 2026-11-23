@@ -1,4 +1,5 @@
-import type { FoundryReviewSummary } from "../../../shared/wfe";
+import type { FoundryLoad, FoundryReviewSummary } from "../../../shared/wfe";
+import { isBusyLoad } from "../ontology/queries";
 
 // When the sidebar's review nudge shows (./nudge.tsx). Pure.
 
@@ -80,3 +81,27 @@ export const nudgeLater = (
   ...state,
   [s.ontologyId]: { loadId: s.loadId, open: s.open ?? 0 },
 });
+
+/**
+ * Whether the job dock's card of load `l` offers Review for summary `s`
+ * (../ontology/job-dock.tsx `loadEnding`), so the nudge stands aside for
+ * it: `l` is the summary's load, nothing is happening to it (a resend or an
+ * extract on it shows its progress, with no Review), it ended ready or
+ * partial, and it has cards to decide or is still counting them.
+ *
+ * @example
+ * dockOffersReview({ id: "L", status: "ready" }, { ontologyId: "o", loadId: "L", open: 7 }); // true
+ * dockOffersReview({ id: "L", status: "ready", jobs: [{ status: "running" }] }, summary); // false
+ */
+export function dockOffersReview(
+  l: FoundryLoad | undefined,
+  s: FoundryReviewSummary,
+): boolean {
+  return (
+    !!l &&
+    l.id === s.loadId &&
+    !isBusyLoad(l) &&
+    (l.status === "ready" || l.status === "partial") &&
+    (!!s.open || !!s.indexing)
+  );
+}

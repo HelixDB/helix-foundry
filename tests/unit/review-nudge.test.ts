@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { FoundryLoad } from "@/shared/wfe";
 import {
   NUDGE_GROWTH,
+  dockOffersReview,
   nudgeLater,
   nudgeShown,
   parseNudgeState,
@@ -78,5 +80,39 @@ describe("parseNudgeState", () => {
     });
     for (const raw of ["", "oops", "[]", "null", "3"])
       expect(parseNudgeState(raw)).toEqual({});
+  });
+});
+
+describe("dockOffersReview", () => {
+  const load = (more: Partial<FoundryLoad> = {}): FoundryLoad => ({
+    id: "L-a",
+    status: "ready",
+    ...more,
+  });
+  it("is true only while the dock's card of the summary's load offers Review", () => {
+    expect(dockOffersReview(load(), s("a", 7))).toBe(true);
+    expect(dockOffersReview(load({ status: "partial" }), s("a", 7))).toBe(true);
+    expect(
+      dockOffersReview(load(), {
+        ontologyId: "a",
+        loadId: "L-a",
+        indexing: true,
+      }),
+    ).toBe(true);
+  });
+  it("is false while a job runs on the load, or it isn't ready, or not read, or another's", () => {
+    // A resend or an extract on the load: the card shows its progress.
+    for (const status of ["queued", "running"] as const)
+      expect(
+        dockOffersReview(load({ jobs: [{ id: "j", status }] }), s("a", 7)),
+      ).toBe(false);
+    expect(dockOffersReview(load({ status: "writing" }), s("a", 7))).toBe(
+      false,
+    );
+    expect(dockOffersReview(load({ status: "failed" }), s("a", 7))).toBe(false);
+    expect(dockOffersReview(undefined, s("a", 7))).toBe(false);
+    expect(dockOffersReview(load({ id: "L-old" }), s("a", 7))).toBe(false);
+    // Nothing to decide: the card offers Explore it.
+    expect(dockOffersReview(load(), s("a", 0))).toBe(false);
   });
 });

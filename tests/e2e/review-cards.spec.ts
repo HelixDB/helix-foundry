@@ -148,6 +148,36 @@ test("counts the cards to decide where no one has opened Review: the panel, the 
   await expect(ours()).toContainText(new RegExp(`^${n - 1} cards? to decide`));
 });
 
+test("the nudge offers a load's cards while its dock card shows a job on it, with no Review", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 1500, documentUnmatched: true });
+  await signIn(page);
+  await uploadInData(page, [
+    file("contract.md", CONTRACT),
+    file("variant.md", HEDGED),
+  ]);
+  await makeContractsCurrent(page);
+  await startContractsLoad(page);
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  await page.goto("/data");
+  const dock = page.getByRole("region", { name: "Jobs in progress" });
+  await expect(dock).toContainText("Data loaded", { timeout: 30_000 });
+  const ours = () => nudge(page).filter({ hasText: "Customer contracts" });
+  await expect(ours()).toHaveCount(0);
+  // A document the ontology reads queues an extract on the load: its card
+  // shows that job, without Review, so the nudge offers the cards.
+  await mock.configure({ loadStepMs: 10_000 });
+  await uploadInData(page, [
+    file("later.md", "# Later deal\n\nNothing new.\n"),
+  ]);
+  await expect(dock).toContainText(/Loading the database|Load queued/, {
+    timeout: 15_000,
+  });
+  await expect(dock.getByRole("link", { name: /^Review/ })).toHaveCount(0);
+  await expect(ours()).toContainText(/cards? to decide|Counting/);
+});
+
 test("the nudge opens the walk, and Later hides it for that load", async ({
   page,
 }) => {

@@ -4,11 +4,12 @@
 // summary), with Start (the Review page's walk) and Later, which hides it
 // for that load until its count grows by a quarter (./nudge-model.ts), in
 // this browser. One ontology at a time: the one with the most, but not a
-// load whose card in the job dock offers its Review already.
+// load whose card in the job dock offers its Review already (a card that
+// shows a job's progress on the load offers none, so the nudge does).
 import "../ontology/ontology.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 import { sizeBucket, trackEvent } from "../../analytics";
 import { formatNumber, plural, readStorage, writeStorage } from "../../kit";
@@ -21,6 +22,7 @@ import { useWatchedJobs } from "../ontology/use-watched-jobs";
 import { shownOn } from "../ontology/watched-jobs";
 import { useReviewSummary } from "./cards-api";
 import {
+  dockOffersReview,
   nudgeLater,
   nudgeShown,
   parseNudgeState,
@@ -40,17 +42,33 @@ export function ReviewNudge() {
   // cards to decide, its card says Review N (../ontology/job-dock.tsx).
   const jobs = useWatchedJobs(ws),
     sample = useSampleOntology()?.id;
-  const shown = useMemo(() => {
-    const docked = new Set(
-      jobs.flatMap((j) =>
-        j.kind === "load" && !shownOn(j, pathname, sample) ? [j.id] : [],
+  const docked = jobs.filter(
+    (j) => j.kind === "load" && !shownOn(j, pathname, sample),
+  );
+  // Each docked load as its card read it: the dock reads them, the nudge
+  // only follows the cache.
+  const loads = useQueries({
+    queries: docked.map((j) => ({
+      ...ontologyQueries.load(ws, j.ontologyId, j.id),
+      enabled: false,
+    })),
+    combine: (rs) =>
+      new Map(
+        rs.flatMap((r) =>
+          r.data?.load ? [[r.data.load.id, r.data.load]] : [],
+        ),
       ),
-    );
-    return nudgeShown(
-      state,
-      [...summary.values()].filter((s) => !docked.has(s.loadId)),
-    );
-  }, [state, summary, jobs, pathname, sample]);
+  });
+  const shown = useMemo(
+    () =>
+      nudgeShown(
+        state,
+        [...summary.values()].filter(
+          (s) => !dockOffersReview(loads.get(s.loadId), s),
+        ),
+      ),
+    [state, summary, loads],
+  );
   const reported = useRef("");
   const open = shown?.open ?? 0;
   // The walk shows the count already.
