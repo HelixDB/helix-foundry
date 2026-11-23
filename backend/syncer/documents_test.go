@@ -174,7 +174,7 @@ func (m *memoryStore) PublishConnectorDocuments(_ context.Context, p model.Conne
 		return nil, foundrystore.ErrNotFound
 	}
 	removed := map[string]bool{}
-	for _, id := range p.Remove {
+	for _, id := range slices.Concat(p.Remove, p.Expire) {
 		if d := m.docs[id]; d != nil && d.SetID == p.SetID && d.Status == model.FoundryDocumentUploaded {
 			removed[id] = true
 		}
@@ -624,6 +624,20 @@ func TestSyncerDocuments(t *testing.T) {
 		f.run(t, "sync-3")
 		if got := f.held(t, "notes"); len(got) != 2 || got["n4"] == "" || got["n2"] == "" || f.store.owed != 2 {
 			t.Fatalf("documents = %v, owed = %d", got, f.store.owed)
+		}
+	})
+	t.Run("expires the documents the stream says left the source's retention, and removes the rest", func(t *testing.T) {
+		kind := newNoteKind(connector.CaptureFull, n3, n2, n1)
+		kind.streams[0].Expired = func(externalID string) bool { return externalID == "n1" }
+		f := newNoteFixture(t, kind)
+		f.run(t, "sync-1")
+		n1ID, n2ID, expired := f.liveID("notes", "n1"), f.liveID("notes", "n2"), documentsCounted("expired")
+		kind.notes["notes"] = []note{n3}
+		f.run(t, "sync-2")
+		p := f.store.publishes[len(f.store.publishes)-1]
+		if got := f.held(t, "notes"); len(got) != 1 || !slices.Equal(p.Expire, []string{n1ID}) || !slices.Equal(p.Remove, []string{n2ID}) ||
+			documentsCounted("expired")-expired != 1 {
+			t.Fatalf("documents = %v, publish = %+v", got, p)
 		}
 	})
 	t.Run("removes a held document the kind drops, and holds none it drops first", func(t *testing.T) {

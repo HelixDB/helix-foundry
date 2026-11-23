@@ -9,7 +9,7 @@ import {
 } from "../../src/shared/foundry-labels";
 import { ENRICHMENT_SOURCE } from "../../src/web/areas/ontology/enrichment-fields";
 import { isEmpty, type Scope } from "./scope";
-import type { LoadGraph, Props, Value } from "./store";
+import { HelixDateTime, type LoadGraph, type Props, type Value } from "./store";
 import { onReset } from "../state";
 
 // The mock's stand-in for the ontology agent's Ingest and Extract RPCs:
@@ -647,13 +647,16 @@ const rowValues = new WeakMap<object, Map<string, Value | undefined>>();
  * attribute::settle gives them from contract 4.14.0, weighed without the
  * decision: those disagreeing with a row's value, or every quote when
  * documents disagree; none without a conflict. So a load lists the same
- * review before a decision, with it and after it is removed.
+ * review before a decision, with it and after it is removed. A decision's
+ * value of a `datetime` prop (`datetime`: the version declares it so) is
+ * written as Helix's DateTime, as the engine writes every datetime.
  */
 function settle(
   g: LoadGraph,
   entity: number,
   prop: string,
   decisions: ReviewDecision[],
+  datetime: boolean,
 ): Props[] {
   const node = g.node(entity)!;
   const decision = decisions.find(
@@ -696,6 +699,8 @@ function settle(
     const v = decision.value;
     if (v.null !== undefined) delete node.props[prop];
     else if (v.integer !== undefined) node.props[prop] = Number(v.integer);
+    else if (datetime && v.text !== undefined)
+      node.props[prop] = HelixDateTime.parse(v.text)!;
     else node.props[prop] = v.text ?? v.number ?? v.boolean!;
   } else if (kept?.has(prop)) {
     // The decision is gone: the row's value again.
@@ -715,7 +720,8 @@ function settle(
  * Extract carries them: a decision of `prop` sets its value (null removes
  * it), and with none the prop is what its evidence gives: a value a table
  * row set is the row's again at once, as the engine restores it. False when
- * the load holds no such entity.
+ * the load holds no such entity. `datetime` says the version declares the
+ * prop a datetime.
  */
 export function decideValue(
   g: LoadGraph,
@@ -723,10 +729,11 @@ export function decideValue(
   key: string,
   prop: string,
   decisions: ReviewDecision[],
+  datetime: boolean,
 ): boolean {
   for (const n of g.nodes())
     if (n.label === type && (n.props.entity_key ?? n.props.norm_name) === key) {
-      settle(g, n.id, prop, decisions);
+      settle(g, n.id, prop, decisions, datetime);
       return true;
     }
   return false;
@@ -943,6 +950,8 @@ export type UndoableLink = "adjudicated" | WeakLink;
 /** What extraction reads of the version's ontology.toml. */
 export type ExtractOntology = {
   types: Set<string>;
+  // Each type's props the version declares `datetime`, as `<type>.<prop>`.
+  datetimes?: Set<string>;
   // The links that hold one value (`cardinality = "one"`).
   oneValued?: Set<string>;
   // A type's first `names` prop.
@@ -1293,7 +1302,13 @@ export function extractDocument(
     g.addEdge(E.ABOUT, ev, entity);
     g.addEdge(E.FROM_SECTION, ev, s.node);
     counts.attributes += 1;
-    const disagreeing = settle(g, entity, prop, decisions);
+    const disagreeing = settle(
+      g,
+      entity,
+      prop,
+      decisions,
+      !!ontology.datetimes?.has(`${node.label}.${prop}`),
+    );
     // Only a document that adds to a conflict writes its review: one per
     // entity and prop, its values updated as later documents add quotes.
     if (!disagreeing.some((q) => q.doc_id === doc.id)) return;

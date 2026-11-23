@@ -57,6 +57,7 @@ const appChoices: [ConnectorKindName, string, string][] = [
   ["notion", "Notion", "Pages and databases"],
   ["google", "Google Workspace", "Drive docs, calendars and people"],
   ["databuddy", "Databuddy", "Web analytics: sessions, pages and visitors"],
+  ["attio", "Attio", "CRM: people, companies, deals, lists, notes and tasks"],
 ];
 const databaseChoices: [ConnectorKindName, string, string][] = [
   ["postgres", "PostgreSQL", "Import tables from your database."],
@@ -489,7 +490,10 @@ export function ConnectData({
                 key={kind}
                 kind={kind}
                 setup={chosen.s3}
-                signIn={!!chosen.signIn}
+                slack={chosen.slack}
+                // Where Helix's Slack app reads Slack, it is how Slack
+                // connects: Pipes' sign-in isn't offered beside it.
+                signIn={!!chosen.signIn && !chosen.slack}
                 installUrl={chosen.github?.installUrl}
                 returnPath={back}
                 onDone={done}

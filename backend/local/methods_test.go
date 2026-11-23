@@ -66,6 +66,7 @@ var refused = map[string]string{
 	foundry("ListFoundryAccess"):          noGrantees,
 	foundry("SetFoundryAccessGrants"):     noGrantees,
 	foundry("PreviewFoundryAccessChange"): noGrantees,
+	foundry("ListFoundrySourceAudiences"): noGrantees,
 	foundry("SetFoundryMemberRestricted"): noGrantees,
 	foundry("CreateFoundryTeam"):          noGrantees,
 	foundry("UpdateFoundryTeam"):          noGrantees,
@@ -73,6 +74,21 @@ var refused = map[string]string{
 
 	foundry("CreateOntologyVersion"): notCalled,
 	foundry("UpdateFoundryOntology"): notCalled,
+
+	foundry("FinishFoundrySlackInstall"):                                noFinish,
+	foundry("DisconnectFoundrySlack"):                                   noDisconnect,
+	"/helix.foundry.v1.FoundryEventsService/ReceiveSlackRequest":        noDoor,
+	"/helix.foundry.v1.FoundryEventsService/RecordFoundrySlackFeedGaps": noDoor,
+	// Helix's side of the relay.
+	foundry("AuthorizeFoundryRelayLink"):                                   noRelayLinks,
+	foundry("ListFoundryRelayLinks"):                                       noRelayLinks,
+	foundry("RevokeFoundryRelayLink"):                                      noRelayLinks,
+	"/helix.foundry.v1.FoundryEventsService/ValidateFoundryRelayToken":     noDoor,
+	"/helix.foundry.v1.FoundryEventsService/RedeemFoundryRelayCode":        noDoor,
+	"/helix.foundry.v1.FoundryEventsService/ClaimFoundryRelayDeliveries":   noDoor,
+	"/helix.foundry.v1.FoundryEventsService/CallSlackForRelay":             noDoor,
+	"/helix.foundry.v1.FoundryEventsService/StartFoundryRelaySlackInstall": noDoor,
+	"/helix.foundry.v1.FoundryEventsService/RevokeFoundryRelayToken":       noDoor,
 
 	foundry("DeleteFoundryOntologyDocument"):    noOntologySets,
 	foundry("ListFoundryOntologyDocumentSets"):  noOntologySets,
@@ -88,4 +104,8 @@ const (
 	noPublicLinks  = "public dashboard links are hosted only, served by a door an install doesn't run"
 	notCalled      = "the local site doesn't call it"
 	noOntologySets = "documents are the workspace's: the site calls the workspace's routes"
+	noFinish       = "Helix finishes a relayed install, and sends its owner back"
+	noDisconnect   = "Helix holds a relayed install: unlinking the install from Helix, or removing the app in Slack, disconnects it"
+	noDoor         = "Helix receives Slack for a local install"
+	noRelayLinks   = "Helix keeps the links of the installs it relays Slack to"
 )

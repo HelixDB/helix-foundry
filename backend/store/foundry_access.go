@@ -477,8 +477,9 @@ WHERE r.ontology_id=? AND r.kind='prop' GROUP BY 1, 2, 3`, ontologyID)
 }
 
 // FoundryLoadHoldings is what a load of the workspace holds, document by
-// document, each by the set it is in now, for reading the part of it a
-// grantee holds. A load it can't tell is ErrNotFound.
+// document, each by the set it is in now, with the set's stream and its row's
+// key for a connector's (what item of its source it is of), for reading the
+// part of it a grantee holds. A load it can't tell is ErrNotFound.
 func (s *mysqlDB) FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error) {
 	var raw []byte
 	var enriched bool
@@ -516,14 +517,15 @@ WHERE l.id=? AND o.workspace_id=? AND o.deleted_at IS NULL AND l.status IN ('rea
 		var refs []access.DocumentRef
 		for rows.Next() {
 			var d access.DocumentRef
-			if err := rows.Scan(&d.ID, &d.Set.SetID, &d.Set.ConnectorID); err != nil {
+			if err := rows.Scan(&d.ID, &d.Set.SetID, &d.Set.ConnectorID, &d.Stream, &d.ExternalID); err != nil {
 				return nil, err
 			}
 			refs = append(refs, d)
 		}
 		return refs, rows.Err()
 	}
-	if out.Documents, err = documents(`SELECT ld.document_id, COALESCE(d.set_id, ''), COALESCE(st.connector_id, '') FROM foundry_load_documents ld
+	if out.Documents, err = documents(`SELECT ld.document_id, COALESCE(d.set_id, ''), COALESCE(st.connector_id, ''),
+  COALESCE(st.stream, ''), COALESCE(d.external_id, '') FROM foundry_load_documents ld
 LEFT JOIN foundry_documents d ON d.id = ld.document_id
 LEFT JOIN foundry_document_sets st ON st.id = d.set_id
 WHERE ld.load_id=? ORDER BY ld.document_id`, []any{loadID}); err != nil {
@@ -534,7 +536,8 @@ WHERE ld.load_id=? ORDER BY ld.document_id`, []any{loadID}); err != nil {
 		for i, d := range input.Documents {
 			ids[i] = d.ID
 		}
-		if out.Files, err = documents(`SELECT d.id, COALESCE(d.set_id, ''), COALESCE(st.connector_id, '') FROM foundry_documents d
+		if out.Files, err = documents(`SELECT d.id, COALESCE(d.set_id, ''), COALESCE(st.connector_id, ''),
+  COALESCE(st.stream, ''), COALESCE(d.external_id, '') FROM foundry_documents d
 LEFT JOIN foundry_document_sets st ON st.id = d.set_id
 WHERE d.workspace_id=? AND d.id IN (`+idPlaceholders(len(ids))+`) ORDER BY d.id`, append([]any{workspaceID}, toAnySlice(ids)...)); err != nil {
 			return access.Holdings{}, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -265,4 +266,24 @@ func TestRunApprovedPreparesAndRunsOnce(t *testing.T) {
 	assert.IsType(t, ExecutedUnknown{}, s.RunApproved(context.Background(), reader(), loadInput), "its answer lost after the confirmation was spent")
 	actions.err = status.Error(codes.FailedPrecondition, "the version can't be loaded")
 	assert.IsType(t, ExecutedFailed{}, s.RunApproved(context.Background(), reader(), loadInput))
+}
+
+// FounderAPI is narrow: Founder's turn and action routes a caller acting for
+// a person needs, and the approval of a workflow a bot's proposal they ran
+// made, each one of FoundryService's RPCs, and nothing else (no thread
+// deletes, no runtime or helper changes).
+func TestFounderAPIIsFoundersOwnRoutesAlone(t *testing.T) {
+	rpcs := map[string]bool{}
+	for _, m := range foundryv1.FoundryService_ServiceDesc.Methods {
+		rpcs[m.MethodName] = true
+	}
+	api := reflect.TypeFor[FounderAPI]()
+	var names []string
+	for i := range api.NumMethod() {
+		name := api.Method(i).Name
+		names = append(names, name)
+		assert.True(t, rpcs[name], "%s is a FoundryService RPC", name)
+	}
+	assert.ElementsMatch(t, []string{"SendFoundryAgentMessage", "ListFoundryAgentTurnEvents", "ExecuteFoundryAgentAction",
+		"DismissFoundryAgentAction", "RefreshFoundryAgentAction", "CancelFoundryAgentTurn", "ApproveFoundryAutomation"}, names)
 }

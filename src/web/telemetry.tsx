@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { LOCAL } from "../shared/deployment";
 import { MASK_PATTERNS } from "../shared/usage";
 import { DATABUDDY_CLIENT_ID, stopSending, trackingAllowed } from "./analytics";
+import { noteFirstTouch } from "./first-touch";
 import * as localUsage from "./local-usage";
 
 // Databuddy's tracker, on the hosted site's pages: sign-in and the app (its
@@ -68,16 +69,24 @@ export const TRACKER = {
  * Sending, once the page knows this browser may (after the first render: it
  * reads the URL and storage): not one of Helix's own (analytics.ts
  * trackingAllowed) and, on a local install, not turned off by its owner
- * (GET /telemetry). The hosted site's pages then load the tracker, and a
- * local install's post what waits (./local-usage.ts). Otherwise nothing is
- * sent from this page on.
+ * (GET /telemetry). The hosted site's pages then keep the page load's first
+ * touch (./first-touch.ts) and load the tracker, and a local install's post
+ * what waits (./local-usage.ts). Otherwise nothing is sent from this page on.
  */
 export function Telemetry() {
   const [allowed, setAllowed] = useState(false);
   useEffect(() => {
     if (!DATABUDDY_CLIENT_ID) return;
     if (!trackingAllowed(location.search)) return stopSending();
-    if (!LOCAL) return setAllowed(true);
+    if (!LOCAL) {
+      noteFirstTouch({
+        search: location.search,
+        pathname: location.pathname,
+        host: location.host,
+        referrer: document.referrer,
+      });
+      return setAllowed(true);
+    }
     if (localUsage.optedOut(navigator)) return stopSending();
     fetch("/telemetry", { cache: "no-store" })
       .then((r) => r.json())

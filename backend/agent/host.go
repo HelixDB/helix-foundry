@@ -505,8 +505,14 @@ func (h *Hosts) open(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 			return nil, err
 		}
 	}
+	// A read-only turn's tools are narrowed by its Server (turnReach); its
+	// model is told so here, before it is served any.
+	readOnly := ""
+	if turn.ReadOnly {
+		readOnly = "\n\n" + readOnlyPrompt
+	}
 	return &HostTurn{
-		Turn: turn, System: system(turn.WorkspaceID) + hostSystem(runtime), Prompt: text, Resume: thread.RuntimeSessionID,
+		Turn: turn, System: system(turn.WorkspaceID) + surfacePrompt(turn) + readOnly + hostSystem(runtime), Prompt: text, Resume: thread.RuntimeSessionID,
 		History: history(all, turn.ID), MaxSteps: h.Cfg.MaxSteps,
 	}, nil
 }
@@ -778,24 +784,31 @@ var (
 // person's session in the turn's workspace, confirming as the person (what
 // it prepares becomes a card, its token sealed and never returned, but for
 // what autoRun runs at once as the person, through Sessions), Tools alone
-// (GranteeTools for a restricted member: reachOf), toolAskPerson among them; once the turn asked its person, only that
+// (GranteeTools for a restricted member and a read-only turn: turnReach), toolAskPerson among them; once the turn asked its person, only that
 // tool runs. Each call is counted by spend first, the ask tool's client token is
 // forced (the same question in a turn is asked once), and the call and its
 // result are shown to the person as the worker shows its own. A call after
 // the claim lost its lease fails.
 func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, spend HostSpend) (*mcp.Server, error) {
 	sink := &actionSink{db: h.DB, keys: h.Keys, turn: turn, workerID: workerID, maxPending: h.Cfg.MaxPendingActions, sessions: h.Sessions}
-	session, err := h.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
+	// A helper runs a person's turns only: a Slack install's bot's threads
+	// run on Foundry's own worker ('api').
+	person, ok := turn.Principal.(model.AgentPerson)
+	if !ok {
+		return nil, fmt.Errorf("agent: a helper runs a person's turns only")
+	}
+	session, err := h.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: person.UserID, WorkspaceID: turn.WorkspaceID},
 		integration.ConfirmByPerson{Sink: sink})
 	if err != nil {
 		return nil, err
 	}
-	// As the worker's own turns: a restricted member's reads and asks only.
-	reach, err := reachOf(session, turn.WorkspaceID)
+	// As the worker's own turns: a restricted member's, and a read-only
+	// turn's, read and ask only.
+	reach, err := turnReach(session, turn)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := threadReach(ctx, h.DB, turn, reach); err != nil {
+	if _, err := threadReach(ctx, h.DB, session, turn, reach); err != nil {
 		return nil, err
 	}
 	sink.reach = reach

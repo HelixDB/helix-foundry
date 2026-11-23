@@ -144,19 +144,20 @@ func (s *mysqlDB) ListFoundryDocuments(ctx context.Context, workspaceID, setID, 
 	return s.listFoundryDocuments(ctx, "", conds, args, pageToken, limit)
 }
 
-// ListFoundryOntologyDocuments returns what an ontology reads (of heldSets
-// alone, when it names any, so a page and its token say nothing of the rest),
+// ListFoundryOntologyDocuments returns what an ontology reads (of the
+// documents held names alone, when it names any, so a page and its token say
+// nothing of the rest: a grantee's part of a load),
 // newest first
 // (by foundryDocumentNewest), a page at a time: the documents of its current
 // load (currentLoadID, empty for none), and the uploaded documents of scope,
 // the sets the version that reads its new uploads reads. Deleted documents
 // are left out. filter keeps those the current load holds as it says.
-func (s *mysqlDB) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string,
+func (s *mysqlDB) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, held *[]string,
 	filter model.FoundryDocumentFilter, pageToken string, limit int) ([]*model.FoundryDocument, string, error) {
 	if !filter.Valid() {
 		return nil, "", fmt.Errorf("list foundry ontology documents: unknown filter %q", filter)
 	}
-	if heldSets != nil && len(*heldSets) == 0 {
+	if held != nil && len(*held) == 0 {
 		return nil, "", nil
 	}
 	read := "EXISTS (SELECT 1 FROM foundry_load_documents m WHERE m.load_id=? AND m.document_id=d.id)"
@@ -166,9 +167,9 @@ func (s *mysqlDB) ListFoundryOntologyDocuments(ctx context.Context, workspaceID,
 		args = append(args, toAnySlice(scope)...)
 	}
 	conds := []string{"d.workspace_id=?", "d.status<>'deleted'", foundryDocumentOwnerLive, read}
-	if heldSets != nil {
-		conds = append(conds, "d.set_id IN ("+idPlaceholders(len(*heldSets))+")")
-		args = append(args, toAnySlice(*heldSets)...)
+	if held != nil {
+		conds = append(conds, "d.id IN ("+idPlaceholders(len(*held))+")")
+		args = append(args, toAnySlice(*held)...)
 	}
 	switch filter {
 	case model.FoundryDocumentFilterWaiting:

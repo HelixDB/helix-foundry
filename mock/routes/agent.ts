@@ -31,6 +31,7 @@ import type {
   Connector,
   ConnectorKind,
   FoundryAccessTarget,
+  FoundryAgentSurface,
   FoundryAgentTurnStatus,
   FoundryAgentAction,
   FoundryAgentAnswers,
@@ -322,6 +323,9 @@ type StoredThread = {
   // the workspace's whole view, which no restricted member reads
   // (model.FoundryAgentThread.Granted).
   granted: FoundryAccessTarget[] | null;
+  // The channels its sources shared with them as its turns ran, which must
+  // all still be (model.FoundryAgentThreadGrants.Items).
+  grantedItems: { connectorId: string; item: string }[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -338,6 +342,9 @@ type StoredTurn = {
   asked: FoundryAgentAsked | null;
   answers: FoundryAgentAnswers | null;
   pageContext: AgentPageContext | null;
+  // Where its person reads it; a continuation (an action's result, answers)
+  // keeps its turn's.
+  surface: FoundryAgentSurface;
   clientToken: string;
   status: FoundryAgentTurnStatus;
   error: string;
@@ -540,13 +547,21 @@ function advance(t: StoredTurn) {
 const advanceThread = (threadId: string) =>
   state.turns.filter((t) => t.threadId === threadId).forEach(advance);
 
-const toThread = (t: StoredThread): FoundryAgentThread => ({
-  id: t.id,
-  title: t.title,
-  runtime: t.runtime,
-  createdAt: t.createdAt,
-  updatedAt: t.updatedAt,
-});
+// A thread says where it was started: its first turn's surface, as the
+// backend's thread reads say it (Slack only; the site's is left unset).
+const toThread = (t: StoredThread): FoundryAgentThread => {
+  const first = state.turns.find((x) => x.threadId === t.id);
+  return {
+    id: t.id,
+    title: t.title,
+    runtime: t.runtime,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+    ...(first?.surface === "FOUNDRY_AGENT_SURFACE_SLACK" && {
+      surface: first.surface,
+    }),
+  };
+};
 const toTurn = (t: StoredTurn): FoundryAgentTurn => ({
   id: t.id,
   threadId: t.threadId,
@@ -565,6 +580,7 @@ const toTurn = (t: StoredTurn): FoundryAgentTurn => ({
   finishedAt: t.finishedAt,
   ...(t.asked && { asked: structuredClone(t.asked) }),
   ...(t.answers && { answers: structuredClone(t.answers) }),
+  ...(t.surface === "FOUNDRY_AGENT_SURFACE_SLACK" && { surface: t.surface }),
 });
 const toAction = (a: StoredAction): FoundryAgentAction => ({
   id: a.id,
@@ -602,9 +618,15 @@ const isPerson = (
   x: ReturnType<typeof person>,
 ): x is Exclude<ReturnType<typeof person>, MockReply> => "userId" in x;
 
-/** Whether a grantee may read thread `t`: one it made, all of whose grants it holds. */
+/**
+ * Whether a grantee may read thread `t`: one it made, all of whose grants it
+ * holds, and every channel of whose its sources still share with it.
+ */
 const granteeReads = (t: StoredThread, grantee?: MockGrantee) =>
-  !grantee || (!!t.granted && grantee.holdsAll(t.granted));
+  !grantee ||
+  (!!t.granted &&
+    grantee.holdsAll(t.granted) &&
+    grantee.seesItems(t.grantedItems));
 
 /** The person's thread, unless deleted or not the grantee's to read. */
 function threadOf(
@@ -3766,6 +3788,7 @@ export function queueAutomationTurn(p: {
       title: [...p.title].slice(0, TITLE_CHARS).join(""),
       runtime: "api",
       granted: null,
+      grantedItems: [],
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null,
@@ -4453,7 +4476,7 @@ function queueTurn(
     StoredTurn,
     "kind" | "text" | "actionId" | "pageContext" | "clientToken" | "script"
   > &
-    Partial<Pick<StoredTurn, "answers">>,
+    Partial<Pick<StoredTurn, "answers" | "surface">>,
   first?: AgentEvent,
 ) {
   const at = Date.now(),
@@ -4461,6 +4484,7 @@ function queueTurn(
   const t: StoredTurn = {
     asked: null,
     answers: null,
+    surface: "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
     ...turn,
     id: id("turn"),
     threadId: thread.id,
@@ -4571,6 +4595,7 @@ function execute(req: MockRequest, userId: string) {
       pageContext: null,
       clientToken: "",
       script: [],
+      surface: state.turns.find((t) => t.id === a.turnId)?.surface,
     },
     {
       type: "action_result",
@@ -4651,6 +4676,7 @@ export const agentRoutes: MockRoute[] = [
         Record<"threadId" | "text" | "clientToken", string> & {
           answers: Partial<FoundryAgentAnswers>;
           pageContext: AgentPageContext;
+          surface: string;
         }
       >;
       const text = (body.text || "").trim(),
@@ -4664,6 +4690,14 @@ export const agentRoutes: MockRoute[] = [
         );
       if (body.threadId && !ID.test(body.threadId))
         return fail("INVALID_ARGUMENT", "thread_id is malformed");
+      // Any caller may set it (it only narrows the turn); an unknown value
+      // is the gateway's 400.
+      if (
+        body.surface !== undefined &&
+        body.surface !== "FOUNDRY_AGENT_SURFACE_UNSPECIFIED" &&
+        body.surface !== "FOUNDRY_AGENT_SURFACE_SLACK"
+      )
+        return fail("INVALID_ARGUMENT", "surface is not a FoundryAgentSurface");
       if (replying && body.text !== undefined)
         return fail("INVALID_ARGUMENT", "text or answers, not both");
       if (!replying && (!text || [...text].length > MAX_TEXT))
@@ -4861,6 +4895,7 @@ export const agentRoutes: MockRoute[] = [
           runtime,
           // A restricted member's holds what their grants give now.
           granted: p.grantee ? [...p.grantee.targets] : null,
+          grantedItems: p.grantee ? p.grantee.items() : [],
           createdAt: now(),
           updatedAt: now(),
           deletedAt: null,
@@ -4905,6 +4940,12 @@ export const agentRoutes: MockRoute[] = [
         thread.granted.push(
           ...p.grantee.targets.filter((t) => !had.has(JSON.stringify(t))),
         );
+        const hadItems = new Set(
+          thread.grantedItems.map((i) => JSON.stringify(i)),
+        );
+        thread.grantedItems.push(
+          ...p.grantee.items().filter((i) => !hadItems.has(JSON.stringify(i))),
+        );
       }
       const turn = queueTurn(
         thread,
@@ -4915,6 +4956,11 @@ export const agentRoutes: MockRoute[] = [
           pageContext,
           clientToken: token,
           script: [],
+          surface: reply
+            ? reply.asking.surface
+            : body.surface === "FOUNDRY_AGENT_SURFACE_SLACK"
+              ? body.surface
+              : "FOUNDRY_AGENT_SURFACE_UNSPECIFIED",
           ...(reply && {
             answers: { turnId: reply.asking.id, answers: reply.answers },
           }),

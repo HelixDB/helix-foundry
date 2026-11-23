@@ -320,7 +320,7 @@ func TestReminderLog(t *testing.T) {
 	cfg := config.Defaults().Foundry.Events
 	backend := &fakeBackend{live: map[string]sendtoken.Sender{}}
 	clock := &clock{at: t0}
-	h := newHandler(dial(t, backend), cfg, slog.New(slog.NewJSONHandler(&logs, nil)), clock.now)
+	h := newHandler(dial(t, backend), cfg, config.SlackConfig{}, slog.New(slog.NewJSONHandler(&logs, nil)), clock.now)
 	routes := h.routes()
 	do := func(r *http.Request) int {
 		rec := httptest.NewRecorder()

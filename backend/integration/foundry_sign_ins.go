@@ -64,6 +64,9 @@ var signInSettings = map[string]func(FoundryConnectInput) *foundryv1.ConnectorCo
 	"google": func(FoundryConnectInput) *foundryv1.ConnectorConfig {
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{}}}
 	},
+	"attio": func(FoundryConnectInput) *foundryv1.ConnectorConfig {
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Attio{Attio: &foundryv1.AttioConnectorConfig{}}}
+	},
 }
 
 type GetFoundrySignInInput struct {

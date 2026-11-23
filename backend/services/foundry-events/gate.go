@@ -15,8 +15,10 @@ import (
 // dropped first, so address churn can't grow the map without end.
 const addressEntries = 50_000
 
-// gate is a pod's admission before it looks at a request's token, so a flood is refused at its
-// cheapest. Nothing in it waits: a request past any bound is refused at once.
+// gate is a pod's admission of one class of its routes before it looks at a request's token or
+// signature, so a flood is refused at its cheapest. Each class has its own (config.DoorGateConfig):
+// the sends, reminders and shared dashboards one, Slack's routes another, so a flood of either
+// never refuses the other. Nothing in it waits: a request past any bound is refused at once.
 //   - address: each client address's bucket, charged first, so one address never spends the
 //     pod's budget.
 //   - addressPlace: one of the address's places in flight, taken before the pod's room and held
@@ -39,13 +41,15 @@ type gate struct {
 	held       map[string]int
 }
 
-func newGate(cfg config.EventsEndpointConfig) *gate {
+// newGate is the gate of cfg for bodies of at most maxBody bytes, the weight of a body of unknown
+// length.
+func newGate(cfg config.DoorGateConfig, maxBody int64) *gate {
 	return &gate{
 		addresses:  iplimit.New(rate.Limit(cfg.AddressRequestsPerSecond), cfg.AddressBurstRequests, addressEntries),
 		requests:   rate.NewLimiter(rate.Limit(cfg.RequestsPerSecond), cfg.BurstRequests),
 		inFlight:   semaphore.NewWeighted(int64(cfg.MaxInFlight)),
 		bytes:      semaphore.NewWeighted(cfg.MaxBytesInFlight),
-		maxBody:    cfg.MaxBodyBytes,
+		maxBody:    maxBody,
 		perAddress: cfg.AddressMaxInFlight,
 		held:       map[string]int{},
 	}

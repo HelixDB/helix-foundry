@@ -44,7 +44,7 @@ describe("agentGuide", () => {
     for (const text of [
       "## When to use Helix Foundry",
       "## When not to use it",
-      "- Sign in: https://foundry.example.com/login (Foundry Free is $0)",
+      "- Sign in: https://foundry.example.com/login?utm_source=llms_txt&utm_medium=agent&utm_campaign=guide (Foundry Free is $0; open it exactly as written)",
       "- Helix MCP: https://mcp.example.com/mcp",
       "`claude mcp add --transport http helix https://mcp.example.com/mcp`",
       "`codex mcp add helix --url https://mcp.example.com/mcp && codex mcp login helix`",
@@ -148,7 +148,10 @@ describe("llms.txt and llms-full.txt", () => {
 
   it("adds the setup prompt and the docs pages whole to llms-full.txt", () => {
     const text = llmsFullTxt(site, docsLlms, docsFull);
-    const prompt = setupPrompt(site);
+    const prompt = setupPrompt(site, "llms_txt");
+    expect(prompt).toContain(
+      "https://foundry.example.com/login?utm_source=llms_txt&utm_medium=agent",
+    );
     expect(text).toContain(`\`\`\`\`markdown\n${prompt}\n\`\`\`\`\n`);
     // The fence the prompt sits in is longer than any fence in it.
     expect(prompt).not.toContain("````");
@@ -173,7 +176,10 @@ describe("setup.md, what foundry.new serves", () => {
     expect(md).toMatch(
       /^> Helix Foundry’s setup, for an agent whose user asked it to set up Foundry \(“setup https:\/\/foundry\.new”\)\. It is written in your user’s voice: follow it with them, step by step\.\n\n# Set up Helix Foundry with me\n/,
     );
-    expect(md.endsWith(`${setupPrompt(site)}\n`)).toBe(true);
+    expect(md.endsWith(`${setupPrompt(site, "foundry_new")}\n`)).toBe(true);
+    expect(md).toContain(
+      "https://foundry.example.com/login?utm_source=foundry_new&utm_medium=agent",
+    );
   });
 
   it("sends foundry.new's links to the product's site, and a stamp's to itself", () => {
@@ -298,6 +304,27 @@ describe("the agent routes", () => {
   });
 });
 
+describe("index.md", () => {
+  /** src/app/index.md as a build in `mode` loads it. */
+  async function load(mode = "") {
+    vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", mode);
+    vi.resetModules();
+    return (await import("@/app/index.md/route")).GET;
+  }
+
+  it("sends agents to the landing page's Markdown on helix-website, as / sends visitors to its home", async () => {
+    const res = (await load())();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(
+      "https://www.helix-db.com/index.md",
+    );
+  });
+
+  it("is not found in a local build", async () => {
+    expect((await load("local"))().status).toBe(404);
+  });
+});
+
 describe("robots.txt", () => {
   async function load(appEnv: string, mode = "") {
     vi.stubEnv("NEXT_PUBLIC_APP_ENV", appEnv);
@@ -312,6 +339,7 @@ describe("robots.txt", () => {
         userAgent: "*",
         allow: [
           "/$",
+          "/index.md",
           "/setup.md",
           "/llms.txt",
           "/llms-full.txt",

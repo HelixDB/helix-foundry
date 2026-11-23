@@ -134,6 +134,7 @@ describe("connector kinds", () => {
       "slack",
       "notion",
       "google",
+      "attio",
     ]);
     expect(kinds.find((k) => k.kind === "github")?.github?.installUrl).toMatch(
       /^https:\/\/github\.com\/apps\//,
@@ -614,6 +615,7 @@ describe("every kind that signs in", () => {
       ["calcom", { calcom: {} }],
       ["stripe", { stripe: {} }],
       ["google", { google: { eventDays: 30 } }],
+      ["attio", { attio: {} }],
     ] as const) {
       const s = await connect({ kind, config });
       expect(s.status, kind).toBe("CONNECTOR_SIGN_IN_STATUS_CONNECTED");
@@ -628,6 +630,7 @@ describe("every kind that signs in", () => {
       calcom: "ada",
       stripe: "Acme",
       google: "ada@example.com",
+      attio: "Acme",
     });
   });
 

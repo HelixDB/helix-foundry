@@ -13,6 +13,12 @@ func ExampleNewEventSource() {
 	// Output: true 70 <nil>
 }
 
+func ExampleNewRelay() {
+	token, _ := NewRelay()
+	fmt.Println(strings.HasPrefix(token, "hx_rl_"), len(token), ValidateRelay(token), ValidateEventSource(token) != nil)
+	// Output: true 70 <nil> true
+}
+
 func TestEventSourceToken(t *testing.T) {
 	t.Parallel()
 
@@ -66,5 +72,40 @@ func TestEventSourceToken(t *testing.T) {
 				t.Fatalf("ValidateEventSource accepted %q", tc.token)
 			}
 		})
+	}
+}
+
+// A relay token is its own kind: an event source's token, or anything near
+// one, is never a relay token, and the other way round.
+func TestRelayToken(t *testing.T) {
+	t.Parallel()
+	format := regexp.MustCompile(`^hx_rl_[0-9a-f]{64}$`)
+	seen := map[string]bool{}
+	for range 64 {
+		token, err := NewRelay()
+		if err != nil {
+			t.Fatalf("new relay token: %v", err)
+		}
+		if !format.MatchString(token) || ValidateRelay(token) != nil || seen[token] {
+			t.Fatalf("relay token %q: not the format, refused, or minted twice", token)
+		}
+		seen[token] = true
+	}
+	suffix := strings.Repeat("0123456789abcdef", 4)
+	for _, tc := range []struct{ name, token string }{
+		{"an event source's", eventSourcePrefix + suffix},
+		{"empty", ""},
+		{"prefix only", relayPrefix},
+		{"short", relayPrefix + suffix[1:]},
+		{"long", relayPrefix + suffix + "0"},
+		{"uppercase hex", relayPrefix + strings.ToUpper(suffix)},
+		{"non hex", relayPrefix + suffix[1:] + "z"},
+	} {
+		if err := ValidateRelay(tc.token); err == nil {
+			t.Errorf("ValidateRelay accepted %s: %q", tc.name, tc.token)
+		}
+	}
+	if err := ValidateEventSource(relayPrefix + suffix); err == nil {
+		t.Error("ValidateEventSource accepted a relay token")
 	}
 }

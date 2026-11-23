@@ -198,6 +198,34 @@ test("pages, searches, sorts and filters records, and opens one in the graph", a
   await page.goto(`${X}/records?type=Customer&field=currency`);
   await expect(page.getByText("1–50 of 64")).toBeVisible();
   await expect(firstRow(page, "Customer")).toContainText("Globex Corporation");
+  // A datetime filter is Helix's DateTime of the instant, however it is
+  // written, to the millisecond.
+  for (const [value, key] of [
+    ["2026-01-05T09:00:00Z", "in_1001"],
+    ["2026-01-05T10:00:00.000%2B01:00", "in_1001"],
+    ["2026-01-06T16:00:00.000Z", "in_1002"],
+    ["2026-01-06%2016:00:00.0009Z", "in_1002"],
+  ]) {
+    await page.goto(
+      `${X}/records?type=Invoice&field=created_at&value=${value}`,
+    );
+    await expect(grid(page, "Invoice").getByRole("row")).toHaveCount(2);
+    await expect(firstRow(page, "Invoice")).toContainText(key!);
+    await expect(page.getByText("1–1 of 1")).toBeVisible();
+  }
+  await page.goto(
+    `${X}/records?type=Invoice&field=created_at&value=2026-01-05`,
+  );
+  await expect(
+    page.getByText(
+      "Enter a date and time, such as 2026-03-14T09:30:00Z (kept to the millisecond).",
+    ),
+  ).toBeVisible();
+  // Sorted by its instant, the first invoice first, the last last.
+  await page.goto(`${X}/records?type=Invoice&sort=created_at`);
+  await expect(firstRow(page, "Invoice")).toContainText("in_1001");
+  await page.goto(`${X}/records?type=Invoice&sort=created_at&dir=desc`);
+  await expect(firstRow(page, "Invoice")).toContainText("in_1065");
   await page.goto(`${X}/records?type=Customer`);
 
   // Open a record: its props, its links by name, and where it comes from.

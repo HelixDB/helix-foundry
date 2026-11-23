@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local"
 	"github.com/helixdb/helix-foundry/backend/local/directory"
+	"github.com/helixdb/helix-foundry/backend/local/relay"
 	directoryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/directory/v1"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/helixgateway"
@@ -40,7 +42,9 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	foundryreadservice "github.com/helixdb/helix-foundry/backend/services/foundry-read"
+	"github.com/helixdb/helix-foundry/backend/slackbot"
 	"github.com/helixdb/helix-foundry/backend/store"
+	"github.com/helixdb/helix-foundry/backend/syncer"
 	foundryagentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-agent-worker"
 	foundryaskworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ask-worker"
 	foundryautomationworker "github.com/helixdb/helix-foundry/backend/workers/foundry-automation-worker"
@@ -48,6 +52,7 @@ import (
 	foundrygraphworker "github.com/helixdb/helix-foundry/backend/workers/foundry-graph-worker"
 	foundryhealworker "github.com/helixdb/helix-foundry/backend/workers/foundry-heal-worker"
 	foundryontologyworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ontology-worker"
+	foundryslackworker "github.com/helixdb/helix-foundry/backend/workers/foundry-slack-worker"
 	foundrysyncworker "github.com/helixdb/helix-foundry/backend/workers/foundry-sync-worker"
 )
 
@@ -87,15 +92,22 @@ var agentWorker = foundryagentworker.New
 // foundry.automations.enabled (on in the image's foundry.yaml).
 var automationWorker = foundryautomationworker.New
 
+// slackWorker runs the Slack bot on what Helix's relay delivers, with
+// foundry.slack.enabled (on in the image's foundry.yaml).
+var slackWorker = foundryslackworker.New
+
 // run starts the install and blocks until ctx is cancelled, SIGINT or
 // SIGTERM arrives, or a part exits, returning the first error.
 //
 //  1. Open the database, migrate it (the directory's set, then Foundry's) and
 //     write the owner's row, their first workspace (until they have one)
-//     and the bucket.
+//     and the bucket, then queue the reloads of current loads a release
+//     owes (local.RebuildOwedLoads); while any is still owed, a part
+//     (local.Rebuilds) queues them again every minute until none is.
 //  2. Without a configured AI provider, look for one on this machine
 //     (package ai/detect), so model work starts on it.
-//  3. Build the front end (the directory and FoundryService, behind the site
+//  3. Build the link to Helix's Slack relay (with foundry.slack.enabled),
+//     the front end (the directory and FoundryService, behind the site
 //     token), foundry-read and the workers.
 //  4. Start them, then report ready on the health listener.
 //  5. On shutdown, stop the workers, then the front end, within shutdownGrace.
@@ -142,16 +154,36 @@ func run(parent context.Context, cfg *Config) error {
 	}
 
 	st := store.NewMySQL(db, local.Workspaces{})
+	rebuildsOwed, err := local.RebuildOwedLoads(ctx, db, st, logger)
+	if err != nil {
+		return err
+	}
 	probes := newProbes(db.PingContext, logger)
-	f, err := newFront(ctx, cfg, logger, probes, directorySvc, dir, st, awsCfg, detector)
+	link, err := newRelay(cfg, fcfg, logger, dir, st)
+	if err != nil {
+		return err
+	}
+	f, err := newFront(ctx, cfg, logger, probes, directorySvc, dir, st, awsCfg, detector, link)
 	if err != nil {
 		return err
 	}
 	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
-	parts, err := buildWorkers(fcfg, logger, probes, st, awsCfg, dbs, f.sessions)
+	var relayed *slackbot.Relayed
+	if link != nil {
+		relayed = link.Transport()
+	}
+	parts, err := buildWorkers(fcfg, logger, probes, st, awsCfg, dbs, local.People{Directory: dir}, f.sessions, relayed)
 	if err != nil {
 		_ = f.Stop(ctx)
 		return err
+	}
+	// The relay runs whether or not the install is linked: unlinked, it only
+	// reads whether it was.
+	if link != nil {
+		parts = append(parts, link)
+	}
+	if rebuildsOwed {
+		parts = append(parts, local.Rebuilds{DB: db, Store: st, Logger: logger, Every: local.RebuildEvery})
 	}
 	healthLn, err := net.Listen("tcp", cfg.Local.Listen.Health)
 	if err != nil {
@@ -159,6 +191,28 @@ func run(parent context.Context, cfg *Config) error {
 		return fmt.Errorf("health listen %s: %w", cfg.Local.Listen.Health, err)
 	}
 	return serve(ctx, logger, probes, healthLn, append([]component{f}, parts...))
+}
+
+// newRelay is the install's link to Helix's Slack relay, with
+// foundry.slack.enabled; nil without. Helix names the install by this
+// machine's name.
+func newRelay(cfg *Config, fcfg *foundryconfig.Config, logger *slog.Logger, dir *directory.Store, st store.Store) (*relay.Relay, error) {
+	if !fcfg.Foundry.Slack.Enabled {
+		return nil, nil
+	}
+	keys, err := connector.NewKeyring(fcfg.Foundry.Connectors)
+	if err != nil {
+		return nil, err
+	}
+	name, err := os.Hostname()
+	if name = strings.TrimSpace(name); err != nil || name == "" {
+		name = "Foundry"
+	}
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	return relay.New(relay.Options{Directory: dir, DB: st, Keys: keys, Door: cfg.Local.Relay.URL, Site: cfg.Local.Relay.SiteURL,
+		Origin: strings.TrimRight(cfg.Local.SiteOrigin, "/"), Name: name, Slack: fcfg.Foundry.Slack, Logger: logger})
 }
 
 // newDetector is the look for an AI default on this machine, of an install
@@ -235,12 +289,13 @@ const sweepUnclaimedEvery = 30 * time.Second
 
 // newFront builds the front end over the install's directory and Foundry's
 // store, its objects kept in the install's bucket (foundry.sync.data_bucket),
-// with the look for an AI default, if the install has one.
+// with the look for an AI default, if the install has one, and its link to
+// Helix's Slack relay, if Slack is on (link).
 // The site token's interceptor sets each call's Actor, so FoundryService is
 // served without api.ActorInterceptor: nothing stands between the site and
 // it.
 func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *probes, directorySvc *directory.Service, dir *directory.Store,
-	st store.Store, awsCfg aws.Config, detector *detect.Detector) (*front, error) {
+	st store.Store, awsCfg aws.Config, detector *detect.Detector, link *relay.Relay) (*front, error) {
 	auth, err := local.NewAuthenticator(cfg.Local.SiteToken, dir, st, logger.With("component", "auth"))
 	if err != nil {
 		return nil, err
@@ -261,15 +316,22 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 	// The Assistant's tools call this front end's gRPC as the owner, as the
 	// MCP's do; its clicks run them from the API, its turns from the worker.
 	sessions := local.NewAgentSessions(auth, local.LocalService(dir, ep.GatewayConn, fcfg.Foundry.Documents, fcfg.Foundry.Automations.Enabled, cfg.Local.SiteOrigin,
-		logger.With("component", "agent")), directoryv1.NewDirectoryServiceClient(ep.GatewayConn), cfg.Local.SiteToken)
+		logger.With("component", "agent")), foundryv1.NewFoundryServiceClient(ep.GatewayConn), directoryv1.NewDirectoryServiceClient(ep.GatewayConn),
+		cfg.Local.SiteToken)
 	dbs := local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL}
+	// A nil link must stay a nil interface: the API refuses the relay's
+	// methods without one.
+	var linker api.RelayLinker
+	if link != nil {
+		linker = link
+	}
 	foundrySvc, err := api.New(api.Deps{
 		Cfg: fcfg, Logger: logger.With("service", "foundry"), DB: st, AWS: awsCfg,
 		Documents: document.New(s3.NewFromConfig(awsCfg), fcfg.Foundry.Sync.DataBucket),
 		Databases: dbs,
 		Graph:     local.GraphReader{Directory: directorySvc}, People: local.People{Directory: dir},
 		LocalAI: detector, AgentSessions: sessions, AgentHosts: dir,
-		AgentHostURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Local.MCPPort),
+		AgentHostURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Local.MCPPort), Relay: linker,
 	})
 	if err != nil {
 		_ = ep.GracefulStop(ctx)
@@ -338,11 +400,14 @@ func (f *front) Stop(ctx context.Context) error {
 
 // buildWorkers builds foundry-read and the workers from what the install
 // provides them: Foundry's configuration, the logger, the health, the store,
-// the object store and the databases. Nothing else is provided, so the
-// optional ports an install lacks are nil: no plan is sold (PlanReader) and
-// nothing is boosted (Boosts).
+// the object store, the databases, who the install's people are (people:
+// the ask worker matches a grantee to its sources by email), and, with Slack
+// on, the way to Slack through Helix's relay (relayed), for the Slack bot
+// and the Slack data connector's syncs. Nothing else is provided, so the optional ports an
+// install lacks are nil: no plan is sold (PlanReader) and nothing is
+// boosted (Boosts).
 func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes, st store.Store, awsCfg aws.Config,
-	dbs ports.Databases, sessions integration.SessionHost) ([]component, error) {
+	dbs ports.Databases, people ports.People, sessions integration.SessionHost, relayed *slackbot.Relayed) ([]component, error) {
 	c := dig.New()
 	for _, provide := range []any{
 		func() *foundryconfig.Config { return cfg },
@@ -351,10 +416,21 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 		func() store.Store { return st },
 		func() aws.Config { return awsCfg },
 		func() ports.Databases { return dbs },
+		func() ports.People { return people },
 		func() integration.SessionHost { return sessions },
 	} {
 		if err := c.Provide(provide); err != nil {
 			return nil, err
+		}
+	}
+	if relayed != nil {
+		for _, provide := range []any{
+			func() *slackbot.Relayed { return relayed },
+			func() syncer.SlackCallers { return relayed.Callers },
+		} {
+			if err := c.Provide(provide); err != nil {
+				return nil, err
+			}
 		}
 	}
 	constructors := slices.Clip(workers)
@@ -366,6 +442,9 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 	}
 	if cfg.Foundry.Automations.Enabled {
 		constructors = append(constructors, automationWorker)
+	}
+	if cfg.Foundry.Slack.Enabled {
+		constructors = append(constructors, slackWorker)
 	}
 	for _, constructor := range constructors {
 		if err := c.Provide(constructor, dig.Group("components"), dig.As(new(component))); err != nil {

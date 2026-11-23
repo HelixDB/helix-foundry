@@ -18,12 +18,14 @@ import (
 
 // AgentSessions opens the Assistant's sessions on a standalone install
 // (integration.SessionHost): the owner's tools, as the install's MCP gives
-// them, calling the install's own gRPC with the site token, inside this
-// process only. Its confirmations bind the owner, so the worker that prepares
-// an action and the API that runs it match.
+// them, and Founder's own API (integration.FounderAPI), both calling the
+// install's own gRPC with the site token, inside this process only. Its
+// confirmations bind the owner, so the worker that prepares an action and
+// the API that runs it match.
 type AgentSessions struct {
 	auth      *Authenticator
 	service   *integration.Service
+	founder   integration.FounderAPI
 	directory directoryv1.DirectoryServiceClient
 	siteToken string
 }
@@ -31,9 +33,11 @@ type AgentSessions struct {
 var _ integration.SessionHost = (*AgentSessions)(nil)
 
 // NewAgentSessions opens sessions on service (LocalService's) as the owner
-// auth authenticates, with siteToken on every call.
-func NewAgentSessions(auth *Authenticator, service *integration.Service, directory directoryv1.DirectoryServiceClient, siteToken string) *AgentSessions {
-	return &AgentSessions{auth: auth, service: service.ForAgent(), directory: directory, siteToken: siteToken}
+// auth authenticates, with founder (the install's gRPC client) as their
+// Founder and siteToken on every call.
+func NewAgentSessions(auth *Authenticator, service *integration.Service, founder integration.FounderAPI, directory directoryv1.DirectoryServiceClient,
+	siteToken string) *AgentSessions {
+	return &AgentSessions{auth: auth, service: service.ForAgent(), founder: founder, directory: directory, siteToken: siteToken}
 }
 
 // Session opens the owner's tools in actor's workspace, and that workspace
@@ -72,7 +76,7 @@ func (s *AgentSessions) Session(ctx context.Context, actor ports.Actor, confirm 
 		return authorize(ctx, req, grant, methods...)
 	}
 	identity.Allows = func(workspaceID, _ string, _ integration.Grant) bool { return workspaceID == actor.WorkspaceID }
-	return integration.Session{Ctx: ctx, Service: s.service, Identity: identity, HostTools: func(server *mcp.Server) {
+	return integration.Session{Ctx: ctx, Service: s.service, Identity: identity, Founder: s.founder, HostTools: func(server *mcp.Server) {
 		addLocalDiscovery(s.service, server, identity, s.directory, actor.WorkspaceID)
 	}}, nil
 }

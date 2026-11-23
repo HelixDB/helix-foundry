@@ -22,6 +22,13 @@ local:
     rest: ":8081"
     grpc: "127.0.0.1:50061"
     health: "127.0.0.1:8083"
+  # Helix's Slack relay: once the owner links the install to a Helix
+  # workspace (Settings › Slack), Slack reaches it through Helix's door, and
+  # the link is made on Helix's site. Pinned to Helix's own hosts unless
+  # allow_custom_host (Helix's development stamps).
+  relay:
+    url: "https://ingest.helix-db.com"
+    site_url: "https://foundry.helix-db.com"
   # The public helix-db image: one database every ontology's loads share.
   helix_url: "http://helix:8080"
   # The browser PUTs documents to URLs presigned for this address, so it is
@@ -40,7 +47,7 @@ billing:
       plans:
         - code: local
           display_name: Local
-          kinds: [stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, events, postgres, mysql, s3]
+          kinds: [stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, attio, events, postgres, mysql, s3]
           sync: { every: 15m, shortest: 15m, capture: [full, cursor, events, log], reconcile_every: 24h, refresh_every: 15m }
 
 backend:
@@ -134,3 +141,10 @@ foundry:
     http: { listen: "127.0.0.1:8103" }
     monthly_usd: 20
     max_usd: 0.5
+  # Helix Foundry for Slack, through Helix's relay: idle until the owner
+  # links the install to Helix in Settings › Slack. Its bot answers as the
+  # owner: their own Slack account in full, and the Slack users they allow
+  # read-only.
+  slack:
+    enabled: true
+    http: { listen: "127.0.0.1:8104" }

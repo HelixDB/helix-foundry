@@ -27,6 +27,10 @@ var documentKinds = map[string]struct {
 	"google": {settings: json.RawMessage(`{"subject":"ada@acme.com","event_days":90}`), keys: map[string][]string{
 		"users": {"user_id"}, "files": {"file_id"}, "calendars": {"calendar_id"},
 		"calendar_events": {"event_id"}, "event_attendees": {"event_id", "email"}}},
+	"attio": {settings: json.RawMessage(`{}`), keys: map[string][]string{
+		"workspace_members": {"workspace_member_id"}, "objects": {"object_id"}, "lists": {"list_id"}, "notes": {"note_id"},
+		"tasks": {"task_id"}, "task_assignees": {"task_id", "assignee_type", "assignee_id"},
+		"task_records": {"task_id", "target_object", "target_record_id"}}},
 }
 
 // streamProblems lists what keeps streams from being synced: a stream the

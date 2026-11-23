@@ -48,6 +48,32 @@ func TestBakedConfig(t *testing.T) {
 	if f := cfg.foundry(); !f.Host.Local || f.Host.GatewayKey != "" {
 		t.Fatalf("host = %+v", f.Host)
 	}
+	// Slack reaches the install through Helix's own relay, and its bot's
+	// links open on this machine's site.
+	if l.Relay != (RelayConfig{URL: helixDoor, SiteURL: helixSite}) {
+		t.Fatalf("relay = %+v", l.Relay)
+	}
+	if s := cfg.foundry().Foundry.Slack; !s.Enabled || s.SiteURL != l.SiteOrigin || s.HTTP.Listen != "127.0.0.1:8104" || s.ReadsHistory() {
+		t.Fatalf("foundry.slack = %+v", s)
+	}
+}
+
+// A development stamp's relay is allowed by name, over http too.
+func TestACustomRelay(t *testing.T) {
+	secrets(t)
+	t.Setenv("HELIX_LOCAL__RELAY__URL", "http://127.0.0.1:8090")
+	t.Setenv("HELIX_LOCAL__RELAY__SITE_URL", "https://dev.foundry.helix-db.com")
+	if _, err := load("foundry.yaml"); err == nil || !strings.Contains(err.Error(), "allow_custom_host") {
+		t.Fatalf("err = %v", err)
+	}
+	t.Setenv("HELIX_LOCAL__RELAY__ALLOW_CUSTOM_HOST", "true")
+	cfg, err := load("foundry.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Local.Relay.URL != "http://127.0.0.1:8090" {
+		t.Fatalf("relay = %+v", cfg.Local.Relay)
+	}
 }
 
 // The image's Foundry settings: one plan, sold to no one, with every
@@ -225,6 +251,14 @@ func TestValidate(t *testing.T) {
 		"no rest listener":   {func(c *Config) { c.Local.Listen.REST = "" }, "local.listen.rest is required"},
 		"no grpc listener":   {func(c *Config) { c.Local.Listen.GRPC = "" }, "local.listen.grpc is required"},
 		"no health listener": {func(c *Config) { c.Local.Listen.Health = "" }, "local.listen.health is required"},
+		// Helix's relay is Helix's own, but where allowed.
+		"another relay":      {func(c *Config) { c.Local.Relay.URL = "https://ingest.evil.example" }, "local.relay.url must be https://ingest.helix-db.com"},
+		"another relay site": {func(c *Config) { c.Local.Relay.SiteURL = "https://dev.foundry.helix-db.com" }, "local.relay.site_url must be"},
+		"a relay path": {func(c *Config) {
+			c.Local.Relay.AllowCustomHost, c.Local.Relay.URL = true, "https://ingest.dev.helix-db.com/v1"
+		}, "local.relay.url must be an http(s) origin"},
+		"a relay of no scheme": {func(c *Config) { c.Local.Relay.SiteURL = "foundry.helix-db.com" }, "local.relay.site_url must be an http(s) origin"},
+		"a Slack listener":     {func(c *Config) { c.Foundry.Slack.HTTP.Listen = "" }, "foundry.slack.http.listen"},
 		// Foundry's own checks, for a host on one machine running every part
 		// the install runs.
 		"no data bucket":    {func(c *Config) { c.Foundry.Sync.DataBucket = "" }, "local mode needs foundry.sync.data_bucket"},

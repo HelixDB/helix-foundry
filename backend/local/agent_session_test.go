@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -24,7 +25,55 @@ func agentSessions(t *testing.T) (*AgentSessions, *Authenticator) {
 	auth, err := NewAuthenticator(strings.Repeat("t", MinSiteToken), testDirectory(), fakeOntologies{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	service := &integration.Service{ResourceURI: mcpAudience, SignIn: true}
-	return NewAgentSessions(auth, service, nil, strings.Repeat("t", MinSiteToken)), auth
+	return NewAgentSessions(auth, service, &founderCalls{}, nil, strings.Repeat("t", MinSiteToken)), auth
+}
+
+// founderCalls is the install's gRPC client as Founder's API, keeping each
+// call's context.
+type founderCalls struct {
+	foundryv1.FoundryServiceClient
+	ctxs []context.Context
+}
+
+func (f *founderCalls) SendFoundryAgentMessage(ctx context.Context, _ *foundryv1.SendFoundryAgentMessageRequest, _ ...grpc.CallOption) (
+	*foundryv1.FoundryAgentTurnResponse, error) {
+	f.ctxs = append(f.ctxs, ctx)
+	return &foundryv1.FoundryAgentTurnResponse{}, nil
+}
+
+// A session's Founder is the install's own API, and its calls, made with the
+// session's context, pass the install's gate as the owner: Slack's turns and
+// clicks act as the owner and only in the session's workspace.
+func TestAgentSessionsFounderActsAsTheOwner(t *testing.T) {
+	sessions, auth := agentSessions(t)
+	ctx := context.Background()
+	session, err := sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: "owner", WorkspaceID: "ws"}, integration.ConfirmByCaller{})
+	require.NoError(t, err)
+	require.Same(t, sessions.founder, session.Founder)
+	_, err = session.Founder.SendFoundryAgentMessage(session.Ctx, &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws",
+		Input: &foundryv1.SendFoundryAgentMessageRequest_Text{Text: "Hi"}})
+	require.NoError(t, err)
+	calls := sessions.founder.(*founderCalls).ctxs
+	require.Len(t, calls, 1)
+	out, _ := metadata.FromOutgoingContext(calls[0])
+	incoming := metadata.NewIncomingContext(ctx, out)
+	for method, req := range map[string]any{
+		foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName:    &foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws"},
+		foundryv1.FoundryService_ListFoundryAgentTurnEvents_FullMethodName: &foundryv1.ListFoundryAgentTurnEventsRequest{WorkspaceId: "ws"},
+		foundryv1.FoundryService_ExecuteFoundryAgentAction_FullMethodName:  &foundryv1.ExecuteFoundryAgentActionRequest{WorkspaceId: "ws"},
+		foundryv1.FoundryService_DismissFoundryAgentAction_FullMethodName:  &foundryv1.DismissFoundryAgentActionRequest{WorkspaceId: "ws"},
+		foundryv1.FoundryService_RefreshFoundryAgentAction_FullMethodName:  &foundryv1.RefreshFoundryAgentActionRequest{WorkspaceId: "ws"},
+		foundryv1.FoundryService_CancelFoundryAgentTurn_FullMethodName:     &foundryv1.CancelFoundryAgentTurnRequest{WorkspaceId: "ws"},
+	} {
+		gated, err := auth.gate(incoming, method, req)
+		require.NoError(t, err, method)
+		actor, _ := ports.ActorFrom(gated)
+		assert.Equal(t, "owner", actor.UserID, method)
+	}
+	// Without the session's context, the same client is refused at the gate.
+	_, err = auth.gate(metadata.NewIncomingContext(ctx, metadata.MD{}), foundryv1.FoundryService_SendFoundryAgentMessage_FullMethodName,
+		&foundryv1.SendFoundryAgentMessageRequest{WorkspaceId: "ws"})
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
 func TestAgentSessionsAreTheOwnersAlone(t *testing.T) {

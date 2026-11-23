@@ -63,6 +63,11 @@ type Deps struct {
 	Databases ports.Databases `optional:"true"`
 	// Plans says which workspaces' plans let them ask on their own provider.
 	Plans ports.PlanReader `optional:"true"`
+	// People tells a grantee's verified email, which what a source shares
+	// with it is matched by. Required, so the worker narrows a grantee's
+	// question exactly as the API narrows the grantee: a host that wires none
+	// fails at start, never asks as a different reader.
+	People ports.People
 }
 
 type questionQueue interface {
@@ -101,6 +106,9 @@ func New(d Deps) (*Task, error) {
 	if d.DB == nil || d.Databases == nil {
 		return nil, errors.New("foundry-ask-worker: db not configured")
 	}
+	if d.People == nil {
+		return nil, errors.New("foundry-ask-worker: people not configured: a grantee's sources are matched by their email")
+	}
 	if d.Cfg.Foundry.Graph.LoadRateLimit.Enabled() && d.Boosts == nil {
 		return nil, errors.New("foundry-ask-worker: foundry.graph.load_rate_limit is set, but the host has no rate-limit boosts")
 	}
@@ -138,7 +146,7 @@ func New(d Deps) (*Task, error) {
 	return &Task{
 		deps: d, cfg: cfg, queue: d.DB, boosts: d.Boosts, workerID: workerID, now: time.Now, slots: make(chan struct{}, cfg.Concurrency),
 		closeFn: func() error { return errors.Join(proxy.Close(), agent.Close()) },
-		runner:  &runner{db: d.DB, dbs: d.Databases, boosts: d.Boosts, agent: agent, ai: resolver, proxy: proxy, cfg: d.Cfg, workerID: workerID, flushEvery: flushEvery},
+		runner:  &runner{db: d.DB, dbs: d.Databases, people: d.People, boosts: d.Boosts, agent: agent, ai: resolver, proxy: proxy, cfg: d.Cfg, workerID: workerID, flushEvery: flushEvery},
 		prober: &prober{
 			queue: d.DB, agent: agent, keys: resolver.Keyring, deployment: resolver.Deployment, cfg: probe, owner: workerID, checkTools: checkTools,
 		},

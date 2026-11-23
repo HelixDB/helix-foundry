@@ -65,20 +65,23 @@ export type FounderThread = {
   title: string;
   // When it last changed (threadGroups groups by it).
   last: string;
+  // Started in Slack (its first turn's surface), through Helix Foundry's
+  // Slack app.
+  slack: boolean;
 };
 
 /**
  * Founder's threads as the sidebar lists them, in the list's order (newest
- * first): untitled ones named so, and dated by their last change, else by
- * their start.
+ * first): untitled ones named so, dated by their last change, else by
+ * their start, and those started in Slack said so.
  *
  * @example
  * founderThreads([
  *   { id: "t1", title: "Unpaid invoices", updatedAt: "2026-11-16T09:00:00Z" },
- *   { id: "t2", createdAt: "2026-11-15T09:00:00Z" },
+ *   { id: "t2", createdAt: "2026-11-15T09:00:00Z", surface: "FOUNDRY_AGENT_SURFACE_SLACK" },
  * ]);
- * // [{ id: "t1", title: "Unpaid invoices", last: "2026-11-16T09:00:00Z" },
- * //  { id: "t2", title: "Untitled", last: "2026-11-15T09:00:00Z" }]
+ * // [{ id: "t1", title: "Unpaid invoices", last: "2026-11-16T09:00:00Z", slack: false },
+ * //  { id: "t2", title: "Untitled", last: "2026-11-15T09:00:00Z", slack: true }]
  * founderThreads(undefined); // []
  */
 export function founderThreads(
@@ -88,6 +91,7 @@ export function founderThreads(
     id: t.id,
     title: t.title || "Untitled",
     last: t.updatedAt || t.createdAt || "",
+    slack: t.surface === "FOUNDRY_AGENT_SURFACE_SLACK",
   }));
 }
 

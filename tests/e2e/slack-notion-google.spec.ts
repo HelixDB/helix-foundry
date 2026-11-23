@@ -50,8 +50,13 @@ async function openPicker(page: Page, kind: string) {
   await page.getByRole("button", { name: "Add data" }).first().click();
   await dialog(page).getByRole("button", { name: kind, exact: true }).click();
   await expect(dialog(page)).toHaveAttribute("aria-label", kind);
-  // Each signs in too: these are their keys' forms.
-  await chooseKeyForm(dialog(page));
+  // Each signs in too, and Slack reads through Helix's Slack app: these are
+  // their keys' forms.
+  if (kind === "Slack")
+    await dialog(page)
+      .getByRole("radio", { name: "Use your own app’s token" })
+      .click();
+  else await chooseKeyForm(dialog(page));
 }
 
 /**
@@ -96,7 +101,9 @@ test("connects Slack, says which scope its token lacks, and keeps a document per
     "channels:read and channels:history for public channels, groups:read and groups:history for private ones",
   );
   await expect(guide).toContainText("/invite @Helix Foundry");
-  await expect(guide).toContainText("Direct messages are never read.");
+  await expect(guide).toContainText(
+    "Direct messages are never read, nor are the answers of Helix’s own Slack app.",
+  );
   const tokenField = dialog(page).getByLabel("Bot token");
   await expect(tokenField).toHaveAttribute("placeholder", "xoxb-…");
   await expect(dialog(page).getByLabel("Days of history")).toHaveValue("90");
@@ -166,7 +173,7 @@ test("connects Slack, says which scope its token lacks, and keeps a document per
   const documents = conversations.getByRole("link");
   await expect(documents).toHaveCount(50);
   await expect(documents.first()).toHaveText(
-    /^#(general|sales|support|engineering), \d{4}-\d{2}-\d{2}$/,
+    /^#(general|sales|support|engineering|leadership), \d{4}-\d{2}-\d{2}$/,
   );
   // A channel day's page: its messages, from Slack.
   await documents.first().click();

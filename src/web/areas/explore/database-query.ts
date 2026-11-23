@@ -50,8 +50,21 @@ export type Ast = { [key: string]: JsonValue };
 /** One named query of a read; `returned: false` keeps it out of the answer
  *  (a variable the later ones read). */
 export type ReadEntry = { name: string; root: Ast; returned?: boolean };
+/**
+ * A parameter's type as `parameter_types` declares it: the families the
+ * site's reads send. Helix checks the value against it, and makes a
+ * `date_time` (RFC 3339 text) its DateTime, to the millisecond: an untyped
+ * string never equals a DateTime.
+ */
+export type ReadParamType =
+  | "string"
+  | "i64"
+  | "f64"
+  | "bool"
+  | "date_time"
+  | { array: "string" | "i64" };
 /** A parameter: its value and its type, which the request carries apart. */
-export type ReadParam = { value: JsonValue; type: JsonValue };
+export type ReadParam = { value: JsonValue; type: ReadParamType };
 
 /**
  * The read `name` (as the database's logs call it): its entries in order,

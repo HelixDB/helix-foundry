@@ -411,8 +411,8 @@ func decodeFoundryKey(encoded string) ([]foundryKeyValue, bool) {
 // float. Strings are trimmed and must not be empty; a date is YYYY, YYYY-MM
 // or YYYY-MM-DD with a real month and day; a datetime is RFC 3339 whose UTC
 // year has four digits. It returns the value as the engine keeps it: a
-// trimmed string, or a datetime in UTC with its fraction in groups of
-// three; an error is a value the engine refuses.
+// trimmed string, or a datetime in UTC truncated to the millisecond
+// (foundryDateTime); an error is a value the engine refuses.
 func (ty FoundryPropType) DecisionValue(raw json.RawMessage) (json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -505,9 +505,15 @@ func foundryISODate(value string) bool {
 	return ok && day >= 1 && time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC).Day() == day
 }
 
-// foundryDateTime is an RFC 3339 instant as schema keeps a datetime: in UTC,
-// written with Z and as many fractional digits as it needs in groups of
-// three; false when it isn't one, or its UTC year doesn't have four digits.
+// foundryDateTime is an RFC 3339 instant as schema keeps a datetime
+// (schema::Instant, which Helix stores as its DateTime): in UTC, truncated to
+// the millisecond, written with Z and no fraction when that millisecond is 0,
+// else three digits (Instant's Display, chrono's AutoSi of a millisecond);
+// false when it isn't one, or its UTC year doesn't have four digits. It is
+// the one canonical form: decision values are written in it, and
+// decodeFoundryKey requires a key's datetime to be in it already, so an
+// entity_key the engine wrote before it kept datetimes to the millisecond
+// (with a finer fraction) names no entity.
 func foundryDateTime(value string) (string, bool) {
 	t, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
@@ -518,14 +524,10 @@ func foundryDateTime(value string) (string, bool) {
 		return "", false
 	}
 	fraction := ""
-	switch ns := utc.Nanosecond(); {
-	case ns == 0:
-	case ns%1_000_000 == 0:
-		fraction = fmt.Sprintf(".%03d", ns/1_000_000)
-	case ns%1_000 == 0:
-		fraction = fmt.Sprintf(".%06d", ns/1_000)
-	default:
-		fraction = fmt.Sprintf(".%09d", ns)
+	// Nanosecond is within the second and never negative, so dividing floors,
+	// before 1970 too, as timestamp_millis does.
+	if ms := utc.Nanosecond() / 1_000_000; ms != 0 {
+		fraction = fmt.Sprintf(".%03d", ms)
 	}
 	return utc.Format("2006-01-02T15:04:05") + fraction + "Z", true
 }

@@ -4,7 +4,16 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Bot, Copy, KeyRound, Plus, Shapes, Users } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import {
+  Bot,
+  Copy,
+  KeyRound,
+  Plus,
+  Shapes,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { FOUNDER } from "../../../shared/deployment";
 import type {
   CreateServiceCredentialResponse,
@@ -15,6 +24,7 @@ import type {
 } from "../../../shared/wfe";
 import {
   Button,
+  ButtonLink,
   ConfirmDialog,
   Dialog,
   EmptyState,
@@ -31,6 +41,7 @@ import {
   plural,
   useTabParam,
 } from "../../kit";
+import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
 import { shellRoles } from "../../workspaces";
 import { connectorsQuery } from "../data/data-api";
@@ -46,6 +57,7 @@ import {
   revokeKey,
   setGrants,
   setRestricted,
+  sourcesQuery,
   updateTeam,
 } from "./access-api";
 import {
@@ -60,10 +72,13 @@ import {
   readings,
   readsText,
   holdsRawAccess,
+  keyParam,
   newlyRestricted,
   restrictable,
   restrictedHoldingNothing,
   setOwners,
+  sourcePermissions,
+  SLACK_GRANT_NOTE,
   sourceState,
   sourceTree,
   syncedFrom,
@@ -77,6 +92,7 @@ import {
 import { DirectoryPanel, NoSourcesNudge } from "./access-directory";
 import { membersQuery } from "./members";
 import { initials, roleLabel } from "./people";
+import { slackQuery } from "./slack-api";
 
 // Settings › Access (hosted, owners and admins): what agents, people and
 // teams may read through source grants. A grant gives a connection (its
@@ -91,14 +107,19 @@ import { initials, roleLabel } from "./people";
 // Everyone else sees what they saw before. Ontologies says who each is shared
 // with. Each principal's Usage permission, on unless turned off here, lets
 // it see the use cases of what it reads and record their runs: every run of an
-// ontology it reads all of, else only its own.
+// ontology it reads all of, else only its own. A connection whose source
+// reports its own permissions (Slack's channel membership) gives the
+// restricted only what the source shares with their email; Source
+// permissions says, per connection, when those were read and whom they
+// match.
 
-type Tab = "agents" | "people" | "teams" | "ontologies";
+type Tab = "agents" | "people" | "teams" | "ontologies" | "sources";
 const TABS: { id: Tab; label: string }[] = [
   { id: "agents", label: "Agents" },
   { id: "people", label: "People" },
   { id: "teams", label: "Teams" },
   { id: "ontologies", label: "Ontologies" },
+  { id: "sources", label: "Source permissions" },
 ];
 
 /** What every part of the page reads, with the names it shows. */
@@ -232,6 +253,9 @@ function GrantsDialog({
       data.sets.data || [],
     ),
     owners = setOwners(data.sets.data || []);
+  // The connections that follow their sources' permissions, once read.
+  const sources = useQuery(sourcesQuery(id)),
+    follows = new Set((sources.data || []).map((a) => a.connectorId));
   const key = (gs: readonly Grant[]) =>
     targetsOf(gs, owners)
       .map((t) => JSON.stringify(t))
@@ -364,7 +388,12 @@ function GrantsDialog({
                         </span>
                         <span>
                           {c.name}
-                          <small> · all of it, now and later</small>
+                          <small>
+                            {" · "}
+                            {follows.has(c.id)
+                              ? SLACK_GRANT_NOTE
+                              : "all of it, now and later"}
+                          </small>
                         </span>
                       </SourceCheck>
                       {(c.tables.length > 0 || c.sets.length > 0) && (
@@ -682,15 +711,38 @@ function NewKeyDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AgentsPanel({ data }: { data: AccessData }) {
+function AgentsPanel({
+  data,
+  opening,
+  onOpened,
+}: {
+  data: AccessData;
+  // The key a link opens the sources of (?principal=), once the keys are read.
+  opening: string | null;
+  onOpened: () => void;
+}) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient();
   const keys = useQuery(keysQuery(id));
+  // Helix Foundry's Slack bot's key: turned off in Settings › Slack, not
+  // revoked here.
+  const slack = useQuery({ ...slackQuery(id), retry: false }).data;
+  const bot =
+    slack?.kind === "installed" && slack.mode.kind === "bot"
+      ? slack.mode.credentialId
+      : null;
   const [making, setMaking] = useState(false),
     [editing, setEditing] = useState<ServiceCredential>(),
     [revoking, setRevoking] = useState<ServiceCredential>(),
     [pending, setPending] = useState(false);
   const live = (keys.data || []).filter((k) => !k.revokedAt);
+  useEffect(() => {
+    if (!opening || !keys.data) return;
+    const k = live.find((k) => k.id === opening);
+    if (k) setEditing(k);
+    else notify("That agent key was revoked.", true);
+    onOpened();
+  }, [opening, keys.data]);
   const revoke = async (k: ServiceCredential) => {
     setPending(true);
     try {
@@ -748,6 +800,14 @@ function AgentsPanel({ data }: { data: AccessData }) {
                 key={k.id}
                 icon={<Bot size={15} />}
                 title={k.name || k.id}
+                tags={k.id === bot && <Tag>Slack bot</Tag>}
+                notes={
+                  k.id === bot
+                    ? [
+                        "Helix Foundry’s shared bot in Slack reads what this key is given. Turn bot mode off in Settings › Slack to retire it.",
+                      ]
+                    : undefined
+                }
                 lines={
                   <>
                     <span className="hf-mono">{k.tokenPrefix}…</span>
@@ -767,14 +827,24 @@ function AgentsPanel({ data }: { data: AccessData }) {
                     >
                       Sources
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Revoke ${k.name || k.id}`}
-                      onClick={() => setRevoking(k)}
-                    >
-                      Revoke
-                    </Button>
+                    {k.id === bot ? (
+                      <ButtonLink
+                        size="sm"
+                        variant="ghost"
+                        to={paths.settings("slack")}
+                      >
+                        Settings › Slack
+                      </ButtonLink>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Revoke ${k.name || k.id}`}
+                        onClick={() => setRevoking(k)}
+                      >
+                        Revoke
+                      </Button>
+                    )}
                   </>
                 }
               />
@@ -1440,6 +1510,89 @@ function OntologiesPanel({ data }: { data: AccessData }) {
   );
 }
 
+// ---------------------------------------------------------------- source permissions
+
+/**
+ * The connections whose sources' own permissions narrow their grants: each
+ * with what it follows, when its syncs last read who its source shares what
+ * with, how many members its people match by email, who isn't matched, its
+ * guests, and why its last read failed.
+ */
+function SourcesPanel({ data }: { data: AccessData }) {
+  const { id } = useWorkspace(),
+    sources = useQuery(sourcesQuery(id));
+  return (
+    <Panel
+      title="Source permissions"
+      subtitle="Connections that follow their source’s own permissions: someone restricted reads only what the source shares with their email, and none of its tables. Everyone else reads all of it."
+      padded={false}
+    >
+      {sources.isPending || data.members.isPending ? (
+        <div className="wk-pad">
+          <SkeletonText lines={2} />
+        </div>
+      ) : sources.error ? (
+        <div className="wk-pad">
+          <p role="alert" className="hf-form-error">
+            {sources.error.message}
+          </p>
+          <Button size="sm" onClick={() => void sources.refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : sources.data.length ? (
+        <ul
+          className="wk-members"
+          aria-label="Source permissions"
+          data-replay-block
+        >
+          {sources.data.map((a) => {
+            const name = data.names.connection(a.connectorId || ""),
+              row = sourcePermissions(
+                a,
+                (userId) => {
+                  const member = data.people.find((m) => m.user?.id === userId);
+                  return member ? nameOf(member) : "Unknown user";
+                },
+                formatRelative,
+              );
+            return (
+              <Row
+                key={a.connectorId}
+                icon={<SourceLogo source={a.kind || ""} size={15} />}
+                title={name}
+                tags={
+                  <Tag tone={a.stale || a.problem ? "warning" : "neutral"}>
+                    {row.follows}
+                  </Tag>
+                }
+                lines={row.line}
+                notes={row.notes}
+                actions={
+                  <ButtonLink
+                    size="sm"
+                    to={paths.connection(a.connectorId || "")}
+                    aria-label={`Open ${name}`}
+                  >
+                    Open
+                  </ButtonLink>
+                }
+              />
+            );
+          })}
+        </ul>
+      ) : (
+        <EmptyState
+          size="sm"
+          icon={ShieldCheck}
+          title="No connection follows its source’s permissions"
+          text="A Slack connection does: someone restricted reads only the channels they’re in."
+        />
+      )}
+    </Panel>
+  );
+}
+
 export function AccessTab() {
   const { role } = useWorkspace();
   return canManage(role) ? (
@@ -1452,16 +1605,26 @@ export function AccessTab() {
 function AccessTabs() {
   const [tab, setTab] = useTabParam(TABS.map((t) => t.id));
   const data = useAccessData();
+  // A link to a key's sources (paths.keySources) shows Agents and opens
+  // them, then leaves the address.
+  const [params, setParams] = useSearchParams(),
+    opening = keyParam(params.get("principal"));
+  const shown = opening ? "agents" : tab;
   return (
     <>
       <Tabs
         label="Access"
         idPrefix="access"
         items={TABS}
-        value={tab}
+        value={shown}
         onChange={setTab}
       />
-      <TabPanel id={tab} value={tab} idPrefix="access" className="wk-access">
+      <TabPanel
+        id={shown}
+        value={shown}
+        idPrefix="access"
+        className="wk-access"
+      >
         {data.loading ? (
           <SkeletonText lines={4} />
         ) : data.failed ? (
@@ -1473,12 +1636,28 @@ function AccessTabs() {
               Retry
             </Button>
           </div>
-        ) : tab === "agents" ? (
-          <AgentsPanel data={data} />
-        ) : tab === "people" ? (
+        ) : shown === "agents" ? (
+          <AgentsPanel
+            data={data}
+            opening={opening}
+            onOpened={() =>
+              setParams(
+                (p) => {
+                  const next = new URLSearchParams(p);
+                  next.delete("principal");
+                  next.delete("tab");
+                  return next;
+                },
+                { replace: true },
+              )
+            }
+          />
+        ) : shown === "people" ? (
           <PeoplePanel data={data} />
-        ) : tab === "ontologies" ? (
+        ) : shown === "ontologies" ? (
           <OntologiesPanel data={data} />
+        ) : tab === "sources" ? (
+          <SourcesPanel data={data} />
         ) : (
           <TeamsPanel data={data} />
         )}

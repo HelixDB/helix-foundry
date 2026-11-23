@@ -547,6 +547,7 @@ export type ConnectorKindName =
   | "notion"
   | "google"
   | "databuddy"
+  | "attio"
   | "postgres"
   | "mysql"
   | "s3"
@@ -565,6 +566,26 @@ export type S3ConnectorSetup = {
  * installed.
  */
 export type GitHubConnectorSetup = { installUrl?: string };
+/**
+ * v1SlackConnectorSetup: what a Slack connection through Helix's Slack app
+ * needs, where the stamp offers it (foundry.slack.feed): the workspace's
+ * install, made by a Slack admin or owner with the permissions channel
+ * history needs, and the storage notice the owner or admin binding it
+ * accepts.
+ */
+export type SlackConnectorSetup = {
+  // The workspace's install; unset while it has none.
+  install?: FoundrySlackInstall | null;
+  // The caller may add the app, or add it again for new permissions.
+  canInstall?: boolean;
+  // The connection that reads the install already; a Slack workspace is
+  // read by one connection.
+  inUseByConnectorId?: string;
+  // False: a Slack workspace admin or owner must add the app again first.
+  installerAdmin?: boolean;
+  // The storage notice to show, and send back (SlackAppCredential).
+  noticeVersion?: number;
+};
 /** v1ConnectorKind: GET .../foundry/connector-kinds, in display order. */
 export type ConnectorKind = {
   kind: string;
@@ -576,11 +597,14 @@ export type ConnectorKind = {
   s3?: S3ConnectorSetup | null;
   // github only, where it connects by signing in (the same oneof).
   github?: GitHubConnectorSetup | null;
+  // slack only, where a connection may read through Helix's Slack app (the
+  // same oneof).
+  slack?: SlackConnectorSetup | null;
   // True when the caller can connect the kind by signing in at its
   // provider (StartConnectorSignIn) instead of entering a key: hosted, the
   // kinds Pipes signs in to that the stamp lists (GitHub, Linear, Slack,
-  // Notion, PostHog, Cal.com, Stripe, Google Workspace), for a member of the
-  // workspace's WorkOS organization.
+  // Notion, PostHog, Cal.com, Stripe, Google Workspace, Attio), for a member
+  // of the workspace's WorkOS organization.
   signIn?: boolean;
 };
 /** helixwfev1ListConnectorKindsResponse */
@@ -620,13 +644,41 @@ export type GranolaConnectorConfig = {
   // Transcripts set beside its Notes. Off by default.
   transcripts?: boolean;
 };
-/** v1SlackConnectorConfig: the bot token (xoxb-…) of an app in a Slack workspace. */
+/**
+ * v1SlackAppCredential: read through the workspace's install of Helix's
+ * Slack app (Settings › Slack). noticeVersion is the storage notice the
+ * owner or admin binding it accepted (SlackConnectorSetup.noticeVersion),
+ * required to bind; a response carries the one accepted. now, on an update
+ * of a connection switching from its token (slackStatus.switching): read
+ * through the app at once, before it has read the history. Creating, or
+ * switching to, one is FAILED_PRECONDITION by reason:
+ * FOUNDRY_SLACK_FEED_DISABLED, FOUNDRY_SLACK_APP_NOT_INSTALLED,
+ * FOUNDRY_SLACK_APP_SCOPES, FOUNDRY_SLACK_APP_ADMIN,
+ * FOUNDRY_SLACK_APP_BOT_UNKNOWN, FOUNDRY_SLACK_APP_IN_USE and
+ * FOUNDRY_SLACK_APP_ENTERPRISE (metadata connector_id: the connection in
+ * the way, when it is this workspace's), FOUNDRY_SLACK_APP_NOTICE.
+ */
+export type SlackAppCredential = { noticeVersion?: number; now?: boolean };
+/**
+ * v1SlackConnectorConfig: the channels a Slack app was added to, read with
+ * the bot token (xoxb-…) of the customer's own app, or through Helix's
+ * Slack app (helixApp; proto oneof credential). Neither on an update, or an
+ * empty botToken, keeps the current credential; a response sets helixApp
+ * for a connection through the app and an empty botToken for one with a
+ * token.
+ */
 export type SlackConnectorConfig = {
-  // Write-only.
-  botToken?: string;
-  // Days of channel history to keep, 1 to 365; 0 means 90.
+  // Days of channel history to keep: 1 to 365 with a token, 1 to 90
+  // through the app; 0 means 90.
   historyDays?: number;
-};
+} & (
+  | {
+      // Write-only.
+      botToken?: string;
+      helixApp?: never;
+    }
+  | { helixApp: SlackAppCredential; botToken?: never }
+);
 /** v1NotionConnectorConfig: an internal integration's secret (ntn_… or secret_…). */
 export type NotionConnectorConfig = {
   // Write-only.
@@ -653,6 +705,14 @@ export type DatabuddyConnectorConfig = {
   websiteIds?: string[];
   // Days of history to keep, 1 to 365; 0 means 90.
   historyDays?: number;
+};
+/**
+ * v1AttioConnectorConfig: an Attio access token (64 characters); the
+ * connector reads everything its scopes allow.
+ */
+export type AttioConnectorConfig = {
+  // Write-only.
+  apiKey?: string;
 };
 /** v1DatabaseConnectorConfig: PostgreSQL and MySQL. */
 export type DatabaseConnectorConfig = {
@@ -749,6 +809,7 @@ export type ConnectorConfig =
   | { notion: NotionConnectorConfig }
   | { google: GoogleWorkspaceConnectorConfig }
   | { databuddy: DatabuddyConnectorConfig }
+  | { attio: AttioConnectorConfig }
   | { postgres: DatabaseConnectorConfig }
   | { mysql: DatabaseConnectorConfig }
   | { s3: S3ConnectorConfig }
@@ -889,6 +950,61 @@ export type Connector = {
   // Set when it was connected by signing in at its provider; its
   // `secretHint` is then empty.
   account?: ConnectorAccount | null;
+  // Set for a Slack connection through Helix's Slack app, or switching to it.
+  slackStatus?: ConnectorSlackStatus | null;
+};
+
+/** v1SlackFeedState: whether a Slack connection through Helix's Slack app can read. */
+export type SlackFeedState =
+  | "SLACK_FEED_STATE_UNSPECIFIED"
+  // It reads.
+  | "SLACK_FEED_STATE_LIVE"
+  // The install lacks permissions (missingScopes): an owner or admin adds
+  // the app again.
+  | "SLACK_FEED_STATE_NEEDS_REINSTALL"
+  // The app was removed from the Slack workspace: its data is frozen, and
+  // deleted at deletedAt unless the app is added again.
+  | "SLACK_FEED_STATE_INSTALL_GONE"
+  // The workspace's install is of another Slack workspace: edit the
+  // connection to read it, or delete it.
+  | "SLACK_FEED_STATE_TEAM_CHANGED";
+
+/**
+ * v1SlackBackfill: what Helix's Slack app has left to read of a
+ * connection's history, which Slack allows it a page a minute.
+ */
+export type SlackBackfill = {
+  channels?: number;
+  channelsDone?: number;
+  // Reserved; not set yet.
+  channelName?: string;
+  // int64: about how long it has left; "0" when it can't tell.
+  etaSeconds?: string;
+  // Slack asked it to wait until then; unset when it doesn't wait.
+  waitingUntil?: string | null;
+};
+
+/** v1ConnectorSlackStatus: how a Slack connection through Helix's Slack app reads its Slack workspace. */
+export type ConnectorSlackStatus = {
+  teamId?: string;
+  teamName?: string;
+  state?: SlackFeedState;
+  // The permissions the install lacks (NEEDS_REINSTALL).
+  missingScopes?: string[];
+  // Unset when nothing is left to read.
+  backfill?: SlackBackfill | null;
+  // Reserved; not set yet.
+  lastEventAt?: string | null;
+  // When Slack last dropped the team's events, past its 30,000 an hour;
+  // set only within the last 24 hours.
+  eventsLimitedAt?: string | null;
+  // Days published with messages possibly missing.
+  lossyDays?: number;
+  // Switching from its token: it syncs by its token until the app has read
+  // the history.
+  switching?: boolean;
+  // INSTALL_GONE: when the connection and its data are deleted.
+  deletedAt?: string | null;
 };
 
 /**
@@ -2883,6 +2999,16 @@ export type AgentPageContext = {
  */
 export type AgentRuntime = "api" | "claude_code" | "codex";
 
+/**
+ * v1FoundryAgentSurface: where a turn's person reads it: Foundry's site
+ * (UNSPECIFIED, also when missing) or a Slack thread, through Helix
+ * Foundry's Slack app. A Slack-born thread is deleted 30 days after its
+ * last activity.
+ */
+export type FoundryAgentSurface =
+  | "FOUNDRY_AGENT_SURFACE_UNSPECIFIED"
+  | "FOUNDRY_AGENT_SURFACE_SLACK";
+
 /** v1FoundryAgentThread */
 export type FoundryAgentThread = {
   id: string;
@@ -2891,6 +3017,8 @@ export type FoundryAgentThread = {
   runtime?: AgentRuntime;
   createdAt?: string | null;
   updatedAt?: string | null;
+  // Where it was started: its first turn's surface.
+  surface?: FoundryAgentSurface;
 };
 
 /** v1FoundryAgentTurn */
@@ -2923,6 +3051,9 @@ export type FoundryAgentTurn = {
   asked?: FoundryAgentAsked | null;
   // An answers turn's: the turn it answers, and the person's answers.
   answers?: FoundryAgentAnswers | null;
+  // Where its person reads it; a continuation (an action's result, answers)
+  // keeps its turn's.
+  surface?: FoundryAgentSurface;
 };
 
 /**
@@ -5510,6 +5641,50 @@ export type GetMyFoundryAccessResponse = {
   ontologyIds?: string[];
   partialOntologyIds?: string[];
   workflows?: boolean;
+  /** A grantee's: the channels its sources share with it now, sorted. */
+  sourceItems?: FoundrySourceItem[];
+};
+
+/** v1FoundrySourceItem: one item of a connection's source (a Slack channel). */
+export type FoundrySourceItem = { connectorId?: string; itemKey?: string };
+
+/** v1FoundrySourceAudienceProblem: why the latest read failed, and when. */
+export type FoundrySourceAudienceProblem = { message?: string; at?: string };
+
+/**
+ * v1FoundrySourceAudience: who one connection's source shares its items
+ * with (a Slack connection's channels), as its last sync read it. A grantee
+ * reads only the items shared with their verified email, and none of its
+ * tables. `stale`: never read, or last read more than 7 days ago (a day, once
+ * a read since failed), so its documents go to full readers only. `problem`:
+ * why the latest read failed, while none has worked since. `everyoneItems`
+ * are shared with everyone the source has an account for but guests (public
+ * channels), `membersItems` only with the people they list (private
+ * channels). `grantees` counts the people it narrows (restricted members and
+ * the members of teams with grants); `unmatchedUserIds` are those it has no
+ * account for by their email (they read none of its items) and
+ * `guestUserIds` those it knows as guests.
+ */
+export type FoundrySourceAudience = {
+  connectorId?: string;
+  kind?: string;
+  readAt?: string;
+  stale?: boolean;
+  problem?: FoundrySourceAudienceProblem;
+  everyoneItems?: number;
+  membersItems?: number;
+  grantees?: number;
+  unmatchedUserIds?: string[];
+  guestUserIds?: string[];
+};
+
+/**
+ * v1ListFoundrySourceAudiencesResponse: GET .../foundry/access/sources,
+ * owners and admins. Each live connection whose kind follows its source's
+ * permissions, oldest first, read or not.
+ */
+export type ListFoundrySourceAudiencesResponse = {
+  sources?: FoundrySourceAudience[];
 };
 
 /**
@@ -5582,3 +5757,362 @@ export type CreateServiceCredentialResponse = {
   credential?: ServiceCredential;
   token?: string;
 };
+
+// ---------------------------------------------------------------- Slack
+// Routes under /v1/workspaces/{workspaceId}/foundry/slack... and POST
+// /v1/foundry/slack:finish-install (the state names the workspace): Helix's
+// own Slack app, Helix Foundry, which answers people in one Slack workspace
+// as Founder, each linked Slack user as their own Foundry user. Owners and
+// admins add it by Slack's OAuth (start, then finish once Slack returns to
+// /slack/installed) and disconnect it; each person links their Slack account
+// from the one-time link the app sends them in Slack (/slack/link, its token
+// in the fragment). Hosted only: a local install refuses every route. Where
+// foundry.slack is off, every route is FAILED_PRECONDITION, reason
+// FOUNDRY_SLACK_DISABLED; other refusals carry the reasons below.
+
+/** v1FoundrySlackInstall: a Slack workspace's install of the app. */
+export type FoundrySlackInstall = {
+  // The Slack workspace (team) and, inside an Enterprise Grid org, the org.
+  teamId?: string;
+  teamName?: string;
+  enterpriseId?: string;
+  // The app's bot user there, which people message.
+  botUserId?: string;
+  // Who installed it, last: the Foundry user and their name.
+  installedByUserId?: string;
+  installedByName?: string;
+  // When it was first installed, and last installed again.
+  createdAt?: string;
+  updatedAt?: string;
+  // The permissions it lacks that what Helix offers here needs (a Slack
+  // connection through the app, follow-ups without a mention): adding the
+  // app again (start-install) asks for them. Empty while those are off.
+  missingScopes?: string[];
+  // A Slack workspace admin or owner installed it: a connection reads
+  // through it only then.
+  installerAdmin?: boolean;
+  // When Slack last dropped the team's events, past its 30,000 an hour;
+  // set only within the last 24 hours.
+  eventsLimitedAt?: string;
+  // Whom its bot acts as; the shared bot is set in BOT mode only.
+  identityMode?: FoundrySlackIdentityMode;
+  bot?: FoundrySlackBot | null;
+};
+
+/**
+ * v1FoundrySlackIdentityMode: whom an install's bot acts as. PER_PERSON:
+ * each linked Slack user as their own Foundry user. BOT: one shared bot,
+ * which anyone in the Slack workspace may ask, reading only the sources its
+ * key is given; owners and admins run what it proposes as themselves.
+ */
+export type FoundrySlackIdentityMode =
+  | "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED"
+  | "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON"
+  | "FOUNDRY_SLACK_IDENTITY_MODE_BOT";
+
+/**
+ * v1FoundrySlackBot: an install's shared bot, the workspace service
+ * credential it acts as. Settings › Access chooses its sources, as principal
+ * service_credential:<credentialId>. credentialName is empty when Helix
+ * can't read it. broken: the key was revoked, deleted, expired or given
+ * database permissions, and the bot's turns fail until bot mode is turned
+ * off and on again.
+ */
+export type FoundrySlackBot = {
+  credentialId?: string;
+  credentialName?: string;
+  broken?: boolean;
+};
+
+/**
+ * v1FoundrySlackLink: a Slack user who acts as a Foundry user: the bot
+ * answers them, in Slack, as that user.
+ */
+export type FoundrySlackLink = {
+  slackUserId?: string;
+  userId?: string;
+  // The Foundry user's name, as Foundry shows it.
+  userName?: string;
+  createdAt?: string;
+  // FULL on Helix, and for a local install's owner (the app's installer);
+  // READ for a Slack user the owner allowed to read and ask as them.
+  access?: FoundrySlackLinkAccess;
+};
+
+/**
+ * v1FoundrySlackLinkAccess: what a linked Slack user may do. FULL: act as
+ * their Foundry user. READ: read and ask as a local install's owner,
+ * changing nothing. NONE: only SetFoundrySlackAccess's, removing them.
+ */
+export type FoundrySlackLinkAccess =
+  | "FOUNDRY_SLACK_LINK_ACCESS_UNSPECIFIED"
+  | "FOUNDRY_SLACK_LINK_ACCESS_FULL"
+  | "FOUNDRY_SLACK_LINK_ACCESS_READ"
+  | "FOUNDRY_SLACK_LINK_ACCESS_NONE";
+
+/** v1FoundrySlackAccessRequest: a Slack user who asked to use a local install. */
+export type FoundrySlackAccessRequest = {
+  slackUserId?: string;
+  // Their name in Slack.
+  slackName?: string;
+  createdAt?: string;
+};
+
+/** v1FoundrySlack: a workspace's Slack. */
+export type FoundrySlack = {
+  workspaceId?: string;
+  // The workspace may add the app: Helix offers it to every workspace, or
+  // this one is on the list Helix offers it to until Slack's Marketplace
+  // review (foundry.slack.install_allowlist).
+  installAllowed?: boolean;
+  // The caller is an owner or admin: they add and disconnect the app and
+  // see who is linked.
+  canManage?: boolean;
+  // The workspace's install, and the caller's own Slack account in it;
+  // unset while there is none.
+  install?: FoundrySlackInstall | null;
+  myLink?: FoundrySlackLink | null;
+};
+
+/**
+ * v1FoundrySlackResponse: GET .../foundry/slack, and the answer of
+ * :finish-install, :disconnect and PATCH .../foundry/slack.
+ */
+export type FoundrySlackResponse = {
+  slack?: FoundrySlack;
+  // :finish-install's: the site path the install was started from
+  // (StartFoundrySlackInstallRequest.returnPath); empty for Settings › Slack.
+  returnPath?: string;
+  // :finish-install's, for an install a linked local install started: its
+  // own Settings › Slack, an http://localhost or 127.0.0.1 URL, where the
+  // site sends the browser instead.
+  returnTo?: string;
+};
+
+/**
+ * v1StartFoundrySlackInstallRequest: the body of :start-install. returnPath
+ * is where the site goes once the install is finished: /settings/slack (or
+ * empty), /data?add=slack or /data/connections/{id}; any other is
+ * INVALID_ARGUMENT.
+ */
+export type StartFoundrySlackInstallRequest = { returnPath?: string };
+
+/**
+ * v1StartFoundrySlackInstallResponse: POST .../foundry/slack:start-install
+ * (body StartFoundrySlackInstallRequest), owners and admins: Slack's page
+ * that asks to add the app, returning to the site's /slack/installed with a
+ * code and the state, which is bound to the caller, the workspace and the
+ * return path for ten minutes, once. An install lacking permissions
+ * (missingScopes) is added again, asking for them. FAILED_PRECONDITION:
+ * FOUNDRY_SLACK_NOT_OFFERED (not on the install list),
+ * FOUNDRY_SLACK_INSTALLED (it has an install lacking nothing),
+ * FOUNDRY_AGENT_DISABLED (Founder is off).
+ */
+export type StartFoundrySlackInstallResponse = { authorizeUrl?: string };
+
+/**
+ * v1FinishFoundrySlackInstallRequest: POST /v1/foundry/slack:finish-install,
+ * what Slack returned: the state with a code, or with Slack's error code
+ * (the person cancelled), which spends the state and is refused
+ * FOUNDRY_SLACK_CANCELLED. The state must be the caller's, unexpired and
+ * unspent (FOUNDRY_SLACK_INSTALL_EXPIRED), and the caller still an owner or
+ * admin. FAILED_PRECONDITION: FOUNDRY_SLACK_ENTERPRISE_INSTALL,
+ * FOUNDRY_SLACK_SCOPES, FOUNDRY_SLACK_REFUSED, FOUNDRY_SLACK_TEAM_TAKEN,
+ * FOUNDRY_SLACK_DISCONNECTING, FOUNDRY_SLACK_INSTALLED. Every refusal past
+ * the state of an install a linked local install started carries that
+ * install's Settings › Slack as its ErrorInfo's metadata `return_to` (one
+ * of no reason of its own: FOUNDRY_SLACK_INSTALL_FAILED). The same Slack
+ * workspace again is a reinstall, which keeps its links.
+ */
+export type FinishFoundrySlackInstallRequest =
+  | { code: string; state: string }
+  | { error: string; state: string };
+
+/**
+ * FoundryServiceUpdateFoundrySlackBody: PATCH .../foundry/slack, owners and
+ * admins (answers FoundrySlackResponse). BOT makes the shared bot's key;
+ * PER_PERSON revokes it and deletes the bot's threads; the mode the install
+ * has changes nothing. NOT_FOUND without an install; FAILED_PRECONDITION
+ * FOUNDRY_SLACK_BOT_HOSTED_ONLY where the host makes no bot keys.
+ */
+export type UpdateFoundrySlackRequest = {
+  identityMode: Exclude<
+    FoundrySlackIdentityMode,
+    "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED"
+  >;
+};
+
+/**
+ * v1ListFoundrySlackLinksResponse: GET .../foundry/slack/links, owners and
+ * admins; oldest first. requests: a local install's Slack users who asked
+ * to use it.
+ */
+export type ListFoundrySlackLinksResponse = {
+  links?: FoundrySlackLink[];
+  requests?: FoundrySlackAccessRequest[];
+};
+
+/**
+ * FoundryServicePreviewFoundrySlackLinkBody and
+ * FoundryServiceCreateFoundrySlackLinkBody: POST
+ * .../foundry/slack/links:preview and POST .../foundry/slack/links, the
+ * token the app's link carries in its fragment (#t=). A token not live in
+ * the workspace's install is FAILED_PRECONDITION FOUNDRY_SLACK_LINK_EXPIRED.
+ */
+export type FoundrySlackLinkTokenRequest = { token: string };
+
+/**
+ * v1FoundrySlackLinkRefusal: why a Slack user can't be linked to the
+ * caller. UNSPECIFIED: they can be. EMAIL_MISMATCH: their Slack email isn't
+ * the caller's, or Slack hides it. EMAIL_UNCONFIRMED: Slack hasn't confirmed
+ * it. NOT_A_MEMBER: a guest, a bot, a deactivated account, or someone of
+ * another organisation or workspace.
+ */
+export type FoundrySlackLinkRefusal =
+  | "FOUNDRY_SLACK_LINK_REFUSAL_UNSPECIFIED"
+  | "FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_MISMATCH"
+  | "FOUNDRY_SLACK_LINK_REFUSAL_EMAIL_UNCONFIRMED"
+  | "FOUNDRY_SLACK_LINK_REFUSAL_NOT_A_MEMBER";
+
+/**
+ * v1PreviewFoundrySlackLinkResponse: what linking the token's Slack user to
+ * the caller would do, before it is spent.
+ */
+export type PreviewFoundrySlackLinkResponse = {
+  // The installed Slack workspace.
+  teamName?: string;
+  // The Slack user: their name and handle, and their email with all but
+  // its first character and its domain hidden ("a•••@acme.com").
+  slackUserId?: string;
+  slackName?: string;
+  slackHandle?: string;
+  slackEmailMasked?: string;
+  // They may be linked to the caller; else `refusal` says why.
+  matchesYou?: boolean;
+  refusal?: FoundrySlackLinkRefusal;
+};
+
+/**
+ * v1FoundrySlackLinkResponse: POST .../foundry/slack/links. It replaces the
+ * Slack user's earlier link, and the caller's; a refused one is
+ * FAILED_PRECONDITION FOUNDRY_SLACK_LINK_REFUSED, the refusal's name in its
+ * metadata (`refusal`). DELETE .../foundry/slack/links/{slackUserId}
+ * unlinks the caller's own, or, for an owner or admin, anyone's.
+ */
+export type FoundrySlackLinkResponse = { link?: FoundrySlackLink };
+
+// ---------------------------------------------------------------- Slack relay
+// Helix's Slack relay (foundry.slack.relay): a local Foundry install linked
+// to a Helix workspace, through which Slack reaches it. Helix's side
+// (owners and admins; a local install refuses it): POST
+// .../foundry/relay-links:authorize, GET .../foundry/relay-links and POST
+// .../foundry/relay-links/{linkId}:revoke; where the relay is off,
+// FAILED_PRECONDITION FOUNDRY_RELAY_DISABLED. The local install's side (its
+// owner; Helix refuses it, FOUNDRY_RELAY_LOCAL_ONLY): GET, PATCH
+// .../foundry/relay, POST .../foundry/relay:start-link, :complete-link and
+// :unlink, and PUT .../foundry/slack/links/{slackUserId}/access (Helix:
+// FOUNDRY_SLACK_LOCAL_ONLY).
+
+/**
+ * FoundryServiceAuthorizeFoundryRelayLinkBody: POST
+ * .../foundry/relay-links:authorize, from Helix's /relay/link page. state is
+ * the install's own (16 to 256 URL-safe characters), codeChallenge its PKCE
+ * S256 challenge, redirectUri its Settings › Slack
+ * (http://localhost[:port]/settings/slack or http://127.0.0.1[:port]/...),
+ * name its name (1 to 128 bytes). FAILED_PRECONDITION
+ * FOUNDRY_SLACK_NOT_OFFERED off the install list.
+ */
+export type AuthorizeFoundryRelayLinkRequest = {
+  state: string;
+  codeChallenge: string;
+  redirectUri: string;
+  name: string;
+};
+
+/**
+ * v1AuthorizeFoundryRelayLinkResponse: redirectUri with the one-time code
+ * (ten minutes) and the state, where the site sends the browser.
+ */
+export type AuthorizeFoundryRelayLinkResponse = { redirectUrl?: string };
+
+/** v1FoundryRelayLinkInstall: a Slack workspace a linked install serves. */
+export type FoundryRelayLinkInstall = {
+  teamId?: string;
+  teamName?: string;
+  createdAt?: string;
+};
+
+/**
+ * v1FoundryRelayLink: a local install linked to the workspace, with today's
+ * counts (UTC; int64 strings): Slack's requests held for it, its calls to
+ * Slack made and refused, and channel messages held.
+ */
+export type FoundryRelayLink = {
+  id?: string;
+  name?: string;
+  createdByUserId?: string;
+  createdByName?: string;
+  createdAt?: string;
+  // Its last claim or call, written at most once a minute.
+  lastSeenAt?: string;
+  installs?: FoundryRelayLinkInstall[];
+  deliveriesToday?: string;
+  callsToday?: string;
+  refusedToday?: string;
+  feedRowsToday?: string;
+};
+
+/** v1ListFoundryRelayLinksResponse: GET .../foundry/relay-links, newest first. */
+export type ListFoundryRelayLinksResponse = { links?: FoundryRelayLink[] };
+
+/**
+ * v1FoundryRelay: a local install's link to Helix; the rest is unset while
+ * not linked. slackApprovals: its owner's Slack account may approve changes
+ * through Slack (off: the relay only reads and asks).
+ */
+export type FoundryRelay = {
+  linked?: boolean;
+  hostedOrigin?: string;
+  accountEmail?: string;
+  linkedAt?: string;
+  // When Helix last answered its claim.
+  lastOkAt?: string;
+  slackApprovals?: boolean;
+};
+
+/**
+ * v1FoundryRelayResponse: GET and PATCH .../foundry/relay, and the answer of
+ * :complete-link and :unlink.
+ */
+export type FoundryRelayResponse = { relay?: FoundryRelay };
+
+/** v1StartFoundryRelayLinkResponse: POST .../foundry/relay:start-link: Helix's /relay/link page. */
+export type StartFoundryRelayLinkResponse = { authorizeUrl?: string };
+
+/**
+ * FoundryServiceCompleteFoundryRelayLinkBody: what Helix handed back to
+ * Settings › Slack. FAILED_PRECONDITION FOUNDRY_RELAY_LINK_EXPIRED for a
+ * state unknown, spent or expired.
+ */
+export type CompleteFoundryRelayLinkRequest = { code: string; state: string };
+
+/** FoundryServiceUpdateFoundryRelayBody: PATCH .../foundry/relay. NOT_FOUND while unlinked. */
+export type UpdateFoundryRelayRequest = { slackApprovals: boolean };
+
+/**
+ * FoundryServiceSetFoundrySlackAccessBody: PUT
+ * .../foundry/slack/links/{slackUserId}/access, a local install's owner.
+ * READ lets a Slack user who asked read and ask as the owner; NONE removes
+ * them or drops their request. The owner's own link is
+ * FAILED_PRECONDITION FOUNDRY_SLACK_OWNER_LINK; a Slack user who never asked
+ * is NOT_FOUND.
+ */
+export type SetFoundrySlackAccessRequest = {
+  access: Extract<
+    FoundrySlackLinkAccess,
+    "FOUNDRY_SLACK_LINK_ACCESS_READ" | "FOUNDRY_SLACK_LINK_ACCESS_NONE"
+  >;
+};
+
+/** v1FoundrySlackAccessResponse: the Slack user's link once READ; unset once NONE. */
+export type FoundrySlackAccessResponse = { link?: FoundrySlackLink | null };

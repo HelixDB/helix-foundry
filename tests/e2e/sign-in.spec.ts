@@ -668,6 +668,8 @@ test("comes back to an ontology's setup with what it chose", async ({
 test("connects Slack by signing in, keeping its history and refusing a user token", async ({
   page,
 }) => {
+  // Where Helix's Slack app reads Slack, Slack doesn't sign in.
+  await mock.configure({ slackFeedOff: true });
   await signIn(page);
   await openForm(page, "Slack");
   const form = dialog(page);

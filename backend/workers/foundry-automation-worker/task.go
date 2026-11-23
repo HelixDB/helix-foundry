@@ -723,11 +723,11 @@ func (t *Task) startAssistant(ctx context.Context, st *runState, nodeID string, 
 		threadID = *run.ThreadID
 	} else {
 		threadID = id.New()
-		thread = &model.FoundryAgentThread{ID: threadID, WorkspaceID: run.WorkspaceID, UserID: run.OwnerUserID, Kind: model.FoundryAgentThreadAutomation,
+		thread = &model.FoundryAgentThread{ID: threadID, WorkspaceID: run.WorkspaceID, Principal: model.AgentPerson{UserID: run.OwnerUserID}, Kind: model.FoundryAgentThreadAutomation,
 			Title: title(st.name), Runtime: model.FoundryAgentRuntimeAPI}
 	}
 	runID, node := run.ID, nodeID
-	turn := &model.FoundryAgentTurn{ID: id.New(), WorkspaceID: run.WorkspaceID, ThreadID: threadID, UserID: run.OwnerUserID,
+	turn := &model.FoundryAgentTurn{ID: id.New(), WorkspaceID: run.WorkspaceID, ThreadID: threadID, Principal: model.AgentPerson{UserID: run.OwnerUserID},
 		Kind: model.FoundryAgentTurnAutomation, Input: instruction(step.Instruction, run), AutomationRunID: &runID, AutomationNodeID: &node,
 		MaxUSDMicros: t.cfg.MaxMicros()}
 	err := t.db.StartFoundryAutomationAssistant(ctx, run.ID, t.workerID, nodeID, thread, turn)

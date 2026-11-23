@@ -6,6 +6,7 @@ import {
   type JsonValue,
   type ReadEntry,
   type ReadParam,
+  type ReadParamType,
 } from "../explore/database-query";
 import {
   MAX_COUNTS,
@@ -21,6 +22,7 @@ import {
   type Readable,
   type TypeNaming,
 } from "../explore/naming";
+import { helixDateTime } from "../../../shared/datetime";
 import { isRecord } from "../../../shared/json";
 
 // Records: an ontology's database as a table, one type of a load's version
@@ -38,7 +40,10 @@ import { isRecord } from "../../../shared/json";
 // - Search folds the text as the ontology agent folds names and looks for it
 //   in the type's normalized names (`<prop>__nn`), its names and its key; a
 //   filter is one equality, on the normalized name for a names prop. Both
-//   scan the type's nodes; their matches are counted up to countCap.
+//   scan the type's nodes; their matches are counted up to countCap. A
+//   datetime prop holds Helix's DateTime, which equals only a `date_time`
+//   parameter's DateTime (never text, and `contains` never matches one), and
+//   which `order_by` sorts by its instant.
 // - Offset paging reads every row before the page, so pages stop at
 //   maxOffset: past it, a search or a filter narrows the type instead.
 
@@ -313,18 +318,26 @@ export type Search =
  * The search for `text` in a type: its normalized names contain the text
  * folded; its names or stored name contain it as typed; its string key
  * props contain it as typed, upper-cased or lower-cased; a numeric key
- * equals it; a type known by its name has its normalized name contain it.
+ * equals it; a datetime key equals it when it is RFC 3339 (as a `date_time`
+ * parameter, to the millisecond); a type known by its name has its
+ * normalized name contain it.
  */
 export function searchOf(t: TypeNaming, text: string): Search {
   const q = text.trim();
   if (!q) return { kind: "all" };
   const qn = normalizeName(q),
-    n = Number(q);
+    n = Number(q),
+    at = helixDateTime(q);
   const type = (p: string) =>
     t.props.find((x) => x.name === p)?.type || "string";
   const preds = new Map<string, Ast>(),
     params: Record<string, ReadParam> = {};
-  const add = (pred: Ast, param: string, value: JsonValue, kind: string) => {
+  const add = (
+    pred: Ast,
+    param: string,
+    value: JsonValue,
+    kind: ReadParamType,
+  ) => {
     preds.set(JSON.stringify(pred), pred);
     params[param] = { value, type: kind };
   };
@@ -339,6 +352,8 @@ export function searchOf(t: TypeNaming, text: string): Search {
         add(eq(k, "qi"), "qi", n, "i64");
     } else if (type(k) === "float") {
       if (Number.isFinite(n)) add(eq(k, "qf"), "qf", n, "f64");
+    } else if (type(k) === "datetime") {
+      if (at) add(eq(k, "qd"), "qd", at, "date_time");
     } else {
       // `contains` keeps case, and keys are often upper or lower case
       // throughout: try those too, in the same scan.
@@ -360,16 +375,18 @@ export function searchOf(t: TypeNaming, text: string): Search {
 
 /** A filter's equality, or why its value can't be one. */
 export type Filter =
-  | { ok: true; property: string; value: JsonValue; type: string }
+  | { ok: true; property: string; value: JsonValue; type: ReadParamType }
   | { ok: false; error: string };
 
 /**
  * The equality a filter on `field` reads `raw` as, by the prop's type: a
- * whole number, a number, true or false, or text (a names prop compares
- * its normalized form, so case and punctuation don't matter).
+ * whole number, a number, true or false, an RFC 3339 instant (Helix's
+ * DateTime of it, to the millisecond), or text (a names prop compares its
+ * normalized form, so case and punctuation don't matter).
  *
  * @example
  * filterOf({ name: "Invoice", props: [{ name: "amount_due", type: "integer" }], key: [], names: [] }, "amount_due", "54000"); // { ok: true, property: "amount_due", value: 54000, type: "i64" }
+ * filterOf({ name: "Invoice", props: [{ name: "created_at", type: "datetime" }], key: [], names: [] }, "created_at", "2026-01-05T10:00:00+01:00"); // { ok: true, property: "created_at", value: "2026-01-05T09:00:00.000Z", type: "date_time" }
  */
 export function filterOf(t: TypeNaming, field: string, raw: string): Filter {
   const column = columnsOf(t).find(
@@ -400,6 +417,16 @@ export function filterOf(t: TypeNaming, field: string, raw: string): Filter {
       return b === undefined
         ? { ok: false, error: "Enter true or false." }
         : { ok: true, property: field, value: b, type: "bool" };
+    }
+    case "datetime": {
+      const at = helixDateTime(v);
+      return at
+        ? { ok: true, property: field, value: at, type: "date_time" }
+        : {
+            ok: false,
+            error:
+              "Enter a date and time, such as 2026-03-14T09:30:00Z (kept to the millisecond).",
+          };
     }
   }
   const nn = folded(t, field);

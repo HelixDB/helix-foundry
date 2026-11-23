@@ -112,15 +112,20 @@ type Inputs struct {
 	Unknown      bool
 }
 
-// Grants are the targets a grantee holds, through itself and its teams.
+// Grants are the targets a grantee holds, through itself and its teams, and
+// what the sources of those targets share with it (WithSharing): a grant of
+// a connector whose source reports its permissions gives only the items the
+// source shares with the reader.
 type Grants struct {
 	connectors map[string]bool
 	tables     map[TableRef]bool
 	sets       map[string]bool
 	enrichment bool
+	sharing    Sharing
 }
 
-// NewGrants indexes targets.
+// NewGrants indexes targets, as the grants give them: no source narrows them
+// until WithSharing.
 func NewGrants(targets []Target) Grants {
 	g := Grants{connectors: map[string]bool{}, tables: map[TableRef]bool{}, sets: map[string]bool{}}
 	for _, t := range targets {
@@ -138,6 +143,21 @@ func NewGrants(targets []Target) Grants {
 	return g
 }
 
+// WithSharing is g narrowed by what the sources of its connectors share with
+// the reader (plans/SOURCE_ACLS.md): a table of an audienced connector is
+// covered for no grantee, since its rows aren't told apart by item, and a
+// set it owns never whole, so a load holding one is always read in part: a
+// document of the set is read only while the source shares its item.
+//
+//	at := time.Now()
+//	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1", "C2"}, at)}, nil))
+//	g.CoversTable(access.TableRef{ConnectorID: "slack", Table: "messages"}) // false, though it reads every channel listed
+func (g Grants) WithSharing(s Sharing) Grants {
+	g.sharing = s
+	return g
+}
+
 // Empty reports grants that give nothing.
 func (g Grants) Empty() bool {
 	return len(g.connectors)+len(g.tables)+len(g.sets) == 0 && !g.enrichment
@@ -147,6 +167,8 @@ func (g Grants) Empty() bool {
 // gives: a table held by its own grant or its connector's, a connector, a set
 // and People enrichment only by their own. What a restricted member's
 // Founder thread read under targets stays theirs only while they hold them.
+// It compares grants as given, whatever their sources share: a thread
+// records the items its reads were narrowed to apart (SeesItems).
 //
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
 //	g.Holds([]access.Target{access.TableTarget("stripe", "customers")}) // true
@@ -156,7 +178,7 @@ func (g Grants) Holds(targets []Target) bool {
 		case TargetConnector:
 			return !g.connectors[t.connectorID]
 		case TargetTable:
-			return !g.CoversTable(TableRef{t.connectorID, t.table})
+			return !g.connectors[t.connectorID] && !g.tables[TableRef{t.connectorID, t.table}]
 		case TargetDocumentSet:
 			return !g.sets[t.setID]
 		case TargetEnrichment:
@@ -166,13 +188,39 @@ func (g Grants) Holds(targets []Target) bool {
 	})
 }
 
-// CoversTable reports whether the grants cover a table.
-func (g Grants) CoversTable(t TableRef) bool { return g.connectors[t.ConnectorID] || g.tables[t] }
+// CoversTable reports whether the grants cover a table: it is granted, by
+// itself or its connector, and its connector's source doesn't report its
+// permissions. A table of one that does goes to full readers only: its rows
+// aren't told apart by item, and may be of items the last read of the
+// source's permissions didn't list.
+func (g Grants) CoversTable(t TableRef) bool {
+	return (g.connectors[t.ConnectorID] || g.tables[t]) && !g.sharing.audienced(t.ConnectorID)
+}
 
-// CoversSet reports whether the grants cover a document in set s.
-func (g Grants) CoversSet(s SetRef) bool {
+// givesSet reports whether a grant gives set s, whatever its source shares.
+func (g Grants) givesSet(s SetRef) bool {
 	return s.SetID != "" && (g.sets[s.SetID] || (s.ConnectorID != "" && g.connectors[s.ConnectorID]))
 }
+
+// CoversSet reports whether the grants cover every document in set s: it is
+// granted, and no connector whose source reports its permissions owns it. A
+// set of one that does is never covered whole, so a load holding it is read
+// in part, document by document (Reads): what the set holds may be of items
+// the last read didn't list, which only full readers read.
+func (g Grants) CoversSet(s SetRef) bool { return g.givesSet(s) && !g.sharing.audienced(s.ConnectorID) }
+
+// ReachesSet reports whether the grants give some documents of set s: it is
+// granted, and the source of an audienced connector that owns it shares an
+// item with the reader, so a reader of part of a load is told of the set.
+func (g Grants) ReachesSet(s SetRef) bool { return g.givesSet(s) && g.sharing.some(s.ConnectorID) }
+
+// Reads reports whether the grants give document d of a load: its set is
+// granted, and the source of an audienced connector that owns the set shares
+// d's item with the reader.
+//
+//	g := access.NewGrants([]access.Target{access.DocumentSetTarget("contracts")})
+//	g.Reads(access.DocumentRef{ID: "d1", Set: access.SetRef{SetID: "contracts"}}) // true
+func (g Grants) Reads(d DocumentRef) bool { return g.givesSet(d.Set) && g.sharing.reads(d) }
 
 // Missing is what of in the grants don't cover: the tables, sets and
 // People enrichment, and whether in holds what nothing covers.
@@ -210,9 +258,55 @@ func (g Grants) Covers(in Inputs) bool {
 	return holds && len(m.Tables)+len(m.Sets)+len(m.DecisionSets) == 0 && !m.Enrichment && !m.Uncoverable && !m.Unknown
 }
 
+// Keeps reports whether a grantee that read seen, part of a load, and the
+// items of audienced sources that part held documents of (Part.Items) may
+// still read what it said (a question's answer): as Covers, but a set of an
+// audienced connector counts while it is granted and its source shares any
+// item with the reader, and every one of items must still be shared with
+// them, so an answer goes with the channel it read.
+//
+//	at := time.Now()
+//	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1"}, at)}, nil))
+//	seen := access.Inputs{Sets: []access.SetRef{{SetID: "conversations", ConnectorID: "slack"}}}
+//	g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
+//	g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C2"}}) // false: C2 isn't shared with them now
+func (g Grants) Keeps(seen Inputs, items []ItemRef) bool {
+	held := len(seen.Tables)+len(seen.Sets) > 0 || seen.Enrichment
+	sets := !slices.ContainsFunc(seen.Sets, func(s SetRef) bool { return !g.ReachesSet(s) }) &&
+		!slices.ContainsFunc(seen.DecisionSets, func(s SetRef) bool { return !g.CoversSet(s) })
+	return held && sets && !slices.ContainsFunc(seen.Tables, func(t TableRef) bool { return !g.CoversTable(t) }) &&
+		(g.enrichment || !seen.Enrichment) && !seen.Uncoverable && !seen.Unknown && g.SeesItems(items)
+}
+
+// SeesItems reports whether every one of items is still shared with the
+// reader by its source: an item of a connector deleted since, or whose
+// source's permissions are unknown now, isn't.
+//
+//	at := time.Now()
+//	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1"}, at)}, nil))
+//	g.SeesItems([]access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
+func (g Grants) SeesItems(items []ItemRef) bool {
+	return !slices.ContainsFunc(items, func(i ItemRef) bool { return !g.sharing.sees(i) })
+}
+
+// VisibleItems are the items every audienced source shares with the reader
+// now, sorted; none for grants that give nothing. A restricted member's
+// Founder thread records them as it runs, and is theirs only while every
+// one is still shared with them (SeesItems): its reads go through the API
+// tool by tool, so which of them it read isn't known.
+func (g Grants) VisibleItems() []ItemRef {
+	if g.Empty() {
+		return nil
+	}
+	return g.sharing.visible()
+}
+
 // Reaches reports whether the grants hold anything of in, so a grantee may
-// read the part of its load they hold. What holds what can't be told isn't
-// read at all.
+// read the part of its load they hold: a covered table, a granted set (of an
+// audienced connector, while its source shares an item with the reader) or
+// People enrichment. What holds what can't be told isn't read at all.
 //
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
 //	g.Reaches(access.Inputs{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}, {ConnectorID: "crm", Table: "accounts"}}}) // true
@@ -220,13 +314,17 @@ func (g Grants) Reaches(in Inputs) bool {
 	if in.Unknown {
 		return false
 	}
-	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.CoversTable) || slices.ContainsFunc(in.Sets, g.CoversSet)
+	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.CoversTable) || slices.ContainsFunc(in.Sets, g.ReachesSet)
 }
 
 // DocumentRef is a document or table file of a load, and the set it is in now.
+// A connector's document has the stream of its set and its row's key
+// (ExternalID), which say what item of its source it is of; an upload has
+// neither.
 type DocumentRef struct {
-	ID  string
-	Set SetRef
+	ID                 string
+	Set                SetRef
+	Stream, ExternalID string
 }
 
 // PropDecision is a value someone decided for a property of a type: the sets
@@ -259,6 +357,10 @@ type Part struct {
 	AllDocuments bool
 	Documents    []string
 	Sets         []SetRef
+	// Items are the items of audienced sources the documents and files it
+	// reads are of, sorted: what it says can be of them, so it stays the
+	// reader's only while they are (Keeps).
+	Items []ItemRef
 	// DecisionSets are the sets of the documents the decisions it reads came
 	// from: its answers carry those values, so grants must keep covering them.
 	DecisionSets []SetRef
@@ -267,7 +369,9 @@ type Part struct {
 	Withheld []PropRef
 }
 
-// Part is what the grants hold of h.
+// Part is what the grants hold of h: the tables they cover, and the
+// documents and table files they read (Reads), each by the item its source
+// shares with the reader when its set's connector reports its permissions.
 //
 //	g := access.NewGrants([]access.Target{access.DocumentSetTarget("contracts")})
 //	g.Part(access.Holdings{Documents: []access.DocumentRef{{ID: "d1", Set: access.SetRef{SetID: "contracts"}}, {ID: "d2", Set: access.SetRef{SetID: "hr"}}}}).Documents // [d1]
@@ -283,20 +387,28 @@ func (g Grants) Part(h Holdings) Part {
 			out.Tables = append(out.Tables, t)
 		}
 	}
+	addItem := func(d DocumentRef) {
+		if i, ok := g.sharing.item(d); ok {
+			out.Items = append(out.Items, i)
+		}
+	}
 	for _, f := range h.Files {
-		if g.CoversSet(f.Set) {
+		if g.Reads(f) {
 			out.Files = append(out.Files, f.ID)
 			addSet(f.Set)
+			addItem(f)
 		}
 	}
 	for _, d := range h.Documents {
-		if g.CoversSet(d.Set) {
+		if g.Reads(d) {
 			out.Documents = append(out.Documents, d.ID)
 			addSet(d.Set)
+			addItem(d)
 		} else {
 			out.AllDocuments = false
 		}
 	}
+	out.Items = SortItems(out.Items)
 	for _, d := range h.Decisions {
 		if d.Recorded && g.Covers(Inputs{Sets: d.Sets}) {
 			for _, s := range d.Sets {

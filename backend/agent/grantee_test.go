@@ -15,6 +15,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/integration"
+	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -125,7 +126,7 @@ func TestOnlyAGranteeIsToldItReadsOnly(t *testing.T) {
 	assert.Contains(t, granteePrompt, "an owner or admin does it in Foundry")
 	assert.Contains(t, granteePrompt, "the limit on their questions about the data, not your own budget")
 	assert.NotContains(t, granteePrompt, "Analyst")
-	assert.Equal(t, "assistant-15", PromptVersion)
+	assert.Equal(t, "assistant-18", PromptVersion)
 }
 
 // Access that can't be read fails the attempt closed, to retry: no model
@@ -238,6 +239,22 @@ func TestAGranteesTurnNeedsItsThreadsGrants(t *testing.T) {
 			assert.Equal(t, tc.granted, h.db.thread("thread1").Granted, "nothing recorded")
 		})
 	}
+	// She was in #exec (C2) when the thread ran, and was removed from it since.
+	t.Run("a channel it ran under no longer shared", func(t *testing.T) {
+		h := newHarness(t, say("Never said."))
+		h.backend.grantee = true
+		h.backend.items = []*foundryv1.FoundrySourceItem{{ConnectorId: "conn-slack", ItemKey: "C1"}}
+		h.db.grants = []model.FoundryAccessGrant{{Principal: access.Principal{Kind: access.PrincipalUser, ID: user}, Target: access.ConnectorTarget("conn-slack")}}
+		granted := &model.FoundryAgentThreadGrants{Targets: []access.Target{access.ConnectorTarget("conn-slack")},
+			Items: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}}}
+		h.db.thread("thread1").Granted = granted
+		_, err := h.runner.Run(context.Background(), message("What did #exec say?"))
+		var f *Failure
+		require.ErrorAs(t, err, &f)
+		assert.True(t, f.Permanent)
+		assert.Contains(t, f.Message, "no longer lets you read")
+		assert.Empty(t, h.model.requests, "no model call")
+	})
 	t.Run("its grants still held", func(t *testing.T) {
 		h := newHarness(t, say("Hello."))
 		h.backend.grantee = true
@@ -271,6 +288,16 @@ func TestAGranteesCallsRecordWhatTheyMayRead(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []access.Target{general, stripe}, h.db.thread("thread1").Granted.Targets)
 	})
+	t.Run("the channels shared with them are recorded", func(t *testing.T) {
+		h := newHarness(t, list(), say("Sales graph."))
+		h.backend.grantee = true
+		h.backend.items = []*foundryv1.FoundrySourceItem{{ConnectorId: "conn-slack", ItemKey: "C2"}, {ConnectorId: "conn-slack", ItemKey: "C1"}}
+		h.db.grants = []model.FoundryAccessGrant{{Principal: eve, Target: general}}
+		_, err := h.runner.Run(context.Background(), message("What do I have?"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}},
+			h.db.thread("thread1").Granted.Items)
+	})
 	for name, tc := range map[string]struct {
 		change func(h *harness)
 		// said is what the turn fails with; whole, whether the thread is the
@@ -284,10 +311,15 @@ func TestAGranteesCallsRecordWhatTheyMayRead(t *testing.T) {
 		}, "Your access changed while Founder was answering", true},
 		"made an admin during a call": {func(h *harness) { h.backend.grantee = false }, "Your access changed while Founder was answering", true},
 		"a grant taken during a call": {func(h *harness) { h.db.grants = nil }, "no longer lets you read", false},
+		"added to a channel during a call": {func(h *harness) {
+			h.backend.items = append(h.backend.items, &foundryv1.FoundrySourceItem{ConnectorId: "conn-slack", ItemKey: "C2"})
+		}, "Your access changed while Founder was answering", true},
+		"removed from a channel during a call": {func(h *harness) { h.backend.items = nil }, "no longer lets you read", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, list(), say("Never said."))
 			h.backend.grantee = true
+			h.backend.items = []*foundryv1.FoundrySourceItem{{ConnectorId: "conn-slack", ItemKey: "C1"}}
 			h.db.grants = []model.FoundryAccessGrant{{Principal: eve, Target: general}}
 			h.backend.onCall = func() { tc.change(h) }
 			_, err := h.runner.Run(context.Background(), message("What do I have?"))

@@ -137,6 +137,7 @@ describe("connector kinds", () => {
       "notion:true",
       "google:true",
       "databuddy:true",
+      "attio:true",
       "postgres:true",
       "mysql:true",
       "s3:true",
@@ -154,6 +155,7 @@ describe("connector kinds", () => {
       "notion:true",
       "google:true",
       "databuddy:true",
+      "attio:true",
       "postgres:false",
       "mysql:false",
       "s3:false",
@@ -543,6 +545,177 @@ describe("testing and creating", () => {
     ).not.toContain(key);
   });
 
+  it("checks an Attio token, lists its tables and says which scopes a token lacks", () => {
+    const test = (config: unknown) =>
+      refusal(call("POST", `${base()}/connectors:test`, { config }));
+    const tested = (config: unknown) =>
+      ok<any>(call("POST", `${base()}/connectors:test`, { config }));
+    const token = (word = "") => word + "k".repeat(60 - word.length) + "4f2a";
+    // 64 characters, without spaces or control characters, after trimming.
+    for (const apiKey of [
+      "",
+      "k".repeat(63),
+      "k".repeat(65),
+      "k".repeat(31) + " " + "k".repeat(32),
+      "k".repeat(63) + "\u0007",
+    ])
+      expect(test({ attio: { apiKey } })).toEqual({
+        status: 400,
+        message: "enter an Attio access token (64 characters)",
+      });
+    expect(test({ attio: { apiKey: token("bad") } })).toEqual({
+      status: 400,
+      message: "Attio rejected this token; check it and enter it again",
+    });
+
+    const all = tested({ attio: { apiKey: ` ${token()}\n` } });
+    expect(all.config).toEqual({ attio: { apiKey: "" } });
+    expect(all.discovery.unavailable).toEqual([]);
+    expect(keys(all)).toEqual({
+      workspace_members: "workspace_member_id",
+      objects: "object_id",
+      people: "record_id",
+      companies: "record_id",
+      deals: "record_id",
+      lists: "list_id",
+      list_sales_pipeline: "entry_id",
+      notes: "note_id",
+      tasks: "task_id",
+      task_assignees: "task_id+assignee_type+assignee_id",
+      task_records: "task_id+target_object+target_record_id",
+    });
+    expect(links(all, "task_assignees")).toEqual(["task_id>tasks.task_id"]);
+    expect(links(all, "task_records")).toEqual(["task_id>tasks.task_id"]);
+    // Record references are polymorphic: nothing else links.
+    expect(links(all, "notes")).toEqual([]);
+    expect(links(all, "deals")).toEqual([]);
+    // An object's table: the record's id, time and page, then its
+    // attributes flattened as attio.go flattens them, a multiselect's
+    // array never null.
+    const table = (name: string) =>
+      all.discovery.tables.find((t: { name: string }) => t.name === name);
+    const typed = (name: string) =>
+      table(name).columns.map(
+        (c: { name: string; type: string; nullable?: boolean }) =>
+          `${c.name}:${c.type}${c.nullable ? "?" : ""}`,
+      );
+    expect(typed("people")).toEqual([
+      "record_id:string",
+      "created_at:string?",
+      "web_url:string?",
+      "name:string?",
+      "name_first_name:string?",
+      "name_last_name:string?",
+      "email_addresses:array",
+      "job_title:string?",
+      "company:string?",
+      "company_object:string?",
+      "primary_location:object?",
+      "last_interaction:string?",
+      "last_interaction_type:string?",
+      "created_by:string?",
+    ]);
+    expect(typed("companies")).toEqual(
+      expect.arrayContaining([
+        "domains:array",
+        "categories:array",
+        "team:array",
+      ]),
+    );
+    expect(typed("deals")).toContain("associated_people:array");
+    // A note may be on no record.
+    expect(typed("notes").slice(0, 3)).toEqual([
+      "note_id:string",
+      "parent_object:string?",
+      "parent_record_id:string?",
+    ]);
+    // Each object's and list's table shows its first rows, every value in
+    // a column of its own.
+    for (const name of [
+      "people",
+      "companies",
+      "deals",
+      "list_sales_pipeline",
+    ]) {
+      const t = table(name);
+      expect(t.preview).toHaveLength(5);
+      const columns = t.columns.map((c: { name: string }) => c.name);
+      for (const row of t.preview.map((r: string) => JSON.parse(r)))
+        expect(Object.keys(row)).toEqual(columns);
+    }
+    const [deal] = table("deals").preview.map((r: string) => JSON.parse(r));
+    expect(deal).toMatchObject({
+      name: "Globex renewal",
+      stage: "Won",
+      value: 48000,
+      value_currency: "USD",
+      associated_company_object: "companies",
+    });
+    expect(deal.web_url).toBe(
+      `https://app.attio.com/acme/deal/${deal.record_id}`,
+    );
+    const [person] = table("people").preview.map((r: string) => JSON.parse(r));
+    expect(person).toMatchObject({
+      name: "Grace Hopper",
+      name_first_name: "Grace",
+      name_last_name: "Hopper",
+      email_addresses: ["grace@globex.example.com"],
+      primary_location: { locality: "London", country_code: "GB" },
+      last_interaction_type: "email",
+    });
+    for (const name of ["workspace_members", "notes", "tasks"])
+      expect(table(name).preview).toEqual([]);
+
+    const limited = tested({ attio: { apiKey: token("noscope") } });
+    expect(limited.discovery.unavailable).toEqual([
+      "notes: the token lacks the note:read scope",
+      "tasks: the token lacks the task:read scope",
+      "task_assignees: the token lacks the task:read scope",
+      "task_records: the token lacks the task:read scope",
+    ]);
+    expect(Object.keys(keys(limited))).toEqual([
+      "workspace_members",
+      "objects",
+      "people",
+      "companies",
+      "deals",
+      "lists",
+      "list_sales_pipeline",
+    ]);
+
+    const key = token();
+    const c = create({ attio: { apiKey: key } });
+    expect(c.secretHint).toBe("…4f2a");
+    expect(c.config).toEqual({ attio: { apiKey: "" } });
+    const scoped = create({ attio: { apiKey: token("noscope") } });
+    for (const s of [c, scoped]) syncOf(s.id);
+    vi.advanceTimersByTime(3000);
+    const read = (id: string) =>
+      ok<{ connector: Connector }>(call("GET", `${base()}/connectors/${id}`))
+        .connector;
+    expect(read(c.id).tables!.map((t) => t.name)).toEqual([
+      "companies",
+      "deals",
+      "list_sales_pipeline",
+      "lists",
+      "notes",
+      "objects",
+      "people",
+      "task_assignees",
+      "task_records",
+      "tasks",
+      "workspace_members",
+    ]);
+    expect(read(c.id).tables!.find((t) => t.name === "deals")).toMatchObject({
+      rowCount: "64",
+      primaryKey: ["record_id"],
+    });
+    expect(read(scoped.id).tables!.map((t) => t.name)).not.toContain("notes");
+    expect(
+      JSON.stringify(call("GET", `${base()}/connectors`).body),
+    ).not.toContain(key);
+  });
+
   it("syncs Cal.com and Granola tables with their key hints, never the key", () => {
     const calKey = "cal_live_" + "a".repeat(24) + "4f2a",
       grnKey = "grn_" + "b".repeat(24) + "QRST";
@@ -891,30 +1064,31 @@ describe("testing and creating", () => {
         ).connector.tables!.map((t) => [t.name, Number(t.rowCount)]),
       );
     // 30 days of history: the 30 before the sync's, two of every three of
-    // them with messages in each of four channels, two messages a day (a
-    // thread's reply is no row).
+    // them with messages in each of five channels, two messages a day (a
+    // thread's reply is no row); the members of the five, and every
+    // channel and person, the bot and the guest among them.
     const days = rows(slack.id).channel_days!;
-    expect(days).toBe(80);
+    expect(days).toBe(100);
     expect(rows(slack.id)).toEqual({
       channel_days: days,
-      channel_members: 31,
-      channels: 5,
+      channel_members: 24,
+      channels: 6,
       messages: days * 2,
-      users: 18,
+      users: 7,
     });
     // Without the history scope, the members are still read.
     expect(rows(noscope.id)).toEqual({
-      channel_members: 31,
-      channels: 5,
-      users: 18,
+      channel_members: 24,
+      channels: 6,
+      users: 7,
     });
     // An app in no channel reads no history.
     expect(rows(lonely.id)).toEqual({
       channel_days: 0,
       channel_members: 0,
-      channels: 5,
+      channels: 6,
       messages: 0,
-      users: 18,
+      users: 7,
     });
     // Pages holds every page, the databases' rows among them.
     expect(rows(notion.id)).toEqual({
@@ -1360,6 +1534,7 @@ describe("editing and deleting", () => {
         {},
       ],
       ["granola", "apiKey", "grn_" + "f".repeat(12) + "QRST", "grn…QRST", {}],
+      ["attio", "apiKey", "j".repeat(60) + "MNOP", "…MNOP", {}],
       [
         "databuddy",
         "apiKey",

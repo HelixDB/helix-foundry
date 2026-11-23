@@ -950,17 +950,69 @@ describe("an approval the current load has yet to apply", () => {
 
 describe("whether a stored value is the one a decision chose", () => {
   it("compares each kind of value as it is stored", () => {
-    expect(model.holdsDecided({ integer: "36" }, 36)).toBe(true);
-    expect(model.holdsDecided({ number: 1.5 }, 1.5)).toBe(true);
-    expect(model.holdsDecided({ text: "GBP" }, "GBP")).toBe(true);
-    expect(model.holdsDecided({ boolean: false }, false)).toBe(true);
-    expect(model.holdsDecided({ text: "GBP" }, "usd")).toBe(false);
-    expect(model.holdsDecided({ integer: "36" }, "36")).toBe(false);
-    expect(model.holdsDecided({ integer: "36" }, 24)).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, 36, "integer")).toBe(true);
+    expect(model.holdsDecided({ number: 1.5 }, 1.5, "float")).toBe(true);
+    expect(model.holdsDecided({ text: "GBP" }, "GBP", "string")).toBe(true);
+    expect(model.holdsDecided({ boolean: false }, false, "boolean")).toBe(true);
+    expect(model.holdsDecided({ text: "GBP" }, "usd", "string")).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, "36", "integer")).toBe(false);
+    expect(model.holdsDecided({ integer: "36" }, 24, "integer")).toBe(false);
+    // A prop the version doesn't declare compares as it is.
+    expect(model.holdsDecided({ text: "GBP" }, "GBP", undefined)).toBe(true);
+    // A datetime's decision is the backend's text for it (no fraction, or
+    // three digits); the load stores Helix's DateTime, read as `…mmmZ`.
+    const at = { text: "2026-03-14T08:30:00Z" };
+    expect(model.holdsDecided(at, "2026-03-14T08:30:00.000Z", "datetime")).toBe(
+      true,
+    );
+    expect(
+      model.holdsDecided(
+        { text: "2026-03-14T08:30:00.250Z" },
+        "2026-03-14T08:30:00.250Z",
+        "datetime",
+      ),
+    ).toBe(true);
+    // One saved before decisions were kept to the millisecond is the
+    // millisecond Helix holds.
+    expect(
+      model.holdsDecided(
+        { text: "2026-03-14T08:30:00.250999Z" },
+        "2026-03-14T08:30:00.250Z",
+        "datetime",
+      ),
+    ).toBe(true);
+    for (const stored of [
+      "2026-03-14T08:30:01.000Z",
+      // Helix never renders the backend's form: that isn't the DateTime.
+      "2026-03-14T08:30:00Z",
+    ])
+      expect(model.holdsDecided(at, stored, "datetime"), stored).toBe(false);
+    expect(model.holdsDecided(at, 1773477000000, "datetime")).toBe(false);
+    expect(
+      model.holdsDecided(
+        { text: "soon" },
+        "2026-03-14T08:30:00.000Z",
+        "datetime",
+      ),
+    ).toBe(false);
+    // A string prop's text compares as it is.
+    expect(model.holdsDecided(at, "2026-03-14T08:30:00Z", "string")).toBe(true);
+    expect(model.holdsDecided(at, "2026-03-14T08:30:00.000Z", "string")).toBe(
+      false,
+    );
   });
   it("is never so for a value removed, or a property that holds none", () => {
-    expect(model.holdsDecided({ null: null }, "usd")).toBe(false);
-    expect(model.holdsDecided({ text: "GBP" }, undefined)).toBe(false);
+    expect(model.holdsDecided({ null: null }, "usd", "string")).toBe(false);
+    expect(model.holdsDecided({ text: "GBP" }, undefined, "string")).toBe(
+      false,
+    );
+    expect(
+      model.holdsDecided(
+        { null: null },
+        "2026-03-14T08:30:00.000Z",
+        "datetime",
+      ),
+    ).toBe(false);
   });
 });
 

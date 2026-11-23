@@ -1,0 +1,556 @@
+{
+  "proposal dismissed": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed for \u003c@U0ADA0001\u003e. Dismissed by \u003c@U0GRACE01\u003e.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "proposal expired": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed for \u003c@U0ADA0001\u003e. Expired: no one ran it in time. Ask again to propose it again.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "proposal failed": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed for \u003c@U0ADA0001\u003e. Run by \u003c@U0GRACE01\u003e: it didn’t succeed.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "proposal open": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.review",
+              "text": {
+                "type": "plain_text",
+                "text": "Review",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed for \u003c@U0ADA0001\u003e. An owner or admin reviews and runs it as themselves.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "proposal open, asker unknown": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.review",
+              "text": {
+                "type": "plain_text",
+                "text": "Review",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            },
+            {
+              "type": "button",
+              "action_id": "foundry.dismiss",
+              "text": {
+                "type": "plain_text",
+                "text": "Dismiss",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\"}"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed by the bot. An owner or admin reviews and runs it as themselves.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "proposal ran": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed for \u003c@U0ADA0001\u003e. Run by \u003c@U0GRACE01\u003e: succeeded.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "proposal ran elsewhere": [
+    {
+      "text": "Load a version",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load a version",
+            "emoji": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Proposed for \u003c@U0ADA0001\u003e. Run: succeeded.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "review": [
+    {
+      "text": "Load v3 of “Sales”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Load v3 of “Sales”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Ontology*\nSales",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Version*\nv3",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Writes this version’s tables and documents into the ontology’s database, beside its other loads. The newest load that finishes ready becomes current.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Reading its documents spends the workspace’s load budget.",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.run",
+              "text": {
+                "type": "plain_text",
+                "text": "Load",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Runs as you (Grace Hopper). Nothing runs until you click Load.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "review of a delete": [
+    {
+      "text": "Delete the dashboard “Revenue”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Delete the dashboard “Revenue”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Dashboard*\nRevenue · pinned for everyone · at a public link",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.run",
+              "text": {
+                "type": "plain_text",
+                "text": "Delete",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "danger",
+              "confirm": {
+                "title": {
+                  "type": "plain_text",
+                  "text": "Run this?",
+                  "emoji": true
+                },
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Delete the dashboard “Revenue”? Deletes the dashboard for everyone in the workspace, and its public link if it has one (only an owner or admin deletes a published one). The data its tiles read stays.",
+                  "verbatim": true
+                },
+                "confirm": {
+                  "type": "plain_text",
+                  "text": "Delete",
+                  "emoji": true
+                },
+                "deny": {
+                  "type": "plain_text",
+                  "text": "Cancel",
+                  "emoji": true
+                },
+                "style": "danger"
+              }
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Runs as you (Grace Hopper). Nothing runs until you click Delete.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "review of a workflow's name": [
+    {
+      "text": "Change the workflow “Renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Change the workflow “Renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · on",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*New name*\n“Renewals, weekly”",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Saves these changes to the workflow. Its steps don’t change, so this approves nothing.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.run",
+              "text": {
+                "type": "plain_text",
+                "text": "Save",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Runs as you (Grace Hopper). Nothing runs until you click Save.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "review of a workflow's steps": [
+    {
+      "text": "Set up the workflow “Weekly renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Set up the workflow “Weekly renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Name*\n“Weekly renewals” (as Founder wrote it)",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Saves this workflow and turns it on, and the click that runs it approves its steps. You can pause or change it on its page.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Its Founder steps spend the workspace’s workflows budget.",
+              "verbatim": true
+            },
+            {
+              "type": "mrkdwn",
+              "text": "Its steps show only in Foundry, so it can’t run from Slack: ask Founder for it in Foundry, as yourself.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "review without a name": [
+    {
+      "text": "Pause the workflow “Renewals”",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Pause the workflow “Renewals”",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Workflow*\nRenewals · on",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "It stops running when it would start. A run already going finishes.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.run",
+              "text": {
+                "type": "plain_text",
+                "text": "Pause",
+                "emoji": true
+              },
+              "value": "{\"a\":\"01JBACTXN0000000000000000A\",\"h\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}",
+              "style": "primary"
+            }
+          ]
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Runs as you. Nothing runs until you click Pause.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

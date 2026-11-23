@@ -206,6 +206,11 @@ describe("mock source grants", () => {
       `DELETE ${F}/agent/threads/{id}`,
       `GET ${F}/agent/turns/{id}/events`,
       `POST ${F}/agent/turns/{id}:cancel`,
+      // Slack: the install, and its own link.
+      `GET ${F}/slack`,
+      `POST ${F}/slack/links:preview`,
+      `POST ${F}/slack/links`,
+      `DELETE ${F}/slack/links/{slackUserId}`,
     ]);
     const foundry = routes.filter((r) =>
       /^\/v1\/(foundry|workspaces\/\{workspaceId\}\/foundry)/.test(r.path),
@@ -1390,6 +1395,267 @@ describe("mock source grants", () => {
       (await call("GET", `${WS}/service-credentials`, undefined, "usr_alan"))
         .status,
     ).toBe(403);
+  });
+});
+
+describe("a source's own permissions", () => {
+  const SOURCES = `${A}/sources`,
+    LEADERSHIP = "C0MOCKLDR";
+  /** A Slack connection of three days' history, synced once. */
+  async function slack(botToken = "xoxb-1-team1234") {
+    const created = await call("POST", `${F}/connectors`, {
+      name: "Acme Slack",
+      config: { slack: { botToken, historyDays: 3 } },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
+    const id: string = created.body.connector.id;
+    expect((await call("POST", `${F}/connectors/${id}:sync`, {})).status).toBe(
+      200,
+    );
+    later(3000);
+    return id;
+  }
+  /** The connection's Conversations set and every document in it. */
+  async function conversations(connectorId: string) {
+    const set = (
+      (await call("GET", `${F}/document-sets`)).body
+        .sets as wfe.FoundryDocumentSet[]
+    ).find((x) => x.connector?.connectorId === connectorId)!;
+    const docs = (await call("GET", `${F}/documents?setId=${set.id}`)).body
+      .documents as wfe.FoundryDocument[];
+    return { set: set.id!, docs };
+  }
+  const channelOf = (d: wfe.FoundryDocument) =>
+    d.source!.externalId!.split(":")[0];
+  const byIds = async (ids: string[], as = "usr_eve") =>
+    (
+      (
+        await call(
+          "GET",
+          `${F}/documents?${ids.map((id) => `ids=${id}`).join("&")}`,
+          undefined,
+          as,
+        )
+      ).body.documents as wfe.FoundryDocument[]
+    ).map(channelOf);
+
+  it("says what each Slack connection's syncs read of who its channels are shared with, to owners and admins", async () => {
+    expect((await call("GET", SOURCES)).body).toEqual({ sources: [] });
+    const created = await call("POST", `${F}/connectors`, {
+      name: "Acme Slack",
+      config: { slack: { botToken: "xoxb-1-team1234", historyDays: 3 } },
+    });
+    const id = created.body.connector.id as string;
+    // Never read: stale, and Eve, restricted, matched to no one.
+    expect((await call("GET", SOURCES)).body.sources).toEqual([
+      expect.objectContaining({
+        connectorId: id,
+        kind: "slack",
+        stale: true,
+        everyoneItems: 0,
+        membersItems: 0,
+        grantees: 1,
+        unmatchedUserIds: ["usr_eve"],
+        guestUserIds: [],
+      }),
+    ]);
+    await call("POST", `${F}/connectors/${id}:sync`, {});
+    later(3000);
+    const [read] = (await call("GET", SOURCES)).body
+      .sources as wfe.FoundrySourceAudience[];
+    // Every public channel, #random too, and the private one the app is in;
+    // Eve matched by her email, and Slack's own people never sent.
+    expect(read).toEqual({
+      connectorId: id,
+      kind: "slack",
+      readAt: expect.any(String),
+      stale: false,
+      everyoneItems: 5,
+      membersItems: 1,
+      grantees: 1,
+      unmatchedUserIds: [],
+      guestUserIds: [],
+    });
+    // Members and grantees aren't told.
+    expect((await call("GET", SOURCES, undefined, "usr_alan")).status).toBe(
+      403,
+    );
+    expect((await eve("GET", SOURCES)).status).toBe(403);
+    // A read over 7 days old is stale, kept as it was.
+    later(8 * 86_400_000);
+    expect((await call("GET", SOURCES)).body.sources[0]).toMatchObject({
+      readAt: read!.readAt,
+      stale: true,
+      membersItems: 1,
+    });
+  });
+
+  it("says why a read failed, keeping what an earlier one read, and fails no sync", async () => {
+    const id = await slack("xoxb-1-noemail1");
+    expect(
+      (await call("GET", `${F}/connectors/${id}`)).body.connector,
+    ).toMatchObject({
+      lastSync: { status: "CONNECTOR_SYNC_STATUS_SUCCEEDED" },
+    });
+    expect((await call("GET", SOURCES)).body.sources[0]).toMatchObject({
+      stale: true,
+      problem: {
+        message:
+          "add the users:read.email scope to the app and reinstall it, so Foundry can follow who each channel is shared with",
+        at: expect.any(String),
+      },
+      unmatchedUserIds: ["usr_eve"],
+    });
+    expect((await call("GET", SOURCES)).body.sources[0].readAt).toBeUndefined();
+  });
+
+  it("gives a grantee only the Conversations of the channels Slack shares with them", async () => {
+    const id = await slack();
+    const { set, docs } = await conversations(id);
+    const ids = docs.map((d) => d.id!);
+    const channels = [...new Set(docs.map(channelOf))].sort();
+    expect(channels).toContain(LEADERSHIP);
+    // Eve isn't in #leadership: the connection gives her the rest.
+    await grant(user("usr_eve"), [
+      general,
+      { kind: "KIND_CONNECTOR", connectorId: id },
+    ]);
+    const public_ = channels.filter((c) => c !== LEADERSHIP);
+    expect([...new Set(await byIds(ids))].sort()).toEqual(public_);
+    // As does its set alone.
+    await grant(user("usr_eve"), [
+      general,
+      { kind: "KIND_DOCUMENT_SET", documentSetId: set },
+    ]);
+    expect([...new Set(await byIds(ids))].sort()).toEqual(public_);
+    // Ada, no grantee, reads every one.
+    expect((await byIds(ids, "usr_ada")).length).toBe(ids.length);
+    // Once the read is over 7 days old, the channels are unknown: none.
+    later(8 * 86_400_000);
+    expect(await byIds(ids)).toEqual([]);
+    // The next sync reads them again.
+    await call("POST", `${F}/connectors/${id}:sync`, {});
+    later(3000);
+    expect(new Set(await byIds(ids))).toEqual(new Set(public_));
+  });
+
+  it("gives a grantee part of a load of Slack's, never its tables, and keeps her answer with its channels", async () => {
+    Object.assign(config, { loadStepMs: 50, ontologyStepMs: 100 });
+    const id = await slack();
+    const { set, docs } = await conversations(id);
+    const generated = await call("POST", `${O}:generate`, {
+      connectorIds: [id],
+      documentSetIds: [set],
+    });
+    expect(generated.status, JSON.stringify(generated.body)).toBe(200);
+    later(10_000);
+    const versionId = (
+      await call("GET", `${O}/generations/${generated.body.generation.id}`)
+    ).body.generation.resultVersionId as string;
+    expect(
+      (
+        await call("POST", `${O}:set-current`, {
+          versionId,
+          expectedCurrentVersionId: "ver_seed_1",
+        })
+      ).status,
+    ).toBe(200);
+    const load = (
+      await call("POST", `${O}/loads`, { versionId, clientToken: "slack" })
+    ).body.load;
+    later(30_000);
+    expect(
+      (await call("GET", `${O}/loads/${load.id}`)).body.load,
+    ).toMatchObject({ status: "ready", current: true });
+    const inputs = (await contractsAccess())!.inputs!;
+    expect(inputs.tables!.every((t) => t.connectorId === id)).toBe(true);
+    expect(inputs.tables!.length).toBeGreaterThan(0);
+    expect(inputs.documentSets).toEqual([
+      { documentSetId: set, connectorId: id },
+    ]);
+
+    // The connection gives Eve its public channels' documents, never its
+    // tables: their rows aren't told apart by channel.
+    await grant(user("usr_eve"), [
+      general,
+      { kind: "KIND_CONNECTOR", connectorId: id },
+    ]);
+    const me = (await eve("GET", `${A}/me`))
+      .body as wfe.GetMyFoundryAccessResponse;
+    expect(me.ontologyIds).toContain("ont_acme_contracts");
+    expect(me.partialOntologyIds).toContain("ont_acme_contracts");
+    // Founder records the channels shared with her as its turns run.
+    const shared = me.sourceItems!.map((i) => i.itemKey);
+    expect(shared).toEqual([...shared].sort());
+    expect(shared).not.toContain(LEADERSHIP);
+    expect(shared).toEqual(
+      expect.arrayContaining(
+        [...new Set(docs.map(channelOf))].filter((c) => c !== LEADERSHIP),
+      ),
+    );
+    expect(me.sourceItems!.every((i) => i.connectorId === id)).toBe(true);
+    expect(
+      ((await call("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
+        .sourceItems,
+    ).toBeUndefined();
+    // Her answer is kept with the channels it read.
+    const asked = (
+      await eve("POST", `${O}/questions`, {
+        question: "What did #general say?",
+        clientToken: "slack-q",
+      })
+    ).body.question as wfe.FoundryQuestion;
+    expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(200);
+    const listed = (await eve("GET", `${O}/documents`)).body
+      .documents as wfe.FoundryDocument[];
+    expect(listed.length).toBe(
+      docs.filter((d) => channelOf(d) !== LEADERSHIP).length,
+    );
+    expect(listed.some((d) => channelOf(d) === LEADERSHIP)).toBe(false);
+    const leadership = docs.find((d) => channelOf(d) === LEADERSHIP)!;
+    expect((await eve("GET", `${O}/documents/${leadership.id}`)).status).toBe(
+      404,
+    );
+    expect(
+      (await eve("GET", `${F}/documents/${leadership.id}:content`)).status,
+    ).toBe(404);
+    expect((await contractsAccess())!.partialReaders).toContainEqual(
+      user("usr_eve"),
+    );
+    // A table alone gives her nothing of it.
+    await grant(user("usr_eve"), [
+      general,
+      { kind: "KIND_TABLE", connectorId: id, table: inputs.tables![0]!.table },
+    ]);
+    expect(
+      ((await eve("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
+        .ontologyIds || [],
+    ).not.toContain("ont_acme_contracts");
+    // An agent's key is no one in Slack: the public channels, part of it.
+    await grant({ kind: "KIND_SERVICE_CREDENTIAL", id: "sc_acme_support" }, [
+      { kind: "KIND_CONNECTOR", connectorId: id },
+    ]);
+    expect((await contractsAccess())!.partialReaders).toContainEqual({
+      kind: "KIND_SERVICE_CREDENTIAL",
+      id: "sc_acme_support",
+    });
+    // Stale, the channels are unknown: Eve's connection gives her none of it.
+    await grant(user("usr_eve"), [
+      general,
+      { kind: "KIND_CONNECTOR", connectorId: id },
+    ]);
+    // Two days on the read still counts; past seven, the channels are unknown.
+    later(2 * 86_400_000);
+    expect(
+      ((await eve("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
+        .ontologyIds,
+    ).toContain("ont_acme_contracts");
+    later(6 * 86_400_000);
+    expect(
+      ((await eve("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
+        .ontologyIds || [],
+    ).not.toContain("ont_acme_contracts");
+    expect((await eve("GET", O)).status).toBe(404);
   });
 });
 

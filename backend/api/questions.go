@@ -170,10 +170,14 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 			return nil, err
 		}
 		seen := part.Inputs()
-		q.Seen = &seen
+		q.Seen, q.SeenItems = &seen, part.Items
+	}
+	limits, err := s.foundryQuestionLimits(ctx, o.WorkspaceID, asker)
+	if err != nil {
+		return nil, err
 	}
 	var refusal foundrymodel.FoundryQuestionRefusal
-	switch err := s.deps.DB.CreateFoundryQuestion(ctx, q, s.foundryQuestionLimits()); {
+	switch err := s.deps.DB.CreateFoundryQuestion(ctx, q, limits); {
 	case errors.As(err, &refusal) && refusal.Budget:
 		return nil, status.Error(codes.FailedPrecondition, refusal.Reason)
 	case errors.As(err, &refusal):
@@ -193,14 +197,30 @@ func (s *Service) askFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	return s.foundryQuestionResponse(ctx, o.ID, q.ID)
 }
 
-// foundryQuestionLimits are the workspace limits of foundry.ask, this month.
-func (s *Service) foundryQuestionLimits() foundrymodel.FoundryQuestionLimits {
+// foundryQuestionLimits are foundry.ask's limits this month on workspaceID's
+// questions asked by asker (nil: the host's caller). A grantee's own are a
+// part of the workspace's, so no one of them spends it all; but the bot of
+// the workspace's Slack install in bot mode, which a whole Slack workspace
+// asks through, has the workspace's, its spend counted in the workspace's
+// as any grantee's.
+func (s *Service) foundryQuestionLimits(ctx context.Context, workspaceID string, asker *access.Principal) (foundrymodel.FoundryQuestionLimits, error) {
 	a := s.deps.Cfg.Foundry.Ask
 	now := time.Now().UTC()
-	return foundrymodel.FoundryQuestionLimits{
+	limits := foundrymodel.FoundryQuestionLimits{
 		Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: a.MonthlyMicros(),
 		PerHour: a.PerHour, Running: a.MaxRunning, GranteePerHour: a.GranteePerHour, GranteeCapMicros: a.GranteeMonthlyMicros(),
 	}
+	if asker == nil || asker.Kind != access.PrincipalServiceCredential {
+		return limits, nil
+	}
+	bot, err := s.deps.DB.IsFoundrySlackBot(ctx, workspaceID, asker.ID)
+	if err != nil {
+		return limits, status.Errorf(codes.Internal, "read the Slack install: %v", err)
+	}
+	if bot {
+		limits.GranteePerHour, limits.GranteeCapMicros = limits.PerHour, limits.CapMicros
+	}
+	return limits, nil
 }
 
 func (s *Service) GetFoundryQuestion(ctx context.Context, req *foundryv1.GetFoundryQuestionRequest) (*foundryv1.FoundryQuestionResponse, error) {
@@ -228,10 +248,14 @@ func (s *Service) ListFoundryQuestions(ctx context.Context, req *foundryv1.ListF
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "list questions: %v", err)
 	}
-	limits := s.foundryQuestionLimits()
+	asker := questionsOf(ctx)
+	limits, err := s.foundryQuestionLimits(ctx, o.WorkspaceID, asker)
+	if err != nil {
+		return nil, err
+	}
 	budget, hourly := limits.CapMicros, limits.PerHour
 	var spend foundrymodel.FoundryQuestionSpend
-	if asker := questionsOf(ctx); asker != nil {
+	if asker != nil {
 		// A grantee's budget is its own; what the workspace spends isn't its to see.
 		budget, hourly = limits.GranteeCapMicros, limits.GranteePerHour
 		spend, err = s.deps.DB.SumFoundryGranteeQuestionSpend(ctx, o.WorkspaceID, *asker, limits.Since)
@@ -336,13 +360,17 @@ func (s *Service) foundryQuestion(ctx context.Context, ontologyID, id string) (*
 
 // readableQuestions keeps, for a grantee, the questions on loads its grants
 // cover now: an answer says what its load held, so it reads only while that
-// load does, whichever load is current. The host's caller keeps them all.
+// load does, whichever load is current. One that read only part of its load
+// (Seen) reads while its grants keep that part and every item of an
+// audienced source its documents were of (SeenItems) is still shared with
+// the grantee (access.Grants.Keeps): removed from the Slack channel it read,
+// they no longer read its answer. The host's caller keeps them all.
 func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymodel.FoundryQuestion) ([]*foundrymodel.FoundryQuestion, error) {
 	g, ok := access.GranteeFrom(ctx)
 	if !ok || len(questions) == 0 {
 		return questions, nil
 	}
-	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	grants, err := s.grantsOf(ctx, g)
 	if err != nil {
 		return nil, err
 	}
@@ -361,8 +389,9 @@ func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymod
 		case !held:
 			return true
 		case q.Seen != nil:
-			// It read only part of the load: that part is what it says.
-			return !grants.Covers(*q.Seen)
+			// It read only part of the load: that part, and the channels its
+			// documents were of, are what it says.
+			return !grants.Keeps(*q.Seen, q.SeenItems)
 		default:
 			return !grants.Covers(l.Inputs)
 		}

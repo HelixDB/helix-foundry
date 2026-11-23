@@ -106,6 +106,9 @@ type Runner struct {
 	Catalog  *ai.Catalog
 	// Keys seals the confirmations of the actions turns prepare.
 	Keys *secretbox.Keyring
+	// ProposalTTL is how long a Slack bot's proposal waits for an owner or
+	// admin (foundry.slack.bot.proposal_ttl); 0 keeps none.
+	ProposalTTL time.Duration
 	// Databases says whose a database is, for a create_ontology on one;
 	// nil refuses those.
 	Databases ports.Databases
@@ -131,6 +134,10 @@ func (f *Failure) Error() string {
 
 func (f *Failure) Unwrap() error { return f.Err }
 
+// BotKeyRefused is why a Slack install's bot's turn fails for good when its
+// host refuses its key: revoked, expired, or granted database permissions.
+const BotKeyRefused = "This bot's key was revoked or changed"
+
 // ErrLost is an attempt that lost its turn's lease, to a cancel, another
 // worker or the thread's deletion: it records nothing more.
 var ErrLost = errors.New("agent: the turn's lease was lost")
@@ -143,9 +150,9 @@ type Attempt struct {
 	Stop StopReason
 }
 
-// Reach is how much of its workspace a person's turn acts on, read each
-// attempt (reachOf). The zero Reach is the narrower one: a sink that never
-// learned it changes nothing.
+// Reach is how much of its workspace a turn acts on, read each attempt
+// (turnReach). The zero Reach is the narrowest: a sink that never learned it
+// changes nothing.
 type Reach uint8
 
 const (
@@ -155,14 +162,60 @@ const (
 	// ReachWorkspace is everyone else's: Tools, and cards for what the
 	// person may do.
 	ReachWorkspace
+	// ReachBot is a Slack install's bot's: it reads what its source grants
+	// give it, as a restricted member does, and proposes BotOperations for
+	// an owner or admin to run (BotTools).
+	ReachBot
+	// ReachReadOnly is a read-only turn's (model.FoundryAgentTurn.ReadOnly)
+	// of a person with the workspace's whole view: it reads all of it, as
+	// ReachWorkspace does, but with GranteeTools only, so it prepares,
+	// changes and makes nothing (readOnlyPrompt).
+	ReachReadOnly
 )
 
 // tools are the tools a turn of r may offer its model.
 func (r Reach) tools() map[string]bool {
-	if r == ReachWorkspace {
+	switch r {
+	case ReachWorkspace:
 		return Tools
+	case ReachBot:
+		return BotTools
 	}
 	return GranteeTools
+}
+
+// wholeView reports a Reach that reads the whole workspace, never narrowed
+// to source grants: the thread records no grants, and its tool calls need
+// no reads of them around (reachAround).
+func (r Reach) wholeView() bool { return r == ReachWorkspace || r == ReachReadOnly }
+
+// readOnlyPrompt is what a read-only turn is told after the system prompt
+// (ReachReadOnly, and a helper's turn: Hosts.Open): a standalone install's
+// Slack users its owner allowed, and the owner's own while approving
+// changes from Slack is off.
+const readOnlyPrompt = `This conversation only reads and asks: prepare nothing, and change or make nothing, dashboards included; you have no tool that would, so what the prompt above says about actions, cards, dashboards you make and workflows doesn't apply here. When they ask for a change, tell them plainly that the install's owner makes changes in Foundry, then answer what you can by reading and asking.`
+
+// turnReach is the turn's Reach this attempt, for the worker's turns and a
+// helper's alike: ReachBot for a Slack install's bot, else its person's now
+// (reachOf). A read-only turn only narrows it: a person with the whole view
+// reads it all with ReachReadOnly, a restricted member keeps ReachGrants,
+// and a bot reads its grants as one does (ReachGrants: it proposes
+// nothing).
+func turnReach(session integration.Session, turn *model.FoundryAgentTurn) (Reach, error) {
+	switch turn.Principal.(type) {
+	case model.AgentBot:
+		if turn.ReadOnly {
+			return ReachGrants, nil
+		}
+		return ReachBot, nil
+	case model.AgentPerson:
+		reach, err := reachOf(session, turn.WorkspaceID)
+		if err == nil && reach == ReachWorkspace && turn.ReadOnly {
+			reach = ReachReadOnly
+		}
+		return reach, err
+	}
+	return ReachGrants, &Failure{Message: "The turn belongs to no one Founder knows", Permanent: true, Err: fmt.Errorf("turn %s: principal %T", turn.ID, turn.Principal)}
 }
 
 // reachOf is the session's person's Reach in workspaceID now: ReachGrants
@@ -180,72 +233,104 @@ func reachOf(session integration.Session, workspaceID string) (Reach, error) {
 	return ReachWorkspace, nil
 }
 
+// threadView is what a restricted member's or a bot's turn ran under, as
+// recorded on its thread: its grant targets, and the items of audienced
+// sources (Slack channels) the API reads as shared with it.
+type threadView struct {
+	targets []access.Target
+	items   []access.ItemRef
+}
+
+// same reports whether v and other give exactly the same.
+func (v threadView) same(other threadView) bool {
+	return access.NewGrants(v.targets).Holds(other.targets) && access.NewGrants(other.targets).Holds(v.targets) &&
+		slices.Equal(v.items, other.items)
+}
+
 // threadReach records the turn's Reach on its thread, as the API reads it
 // (model.FoundryAgentThread.Granted), before anything of the turn runs and
-// around each tool call of a restricted member's (turnRun.reachAround): a
-// whole view's run makes the thread no restricted member's, for good; a
-// restricted member's runs only while they hold every grant the thread ran
-// under (else its transcript holds what they may no longer read: it fails for
-// good) and adds what they hold now, which it returns. A thread begun with the
-// whole view fails the attempt to retry, as a role that couldn't be read
-// reads as restricted until it can; so does a read or write that fails.
-func threadReach(ctx context.Context, db Store, turn *model.FoundryAgentTurn, reach Reach) ([]access.Target, error) {
+// around each tool call of a restricted member's or a bot's
+// (turnRun.reachAround): a whole view's run makes the thread no restricted
+// member's, for good; a restricted member's runs only while they hold every
+// grant the thread ran under and every item of an audienced source it ran
+// under is still shared with them, which the API says (GetMyFoundryAccess's
+// source_items): else its transcript holds what they may no longer read,
+// and it fails for good. It adds what they hold now, which it returns. A
+// person's grants are their own and their teams'; a bot's, its credential's
+// alone. A thread begun with the whole view fails the attempt to retry, as a
+// role that couldn't be read reads as restricted until it can; so does a
+// read or write that fails.
+func threadReach(ctx context.Context, db Store, session integration.Session, turn *model.FoundryAgentTurn, reach Reach) (threadView, error) {
 	retry := func(err error) error {
 		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
-	if reach == ReachWorkspace {
+	if reach.wholeView() {
 		if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
-			return nil, retry(err)
+			return threadView{}, retry(err)
 		}
-		return nil, nil
+		return threadView{}, nil
 	}
 	thread, err := db.GetFoundryAgentThread(ctx, turn.WorkspaceID, turn.ThreadID)
 	if err != nil {
-		return nil, retry(err)
+		return threadView{}, retry(err)
 	}
-	teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, turn.UserID)
-	if err != nil {
-		return nil, retry(err)
-	}
-	principals := []access.Principal{{Kind: access.PrincipalUser, ID: turn.UserID}}
-	for _, team := range teams {
-		principals = append(principals, access.Principal{Kind: access.PrincipalTeam, ID: team})
+	principals := []access.Principal{turn.Principal.Access()}
+	if person, ok := turn.Principal.(model.AgentPerson); ok {
+		teams, err := db.FoundryTeamsOf(ctx, turn.WorkspaceID, person.UserID)
+		if err != nil {
+			return threadView{}, retry(err)
+		}
+		for _, team := range teams {
+			principals = append(principals, access.Principal{Kind: access.PrincipalTeam, ID: team})
+		}
 	}
 	grants, err := db.ListFoundryAccessGrants(ctx, turn.WorkspaceID, principals)
 	if err != nil {
-		return nil, retry(err)
+		return threadView{}, retry(err)
 	}
-	targets := make([]access.Target, len(grants))
+	mine, err := session.Service.Foundry.GetMyFoundryAccess(session.Ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: turn.WorkspaceID})
+	if err != nil {
+		return threadView{}, retry(err)
+	}
+	view := threadView{targets: make([]access.Target, len(grants))}
 	for i, g := range grants {
-		targets[i] = g.Target
+		view.targets[i] = g.Target
 	}
+	for _, item := range mine.GetSourceItems() {
+		view.items = append(view.items, access.ItemRef{ConnectorID: item.GetConnectorId(), Item: item.GetItemKey()})
+	}
+	view.items = access.SortItems(view.items)
+	shared := func(item access.ItemRef) bool { return slices.Contains(view.items, item) }
 	switch {
 	case thread.Granted == nil:
-		return nil, &Failure{Message: "This conversation began with the workspace's whole view, which your access doesn't give now: start a new one"}
-	case !access.NewGrants(targets).Holds(thread.Granted.Targets):
-		return nil, &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
+		return threadView{}, &Failure{Message: "This conversation began with the workspace's whole view, which your access doesn't give now: start a new one"}
+	case !access.NewGrants(view.targets).Holds(thread.Granted.Targets),
+		slices.ContainsFunc(thread.Granted.Items, func(item access.ItemRef) bool { return !shared(item) }):
+		return threadView{}, &Failure{Message: "This conversation holds what your access no longer lets you read: start a new one", Permanent: true}
 	}
-	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, &model.FoundryAgentThreadGrants{Targets: targets}); err != nil {
-		return nil, retry(err)
+	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID,
+		&model.FoundryAgentThreadGrants{Targets: view.targets, Items: view.items}); err != nil {
+		return threadView{}, retry(err)
 	}
-	return targets, nil
+	return view, nil
 }
 
-// reachAround runs call, a restricted member's tool call, between two reads
-// of their reach and grants, each recorded on the thread (threadReach): the
-// API reads every call as they are at that moment, so a call during which
-// they were made an owner or admin, or their grants changed, may have read
-// what the thread's grants don't hold. Such a call makes the thread the whole
-// view's and fails the turn for good, before its result reaches the model or
-// the person.
+// reachAround runs call, a restricted member's or a bot's tool call,
+// between two reads of their reach, grants and the items their sources
+// share with them, each recorded on the thread (threadReach): the API reads
+// every call as they are at that moment, so a call during which they were
+// made an owner or admin, their grants changed, or a source's permissions
+// changed, may have read what the thread doesn't hold. Such a call makes the
+// thread the whole view's and fails the turn for good, before its result
+// reaches the model or the person.
 func (t *turnRun) reachAround(ctx context.Context, call func()) error {
-	read := func() (Reach, []access.Target, error) {
-		reach, err := reachOf(t.session, t.turn.WorkspaceID)
+	read := func() (Reach, threadView, error) {
+		reach, err := turnReach(t.session, t.turn)
 		if err != nil {
-			return reach, nil, err
+			return reach, threadView{}, err
 		}
-		targets, err := threadReach(ctx, t.r.DB, t.turn, reach)
-		return reach, targets, err
+		view, err := threadReach(ctx, t.r.DB, t.session, t.turn, reach)
+		return reach, view, err
 	}
 	before, held, err := read()
 	if err != nil {
@@ -256,8 +341,7 @@ func (t *turnRun) reachAround(ctx context.Context, call func()) error {
 	if err != nil {
 		return err
 	}
-	same := before == after && access.NewGrants(held).Holds(holds) && access.NewGrants(holds).Holds(held)
-	if same {
+	if before == after && held.same(holds) {
 		return nil
 	}
 	if err := t.r.DB.RecordFoundryAgentThreadGrants(ctx, t.turn.WorkspaceID, t.turn.ThreadID, nil); err != nil {
@@ -270,9 +354,9 @@ func (t *turnRun) reachAround(ctx context.Context, call func()) error {
 type turnRun struct {
 	r    *Runner
 	turn *model.FoundryAgentTurn
-	// session is the person's, which every tool call runs as.
+	// session is the turn's principal's, which every tool call runs as.
 	session integration.Session
-	// reach is the turn's person's, read this attempt.
+	// reach is the turn's, read this attempt.
 	reach Reach
 	// automation is an automation's turn's step, and uses its run's uses of
 	// ontologies; both nil for a person's turn.
@@ -300,11 +384,14 @@ type turnRun struct {
 // Run runs an attempt of turn:
 //  1. resolve the workspace's provider and its ask model, which the turn runs
 //     on, unless the setting's tool check found the Assistant can't;
-//  2. open the person's session, confirming as the person, read their Reach,
-//     record it on the thread (threadReach), and serve its tools to the
-//     model through an in-memory MCP client,
-//     Tools alone (GranteeTools for a restricted member, whose turn only
-//     reads and asks; an automation's fails for good);
+//  2. open the turn's session, read its Reach (turnReach), record it on the
+//     thread (threadReach), and serve its tools to the model through an
+//     in-memory MCP client: a person's confirms as them, with Tools alone
+//     (GranteeTools for a restricted member, whose turn only reads and asks;
+//     an automation's fails for good); a Slack install's bot's is a grantee
+//     session of its key, which proposes for an owner or admin (BotTools,
+//     ReachBot), and fails for good with BotKeyRefused once its host
+//     refuses the key;
 //  3. read the thread's transcript, adding the turn's own message once;
 //  4. call the model and run the tools it calls, committing each message and
 //     its events before the next call, until it stops, or the turn reaches
@@ -329,7 +416,8 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 	if err != nil {
 		return out, &Failure{Message: "Founder can't call the workspace's model; an owner can check Settings › AI models.", Permanent: true, Err: err}
 	}
-	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, sessions: r.Sessions}
+	sink := &actionSink{db: r.DB, keys: r.Keys, turn: turn, workerID: r.WorkerID, maxPending: r.Cfg.MaxPendingActions, sessions: r.Sessions,
+		proposalTTL: r.ProposalTTL}
 	var step *automationStep
 	if turn.Kind == model.FoundryAgentTurnAutomation {
 		if step, err = r.automationStep(ctx, turn); err != nil {
@@ -337,24 +425,37 @@ func (r *Runner) Run(ctx context.Context, turn *model.FoundryAgentTurn) (*Attemp
 		}
 		sink.approved = step.allow
 	}
-	session, err := r.Sessions.Session(ctx, ports.Actor{Source: ports.SourceUser, UserID: turn.UserID, WorkspaceID: turn.WorkspaceID},
-		integration.ConfirmByPerson{Sink: sink})
+	// A person's session confirms as them; a bot's, as a Slack install's
+	// key, proposes for an owner or admin.
+	var actor ports.Actor
+	var confirm integration.ConfirmMode
+	refused := "You no longer have access to this workspace."
+	switch p := turn.Principal.(type) {
+	case model.AgentPerson:
+		actor, confirm = ports.Actor{Source: ports.SourceUser, UserID: p.UserID, WorkspaceID: turn.WorkspaceID}, integration.ConfirmByPerson{Sink: sink}
+	case model.AgentBot:
+		actor = ports.Actor{Source: ports.SourceGrantee, ServiceCredentialID: p.CredentialID, WorkspaceID: turn.WorkspaceID}
+		confirm, refused = integration.ConfirmByAdmin{Sink: sink}, BotKeyRefused
+	default:
+		return out, &Failure{Message: "The turn belongs to no one Founder knows", Permanent: true, Err: fmt.Errorf("turn %s: principal %T", turn.ID, turn.Principal)}
+	}
+	session, err := r.Sessions.Session(ctx, actor, confirm)
 	switch status.Code(err) {
 	case codes.OK:
 	case codes.PermissionDenied, codes.NotFound, codes.Unauthenticated:
-		return out, &Failure{Message: "You no longer have access to this workspace.", Permanent: true, Err: err}
+		return out, &Failure{Message: refused, Permanent: true, Err: err}
 	default:
 		return out, &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
 	}
-	reach, err := reachOf(session, turn.WorkspaceID)
+	reach, err := turnReach(session, turn)
 	if err != nil {
 		return out, err
 	}
-	if step != nil && reach == ReachGrants {
+	if step != nil && reach != ReachWorkspace {
 		// Its owner is now a restricted member, who runs no automation.
 		return out, &Failure{Message: "The workflow's owner now reads only through source grants; an owner or admin can take it over", Permanent: true}
 	}
-	if _, err := threadReach(ctx, r.DB, turn, reach); err != nil {
+	if _, err := threadReach(ctx, r.DB, session, turn, reach); err != nil {
 		return out, err
 	}
 	// Before the tools register: the prepare tool reads what the sink allows.
@@ -518,7 +619,9 @@ func openingText(ctx context.Context, db Store, turn *model.FoundryAgentTurn) (s
 		if err != nil {
 			return "", &Failure{Message: "The action this turn goes on from can't be read", Permanent: true, Err: err}
 		}
-		return actionResultText(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(a.Status), Result: a.Result, Error: deref(a.Error)}), nil
+		_, proposal := a.Principal.(model.AgentBot)
+		return actionResultText(ActionResult{ActionID: a.ID, Operation: a.Operation, Status: string(a.Status), Result: a.Result, Error: deref(a.Error)},
+			proposal), nil
 	}
 	return "", &Failure{Message: "The turn is of no kind Founder runs", Permanent: true, Err: fmt.Errorf("kind %q", turn.Kind)}
 }
@@ -797,7 +900,7 @@ func (t *turnRun) runTools(ctx context.Context, uses []llm.ToolUse) error {
 		var output any
 		var failed bool
 		run := func() { content, output, failed = t.callTool(ctx, use, tool != nil) }
-		if t.reach == ReachGrants && tool != nil {
+		if !t.reach.wholeView() && tool != nil {
 			if err := t.reachAround(ctx, run); err != nil {
 				return err
 			}

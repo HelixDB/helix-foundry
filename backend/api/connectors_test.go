@@ -859,7 +859,7 @@ func TestSlackConnectorConfig(t *testing.T) {
 	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{})
 	config := func(token string, days int32) *foundryv1.ConnectorConfig {
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{
-			BotToken: token, HistoryDays: days,
+			Credential: &foundryv1.SlackConnectorConfig_BotToken{BotToken: token}, HistoryDays: days,
 		}}}
 	}
 	for _, tc := range []struct {
@@ -1162,5 +1162,29 @@ func TestDatabuddyConnectorConfig(t *testing.T) {
 	}
 	if _, err := configToProto("databuddy", json.RawMessage(`{"history_days":"x"}`)); err == nil {
 		t.Fatal("configToProto read settings Prepare never stores")
+	}
+}
+
+// An Attio connector stores no settings besides its token, which never
+// comes back: the config rebuilt from what it stores is empty.
+func TestAttioConnectorConfig(t *testing.T) {
+	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{})
+	const token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	kind, src, secretless, err := sourceFromProto(catalog, &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Attio{
+		Attio: &foundryv1.AttioConnectorConfig{ApiKey: " " + token + "\n"}}})
+	if err != nil || kind.Name() != "attio" || kind.DisplayName() != "Attio" || secretless || src.Secret != token {
+		t.Fatalf("source = (%v, %s, %v, %v)", kind, src.Settings, secretless, err)
+	}
+	settings, err := kind.Prepare(src)
+	if err != nil || string(settings) != `{}` || kind.Hint(src.Secret) != "…cdef" {
+		t.Fatalf("prepare = (%s, %v), hint = %q", settings, err, kind.Hint(src.Secret))
+	}
+	got, err := configToProto("attio", settings)
+	want := &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Attio{Attio: &foundryv1.AttioConnectorConfig{}}}
+	if err != nil || !proto.Equal(got, want) || got.GetAttio().GetApiKey() != "" {
+		t.Fatalf("config = (%v, %v)", got, err)
+	}
+	if _, err := kind.Prepare(connector.Source{Secret: "short", Settings: src.Settings}); err == nil {
+		t.Fatal("Prepare took a token that is not 64 characters")
 	}
 }

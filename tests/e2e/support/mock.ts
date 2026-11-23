@@ -227,6 +227,26 @@ export const mock = {
     // The load holds an approved claim's document with other text than a
     // resend sends (contract 4.17.0): refused in place as document_changed.
     documentChanged?: boolean;
+    // Helix Foundry for Slack (mock/routes/slack.ts): off where the API
+    // runs, the workspace off the install list, the Slack workspace held by
+    // another Foundry workspace, and every Slack user's email someone
+    // else's.
+    slackAvailable?: boolean;
+    slackInstallAllowed?: boolean;
+    slackTeamTaken?: boolean;
+    slackEmailMismatch?: boolean;
+    // The Slack data connector on the app (mock/routes/data.ts): off, the
+    // install lacking the history scopes, made by someone who isn't a
+    // Slack admin, Slack holding back the team's events, a backfill's
+    // length, and days published with messages possibly missing.
+    slackFeedOff?: boolean;
+    slackScopesOld?: boolean;
+    slackInstallerMember?: boolean;
+    slackEventsLimited?: boolean;
+    // The shared bot's key can't answer (mock/routes/slack.ts's bot mode).
+    slackBotBroken?: boolean;
+    slackBackfillMs?: number;
+    slackLossyDays?: number;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
@@ -271,6 +291,43 @@ export const mock = {
       { method: "POST" },
     );
     if (!res.ok) throw new Error(`prune run: ${res.status}`);
+  },
+  /**
+   * Helix Foundry's message to a person in Slack: a one-time link token of
+   * the workspace's install (Acme's by default) for a Slack user with that
+   * email, and the site's /slack/link URL carrying it in its fragment.
+   */
+  /**
+   * A message posted in a channel Helix's Slack app is in (by id or name),
+   * which Slack sends the app: the workspace's Slack connection through the
+   * app syncs it.
+   */
+  slackFeed: async (message: {
+    channel: string;
+    text: string;
+    workspaceId?: string;
+  }) => {
+    const res = await fetch(`${MOCK}/__mock/slack/feed`, {
+      method: "POST",
+      body: JSON.stringify(message),
+    });
+    if (!res.ok) throw new Error(`slack feed: ${res.status}`);
+  },
+  slackLinkToken: async (link: {
+    email: string;
+    slackUser?: string;
+    name?: string;
+    handle?: string;
+    workspaceId?: string;
+    guest?: boolean;
+    unconfirmed?: boolean;
+  }): Promise<{ token: string; url: string }> => {
+    const res = await fetch(`${MOCK}/__mock/slack/link-token`, {
+      method: "POST",
+      body: JSON.stringify(link),
+    });
+    if (!res.ok) throw new Error(`slack link token: ${res.status}`);
+    return res.json();
   },
   /**
    * Sends pieces to an API source as an agent does through the Helix MCP

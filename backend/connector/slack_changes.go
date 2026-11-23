@@ -133,7 +133,7 @@ func (k *slackKind) Changes(ctx context.Context, src Source, tables []Table, cur
 		}
 	}
 	held := &slackHeldRows{w: w, rows: map[string]map[string][]map[string]any{}}
-	dayRows := &slackDayRows{w: w}
+	dayRows := &slackDayRows{w: w, table: "channel_days"}
 	p, err := k.pass(ctx, src, tables, map[string]RowWriter{"messages": held, "channel_days": dayRows}, w)
 	if err != nil {
 		return nil, err
@@ -443,9 +443,11 @@ func (h *slackHeldRows) forget(gone map[string]bool) {
 	}
 }
 
-// slackDayRows upserts the channel_days rows of the days a change read rewrites.
+// slackDayRows upserts the rows of table (channel_days, or the app's
+// messages) of the days a change read rewrites.
 type slackDayRows struct {
 	w       ChangeWriter
+	table   string
 	rewrite map[string]bool
 }
 
@@ -453,7 +455,7 @@ func (d *slackDayRows) Write(row map[string]any) error {
 	if day, _ := row["day"].(string); !d.rewrite[day] {
 		return nil
 	}
-	return d.w.Upsert("channel_days", row)
+	return d.w.Upsert(d.table, row)
 }
 
 // WriteJSON writes a row the source encoded; the pass writes maps.

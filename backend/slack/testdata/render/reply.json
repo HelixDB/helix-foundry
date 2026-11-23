@@ -1,0 +1,253 @@
+{
+  "answered": [
+    {
+      "text": "Here is what I found, *Ada*: &lt;!channel&gt; see <https://foundry.helix-db.com/ontology/o1?workspace=w1|https://foundry.helix-db.com/ontology/o1?workspace=w1> and not `evil.example.com/x`.\n\nRun `helix ask` to check.",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Here is what I found, *Ada*: \u0026lt;!channel\u0026gt; see \u003chttps://foundry.helix-db.com/ontology/o1?workspace=w1|https://foundry.helix-db.com/ontology/o1?workspace=w1\u003e and not `evil.example.com/x`.\n\nRun `helix ask` to check.",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "answered with nothing said": [
+    {
+      "text": "Done.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Done.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "asked with nothing said": [
+    {
+      "text": "Founder needs your answers, below.",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Founder needs your answers, below.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "at its step limit": [
+    {
+      "text": "Partly.",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Partly.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "It stopped at its step limit. Ask it to go on.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "before any event": [
+    {
+      "text": "Working…",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Working…",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.stop",
+              "text": {
+                "type": "plain_text",
+                "text": "Stop",
+                "emoji": true
+              },
+              "value": "{\"t\":\"01JBTVRN0000000000000000T1\"}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "calling a tool": [
+    {
+      "text": "Here is what I found, *Ada*: &lt;!channel&gt; see <https://foundry.helix-db.com/ontology/o1?workspace=w1|https://foundry.helix-db.com/ontology/o1?workspace=w1> and not `evil.example.com/x`.\n\nRun `helix ask` to check.",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Here is what I found, *Ada*: \u0026lt;!channel\u0026gt; see \u003chttps://foundry.helix-db.com/ontology/o1?workspace=w1|https://foundry.helix-db.com/ontology/o1?workspace=w1\u003e and not `evil.example.com/x`.\n\nRun `helix ask` to check.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Read \u0026lt;the\u0026gt; graph",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.stop",
+              "text": {
+                "type": "plain_text",
+                "text": "Stop",
+                "emoji": true
+              },
+              "value": "{\"t\":\"01JBTVRN0000000000000000T1\"}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "failed": [
+    {
+      "text": "Looking.",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Looking.",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Founder couldn’t finish this answer: the provider is busy",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "long text": [
+    {
+      "text": "A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of \n…",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of ",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. A sentence of words. ",
+            "verbatim": true
+          }
+        }
+      ]
+    }
+  ],
+  "stopped in slack": [
+    {
+      "text": "Part",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "Part",
+            "verbatim": true
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Stopped by \u003c@U0ADA0001\u003e.",
+              "verbatim": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "thinking": [
+    {
+      "text": "Thinking…",
+      "blocks": [
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Thinking…",
+              "verbatim": true
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "foundry.stop",
+              "text": {
+                "type": "plain_text",
+                "text": "Stop",
+                "emoji": true
+              },
+              "value": "{\"t\":\"01JBTVRN0000000000000000T1\"}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

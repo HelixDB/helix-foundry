@@ -393,6 +393,92 @@ test("connects Databuddy with the websites chosen and its days of history", asyn
   for (const body of bodies) expect(body).not.toContain(key);
 });
 
+test("connects Attio with an access token and says which scopes a token lacks", async ({
+  page,
+}) => {
+  // Attio's tokens are 64 characters.
+  const token = (word: string) => word + "x".repeat(60 - word.length) + "WXYZ";
+  const key = token("e2eAttioToken");
+  const bodies = recordResponses(page);
+  await signIn(page);
+  await page.goto("/data?add=attio");
+  await expect(dialog(page)).toHaveAttribute("aria-label", "Attio");
+  // Attio signs in where the stamp offers it; its token is the way back.
+  await expect(
+    dialog(page).getByRole("button", { name: "Connect with Attio" }),
+  ).toBeVisible();
+  await expect(dialog(page).locator(".connection-guide")).toContainText(
+    "Only an admin of the Attio workspace can authorize it.",
+  );
+  await chooseKeyForm(dialog(page));
+  const guide = dialog(page).locator(".connection-guide");
+  await expect(guide).toContainText("Workspace settings → Developers");
+  await expect(guide).toContainText("User management");
+  await expect(
+    guide.getByRole("link", { name: "Attio’s guide" }),
+  ).toHaveAttribute(
+    "href",
+    "https://attio.com/help/apps/other-apps/generating-an-api-key",
+  );
+  const keyField = dialog(page).getByLabel("Access token");
+  await expect(keyField).toHaveAttribute("placeholder", "64 characters");
+  const test = () =>
+    dialog(page).getByRole("button", { name: "Test connection" }).click();
+  await keyField.fill("too-short");
+  await test();
+  await expect(dialog(page).getByRole("alert")).toHaveText(
+    "enter an Attio access token (64 characters)",
+  );
+  await keyField.fill(token("bad"));
+  await test();
+  await expect(dialog(page).getByRole("alert")).toHaveText(
+    "Attio rejected this token; check it and enter it again",
+  );
+  // A token without the notes and tasks scopes reads the rest, and says
+  // which scope each table it can't read needs.
+  await keyField.fill(token("noscope"));
+  await test();
+  const objects = dialog(page).getByRole("group", {
+    name: "Attio objects this key can read",
+  });
+  const listed = objects.locator(".table-selection > [role=listitem]");
+  await expect(listed).toHaveCount(7);
+  await expect(dialog(page).locator(".dc-unavailable li")).toHaveText([
+    "notes: the token lacks the note:read scope",
+    "tasks: the token lacks the task:read scope",
+    "task_assignees: the token lacks the task:read scope",
+    "task_records: the token lacks the task:read scope",
+  ]);
+  await keyField.fill(key);
+  await test();
+  await expect(listed).toHaveCount(11);
+  for (const name of ["people", "companies", "deals", "list_sales_pipeline"])
+    await expect(objects).toContainText(name);
+  await expect(dialog(page).locator(".dc-unavailable li")).toHaveCount(0);
+  await dialog(page).getByRole("button", { name: "Connect and sync" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^Open / })
+    .click();
+
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Attio" }),
+  ).toBeVisible();
+  await expect(header(page)).toContainText("…WXYZ");
+  await expect(header(page).getByText("Synced", { exact: true })).toBeVisible(
+    SYNCED,
+  );
+  await expect(
+    page.getByRole("list", { name: "Synced tables" }).getByRole("listitem"),
+  ).toHaveCount(11);
+  // Each note with a body is a document in the connection's Notes.
+  await expect(
+    page
+      .getByRole("region", { name: "Documents" })
+      .getByRole("listitem", { name: "Notes" }),
+  ).toContainText("23 documents", SYNCED);
+  for (const body of bodies) expect(body).not.toContain(key);
+});
+
 test("connects a PostgreSQL database with the tables chosen", async ({
   page,
 }) => {

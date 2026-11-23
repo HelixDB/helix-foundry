@@ -771,7 +771,14 @@ func TestSettleFoundryReviewPropValues(t *testing.T) {
 		{"signed", propText("2026"), `"2026"`},
 		{"signed", propText("2026-02-30"), ``},
 		{"at", propText("2026-03-14T09:30:00+01:00"), `"2026-03-14T08:30:00Z"`},
+		// Kept to the millisecond, as the load stores it; Helix's rendering
+		// and a finer fraction save the engine's form of that millisecond.
+		{"at", propText("2026-03-14T08:30:00.000Z"), `"2026-03-14T08:30:00Z"`},
+		{"at", propText("2026-03-14T08:30:00.250999Z"), `"2026-03-14T08:30:00.250Z"`},
+		{"at", propText("2026-03-14T08:30:00.0001Z"), `"2026-03-14T08:30:00Z"`},
+		{"at", propText("9999-12-31T23:59:59.9999Z"), `"9999-12-31T23:59:59.999Z"`},
 		{"at", propText("9999-12-31T23:30:00-01:00"), ``},
+		{"at", propText("2026-03-14"), ``},
 		{"count", propNumber(3), `3`},
 		{"count", propNumber(3.5), ``},
 		{"count", propText("3"), ``},

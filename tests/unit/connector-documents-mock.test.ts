@@ -11,8 +11,8 @@ import { config, db, resetState } from "../../mock/state";
 import { transcriptText } from "../../src/shared/transcript";
 
 // A connector's documents in the mock WFE, as the reader release serves
-// them and the writer release writes them: a Granola, Slack, Notion or
-// Google Workspace sync fills a set per stream, newest first and capped; those sets and documents are the
+// them and the writer release writes them: a Granola, Slack, Notion, Attio
+// or Google Workspace sync fills a set per stream, newest first and capped; those sets and documents are the
 // connector's alone; the upload rules, the workspace's list and the set cap
 // leave them out; `ids` reads them by id; and deleting the connection
 // deletes them.
@@ -285,17 +285,17 @@ const googleKey = JSON.stringify({
   client_email: "foundry@acme-data.iam.gserviceaccount.com",
 });
 
-describe("Slack's, Notion's and Google Workspace's documents", () => {
+describe("Slack's, Notion's, Attio's and Google Workspace's documents", () => {
   it("fills Slack's Conversations with a document per channel and day, newest first", async () => {
     const connectorId = await connect("Acme Slack", {
       slack: { botToken: "xoxb-1-team1234" },
     });
     const conversations = await setOf("conversations");
-    // The 90 days before the sync's, two of every three in each of four
-    // channels: the app isn't in #random.
+    // The 90 days before the sync's, two of every three in each of five
+    // channels, private #leadership among them: the app isn't in #random.
     expect(conversations).toMatchObject({
       name: "Conversations",
-      documents: 240,
+      documents: 300,
       connector: {
         connectorId,
         stream: "conversations",
@@ -321,10 +321,14 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
         at: "2026-10-22T16:24:00.000Z",
       },
     });
-    // And its last message where no reply is later.
+    // And its last message where no reply is later: here private
+    // #leadership's, whose days are documents as the others' are.
     expect(next).toMatchObject({
-      name: "#support, 2026-10-22",
-      source: { at: "2026-10-22T14:21:00.000Z" },
+      name: "#leadership, 2026-10-22",
+      source: {
+        externalId: "C0MOCKLDR:2026-10-22",
+        at: "2026-10-22T14:47:00.000Z",
+      },
     });
     // The version is "2|", 40 hex digits of a hash of its messages and 16
     // of the names they show.
@@ -362,7 +366,7 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
     });
     // The 7 days before the sync's.
     const week = (await setOf("conversations"))!;
-    expect(week.documents).toBe(18);
+    expect(week.documents).toBe(23);
     const days = (await page(`setId=${week.id}`)).documents.map((d) =>
       d.name!.slice(-10),
     );
@@ -440,6 +444,62 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       source: { version: `2|2026-10-27T14:05:00Z|${reread(Date.now())}` },
     });
     expect(again!.source!.version).not.toBe(newest!.source!.version);
+  });
+
+  it("fills Attio's Notes with each note that has a body, and none without note:read", async () => {
+    const token = (word = "") => word + "n".repeat(60 - word.length) + "4f2a";
+    const connectorId = await connect("Acme CRM", {
+      attio: { apiKey: token() },
+    });
+    const notes = await setOf("notes");
+    // 24 notes, the oldest with no body.
+    expect(notes).toMatchObject({
+      name: "Notes",
+      documents: 23,
+      connector: { connectorId, stream: "notes", connectorName: "Acme CRM" },
+    });
+    expect(notes!.description).toMatch(
+      /^Notes written in Attio on its records/,
+    );
+    const docs = (await page(`setId=${notes!.id}`)).documents;
+    const [newest] = docs;
+    const id = "a0be0001-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    expect(newest).toMatchObject({
+      name: "Discovery call",
+      mediaType: "text/markdown",
+      source: {
+        externalId: id,
+        url: "https://app.attio.com/acme/person/a7710001-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        at: "2026-10-21T09:30:00.000Z",
+      },
+    });
+    // Its title, then its body as Attio writes it.
+    const text: string = (await call("GET", `${DOCS}/${newest!.id}:content`))
+      .body.text;
+    const heading = "# Discovery call\n\n";
+    expect(text.startsWith(heading + "## Context\n\n- Grace Hopper")).toBe(
+      true,
+    );
+    // "1|" and 32 hex digits of a hash of the title and the body: Attio
+    // dates no edit of a note.
+    expect(newest!.source!.version).toBe(
+      `1|${sha(`Discovery call\0${text.slice(heading.length)}`).slice(0, 32)}`,
+    );
+    // A note without a title is an untitled one.
+    expect(docs[4]).toMatchObject({
+      name: "Untitled note",
+      source: {
+        url: "https://app.attio.com/acme/company/c0a10005-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      },
+    });
+    // Unchanged at the source, a note keeps its document at the next sync.
+    await sync(connectorId);
+    expect((await page(`setId=${notes!.id}`)).documents).toEqual(docs);
+
+    await connect("No notes", { attio: { apiKey: token("noscope") } });
+    expect(
+      (await sets()).filter((s) => s.connector?.connectorName === "No notes"),
+    ).toEqual([]);
   });
 
   it("fills Google Workspace's Docs with each Google Doc the user can open", async () => {

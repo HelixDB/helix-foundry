@@ -22,7 +22,7 @@ import (
 // is a sign-in's, and the schema of a caller who can't sign in leaves them out (connectSchema).
 type FoundryConnectInput struct {
 	WorkspaceID string   `json:"workspace_id,omitempty" jsonschema:"Helix workspace identifier. May be empty when the caller has only one workspace (a service key always does)."`
-	Kind        string   `json:"kind" jsonschema:"The connector's kind: stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, postgres, mysql, s3 or events (an API source)."`
+	Kind        string   `json:"kind" jsonschema:"The connector's kind: stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, attio, postgres, mysql, s3 or events (an API source)."`
 	WithKey     bool     `json:"with_key,omitempty" jsonschema:"Open the kind's form to enter a key instead of signing in: for PostHog EU Cloud or a self-hosted PostHog, or when the user asks to use a key."`
 	Name        string   `json:"name,omitempty" jsonschema:"A new connector's name when it signs in; the kind's display name when empty. Not with connector_id."`
 	Repos       []string `json:"repos,omitempty" jsonschema:"A new GitHub connector's repositories when it signs in, as owner/name. None reads the repositories of the Helix Foundry GitHub App's installations the user can reach. Not with connector_id."`
@@ -51,7 +51,7 @@ type FoundryConnectOutput struct {
 
 // connectKindNoEvents is helix_foundry_connect's kind on a host without API sources; its struct
 // tag is the one that has them.
-const connectKindNoEvents = "The connector's kind: stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, postgres, mysql or s3."
+const connectKindNoEvents = "The connector's kind: stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, databuddy, attio, postgres, mysql or s3."
 
 // connectSchema is helix_foundry_connect's input schema: without API sources where the host
 // has none, and with only the Workspace and the kind for a caller who can't sign in.

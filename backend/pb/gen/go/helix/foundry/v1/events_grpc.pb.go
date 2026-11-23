@@ -24,6 +24,14 @@ const (
 	FoundryEventsService_CreateFoundryReminder_FullMethodName           = "/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder"
 	FoundryEventsService_StopFoundryReminders_FullMethodName            = "/helix.foundry.v1.FoundryEventsService/StopFoundryReminders"
 	FoundryEventsService_GetSharedFoundryDashboard_FullMethodName       = "/helix.foundry.v1.FoundryEventsService/GetSharedFoundryDashboard"
+	FoundryEventsService_ReceiveSlackRequest_FullMethodName             = "/helix.foundry.v1.FoundryEventsService/ReceiveSlackRequest"
+	FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName      = "/helix.foundry.v1.FoundryEventsService/RecordFoundrySlackFeedGaps"
+	FoundryEventsService_ValidateFoundryRelayToken_FullMethodName       = "/helix.foundry.v1.FoundryEventsService/ValidateFoundryRelayToken"
+	FoundryEventsService_RedeemFoundryRelayCode_FullMethodName          = "/helix.foundry.v1.FoundryEventsService/RedeemFoundryRelayCode"
+	FoundryEventsService_ClaimFoundryRelayDeliveries_FullMethodName     = "/helix.foundry.v1.FoundryEventsService/ClaimFoundryRelayDeliveries"
+	FoundryEventsService_CallSlackForRelay_FullMethodName               = "/helix.foundry.v1.FoundryEventsService/CallSlackForRelay"
+	FoundryEventsService_StartFoundryRelaySlackInstall_FullMethodName   = "/helix.foundry.v1.FoundryEventsService/StartFoundryRelaySlackInstall"
+	FoundryEventsService_RevokeFoundryRelayToken_FullMethodName         = "/helix.foundry.v1.FoundryEventsService/RevokeFoundryRelayToken"
 )
 
 // FoundryEventsServiceClient is the client API for FoundryEventsService service.
@@ -49,6 +57,71 @@ type FoundryEventsServiceClient interface {
 	// no snapshot, an unpublished one, a deleted workspace's, or wherever
 	// public links are off.
 	GetSharedFoundryDashboard(ctx context.Context, in *GetSharedFoundryDashboardRequest, opts ...grpc.CallOption) (*GetSharedFoundryDashboardResponse, error)
+	// A request Slack sent Helix Foundry's Slack app (foundry.slack), as the
+	// door took it at /v1/slack/events or /v1/slack/interactivity: its raw
+	// body and signature headers, which the door checked only for form and
+	// the five-minute window. The API verifies the signature with the app's
+	// signing secret, records once what the bot acts on (an event's or a
+	// click's own key), and answers what Slack is to be answered, within
+	// Slack's three seconds and without calling Slack. A request it can't
+	// record is an error, which the door answers 500, so Slack retries an
+	// event; Slack never retries a click. Wherever foundry.slack is off,
+	// every request is answered 404.
+	ReceiveSlackRequest(ctx context.Context, in *ReceiveSlackRequestRequest, opts ...grpc.CallOption) (*ReceiveSlackRequestResponse, error)
+	// The minutes of channels whose Slack events the door answered on Slack's
+	// last retry without the API taking them (its gate full, or the API
+	// failing), so Slack drops them: the door sends what it gathered once a
+	// minute. The API records each as a gap of the Slack data connector
+	// reading its team, which the backfill reads again within its capped
+	// budget, and skips the rest (no live install or feed, ids of no form,
+	// foundry.slack.feed off). The door reads them from bodies it couldn't
+	// verify, so a forged one only spends its team's gap budget. A store
+	// failure is UNAVAILABLE, and the door sends them again.
+	//
+	// It also takes one signed event at a time: a channel event the door
+	// refused on Slack's last retry for room it keeps per address, or before
+	// reading its body, which anyone could make it refuse. The API verifies
+	// its signature with the app's signing secret, as ReceiveSlackRequest
+	// does, and only then records the gap of its team, channel and minute,
+	// answering what became of it.
+	RecordFoundrySlackFeedGaps(ctx context.Context, in *RecordFoundrySlackFeedGapsRequest, opts ...grpc.CallOption) (*RecordFoundrySlackFeedGapsResponse, error)
+	// Helix's Slack relay (foundry.slack.relay): a standalone Foundry install
+	// linked to a Helix workspace takes Slack's requests for its Slack teams,
+	// and calls Slack as their installs, through the door, bearing its link's
+	// hx_rl_ token; the door passes the token's SHA-256, never the token, and
+	// checks it first with ValidateFoundryRelayToken. Each method refuses a
+	// token of no live link UNAUTHENTICATED; wherever foundry.slack or its
+	// relay is off, every method is FAILED_PRECONDITION, reason
+	// FOUNDRY_RELAY_DISABLED.
+	//
+	// The live link a token's hash names, for the door's admission.
+	ValidateFoundryRelayToken(ctx context.Context, in *ValidateFoundryRelayTokenRequest, opts ...grpc.CallOption) (*ValidateFoundryRelayTokenResponse, error)
+	// Spends the one-time code the site gave the owner's browser
+	// (FoundryService.AuthorizeFoundryRelayLink) with its PKCE verifier, once,
+	// within ten minutes, and links the install: its token, shown only here.
+	// NOT_FOUND for a code absent, expired, spent or another verifier's;
+	// PERMISSION_DENIED once the member who authorized it is no longer an
+	// owner or admin of the workspace.
+	RedeemFoundryRelayCode(ctx context.Context, in *RedeemFoundryRelayCodeRequest, opts ...grpc.CallOption) (*RedeemFoundryRelayCodeResponse, error)
+	// Acks what the install took, then waits up to wait_ms for what Slack
+	// sent its installs, and leases it: the bot's requests first, then its
+	// channel messages (while hosted's foundry.slack.feed or follow is on and
+	// the install's feed is). Always answers the link's live installs.
+	ClaimFoundryRelayDeliveries(ctx context.Context, in *ClaimFoundryRelayDeliveriesRequest, opts ...grpc.CallOption) (*ClaimFoundryRelayDeliveriesResponse, error)
+	// Calls a Slack Web API method as the link's install serving
+	// local_workspace_id, within the relay's allowlist and scopes, rewritten
+	// as the bot's own calls are; Slack's answer, rid of tokens and of
+	// users.info's email and phone. PERMISSION_DENIED for a method, channel or
+	// user the relay doesn't allow; RESOURCE_EXHAUSTED never: a call that may
+	// not go yet answers retry_after_s.
+	CallSlackForRelay(ctx context.Context, in *CallSlackForRelayRequest, opts ...grpc.CallOption) (*CallSlackForRelayResponse, error)
+	// Starts adding Helix's Slack app for the install's local workspace: the
+	// Slack page to send its owner to, whose answer Helix's site finishes and
+	// sends back to return_to, the link's own Settings › Slack.
+	StartFoundryRelaySlackInstall(ctx context.Context, in *StartFoundryRelaySlackInstallRequest, opts ...grpc.CallOption) (*StartFoundryRelaySlackInstallResponse, error)
+	// Revokes the token's link, from the install's side (its owner unlinked
+	// it): its installs leave Slack.
+	RevokeFoundryRelayToken(ctx context.Context, in *RevokeFoundryRelayTokenRequest, opts ...grpc.CallOption) (*RevokeFoundryRelayTokenResponse, error)
 }
 
 type foundryEventsServiceClient struct {
@@ -109,6 +182,86 @@ func (c *foundryEventsServiceClient) GetSharedFoundryDashboard(ctx context.Conte
 	return out, nil
 }
 
+func (c *foundryEventsServiceClient) ReceiveSlackRequest(ctx context.Context, in *ReceiveSlackRequestRequest, opts ...grpc.CallOption) (*ReceiveSlackRequestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReceiveSlackRequestResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_ReceiveSlackRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) RecordFoundrySlackFeedGaps(ctx context.Context, in *RecordFoundrySlackFeedGapsRequest, opts ...grpc.CallOption) (*RecordFoundrySlackFeedGapsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecordFoundrySlackFeedGapsResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) ValidateFoundryRelayToken(ctx context.Context, in *ValidateFoundryRelayTokenRequest, opts ...grpc.CallOption) (*ValidateFoundryRelayTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidateFoundryRelayTokenResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_ValidateFoundryRelayToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) RedeemFoundryRelayCode(ctx context.Context, in *RedeemFoundryRelayCodeRequest, opts ...grpc.CallOption) (*RedeemFoundryRelayCodeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RedeemFoundryRelayCodeResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_RedeemFoundryRelayCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) ClaimFoundryRelayDeliveries(ctx context.Context, in *ClaimFoundryRelayDeliveriesRequest, opts ...grpc.CallOption) (*ClaimFoundryRelayDeliveriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClaimFoundryRelayDeliveriesResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_ClaimFoundryRelayDeliveries_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) CallSlackForRelay(ctx context.Context, in *CallSlackForRelayRequest, opts ...grpc.CallOption) (*CallSlackForRelayResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CallSlackForRelayResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_CallSlackForRelay_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) StartFoundryRelaySlackInstall(ctx context.Context, in *StartFoundryRelaySlackInstallRequest, opts ...grpc.CallOption) (*StartFoundryRelaySlackInstallResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartFoundryRelaySlackInstallResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_StartFoundryRelaySlackInstall_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) RevokeFoundryRelayToken(ctx context.Context, in *RevokeFoundryRelayTokenRequest, opts ...grpc.CallOption) (*RevokeFoundryRelayTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeFoundryRelayTokenResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_RevokeFoundryRelayToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryEventsServiceServer is the server API for FoundryEventsService service.
 // All implementations should embed UnimplementedFoundryEventsServiceServer
 // for forward compatibility.
@@ -132,6 +285,71 @@ type FoundryEventsServiceServer interface {
 	// no snapshot, an unpublished one, a deleted workspace's, or wherever
 	// public links are off.
 	GetSharedFoundryDashboard(context.Context, *GetSharedFoundryDashboardRequest) (*GetSharedFoundryDashboardResponse, error)
+	// A request Slack sent Helix Foundry's Slack app (foundry.slack), as the
+	// door took it at /v1/slack/events or /v1/slack/interactivity: its raw
+	// body and signature headers, which the door checked only for form and
+	// the five-minute window. The API verifies the signature with the app's
+	// signing secret, records once what the bot acts on (an event's or a
+	// click's own key), and answers what Slack is to be answered, within
+	// Slack's three seconds and without calling Slack. A request it can't
+	// record is an error, which the door answers 500, so Slack retries an
+	// event; Slack never retries a click. Wherever foundry.slack is off,
+	// every request is answered 404.
+	ReceiveSlackRequest(context.Context, *ReceiveSlackRequestRequest) (*ReceiveSlackRequestResponse, error)
+	// The minutes of channels whose Slack events the door answered on Slack's
+	// last retry without the API taking them (its gate full, or the API
+	// failing), so Slack drops them: the door sends what it gathered once a
+	// minute. The API records each as a gap of the Slack data connector
+	// reading its team, which the backfill reads again within its capped
+	// budget, and skips the rest (no live install or feed, ids of no form,
+	// foundry.slack.feed off). The door reads them from bodies it couldn't
+	// verify, so a forged one only spends its team's gap budget. A store
+	// failure is UNAVAILABLE, and the door sends them again.
+	//
+	// It also takes one signed event at a time: a channel event the door
+	// refused on Slack's last retry for room it keeps per address, or before
+	// reading its body, which anyone could make it refuse. The API verifies
+	// its signature with the app's signing secret, as ReceiveSlackRequest
+	// does, and only then records the gap of its team, channel and minute,
+	// answering what became of it.
+	RecordFoundrySlackFeedGaps(context.Context, *RecordFoundrySlackFeedGapsRequest) (*RecordFoundrySlackFeedGapsResponse, error)
+	// Helix's Slack relay (foundry.slack.relay): a standalone Foundry install
+	// linked to a Helix workspace takes Slack's requests for its Slack teams,
+	// and calls Slack as their installs, through the door, bearing its link's
+	// hx_rl_ token; the door passes the token's SHA-256, never the token, and
+	// checks it first with ValidateFoundryRelayToken. Each method refuses a
+	// token of no live link UNAUTHENTICATED; wherever foundry.slack or its
+	// relay is off, every method is FAILED_PRECONDITION, reason
+	// FOUNDRY_RELAY_DISABLED.
+	//
+	// The live link a token's hash names, for the door's admission.
+	ValidateFoundryRelayToken(context.Context, *ValidateFoundryRelayTokenRequest) (*ValidateFoundryRelayTokenResponse, error)
+	// Spends the one-time code the site gave the owner's browser
+	// (FoundryService.AuthorizeFoundryRelayLink) with its PKCE verifier, once,
+	// within ten minutes, and links the install: its token, shown only here.
+	// NOT_FOUND for a code absent, expired, spent or another verifier's;
+	// PERMISSION_DENIED once the member who authorized it is no longer an
+	// owner or admin of the workspace.
+	RedeemFoundryRelayCode(context.Context, *RedeemFoundryRelayCodeRequest) (*RedeemFoundryRelayCodeResponse, error)
+	// Acks what the install took, then waits up to wait_ms for what Slack
+	// sent its installs, and leases it: the bot's requests first, then its
+	// channel messages (while hosted's foundry.slack.feed or follow is on and
+	// the install's feed is). Always answers the link's live installs.
+	ClaimFoundryRelayDeliveries(context.Context, *ClaimFoundryRelayDeliveriesRequest) (*ClaimFoundryRelayDeliveriesResponse, error)
+	// Calls a Slack Web API method as the link's install serving
+	// local_workspace_id, within the relay's allowlist and scopes, rewritten
+	// as the bot's own calls are; Slack's answer, rid of tokens and of
+	// users.info's email and phone. PERMISSION_DENIED for a method, channel or
+	// user the relay doesn't allow; RESOURCE_EXHAUSTED never: a call that may
+	// not go yet answers retry_after_s.
+	CallSlackForRelay(context.Context, *CallSlackForRelayRequest) (*CallSlackForRelayResponse, error)
+	// Starts adding Helix's Slack app for the install's local workspace: the
+	// Slack page to send its owner to, whose answer Helix's site finishes and
+	// sends back to return_to, the link's own Settings › Slack.
+	StartFoundryRelaySlackInstall(context.Context, *StartFoundryRelaySlackInstallRequest) (*StartFoundryRelaySlackInstallResponse, error)
+	// Revokes the token's link, from the install's side (its owner unlinked
+	// it): its installs leave Slack.
+	RevokeFoundryRelayToken(context.Context, *RevokeFoundryRelayTokenRequest) (*RevokeFoundryRelayTokenResponse, error)
 }
 
 // UnimplementedFoundryEventsServiceServer should be embedded to have
@@ -155,6 +373,30 @@ func (UnimplementedFoundryEventsServiceServer) StopFoundryReminders(context.Cont
 }
 func (UnimplementedFoundryEventsServiceServer) GetSharedFoundryDashboard(context.Context, *GetSharedFoundryDashboardRequest) (*GetSharedFoundryDashboardResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSharedFoundryDashboard not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) ReceiveSlackRequest(context.Context, *ReceiveSlackRequestRequest) (*ReceiveSlackRequestResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReceiveSlackRequest not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) RecordFoundrySlackFeedGaps(context.Context, *RecordFoundrySlackFeedGapsRequest) (*RecordFoundrySlackFeedGapsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecordFoundrySlackFeedGaps not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) ValidateFoundryRelayToken(context.Context, *ValidateFoundryRelayTokenRequest) (*ValidateFoundryRelayTokenResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ValidateFoundryRelayToken not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) RedeemFoundryRelayCode(context.Context, *RedeemFoundryRelayCodeRequest) (*RedeemFoundryRelayCodeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RedeemFoundryRelayCode not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) ClaimFoundryRelayDeliveries(context.Context, *ClaimFoundryRelayDeliveriesRequest) (*ClaimFoundryRelayDeliveriesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClaimFoundryRelayDeliveries not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) CallSlackForRelay(context.Context, *CallSlackForRelayRequest) (*CallSlackForRelayResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CallSlackForRelay not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) StartFoundryRelaySlackInstall(context.Context, *StartFoundryRelaySlackInstallRequest) (*StartFoundryRelaySlackInstallResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartFoundryRelaySlackInstall not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) RevokeFoundryRelayToken(context.Context, *RevokeFoundryRelayTokenRequest) (*RevokeFoundryRelayTokenResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RevokeFoundryRelayToken not implemented")
 }
 func (UnimplementedFoundryEventsServiceServer) testEmbeddedByValue() {}
 
@@ -266,6 +508,150 @@ func _FoundryEventsService_GetSharedFoundryDashboard_Handler(srv interface{}, ct
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryEventsService_ReceiveSlackRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReceiveSlackRequestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).ReceiveSlackRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_ReceiveSlackRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).ReceiveSlackRequest(ctx, req.(*ReceiveSlackRequestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_RecordFoundrySlackFeedGaps_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecordFoundrySlackFeedGapsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).RecordFoundrySlackFeedGaps(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_RecordFoundrySlackFeedGaps_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).RecordFoundrySlackFeedGaps(ctx, req.(*RecordFoundrySlackFeedGapsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_ValidateFoundryRelayToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidateFoundryRelayTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).ValidateFoundryRelayToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_ValidateFoundryRelayToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).ValidateFoundryRelayToken(ctx, req.(*ValidateFoundryRelayTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_RedeemFoundryRelayCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RedeemFoundryRelayCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).RedeemFoundryRelayCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_RedeemFoundryRelayCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).RedeemFoundryRelayCode(ctx, req.(*RedeemFoundryRelayCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_ClaimFoundryRelayDeliveries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimFoundryRelayDeliveriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).ClaimFoundryRelayDeliveries(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_ClaimFoundryRelayDeliveries_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).ClaimFoundryRelayDeliveries(ctx, req.(*ClaimFoundryRelayDeliveriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_CallSlackForRelay_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CallSlackForRelayRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).CallSlackForRelay(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_CallSlackForRelay_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).CallSlackForRelay(ctx, req.(*CallSlackForRelayRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_StartFoundryRelaySlackInstall_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartFoundryRelaySlackInstallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).StartFoundryRelaySlackInstall(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_StartFoundryRelaySlackInstall_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).StartFoundryRelaySlackInstall(ctx, req.(*StartFoundryRelaySlackInstallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_RevokeFoundryRelayToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeFoundryRelayTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).RevokeFoundryRelayToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_RevokeFoundryRelayToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).RevokeFoundryRelayToken(ctx, req.(*RevokeFoundryRelayTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryEventsService_ServiceDesc is the grpc.ServiceDesc for FoundryEventsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -292,6 +678,38 @@ var FoundryEventsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSharedFoundryDashboard",
 			Handler:    _FoundryEventsService_GetSharedFoundryDashboard_Handler,
+		},
+		{
+			MethodName: "ReceiveSlackRequest",
+			Handler:    _FoundryEventsService_ReceiveSlackRequest_Handler,
+		},
+		{
+			MethodName: "RecordFoundrySlackFeedGaps",
+			Handler:    _FoundryEventsService_RecordFoundrySlackFeedGaps_Handler,
+		},
+		{
+			MethodName: "ValidateFoundryRelayToken",
+			Handler:    _FoundryEventsService_ValidateFoundryRelayToken_Handler,
+		},
+		{
+			MethodName: "RedeemFoundryRelayCode",
+			Handler:    _FoundryEventsService_RedeemFoundryRelayCode_Handler,
+		},
+		{
+			MethodName: "ClaimFoundryRelayDeliveries",
+			Handler:    _FoundryEventsService_ClaimFoundryRelayDeliveries_Handler,
+		},
+		{
+			MethodName: "CallSlackForRelay",
+			Handler:    _FoundryEventsService_CallSlackForRelay_Handler,
+		},
+		{
+			MethodName: "StartFoundryRelaySlackInstall",
+			Handler:    _FoundryEventsService_StartFoundryRelaySlackInstall_Handler,
+		},
+		{
+			MethodName: "RevokeFoundryRelayToken",
+			Handler:    _FoundryEventsService_RevokeFoundryRelayToken_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

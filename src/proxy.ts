@@ -20,12 +20,14 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
   if (websiteId) event.waitUntil(trackAgents(request, { websiteId }));
 }
 
-// `/` (src/app/(app)/page.tsx, or foundry.new's setup prompt), sign-in and the files written for agents
-// and crawlers: the rest of the site is the signed-in app.
+// `/` (src/app/(app)/page.tsx, or foundry.new's setup prompt) and its
+// Markdown (src/app/index.md), sign-in and the files written for agents and
+// crawlers: the rest of the site is the signed-in app.
 export const config = {
   matcher: [
     "/",
     "/login",
+    "/index.md",
     "/llms.txt",
     "/llms-full.txt",
     "/setup.md",

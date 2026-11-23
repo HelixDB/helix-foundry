@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -281,7 +282,7 @@ func TestEventsKind(t *testing.T) {
 			var stored eventsStored
 			_ = json.Unmarshal([]byte(tc.settings), &stored)
 			want := Stream{Name: "pieces", Table: "events", Title: "Pieces", Description: stored.Description, Format: Markdown, Keep: KeepNewest(500)}
-			if len(streams) != 1 || streams[0] != want || streams[0].Problem() != "" {
+			if len(streams) != 1 || !reflect.DeepEqual(streams[0], want) || streams[0].Problem() != "" {
 				t.Fatalf("streams = %+v, want %+v", streams, want)
 			}
 		})

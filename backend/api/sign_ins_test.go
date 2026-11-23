@@ -1100,7 +1100,7 @@ func TestSignInSettings(t *testing.T) {
 	// Every kind that signs in starts from its defaults, and refuses what a
 	// signed-in connector can't be: a credential, a self-hosted PostHog, a
 	// Google user to act as.
-	for _, kind := range []string{"github", "linear", "slack", "notion", "posthog", "calcom", "stripe", "google"} {
+	for _, kind := range []string{"github", "linear", "slack", "notion", "posthog", "calcom", "stripe", "google", "attio"} {
 		k, err := catalog.Kind(kind)
 		if err != nil {
 			t.Fatal(err)
@@ -1110,7 +1110,7 @@ func TestSignInSettings(t *testing.T) {
 		}
 	}
 	for name, cfg := range map[string]*foundryv1.ConnectorConfig{
-		"a Slack token": {Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{BotToken: "xoxb-1"}}},
+		"a Slack token": {Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{Credential: &foundryv1.SlackConnectorConfig_BotToken{BotToken: "xoxb-1"}}}},
 		"a self-hosted PostHog": {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "custom",
 			Host: "https://posthog.acme.test"}}},
 		"PostHog EU Cloud":        {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "eu"}}},
@@ -1131,7 +1131,7 @@ func TestSignInSettings(t *testing.T) {
 // and stores them; Stripe's mode waits for the vended key.
 func TestStartEveryKind(t *testing.T) {
 	f := newSignInFixture(t)
-	f.broker.Offered = []string{"github", "linear", "slack", "notion", "posthog", "calcom", "stripe", "google"}
+	f.broker.Offered = []string{"github", "linear", "slack", "notion", "posthog", "calcom", "stripe", "google", "attio"}
 	for _, tc := range []struct {
 		kind   string
 		config *foundryv1.ConnectorConfig
@@ -1147,6 +1147,7 @@ func TestStartEveryKind(t *testing.T) {
 		{"stripe", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Stripe{Stripe: &foundryv1.StripeConnectorConfig{}}}, `{"mode":""}`},
 		{"google", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{}}},
 			`{"subject":"","event_days":90}`},
+		{"attio", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Attio{Attio: &foundryv1.AttioConnectorConfig{}}}, `{}`},
 		{"slack", nil, `{"history_days":90}`},
 	} {
 		si := f.start(t, as("user-1"), &foundryv1.StartConnectorSignInRequest{Kind: tc.kind, Config: tc.config})

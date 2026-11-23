@@ -1,6 +1,7 @@
 package syncer
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,11 @@ type slackAccount struct {
 	threads  int
 	since    []string // "<channel>@<day>"
 	wait     func()
+	// users replace users.list's Ada and Grace, private are the private
+	// channels, and scopes replace the guide's scopes, when set.
+	users   []string
+	private map[string]bool
+	scopes  string
 }
 
 // newSlackAccount is an account whose #general holds messages.
@@ -59,7 +65,7 @@ func (a *slackAccount) serve(t *testing.T) string {
 		return fmt.Sprintf(`{"type":"message","user":"U1","text":%q,"ts":%q%s}`, a.messages[channel][ts], ts, thread)
 	}
 	channel := func(id string) string {
-		return fmt.Sprintf(`{"id":%q,"name":%q,"is_member":true}`, id, slackAccountNames[id])
+		return fmt.Sprintf(`{"id":%q,"name":%q,"is_member":true,"is_private":%t}`, id, slackAccountNames[id], a.private[id])
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -71,13 +77,17 @@ func (a *slackAccount) serve(t *testing.T) string {
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		w.Header().Set("X-OAuth-Scopes", "channels:read,channels:history,groups:read,groups:history,users:read,users:read.email")
+		w.Header().Set("X-OAuth-Scopes", cmp.Or(a.scopes, "channels:read,channels:history,groups:read,groups:history,users:read,users:read.email"))
 		var body string
 		switch strings.TrimPrefix(r.URL.Path, "/api/") {
 		case "auth.test":
 			body = `{"ok":true,"user":"foundry","team_id":"T1"}`
 		case "users.list":
-			body = page("members", []string{`{"id":"U1","name":"ada","real_name":"Ada Lovelace"}`, `{"id":"U2","name":"grace","real_name":"Grace Hopper"}`})
+			users := a.users
+			if users == nil {
+				users = []string{`{"id":"U1","name":"ada","real_name":"Ada Lovelace"}`, `{"id":"U2","name":"grace","real_name":"Grace Hopper"}`}
+			}
+			body = page("members", users)
 		case "conversations.list":
 			body = page("channels", []string{channel("C1"), channel("C2")})
 		case "users.conversations":

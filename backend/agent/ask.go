@@ -93,8 +93,8 @@ type asker struct {
 	session  integration.Session
 	turn     *model.FoundryAgentTurn
 	workerID string
-	// reach is the turn's person's: a restricted member asks their own
-	// questions, and relays no generation's.
+	// reach is the turn's: a restricted member and a bot ask their own
+	// questions, and relay no generation's.
 	reach Reach
 }
 
@@ -118,7 +118,7 @@ func (a asker) register(server *mcp.Server) {
 			switch {
 			case (len(in.Questions) > 0) == (in.Generation != nil):
 				return refused("Ask your own questions or relay a generation's: exactly one of questions and generation.")
-			case in.Generation != nil && a.reach == ReachGrants:
+			case in.Generation != nil && a.reach != ReachWorkspace:
 				return refused("This person can't answer a draft's questions: an owner or admin answers them on the generation's page in Foundry.")
 			case in.Generation != nil:
 				asked, shown, err = a.relay(ctx, *in.Generation)

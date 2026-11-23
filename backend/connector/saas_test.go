@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // apiServer answers each path with a status (default 200) and records requests.
@@ -85,6 +86,40 @@ func findTable(t *testing.T, d Discovery, name string) Table {
 	}
 	t.Fatalf("table %s not discovered: %v", name, tableNames(d))
 	return Table{}
+}
+
+// TestRetryBackoff waits a Retry-After in seconds or until an HTTP date (at
+// least the doubling), up to 30 seconds, and doubles from 250ms without one.
+func TestRetryBackoff(t *testing.T) {
+	date := func(d time.Duration) string { return time.Now().Add(d).UTC().Format(http.TimeFormat) }
+	for _, c := range []struct {
+		name        string
+		attempt     int
+		retryAfter  string
+		least, most time.Duration
+	}{
+		{"seconds", 0, "3", 3 * time.Second, 3 * time.Second},
+		{"seconds past the cap", 0, "120", 30 * time.Second, 30 * time.Second},
+		{"zero seconds doubles", 2, "0", time.Second, time.Second},
+		{"none doubles", 0, "", 250 * time.Millisecond, 250 * time.Millisecond},
+		{"none doubles again", 3, "", 2 * time.Second, 2 * time.Second},
+		{"garbage doubles", 1, "soon", 500 * time.Millisecond, 500 * time.Millisecond},
+		// An HTTP date has whole seconds: ten seconds from now is nine to ten away.
+		{"a date", 0, date(10 * time.Second), 8 * time.Second, 10 * time.Second},
+		{"a date past the cap", 0, date(time.Hour), 30 * time.Second, 30 * time.Second},
+		// A date sooner than the doubling, or passed (the clocks differ),
+		// waits the doubling.
+		{"a date passed", 4, date(-time.Minute), 4 * time.Second, 4 * time.Second},
+		{"a date sooner than the doubling", 5, date(time.Second), 8 * time.Second, 8 * time.Second},
+		{"a date later than the doubling", 1, date(5 * time.Second), 3 * time.Second, 5 * time.Second},
+		{"an RFC 850 date", 0, time.Now().Add(time.Hour).UTC().Format(time.RFC850), 30 * time.Second, 30 * time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := retryBackoff(c.attempt, c.retryAfter); got < c.least || got > c.most {
+				t.Fatalf("retryBackoff(%d, %q) = %v, want %v to %v", c.attempt, c.retryAfter, got, c.least, c.most)
+			}
+		})
+	}
 }
 
 func TestStripeConnector(t *testing.T) {

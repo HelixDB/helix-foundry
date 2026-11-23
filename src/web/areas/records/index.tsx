@@ -529,7 +529,12 @@ export function RecordsPage() {
               <input
                 className="rx-value"
                 aria-label={`${fieldName(draft.field)} equals`}
-                placeholder="equals…"
+                placeholder={
+                  columns.find((c) => c.key === draft.field)?.type ===
+                  "datetime"
+                    ? "equals an instant, to the millisecond…"
+                    : "equals…"
+                }
                 value={draft.value}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, value: e.target.value }))

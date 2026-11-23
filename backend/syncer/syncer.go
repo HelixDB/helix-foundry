@@ -52,6 +52,9 @@ type store interface {
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
 	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
+	SourceAudienceRead(ctx context.Context, workspaceID, connectorID string) (model.FoundrySourceAudienceRead, error)
+	ReplaceSourceAudiences(ctx context.Context, workspaceID, connectorID string, readAt time.Time, a connector.Audiences) error
+	RecordSourceAudienceProblem(ctx context.Context, workspaceID, connectorID string, at time.Time, problem string) error
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	ListConnectorChangeBatches(ctx context.Context, workspaceID, syncID string) ([]*model.ConnectorChangeBatch, error)
 	ListFoundryDocumentSets(ctx context.Context, workspaceID string) ([]*model.FoundryDocumentSet, error)
@@ -84,6 +87,10 @@ type Syncer struct {
 	// Accounts vends signed-in connectors' tokens; nil where none sign in,
 	// and a connector with an account then waits, retried, for one.
 	Accounts ports.ProviderAccounts
+	// SlackApps opens the installs of Helix's Slack app that Slack
+	// connectors read through; nil where foundry.slack.feed is off, and
+	// such a connector then fails for good (Credentials.Source).
+	SlackApps SlackApps
 	// Plans is nil when the deployment sells no Foundry plan; every workspace is then Free.
 	Plans       planReader
 	PlanCatalog *foundryplan.Catalog
@@ -156,6 +163,10 @@ type Result struct {
 	// Pushed is set for a Pushed kind once the sync stored its cursor; nil
 	// for any other kind, and for a sync that stopped before.
 	Pushed *PushedResult
+	// PushedConnector says the connector syncs when its data arrives
+	// (model.Connector.Pushed), once the sync read it: a sync of it that
+	// gives up tries again by its arrivals' spacing, not its plan's interval.
+	PushedConnector bool
 }
 
 // PushedResult is what the worker schedules a Pushed kind's next sync by.
@@ -204,6 +215,9 @@ const releaseTimeout = 30 * time.Second
 //     the cursor the next change read starts from.
 //  6. Mark the ontologies that read a changed table as owing a refresh.
 //  7. For a Pushed kind, read what waits beyond the stored cursor.
+//  8. Last, a connector.Audienced kind reads and stores its source's
+//     permissions once they are due (storeAudiences), which fails nothing
+//     and delays nothing the sync owes.
 //
 // A provider that rejects a signed-in connector's token (connector.AuthError)
 // gets one fresh token and steps 3 to 7 again: the broker renews one that
@@ -224,10 +238,15 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	if err != nil {
 		return res, retryable(fmt.Errorf("load connector: %w", err))
 	}
-	res.SyncEverySeconds, res.AccountGeneration = c.SyncEverySeconds, AccountGeneration(c)
-	kind, err := s.Catalog.Kind(c.Kind)
-	if err != nil {
+	res.SyncEverySeconds, res.AccountGeneration, res.PushedConnector = c.SyncEverySeconds, AccountGeneration(c), c.Pushed
+	// The kind its settings read with: a Slack connector through Helix's
+	// Slack app is pushed where one with a token is not.
+	kind, err := s.Catalog.KindFor(c.Kind, c.Config)
+	if errors.Is(err, connector.ErrUnknownKind) {
 		return res, &Failure{Message: "this connector kind is no longer supported", Permanent: true, Err: err}
+	}
+	if err != nil {
+		return res, &Failure{Message: "this connector's settings can't be read", Permanent: true, Err: err}
 	}
 	if floor, ok := kind.(connector.IntervalFloor); ok {
 		res.MinEvery = floor.MinInterval(connector.Source{Settings: c.Config, WorkspaceID: c.WorkspaceID, ConnectorID: c.ID})
@@ -249,6 +268,13 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	}
 	if c.Account != nil && err != nil {
 		return res, s.accountFailure(ctx, c, kind, err)
+	}
+	// A failure the credential says (an install of Helix's Slack app that
+	// is gone) is the sync's as it is: retrying a permanent one would never
+	// pause the schedule.
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return res, failure
 	}
 	if err != nil {
 		return res, retryable(err)
@@ -411,7 +437,62 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 		}
 		res.Pushed = &PushedResult{Backlog: backlog, Rows: res.Rows}
 	}
+	if audienced, ok := kind.(connector.Audienced); ok {
+		s.storeAudiences(ctx, c, audienced, *src)
+	}
 	return res, nil
+}
+
+// AudienceEvery is how often a connector's syncs read its source's
+// permissions again: a sync within it of the last read that worked, with no
+// read failed since, reads none. Slack's users, channels and members lists
+// are paged at Tier 2 (a page every 3 s), so a large workspace's read takes
+// minutes, and a pushed connector syncs whenever rows arrive.
+const AudienceEvery = time.Hour
+
+// audienceTimeout bounds one read of a source's permissions and its write.
+const audienceTimeout = 10 * time.Minute
+
+// storeAudiences reads who the connector's source shares each item with
+// (connector.Audienced), in full, and stores it in place of what was, at the
+// time the read began, once AudienceEvery has passed since the last read
+// that worked, or a read since failed. It runs after everything the sync
+// owes, bounded by audienceTimeout. A read or a write that fails keeps what
+// was stored, records why for owners and admins, and fails nothing: the sync
+// has published, and a connector whose audiences are stale shows its content
+// to full readers only (plans/SOURCE_ACLS.md). A sync whose context ended
+// records nothing: the next one reads them again.
+func (s *Syncer) storeAudiences(ctx context.Context, c *model.Connector, kind connector.Audienced, src connector.Source) {
+	ctx, cancel := context.WithTimeout(ctx, audienceTimeout)
+	defer cancel()
+	at := s.now()
+	last, err := s.DB.SourceAudienceRead(ctx, c.WorkspaceID, c.ID)
+	if err != nil {
+		log.From(ctx).Warn("a connector's audiences were not read", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind, "err", err)
+		return
+	}
+	if last.ReadAt != nil && at.Sub(*last.ReadAt) < AudienceEvery && (last.ProblemAt == nil || !last.ProblemAt.After(*last.ReadAt)) {
+		return
+	}
+	audiences, err := kind.Audiences(ctx, src)
+	var problem string
+	if err != nil {
+		var failure *Failure
+		_ = errors.As(classify(err), &failure) // classify's errors are all Failures
+		problem = failure.Message
+	} else if err = s.DB.ReplaceSourceAudiences(ctx, c.WorkspaceID, c.ID, at, audiences); err != nil {
+		problem = "Helix could not store who the source shares what with; it will try again at the next sync"
+	}
+	if err == nil {
+		return
+	}
+	log.From(ctx).Warn("a connector's audiences were not stored", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind, "err", err)
+	if ctx.Err() != nil {
+		return
+	}
+	if err := s.DB.RecordSourceAudienceProblem(ctx, c.WorkspaceID, c.ID, at, problem); err != nil {
+		log.From(ctx).Warn("a connector's audience problem was not recorded", "workspace", c.WorkspaceID, "connector", c.ID, "err", err)
+	}
 }
 
 // AccountGeneration is the connector's account generation: 0 for one with
@@ -427,7 +508,7 @@ func AccountGeneration(c *model.Connector) *int {
 // credentials opens connectors' credentials with the syncer's keyring and
 // broker, recording each token vended.
 func (s *Syncer) credentials() Credentials {
-	return Credentials{Keys: s.Keys, Accounts: s.Accounts, Checked: s.DB}
+	return Credentials{Keys: s.Keys, Accounts: s.Accounts, Checked: s.DB, SlackApps: s.SlackApps}
 }
 
 // accountFailure is why a signed-in connector's sync stopped when its
@@ -465,7 +546,7 @@ func (s *Syncer) accountFailure(ctx context.Context, c *model.Connector, kind co
 // such as a replication slot, then forgets the cursor. The sync worker calls
 // it for connectors no sync will read again.
 func (s *Syncer) Release(ctx context.Context, c *model.Connector) error {
-	kind, err := s.Catalog.Kind(c.Kind)
+	kind, err := s.Catalog.KindFor(c.Kind, c.Config)
 	if err != nil {
 		return err
 	}

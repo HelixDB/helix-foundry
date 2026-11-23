@@ -70,7 +70,7 @@ const connector = (c: Partial<Connector>): Connector => ({
 });
 
 describe("kinds and roles", () => {
-  it("knows the WFE's fifteen kinds, which are databases and which offer tables", () => {
+  it("knows the WFE's sixteen kinds, which are databases and which offer tables", () => {
     expect(KINDS).toEqual([
       "stripe",
       "workos",
@@ -83,6 +83,7 @@ describe("kinds and roles", () => {
       "notion",
       "google",
       "databuddy",
+      "attio",
       "postgres",
       "mysql",
       "s3",
@@ -90,6 +91,8 @@ describe("kinds and roles", () => {
     ]);
     expect(isKnownKind("databuddy")).toBe(true);
     expect(isDatabase("databuddy")).toBe(false);
+    expect(isKnownKind("attio")).toBe(true);
+    expect(isDatabase("attio")).toBe(false);
     expect(isKnownKind("events")).toBe(true);
     expect(isKnownKind("google")).toBe(true);
     expect(isKnownKind("gdrive")).toBe(false);
@@ -1158,8 +1161,10 @@ describe("credential forms", () => {
     // events, as the WFE's defaults do.
     expect(emptyForm("slack")).toEqual({
       kind: "slack",
+      credential: "token",
       botToken: "",
       historyDays: "90",
+      noticeVersion: 0,
     });
     expect(emptyForm("notion")).toEqual({ kind: "notion", token: "" });
     expect(emptyForm("google")).toEqual({
@@ -1172,14 +1177,22 @@ describe("credential forms", () => {
 
   it("sends Slack's, Notion's and Google Workspace's credentials trimmed, with their days", () => {
     expect(
-      toConfig({ kind: "slack", botToken: " xoxb-1-2 \n", historyDays: "30" }),
+      toConfig({
+        ...emptyForm("slack"),
+        botToken: " xoxb-1-2 \n",
+        historyDays: "30",
+      } as ConnectionForm),
     ).toEqual({ slack: { botToken: "xoxb-1-2", historyDays: 30 } });
     expect(toConfig(emptyForm("slack"))).toEqual({
       slack: { botToken: "", historyDays: 90 },
     });
     // Blank days are left to the WFE's default.
     expect(
-      toConfig({ kind: "slack", botToken: "xoxb-1", historyDays: "" }),
+      toConfig({
+        ...emptyForm("slack"),
+        botToken: "xoxb-1",
+        historyDays: "",
+      } as ConnectionForm),
     ).toEqual({ slack: { botToken: "xoxb-1", historyDays: 0 } });
     expect(toConfig({ kind: "notion", token: "\tntn_1 " })).toEqual({
       notion: { token: "ntn_1" },
@@ -1302,6 +1315,39 @@ describe("credential forms", () => {
     expect(summary()).toBe("Every website");
     expect(summary(["web_a", "web_b"])).toBe("web_a, web_b");
     expect(summary(["a", "b", "c"])).toBe("3 websites");
+  });
+
+  it("sends an Attio access token, trimmed, and nothing else", () => {
+    const token = "a".repeat(60) + "WXYZ";
+    expect(emptyForm("attio")).toEqual({ kind: "attio", apiKey: "" });
+    expect(toConfig({ kind: "attio", apiKey: ` ${token}\n` })).toEqual({
+      attio: { apiKey: token },
+    });
+    // A blank token on an edit keeps the stored one.
+    expect(toConfig(emptyForm("attio"))).toEqual({ attio: { apiKey: "" } });
+    // The token never comes back, and Attio has no other setting.
+    expect(formFromConfig("attio", { attio: { apiKey: "" } })).toEqual(
+      emptyForm("attio"),
+    );
+    expect(formFromConfig("attio", { notion: {} })).toEqual(emptyForm("attio"));
+    expect(hasCredential(emptyForm("attio"))).toBe(false);
+    expect(hasCredential({ kind: "attio", apiKey: " " })).toBe(false);
+    expect(hasCredential({ kind: "attio", apiKey: token })).toBe(true);
+    expect(suggestedName({ kind: "attio", apiKey: token })).toBe("Attio");
+    // Signed in, Attio sends no settings.
+    expect(signInConfig({ kind: "attio", apiKey: token })).toEqual({
+      attio: {},
+    });
+    // Where it reads from is the token's hint.
+    expect(
+      sourceSummary(
+        connector({
+          kind: "attio",
+          config: { attio: {} },
+          secretHint: "…WXYZ",
+        }),
+      ),
+    ).toBe("…WXYZ");
   });
 
   it("sends API keys trimmed and nothing else", () => {
@@ -1465,7 +1511,10 @@ describe("credential forms", () => {
     ).toBe(true);
     expect(hasCredential(emptyForm("slack"))).toBe(false);
     expect(
-      hasCredential({ kind: "slack", botToken: "xoxb-1", historyDays: "" }),
+      hasCredential({
+        ...emptyForm("slack"),
+        botToken: "xoxb-1",
+      } as ConnectionForm),
     ).toBe(true);
     expect(hasCredential({ kind: "notion", token: " " })).toBe(false);
     expect(hasCredential({ kind: "notion", token: "ntn_1" })).toBe(true);
@@ -1622,7 +1671,7 @@ describe("editing a stored connector", () => {
     // with the credential blank; a sparse config takes the defaults.
     expect(
       formFromConfig("slack", { slack: { botToken: "", historyDays: 30 } }),
-    ).toEqual({ kind: "slack", botToken: "", historyDays: "30" });
+    ).toEqual({ ...emptyForm("slack"), historyDays: "30" });
     expect(formFromConfig("slack", { slack: { historyDays: 0 } })).toEqual(
       emptyForm("slack"),
     );
@@ -2344,7 +2393,11 @@ describe("signInConfig", () => {
       }),
     ).toEqual({ github: { repos: ["acme/api", "acme/web"], reviewDays: 30 } });
     expect(
-      signInConfig({ kind: "slack", botToken: "xoxb-1", historyDays: "45" }),
+      signInConfig({
+        ...emptyForm("slack"),
+        botToken: "xoxb-1",
+        historyDays: "45",
+      } as ConnectionForm),
     ).toEqual({ slack: { historyDays: 45 } });
     expect(
       signInConfig({
@@ -2365,7 +2418,7 @@ describe("signInConfig", () => {
         eventDays: "30",
       }),
     ).toEqual({ google: { eventDays: 30 } });
-    for (const kind of ["linear", "calcom", "stripe"] as const)
+    for (const kind of ["linear", "calcom", "stripe", "attio"] as const)
       expect(signInConfig({ kind, apiKey: "secret" })).toEqual({ [kind]: {} });
     expect(signInConfig({ kind: "notion", token: "ntn_1" })).toEqual({
       notion: {},

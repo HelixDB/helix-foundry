@@ -85,6 +85,11 @@ type memStore struct {
 	teams  map[string][]string
 	// causes are the syncs and loads marked as an automation run's, by run.
 	causes map[string][]model.FoundryAutomationJob
+	// continued and first are the last finished click's continuation and
+	// its first event; live is a turn of its thread live, which queues none.
+	continued *model.FoundryAgentTurn
+	first     json.RawMessage
+	live      bool
 }
 
 // thread is the thread id, as a restricted member made it unless a test
@@ -95,7 +100,7 @@ func (s *memStore) thread(id string) *model.FoundryAgentThread {
 	}
 	t, ok := s.threads[id]
 	if !ok {
-		t = &model.FoundryAgentThread{ID: id, WorkspaceID: ws, UserID: user, Kind: model.FoundryAgentThreadChat, Runtime: model.FoundryAgentRuntimeAPI,
+		t = &model.FoundryAgentThread{ID: id, WorkspaceID: ws, Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentThreadChat, Runtime: model.FoundryAgentRuntimeAPI,
 			Granted: &model.FoundryAgentThreadGrants{}}
 		s.threads[id] = t
 	}
@@ -126,7 +131,7 @@ func (s *memStore) RecordFoundryAgentThreadGrants(_ context.Context, _, id strin
 				merged = append(merged, target)
 			}
 		}
-		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged}
+		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged, Items: access.SortItems(slices.Concat(t.Granted.Items, granted.Items))}
 	}
 	return nil
 }
@@ -454,7 +459,11 @@ func (s *memStore) GetFoundryDashboard(_ context.Context, workspaceID, id string
 	return nil, foundrystore.ErrNotFound
 }
 
-func (s *memStore) FinishFoundryAgentAction(_ context.Context, id string, end model.FoundryAgentActionEnd, _ *model.FoundryAgentTurn, _ json.RawMessage) error {
+// FinishFoundryAgentAction ends an executing action as the store does: a
+// bot's proposal keeps only whether it ran, and a continuation takes the
+// action's principal once queued.
+func (s *memStore) FinishFoundryAgentAction(_ context.Context, id string, end model.FoundryAgentActionEnd, continuation *model.FoundryAgentTurn,
+	first json.RawMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := end.Validate(); err != nil {
@@ -465,6 +474,19 @@ func (s *memStore) FinishFoundryAgentAction(_ context.Context, id string, end mo
 			a.Status, a.Result = end.Status, end.Result
 			if end.Error != "" {
 				a.Error = &end.Error
+			}
+			if _, bot := a.Principal.(model.AgentBot); bot {
+				a.Result, a.Error = json.RawMessage(`{"operation":"`+a.Operation+`","status":"`+string(end.Status)+`","decided_by":"`+*a.DecidedBy+`"}`), nil
+				switch end.Status {
+				case model.FoundryAgentActionFailed:
+					a.Error = new(model.FoundryAgentProposalFailed)
+				case model.FoundryAgentActionUnknown:
+					a.Error = new(model.FoundryAgentProposalUnknown)
+				}
+			}
+			s.continued, s.first = continuation, first
+			if continuation != nil && !s.live {
+				continuation.Principal = a.Principal
 			}
 			return nil
 		}
@@ -579,16 +601,25 @@ type backend struct {
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
 	// grantee reads the person as a restricted member; accessErr refuses
-	// reading their access.
+	// reading their access; items are the Slack channels the API reads as
+	// shared with them.
 	grantee   bool
 	accessErr error
+	items     []*foundryv1.FoundrySourceItem
+	// loadErr refuses making a load.
+	loadErr error
+	// approved are the workflows approved, approveErr refuses approving,
+	// and unrevised makes workflows with no revision.
+	approved   []*foundryv1.ApproveFoundryAutomationRequest
+	approveErr error
+	unrevised  bool
 }
 
 func (b *backend) GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error) {
 	if b.accessErr != nil {
 		return nil, b.accessErr
 	}
-	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true}, nil
+	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true, SourceItems: b.items}, nil
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
@@ -695,6 +726,9 @@ func (b *backend) PublishFoundryDashboard(_ context.Context, r *foundryv1.Publis
 
 func (b *backend) CreateFoundryLoad(context.Context, *foundryv1.CreateFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
 	b.loads++
+	if b.loadErr != nil {
+		return nil, b.loadErr
+	}
 	return &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: "load1"}}, nil
 }
 
@@ -726,16 +760,19 @@ func (c *confirmations) Consume(_ context.Context, b integration.ConfirmationBin
 }
 
 // sessions opens every session on one service, as an owner who may do
-// anything unless may says otherwise.
+// anything unless may says otherwise, with founder as its Founder.
 type sessions struct {
-	service *integration.Service
-	actors  []ports.Actor
-	err     error
-	may     func(integration.Permission) bool
+	service  *integration.Service
+	actors   []ports.Actor
+	confirms []integration.ConfirmMode
+	err      error
+	may      func(integration.Permission) bool
+	founder  integration.FounderAPI
 }
 
 func (h *sessions) Session(ctx context.Context, actor ports.Actor, confirm integration.ConfirmMode) (integration.Session, error) {
 	h.actors = append(h.actors, actor)
+	h.confirms = append(h.confirms, confirm)
 	if h.err != nil {
 		return integration.Session{}, h.err
 	}
@@ -743,7 +780,7 @@ func (h *sessions) Session(ctx context.Context, actor ports.Actor, confirm integ
 	if may == nil {
 		may = func(integration.Permission) bool { return true }
 	}
-	return integration.Session{Ctx: ctx, Service: h.service, Identity: &integration.Identity{
+	return integration.Session{Ctx: ctx, Service: h.service, Founder: h.founder, Identity: &integration.Identity{
 		User: true, HasPermission: may,
 		Authorize: func(context.Context, any, integration.Grant, ...string) error { return nil },
 		Allows:    func(string, string, integration.Grant) bool { return true },
@@ -807,7 +844,7 @@ func newHarness(t *testing.T, steps ...[]llm.Chunk) *harness {
 }
 
 func message(text string) *model.FoundryAgentTurn {
-	return &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", UserID: user, Kind: model.FoundryAgentTurnMessage,
+	return &model.FoundryAgentTurn{ID: "turn1", WorkspaceID: ws, ThreadID: "thread1", Principal: model.AgentPerson{UserID: user}, Kind: model.FoundryAgentTurnMessage,
 		Input: text, MaxUSDMicros: 500_000, Attempts: 1}
 }
 
@@ -882,7 +919,8 @@ func TestPreparedActionsGoToThePersonNotTheModel(t *testing.T) {
 	assert.Equal(t, "create_load", a.Operation)
 	assert.JSONEq(t, `{"ontology":{"id":"ont1","name":"Sales graph"},"version":{"id":"ver3","number":3}}`, string(a.Display))
 	assert.True(t, a.TargetNamedByUser, "the person named the ontology")
-	token, err := h.keys.Open(a.TokenSealed, a.KeyID, a.ID)
+	confirmation := a.Approval.(model.PersonApproval)
+	token, err := h.keys.Open(confirmation.TokenSealed, confirmation.KeyID, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "hlxc_secreta", string(token))
 	assert.Zero(t, h.backend.loads, "preparing runs nothing")
@@ -1131,7 +1169,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-15", PromptVersion)
+	assert.Equal(t, "assistant-18", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {

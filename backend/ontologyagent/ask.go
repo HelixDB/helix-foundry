@@ -584,7 +584,7 @@ type AskQuery struct {
 // evidence or exactly one whole target (a row with a key, but a People
 // enrichment row without one; a version with its transaction, its time and
 // exactly one whole thing it is of), a marker cited twice, two queries of
-// one evidence, an output that isn't a query answer, and a visual
+// one evidence, an output DecodeQueryOutput refuses, and a visual
 // checkVisuals refuses. A result of a
 // contract before 3.11.0 reads as one with no outputs and no visuals.
 func DecodeAskResult(data []byte) (AskResult, error) {
@@ -660,7 +660,7 @@ func DecodeAskResult(data []byte) (AskResult, error) {
 		}
 		if isNull(q.Output) {
 			q.Output = nil
-		} else if err := checkOutput(q.Output); err != nil {
+		} else if _, err := DecodeQueryOutput(q.Output); err != nil {
 			return AskResult{}, fmt.Errorf("query %s's output: %w", q.EvidenceID, err)
 		}
 		outputs[q.EvidenceID] = q.Output != nil
@@ -703,12 +703,84 @@ func (a AskAnswer) checkVisuals(outputs map[string]bool) error {
 	return nil
 }
 
-// checkOutput checks a recorded output is the Read call's query answer of a
-// kind this contract names, with the fields its kind needs and at most
-// maxOutputRows rows or maxOutputGroups groups, and that its cut, if any, is
-// text. Cells and group values are left as the agent wrote them: the website
-// shows them as text.
-func checkOutput(raw json.RawMessage) error {
+// QueryOutput is a query's recorded output (AskQuery.Output) as
+// DecodeQueryOutput reads it: the Read call's query answer, one of
+// RowsOutput, CountOutput, AggregateOutput, GroupCountOutput and
+// GroupedAggregateOutput. Cells and group values are kept as the agent
+// wrote them, data to show only as text; Cut, when not empty, says what the
+// agent left out.
+type QueryOutput interface{ queryOutput() }
+
+// RowsOutput is rows, at most 200, and how many distinct rows there are.
+type RowsOutput struct {
+	Rows  []OutputRow
+	Total uint64
+	Cut   string
+}
+
+// OutputRow is one row: its cells and the edges it went along, as written.
+type OutputRow struct {
+	Cells []json.RawMessage
+	Edges []json.RawMessage
+}
+
+// CountOutput is how many distinct entities there are at a position.
+type CountOutput struct {
+	Count uint64
+	Cut   string
+}
+
+// AggregateOutput is an aggregate over a position's entities: nil for a
+// mean, least or greatest of no values; over Values values, Skipped of the
+// entities having had no value of a computed measure.
+type AggregateOutput struct {
+	Value   *float64
+	Values  uint64
+	Skipped uint64
+	Cut     string
+}
+
+// GroupCountOutput is counts by value, at most 100 groups, of TotalGroups.
+type GroupCountOutput struct {
+	Groups      []GroupCount
+	TotalGroups uint64
+	Cut         string
+}
+
+// GroupCount is one group's value, as written (null for none), and count.
+type GroupCount struct {
+	Value json.RawMessage
+	Count uint64
+}
+
+// GroupedAggregateOutput is an aggregate by value, at most 100 groups, of
+// TotalGroups.
+type GroupedAggregateOutput struct {
+	Groups      []GroupAggregate
+	TotalGroups uint64
+	Cut         string
+}
+
+// GroupAggregate is one group's value, as written (null for none), and its
+// aggregate (nil as AggregateOutput's) over Values values.
+type GroupAggregate struct {
+	Value     json.RawMessage
+	Aggregate *float64
+	Values    uint64
+	Skipped   uint64
+}
+
+func (RowsOutput) queryOutput()             {}
+func (CountOutput) queryOutput()            {}
+func (AggregateOutput) queryOutput()        {}
+func (GroupCountOutput) queryOutput()       {}
+func (GroupedAggregateOutput) queryOutput() {}
+
+// DecodeQueryOutput reads a recorded output, refusing one that isn't the
+// Read call's query answer of a kind this contract names, with the fields
+// its kind needs and at most maxOutputRows rows or maxOutputGroups groups,
+// or whose cut, if any, isn't text.
+func DecodeQueryOutput(raw json.RawMessage) (QueryOutput, error) {
 	type queryAnswer struct {
 		Kind string `json:"kind"`
 		Rows *[]struct {
@@ -720,58 +792,76 @@ func checkOutput(raw json.RawMessage) error {
 			Count     *uint64         `json:"count"`
 			Aggregate json.RawMessage `json:"aggregate"`
 			Values    *uint64         `json:"values"`
+			Skipped   uint64          `json:"skipped"`
 		} `json:"groups"`
 		Total       *uint64         `json:"total"`
 		Count       *uint64         `json:"count"`
 		TotalGroups *uint64         `json:"total_groups"`
 		Value       json.RawMessage `json:"value"`
 		Values      *uint64         `json:"values"`
-		Cut         *string         `json:"cut"`
+		Skipped     uint64          `json:"skipped"`
+		Cut         string          `json:"cut"`
 	}
 	var o queryAnswer
 	if err := json.Unmarshal(raw, &o); err != nil {
-		return err
+		return nil, err
 	}
 	// number is a field that is there, a number or null.
-	number := func(raw json.RawMessage) bool {
+	number := func(raw json.RawMessage) (*float64, bool) {
 		var n *float64
-		return len(raw) > 0 && json.Unmarshal(raw, &n) == nil
+		return n, len(raw) > 0 && json.Unmarshal(raw, &n) == nil
 	}
 	switch o.Kind {
 	case "rows":
 		if o.Rows == nil || o.Total == nil || len(*o.Rows) > maxOutputRows {
-			return fmt.Errorf("rows are not at most %d rows and their total", maxOutputRows)
+			return nil, fmt.Errorf("rows are not at most %d rows and their total", maxOutputRows)
 		}
+		out := RowsOutput{Rows: make([]OutputRow, 0, len(*o.Rows)), Total: *o.Total, Cut: o.Cut}
 		for i, row := range *o.Rows {
 			if row.Cells == nil || row.Edges == nil {
-				return fmt.Errorf("row %d lacks its cells or edges", i)
+				return nil, fmt.Errorf("row %d lacks its cells or edges", i)
 			}
+			out.Rows = append(out.Rows, OutputRow{Cells: *row.Cells, Edges: *row.Edges})
 		}
+		return out, nil
 	case "count":
 		if o.Count == nil {
-			return errors.New("a count lacks its count")
+			return nil, errors.New("a count lacks its count")
 		}
+		return CountOutput{Count: *o.Count, Cut: o.Cut}, nil
 	case "aggregate":
-		if !number(o.Value) || o.Values == nil {
-			return errors.New("an aggregate lacks its value or values")
+		value, ok := number(o.Value)
+		if !ok || o.Values == nil {
+			return nil, errors.New("an aggregate lacks its value or values")
 		}
+		return AggregateOutput{Value: value, Values: *o.Values, Skipped: o.Skipped, Cut: o.Cut}, nil
 	case "group_count", "grouped_aggregate":
 		if o.Groups == nil || o.TotalGroups == nil || len(*o.Groups) > maxOutputGroups {
-			return fmt.Errorf("%s is not at most %d groups and their total", o.Kind, maxOutputGroups)
+			return nil, fmt.Errorf("%s is not at most %d groups and their total", o.Kind, maxOutputGroups)
 		}
+		counts := GroupCountOutput{Groups: make([]GroupCount, 0, len(*o.Groups)), TotalGroups: *o.TotalGroups, Cut: o.Cut}
+		aggregates := GroupedAggregateOutput{Groups: make([]GroupAggregate, 0, len(*o.Groups)), TotalGroups: *o.TotalGroups, Cut: o.Cut}
 		for i, g := range *o.Groups {
+			aggregate, isNumber := number(g.Aggregate)
 			whole := len(g.Value) > 0 && g.Count != nil
 			if o.Kind == "grouped_aggregate" {
-				whole = len(g.Value) > 0 && number(g.Aggregate) && g.Values != nil
+				whole = len(g.Value) > 0 && isNumber && g.Values != nil
 			}
 			if !whole {
-				return fmt.Errorf("%s group %d is not whole", o.Kind, i)
+				return nil, fmt.Errorf("%s group %d is not whole", o.Kind, i)
+			}
+			if o.Kind == "group_count" {
+				counts.Groups = append(counts.Groups, GroupCount{Value: g.Value, Count: *g.Count})
+			} else {
+				aggregates.Groups = append(aggregates.Groups, GroupAggregate{Value: g.Value, Aggregate: aggregate, Values: *g.Values, Skipped: g.Skipped})
 			}
 		}
-	default:
-		return fmt.Errorf("unknown kind %q", o.Kind)
+		if o.Kind == "group_count" {
+			return counts, nil
+		}
+		return aggregates, nil
 	}
-	return nil
+	return nil, fmt.Errorf("unknown kind %q", o.Kind)
 }
 
 // validate checks exactly one target is set, and that it is whole: a

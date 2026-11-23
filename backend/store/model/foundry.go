@@ -47,6 +47,13 @@ const (
 	FoundryLoadByRefresh FoundryLoadOrigin = "refresh"
 )
 
+// FoundryRebuildToken prefixes the client token of a rebuild's load job
+// (store.QueueFoundryRebuild): a refresh load that writes again, with a
+// later engine, a current load an earlier one wrote. Telling it from other
+// refreshes, the graph worker doesn't measure it as apply drift, and the
+// store counts the rebuilds of a load that ended without replacing it.
+const FoundryRebuildToken = "rebuild:"
+
 // FoundryLoadStatus is where a load is in its life.
 type FoundryLoadStatus string
 
@@ -441,6 +448,11 @@ type ConnectorDocumentsPublish struct {
 	Update []ConnectorDocumentUpdate
 	// Remove are documents of the set replaced or gone at the source.
 	Remove []string
+	// Expire are documents of the set that left their source's retention
+	// window (a Slack app connector's days past its history): removed as
+	// Remove's are, but they leave every load of every ontology, whatever
+	// its refresh setting. No id is in both Remove and Expire.
+	Expire []string
 	// Grace is how long the purge sweep leaves a purge row
 	// (ListFoundryDocumentPurges' before is now less Grace). A reservation
 	// older than Grace/2 is refused, so the sweep never deletes the bytes

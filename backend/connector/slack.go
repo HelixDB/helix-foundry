@@ -23,6 +23,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 var _ PassKind = (*slackKind)(nil)
@@ -171,46 +172,109 @@ var slackConversations = Stream{Name: "conversations", Table: "channel_days", Ti
 		"with the replies of a thread it started listed beneath it, dated when sent on a later day. Replies show only here, " +
 		"so replies to a thread started before the kept days are left out, and a reply edited later reads as first written " +
 		"until its day changes again. A day too long for one document keeps its earliest messages. People are named " +
-		"by their Slack real name, else their handle, and mentions read @Name and #channel."}
+		"by their Slack real name, else their handle, and mentions read @Name and #channel. Helix Foundry's own messages " +
+		"show without their text."}
 
+// slackKind reads a Slack workspace with a bot token: a pasted internal
+// app's, or one a broker vended. A connector whose settings name Helix's
+// Slack app (SlackCredentialApp), once its switch is no longer staged, is
+// read by app instead (For).
 type slackKind struct {
 	base string
 	http *http.Client
+	// helixAppID is Helix Foundry's own Slack app (SlackFeedOptions.HelixAppID):
+	// its bot's messages are kept without their text. "" knows none.
+	helixAppID string
+	app        *slackAppKind
+}
+
+var _ Variant = (*slackKind)(nil)
+
+// For is the kind that reads a connector with settings: the app's when they
+// name Helix's Slack app and aren't staged, else this token kind. Settings
+// that aren't a Slack connector's are refused.
+func (k *slackKind) For(settings json.RawMessage) (Kind, error) {
+	var s SlackSettings
+	if err := json.Unmarshal(orEmpty(settings), &s); err != nil {
+		return nil, fmt.Errorf("read slack settings: %w", err)
+	}
+	switch s.Credential {
+	case "":
+		return k, nil
+	case SlackCredentialApp:
+		if s.Staged {
+			return k, nil
+		}
+		return k.app, nil
+	}
+	return nil, fmt.Errorf("slack settings name an unknown credential %q", s.Credential)
 }
 
 func (k *slackKind) Name() string        { return "slack" }
 func (k *slackKind) DisplayName() string { return "Slack" }
 
+// SlackCredentialApp is the credential of a Slack connector read through
+// its workspace's install of Helix's Slack app; "" is a bot token.
+const SlackCredentialApp = "helix_app"
+
 // SlackSettings are a Slack connector's settings: how many days of channel
-// history it keeps.
+// history it keeps, and what it reads with.
 type SlackSettings struct {
 	HistoryDays int `json:"history_days"`
+	// Credential is "" for a bot token, or SlackCredentialApp.
+	Credential string `json:"credential,omitempty"`
+	// TeamID is the Slack team an app connector reads, and Staged a token
+	// connector switching to the app: it syncs by its token until the app's
+	// backfill covers its window. The API sets both, never a request.
+	TeamID string `json:"team_id,omitempty"`
+	Staged bool   `json:"staged,omitempty"`
 }
 
-// Prepare checks a key's format. A token the broker vended must be a bot's
-// too (slackBotPrefixes), or none yet at Start: a user token reads as its
-// person, direct messages included, so signing in must install the bot.
-// auth.test says whose a token is (botID), which Discover and Identity
-// check of a signed-in source.
+// Prepare checks the settings, then a key's format: a token's, or a staged
+// switch's, which syncs by its token meanwhile; the app's credential takes
+// none. A token the broker vended must be a bot's too (slackBotPrefixes), or
+// none yet at Start: a user token reads as its person, direct messages
+// included, so signing in must install the bot. auth.test says whose a
+// token is (botID), which Discover and Identity check of a signed-in
+// source. Through the app, a connector keeps at most
+// model.SlackAppHistoryDaysMax days.
 func (k *slackKind) Prepare(src Source) (json.RawMessage, error) {
-	secret := strings.TrimSpace(src.Secret)
-	switch {
-	case src.SignIn && secret != "" && !slices.ContainsFunc(slackBotPrefixes, func(p string) bool { return strings.HasPrefix(secret, p) }):
-		return nil, invalid("Slack gave a token that is no bot's, which reads as its person, direct messages included: sign in with the bot instead")
-	case !src.SignIn && !slackTokenRE.MatchString(secret):
-		return nil, invalid("enter a Slack bot token (xoxb-…)")
-	}
 	var s SlackSettings
 	decoder := json.NewDecoder(bytes.NewReader(orEmpty(src.Settings)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&s); err != nil {
 		return nil, invalid("this connector takes only its token and how many days of history to keep")
 	}
+	most := 365
+	switch s.Credential {
+	case "":
+		if s.TeamID != "" || s.Staged {
+			return nil, invalid("a connection with a bot token reads no Slack team through Helix's Slack app")
+		}
+	case SlackCredentialApp:
+		most = model.SlackAppHistoryDaysMax
+		if s.TeamID != "" && !model.ValidSlackID(s.TeamID) {
+			return nil, invalid("Slack team %q is not a Slack id", s.TeamID)
+		}
+		if !s.Staged && strings.TrimSpace(src.Secret) != "" {
+			return nil, invalid("a connection through Helix's Slack app takes no token")
+		}
+	default:
+		return nil, invalid("a Slack connection reads with a bot token or through Helix's Slack app")
+	}
+	secret := strings.TrimSpace(src.Secret)
+	switch {
+	case s.Credential == SlackCredentialApp && !s.Staged:
+	case src.SignIn && secret != "" && !slices.ContainsFunc(slackBotPrefixes, func(p string) bool { return strings.HasPrefix(secret, p) }):
+		return nil, invalid("Slack gave a token that is no bot's, which reads as its person, direct messages included: sign in with the bot instead")
+	case !src.SignIn && !slackTokenRE.MatchString(secret):
+		return nil, invalid("enter a Slack bot token (xoxb-…)")
+	}
 	switch {
 	case s.HistoryDays == 0:
 		s.HistoryDays = defaultSlackHistoryDays
-	case s.HistoryDays < 1 || s.HistoryDays > 365:
-		return nil, invalid("keep 1 to 365 days of history")
+	case s.HistoryDays < 1 || s.HistoryDays > most:
+		return nil, invalid("keep 1 to %d days of history", most)
 	}
 	return json.Marshal(s)
 }
@@ -230,12 +294,19 @@ func (k *slackKind) Streams(Source) []Stream { return []Stream{slackConversation
 // channel yet lists them with a warning, since only an invite shows what
 // it may read.
 func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error) {
-	c := k.client(src.Secret)
+	return discoverSlack(ctx, k.client(src.Secret), src.SignIn, true)
+}
+
+// discoverSlack is Discover through c. Without probe, the scopes alone say
+// whether the app may read each kind of channel's history: Helix's Slack
+// app reads history from its mirror, never by a call a test would spend.
+// A channel shared with another organisation is never read (slackChannel.shared).
+func discoverSlack(ctx context.Context, c *slackClient, signIn, probe bool) (Discovery, error) {
 	auth, err := c.auth(ctx)
 	if err != nil {
 		return Discovery{}, err
 	}
-	if src.SignIn && auth.botID == "" {
+	if signIn && auth.botID == "" {
 		return Discovery{}, errNotSlackBot
 	}
 	var (
@@ -257,6 +328,9 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 					var ch slackChannel
 					if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
 						return errors.New("slack users.conversations: a listed channel has no id")
+					}
+					if ch.shared() {
+						return nil
 					}
 					if _, ok := joined[ch.IsPrivate]; !ok {
 						joined[ch.IsPrivate] = ch
@@ -288,6 +362,10 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		}
 		if scope := slackHistoryScope(private); !auth.scopes.has(scope) {
 			history[private] = "add the " + scope + " scope to the app and reinstall it"
+			continue
+		}
+		if !probe {
+			readsHistory = true
 			continue
 		}
 		_, _, err := c.call(ctx, "conversations.history", url.Values{"channel": {ch.ID}, "limit": {"1"}})
@@ -379,6 +457,104 @@ func (k *slackKind) Identity(ctx context.Context, src Source) (string, string, e
 	return user + " in " + team, id, nil
 }
 
+var _ Audienced = (*slackKind)(nil)
+
+// Audiences reads who each channel the app can see is shared with: the
+// workspace's people from users.list, by email (deleted accounts and bots
+// left out; two accounts with one email are one person, a guest when
+// either is), then every channel conversations.list lists of the types the
+// token may list. A public channel is shared with everyone; a private one,
+// which the app sees only while in it, with its members of
+// conversations.members that have an email, others dropped. A private
+// channel gone since it was listed stays unknown. Without users:read,
+// users:read.email or channels:read no one can be matched, so the read is
+// refused with the scope to add; without groups:read the private channels
+// stay unknown, so only full readers read them.
+func (k *slackKind) Audiences(ctx context.Context, src Source) (Audiences, error) {
+	return slackAudiences(ctx, k.client(src.Secret))
+}
+
+// slackAudiences reads who each channel c can see is shared with, as
+// slackKind.Audiences says, through a token's client or an install's.
+func slackAudiences(ctx context.Context, c *slackClient) (Audiences, error) {
+	auth, err := c.auth(ctx)
+	if err != nil {
+		return Audiences{}, err
+	}
+	for _, scope := range []string{"users:read", "users:read.email", "channels:read"} {
+		if !auth.scopes.has(scope) {
+			return Audiences{}, refused(errMissingScope, "add the %s scope to the app and reinstall it, so Foundry can follow who each channel is shared with", scope)
+		}
+	}
+	a := Audiences{People: map[Email]Person{}, Items: map[string]Audience{}}
+	emails := map[string]Email{} // by user id
+	err = c.pages(ctx, "users.list", "members", url.Values{"limit": {slackListPage}}, func(raw json.RawMessage) error {
+		var u slackUser
+		if json.Unmarshal(raw, &u) != nil || u.ID == "" {
+			return errors.New("slack users.list: a listed user has no id")
+		}
+		email, ok := ParseEmail(u.Profile.Email)
+		if !ok || u.Deleted || u.IsBot {
+			return nil
+		}
+		emails[u.ID] = email
+		a.People[email] = Person{Guest: a.People[email].Guest || u.IsRestricted || u.IsUltraRestricted}
+		return nil
+	})
+	if err != nil {
+		return Audiences{}, err
+	}
+	var private []string
+	err = c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {auth.scopes.types()}},
+		func(raw json.RawMessage) error {
+			var ch slackChannel
+			if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
+				return errors.New("slack conversations.list: a listed channel has no id")
+			}
+			if ch.IsPrivate {
+				private = append(private, ch.ID)
+			} else {
+				a.Items[ch.ID] = EveryoneAudience()
+			}
+			return nil
+		})
+	if err != nil {
+		return Audiences{}, err
+	}
+	for _, channel := range private {
+		var members []Email
+		err := c.pages(ctx, "conversations.members", "members", url.Values{"channel": {channel}, "limit": {slackListPage}},
+			func(raw json.RawMessage) error {
+				var user string
+				if json.Unmarshal(raw, &user) != nil || user == "" {
+					return fmt.Errorf("slack conversations.members: channel %s lists a member without an id", channel)
+				}
+				if email, ok := emails[user]; ok {
+					members = append(members, email)
+				}
+				return nil
+			})
+		switch {
+		case errors.Is(err, errChannelGone):
+			continue
+		case err != nil:
+			return Audiences{}, err
+		}
+		a.Items[channel] = MembersAudience(members...)
+	}
+	return a, nil
+}
+
+// ItemOfDocument is a conversations document's channel: its external id is
+// "<channel>:<day>".
+func (k *slackKind) ItemOfDocument(stream, externalID string) (string, bool) {
+	channel, day, found := strings.Cut(externalID, ":")
+	if stream != slackConversations.Name || !found || channel == "" || day == "" {
+		return "", false
+	}
+	return channel, true
+}
+
 func (k *slackKind) Hint(secret string) string {
 	if hint := keyHint(strings.TrimSpace(secret), 0); hint != "…" {
 		return "xoxb" + hint
@@ -427,10 +603,18 @@ func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, ro
 // day, or moves a change cursor past it, while a message may still be
 // posted to it.
 func (k *slackKind) pass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) (*slackPass, error) {
+	c := k.client(src.Secret)
+	return newSlackPass(ctx, src, c, c, tables, rows, docs)
+}
+
+// newSlackPass is a pass that calls Slack through c and reads channels'
+// messages from r: Slack itself with a token, Helix's mirror through the app.
+func newSlackPass(ctx context.Context, src Source, c *slackClient, r slackReader, tables []Table, rows map[string]RowWriter,
+	docs DocumentWriter) (*slackPass, error) {
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
 	now := slackNow().UTC().Add(-ChangeOverlap)
-	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs, channels: map[string]string{},
+	p := &slackPass{c: c, r: r, read: map[string]bool{}, rows: rows, docs: docs, channels: map[string]string{},
 		days: map[string]*slackDay{}, historyDays: cmp.Or(s.HistoryDays, defaultSlackHistoryDays), today: now.Format(time.DateOnly),
 		late: map[string]string{}}
 	p.window = now.Truncate(24*time.Hour).AddDate(0, 0, -p.historyDays)
@@ -451,7 +635,9 @@ func (k *slackKind) pass(ctx context.Context, src Source, tables []Table, rows m
 // the names its documents give people and channels, and each channel day
 // it reads.
 type slackPass struct {
-	c    *slackClient
+	c *slackClient
+	// r is where channels' messages are read: Slack, or the app's mirror.
+	r    slackReader
 	read map[string]bool
 	rows map[string]RowWriter
 	docs DocumentWriter
@@ -488,6 +674,27 @@ type slackPass struct {
 	// did not fetch.
 	stop time.Time
 	late map[string]string
+	// states are the app's mirror's days by id: a day gets a document only
+	// once complete or lossy, and a lossy one says so. nil for a token's
+	// read, whose every finished day is complete.
+	states map[string]model.SlackDayState
+	// offer, when set, says whether a finished day's document may be
+	// offered at all (the app's change read waits out redocument_every);
+	// offered are the days whose documents the pass Put.
+	offer   func(d *slackDay) bool
+	offered []string
+}
+
+// slackReader is where a pass reads a channel's messages: Slack's
+// conversations.history and conversations.replies with a token
+// (slackClient), or the app's day mirror.
+type slackReader interface {
+	// history passes each message listed from oldest to latest (zero for
+	// none) to each, newest first, as conversations.history lists them.
+	history(ctx context.Context, channel string, oldest, latest time.Time, each func(slackMessage) error) error
+	// replies are the replies of the thread parent starts, in time order,
+	// up to a little over room bytes.
+	replies(ctx context.Context, channel, parent string, room int) ([]slackMessage, error)
 }
 
 func (p *slackPass) run(ctx context.Context) error {
@@ -635,7 +842,8 @@ func (p *slackPass) listChannels(ctx context.Context) error {
 }
 
 // joined lists the channels the app is in with users.conversations, of the
-// types the token may list, naming them.
+// types the token may list, naming them, but those shared with another
+// organisation: neither a token nor the app reads them.
 func (p *slackPass) joined(ctx context.Context) ([]slackChannel, error) {
 	var member []slackChannel
 	err := p.c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
@@ -645,7 +853,9 @@ func (p *slackPass) joined(ctx context.Context) ([]slackChannel, error) {
 				return errors.New("slack users.conversations: a listed channel has no id")
 			}
 			p.channels[ch.ID] = ch.Name
-			member = append(member, ch)
+			if !ch.shared() {
+				member = append(member, ch)
+			}
 			return nil
 		})
 	return member, err
@@ -655,7 +865,7 @@ func (p *slackPass) joined(ctx context.Context) ([]slackChannel, error) {
 // was removed from, or that was deleted, since it was listed loses the days
 // it read (forget), and the error wraps errChannelGone.
 func (p *slackPass) history(ctx context.Context, ch slackChannel, since time.Time) error {
-	err := p.c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) })
+	err := p.r.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) })
 	if errors.Is(err, errChannelGone) {
 		p.forget(ch.ID)
 	}
@@ -690,6 +900,9 @@ func (p *slackPass) channelDays(ctx context.Context) error {
 			return err
 		}
 		if d.day >= p.today {
+			continue
+		}
+		if state, ok := p.states[d.id()]; p.states != nil && (!ok || state == model.SlackDayPartial) || p.offer != nil && !p.offer(d) {
 			continue
 		}
 		if !p.listed && slices.ContainsFunc(slices.Collect(maps.Keys(d.mentioned)), func(id string) bool {
@@ -739,14 +952,22 @@ func (p *slackPass) channelDays(ctx context.Context) error {
 		if !ok {
 			continue
 		}
+		if p.states[d.id()] == model.SlackDayLossy {
+			text = append(text, "\n"+slackLossyLine+"\n"...)
+		}
 		doc := Document{ExternalID: d.id(), Version: version, At: d.active, Title: "#" + d.channel.Name + ", " + d.day,
 			URL: "https://app.slack.com/client/" + p.team + "/" + d.channel.ID, Text: text}
 		if err := p.docs.Put(ctx, slackConversations.Name, doc); err != nil {
 			return err
 		}
+		p.offered = append(p.offered, d.id())
 	}
 	return nil
 }
+
+// slackLossyLine ends the document of a day the app's mirror holds as
+// lossy: a gap it couldn't read again.
+const slackLossyLine = "Some messages of this day may be missing."
 
 // users reads users.list for the names documents give people, writing the
 // users table's rows when it is read.
@@ -847,7 +1068,7 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 	if d.dropped {
 		var again slackDay
 		start := d.first.Truncate(24 * time.Hour)
-		err := p.c.history(ctx, d.channel.ID, start, start.Add(24*time.Hour-time.Microsecond), func(m slackMessage) error {
+		err := p.r.history(ctx, d.channel.ID, start, start.Add(24*time.Hour-time.Microsecond), func(m slackMessage) error {
 			again.keep(m)
 			return nil
 		})
@@ -878,7 +1099,7 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 		if m.ReplyCount == 0 || text.Len() > slackDayBytes {
 			continue
 		}
-		replies, err := p.c.replies(ctx, d.channel.ID, m.TS, slackDayBytes-text.Len())
+		replies, err := p.r.replies(ctx, d.channel.ID, m.TS, slackDayBytes-text.Len())
 		switch {
 		case errors.Is(err, errChannelGone):
 			return nil, false, nil
@@ -1016,6 +1237,9 @@ func (p *slackPass) version(d *slackDay) (_ string, named bool) {
 	content := sha256.New()
 	content.Write([]byte(d.channel.Name + "\x00"))
 	content.Write(d.sum[:])
+	if p.states[d.id()] == model.SlackDayLossy {
+		content.Write([]byte("lossy\x00"))
+	}
 	for _, id := range slices.Sorted(maps.Keys(d.mentioned)) {
 		content.Write([]byte(id + "\x00" + p.channels[id] + "\x00"))
 	}
@@ -1051,8 +1275,12 @@ type slackUser struct {
 	IsBot    bool   `json:"is_bot"`
 	IsAdmin  bool   `json:"is_admin"`
 	IsOwner  bool   `json:"is_owner"`
-	Updated  int64  `json:"updated"`
-	Profile  struct {
+	// IsRestricted is a multi-channel guest, IsUltraRestricted a
+	// single-channel one.
+	IsRestricted      bool  `json:"is_restricted"`
+	IsUltraRestricted bool  `json:"is_ultra_restricted"`
+	Updated           int64 `json:"updated"`
+	Profile           struct {
 		RealName    string `json:"real_name"`
 		DisplayName string `json:"display_name"`
 		Email       string `json:"email"` // only with users:read.email
@@ -1064,7 +1292,8 @@ func (u slackUser) row() map[string]any {
 	row := map[string]any{
 		"user_id": u.ID, "team_id": orNull(u.TeamID), "name": orNull(u.Name), "real_name": orNull(cmp.Or(u.RealName, u.Profile.RealName)),
 		"display_name": orNull(u.Profile.DisplayName), "email": orNull(u.Profile.Email), "title": orNull(u.Profile.Title),
-		"is_bot": u.IsBot, "is_admin": u.IsAdmin, "is_owner": u.IsOwner, "deleted": u.Deleted, "tz": orNull(u.TZ), "updated_at": nil,
+		"is_bot": u.IsBot, "is_admin": u.IsAdmin, "is_owner": u.IsOwner,
+		"is_restricted": u.IsRestricted, "is_ultra_restricted": u.IsUltraRestricted, "deleted": u.Deleted, "tz": orNull(u.TZ), "updated_at": nil,
 	}
 	if u.Updated > 0 {
 		row["updated_at"] = time.Unix(u.Updated, 0).UTC().Format(time.RFC3339)
@@ -1079,16 +1308,24 @@ type slackChannel struct {
 	IsPrivate  bool   `json:"is_private"`
 	IsArchived bool   `json:"is_archived"`
 	IsMember   bool   `json:"is_member"`
-	Creator    string `json:"creator"`
-	Created    int64  `json:"created"`
-	NumMembers *int   `json:"num_members"`
-	Topic      struct {
+	// IsExtShared and IsPendingExtShared are a channel shared, or being
+	// shared, with another organisation (Slack Connect).
+	IsExtShared        bool   `json:"is_ext_shared"`
+	IsPendingExtShared bool   `json:"is_pending_ext_shared"`
+	Creator            string `json:"creator"`
+	Created            int64  `json:"created"`
+	NumMembers         *int   `json:"num_members"`
+	Topic              struct {
 		Value string `json:"value"`
 	} `json:"topic"`
 	Purpose struct {
 		Value string `json:"value"`
 	} `json:"purpose"`
 }
+
+// shared reports a channel shared, or being shared, with another
+// organisation, which Foundry never reads.
+func (ch slackChannel) shared() bool { return ch.IsExtShared || ch.IsPendingExtShared }
 
 func (ch slackChannel) row() map[string]any {
 	row := map[string]any{
@@ -1105,25 +1342,41 @@ func (ch slackChannel) row() map[string]any {
 	return row
 }
 
-// slackMessage is a message of conversations.history or conversations.replies.
+// slackMessage is a message of conversations.history or conversations.replies,
+// or of the app's mirror, which keeps it as Slack's events and pages give it.
 type slackMessage struct {
-	TS         string `json:"ts"`
-	ThreadTS   string `json:"thread_ts"`
-	User       string `json:"user"`
-	BotID      string `json:"bot_id"`
-	Username   string `json:"username"`
+	TS       string `json:"ts"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+	User     string `json:"user,omitempty"`
+	BotID    string `json:"bot_id,omitempty"`
+	// AppID is the app a bot's message came from, also in its bot_profile.
+	AppID      string `json:"app_id,omitempty"`
+	Username   string `json:"username,omitempty"`
 	BotProfile struct {
-		Name string `json:"name"`
-	} `json:"bot_profile"`
-	Subtype string `json:"subtype"`
+		Name  string `json:"name,omitempty"`
+		AppID string `json:"app_id,omitempty"`
+	} `json:"bot_profile,omitzero"`
+	Subtype string `json:"subtype,omitempty"`
 	Text    string `json:"text"`
 	Edited  struct {
-		TS string `json:"ts"`
-	} `json:"edited"`
-	ReplyCount      int    `json:"reply_count"`
-	ReplyUsersCount int    `json:"reply_users_count"`
-	LatestReply     string `json:"latest_reply"`
+		TS string `json:"ts,omitempty"`
+	} `json:"edited,omitzero"`
+	ReplyCount      int    `json:"reply_count,omitempty"`
+	ReplyUsersCount int    `json:"reply_users_count,omitempty"`
+	LatestReply     string `json:"latest_reply,omitempty"`
 	at              time.Time
+}
+
+// slackOurs reports a message of Helix Foundry's own bot: its bot id,
+// its bot user or its app (app's, else helixAppID), comparing non-empty
+// values only. Its text is never kept; the message is, as a stub, so
+// counts match Slack's.
+func slackOurs(app SlackApp, helixAppID string) func(slackMessage) bool {
+	appID := cmp.Or(app.AppID, helixAppID)
+	return func(m slackMessage) bool {
+		return app.BotID != "" && m.BotID == app.BotID || app.BotUserID != "" && m.User == app.BotUserID ||
+			appID != "" && (m.AppID == appID || m.BotProfile.AppID == appID)
+	}
 }
 
 func (m slackMessage) row(channel string) map[string]any {
@@ -1167,17 +1420,63 @@ func orNull(s string) any {
 
 // slackClient is one read's calls, each method paced under its own limit.
 type slackClient struct {
-	k     *slackKind
-	token string
-	pace  map[string]*rate.Limiter
+	// send makes one GET of a Web API method, paced and retried, and
+	// returns Slack's answer.
+	send func(ctx context.Context, method string, query url.Values) (status int, header http.Header, body []byte, err error)
+	// ours is a message of Helix Foundry's own bot, kept without its text.
+	ours func(slackMessage) bool
 }
 
-func (k *slackKind) client(secret string) *slackClient {
+// slackPace paces each method of one read under its own limit.
+func slackPace() map[string]*rate.Limiter {
 	pace := map[string]*rate.Limiter{}
 	for method, interval := range slackIntervals {
 		pace[method] = rate.NewLimiter(rate.Every(interval), 1)
 	}
-	return &slackClient{k: k, token: strings.TrimSpace(secret), pace: pace}
+	return pace
+}
+
+// client calls Slack's Web API with a token, retrying as fetch does.
+func (k *slackKind) client(secret string) *slackClient {
+	pace, token := slackPace(), strings.TrimSpace(secret)
+	return &slackClient{ours: slackOurs(SlackApp{}, k.helixAppID), send: func(ctx context.Context, method string, query url.Values) (int, http.Header, []byte, error) {
+		target := k.base + "/" + method
+		if len(query) > 0 {
+			target += "?" + query.Encode()
+		}
+		return fetchWithHeader(ctx, k.http, func() (*http.Request, error) {
+			if err := pace[method].Wait(ctx); err != nil {
+				return nil, err
+			}
+			req, err := http.NewRequest(http.MethodGet, target, nil)
+			if err == nil {
+				req.Header = http.Header{"Authorization": {"Bearer " + token}}
+			}
+			return req, err
+		})
+	}}
+}
+
+// appClient calls Slack's Web API through app's caller, paced as a token's
+// calls are, and retrying a rate limit or an outage as fetch does.
+func (k *slackKind) appClient(app *SlackApp) *slackClient {
+	pace := slackPace()
+	return &slackClient{ours: slackOurs(*app, k.helixAppID), send: func(ctx context.Context, method string, query url.Values) (int, http.Header, []byte, error) {
+		for attempt := 0; ; attempt++ {
+			if err := pace[method].Wait(ctx); err != nil {
+				return 0, nil, nil, err
+			}
+			status, header, body, err := app.Caller.Call(ctx, method, query)
+			if err != nil || status != http.StatusTooManyRequests && status < 500 || attempt >= maxRetries {
+				return status, header, body, err
+			}
+			select {
+			case <-ctx.Done():
+				return 0, nil, nil, ctx.Err()
+			case <-time.After(retryBackoff(attempt, header.Get("Retry-After"))):
+			}
+		}
+	}}
 }
 
 // history lists a channel's messages from oldest to latest (zero for
@@ -1202,6 +1501,9 @@ func (c *slackClient) history(ctx context.Context, channel string, oldest, lates
 		case slackSkipped[m.Subtype], m.at.Before(oldest), !latest.IsZero() && m.at.After(latest):
 			return nil
 		}
+		if c.ours(m) {
+			m.Text = ""
+		}
 		return each(m)
 	})
 }
@@ -1225,6 +1527,9 @@ func (c *slackClient) replies(ctx context.Context, channel, parent string, room 
 			case !ok:
 				return fmt.Errorf("slack conversations.replies: thread %s in channel %s lists a reply without a valid ts", parent, channel)
 			case m.TS != parent && !slackSkipped[m.Subtype]:
+				if c.ours(m) {
+					m.Text = ""
+				}
 				replies = append(replies, m)
 				if size += len(m.Text) + slackMessageOverhead; size > room {
 					return errStopPaging
@@ -1288,20 +1593,7 @@ func (c *slackClient) pages(ctx context.Context, method, field string, query url
 // with the scope to add, wrapping errMissingScope, and a channel or thread
 // gone since it was listed wraps errChannelGone or errThreadGone.
 func (c *slackClient) call(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, http.Header, error) {
-	target := c.k.base + "/" + method
-	if len(query) > 0 {
-		target += "?" + query.Encode()
-	}
-	status, header, body, err := fetchWithHeader(ctx, c.k.http, func() (*http.Request, error) {
-		if err := c.pace[method].Wait(ctx); err != nil {
-			return nil, err
-		}
-		req, err := http.NewRequest(http.MethodGet, target, nil)
-		if err == nil {
-			req.Header = http.Header{"Authorization": {"Bearer " + c.token}}
-		}
-		return req, err
-	})
+	status, header, body, err := c.send(ctx, method, query)
 	if err != nil {
 		return nil, nil, refused(err, "could not reach Slack; try again")
 	}

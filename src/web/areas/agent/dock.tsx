@@ -194,6 +194,13 @@ export function AgentDock({
                   onSelect={() => open(t.id)}
                 >
                   {t.title || "Untitled"}
+                  {/* Started in Slack, through Helix Foundry's app. */}
+                  {t.surface === "FOUNDRY_AGENT_SURFACE_SLACK" && (
+                    <>
+                      {" "}
+                      <Tag>Slack</Tag>
+                    </>
+                  )}
                 </MenuItem>
               ))}
             </>
@@ -511,32 +518,43 @@ export function Transcript({
             }
           />
         ) : (
-          data.turns.map((t, i, all) => (
-            <TurnView
-              key={t.id}
-              turn={t}
-              helper={(data.thread.runtime ?? "api") !== "api"}
-              recent={all.length - i <= RECENT_TURNS}
-              scroller={log}
-              actions={actions}
-              busy={busy}
-              asked={
-                !t.asked
-                  ? "no"
-                  : i === all.length - 1 && t.status === "done"
-                    ? "open"
-                    : all.some((x) => x.answers?.turnId === t.id)
-                      ? "answered"
-                      : "passed"
-              }
-              asking={
-                t.answers
-                  ? all.find((x) => x.id === t.answers!.turnId)
-                  : undefined
-              }
-              onNavigate={onNavigate}
-            />
-          ))
+          <>
+            {/* A Slack-born thread: only Slack makes turns in it. */}
+            {data.turns.some(
+              (t) => t.surface === "FOUNDRY_AGENT_SURFACE_SLACK",
+            ) && (
+              <p className="ag-note">
+                This conversation is from Slack. Helix deletes Slack
+                conversations 30 days after their last message.
+              </p>
+            )}
+            {data.turns.map((t, i, all) => (
+              <TurnView
+                key={t.id}
+                turn={t}
+                helper={(data.thread.runtime ?? "api") !== "api"}
+                recent={all.length - i <= RECENT_TURNS}
+                scroller={log}
+                actions={actions}
+                busy={busy}
+                asked={
+                  !t.asked
+                    ? "no"
+                    : i === all.length - 1 && t.status === "done"
+                      ? "open"
+                      : all.some((x) => x.answers?.turnId === t.id)
+                        ? "answered"
+                        : "passed"
+                }
+                asking={
+                  t.answers
+                    ? all.find((x) => x.id === t.answers!.turnId)
+                    : undefined
+                }
+                onNavigate={onNavigate}
+              />
+            ))}
+          </>
         )}
       </div>
     </div>
@@ -662,17 +680,27 @@ function TurnView({
       : null;
   // An Analyst question shows once, under the last step that returned it.
   const answers = useMemo(() => answerBlocks(stream.blocks), [stream.blocks]);
+  // What the person sent from Slack (through Helix Foundry's Slack app) says so.
+  const who = (label: string) =>
+    turn.surface === "FOUNDRY_AGENT_SURFACE_SLACK" ? (
+      <span className="ag-who-row">
+        <span className="ag-who">{label}</span>
+        <Tag>Slack</Tag>
+      </span>
+    ) : (
+      <span className="ag-who">{label}</span>
+    );
   return (
     <>
       {turn.kind === "answers" ? (
         <div className="ag-msg ag-msg--person">
-          <span className="ag-who">You answered</span>
+          {who("You answered")}
           <AnswersOf turn={turn} asking={asking} />
         </div>
       ) : (
         turn.kind !== "action_result" && (
           <div className="ag-msg ag-msg--person">
-            <span className="ag-who">You</span>
+            {who("You")}
             <p className="ag-text">{turn.text}</p>
           </div>
         )

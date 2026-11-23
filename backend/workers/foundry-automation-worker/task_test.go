@@ -609,7 +609,7 @@ func TestARunWalksItsStepsAsItsOwner(t *testing.T) {
 		turn = queued
 	}
 	assert.Equal(t, model.FoundryAgentTurnAutomation, turn.Kind)
-	assert.Equal(t, owner, turn.UserID)
+	assert.Equal(t, model.AgentPerson{UserID: owner}, turn.Principal)
 	assert.Equal(t, f.task.cfg.MaxMicros(), turn.MaxUSDMicros)
 	assert.True(t, strings.HasPrefix(turn.Input, "Are any invoices overdue?\n\n<workflow_context>"), turn.Input)
 

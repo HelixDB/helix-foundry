@@ -71,6 +71,12 @@
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
+/* The speaker and a tag beside it (Slack, for a turn sent from Slack). */
+.ag-who-row {
+  display: flex;
+  align-items: center;
+  gap: var(--hf-space-1);
+}
 .ag-text {
   margin: 0;
   color: var(--hf-text);
