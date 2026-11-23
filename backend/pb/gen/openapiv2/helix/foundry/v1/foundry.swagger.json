@@ -12767,6 +12767,10 @@
         },
         "value": {
           "$ref": "#/definitions/v1FoundryReviewValueCard"
+        },
+        "modelAdvice": {
+          "$ref": "#/definitions/v1FoundryReviewModelAdvice",
+          "description": "Founder's model's suggestion, on a name or value card of the decide lane\nthe rules leave undecided, once the model picked one of its choices."
         }
       },
       "description": "A card of the review walk: a name, a held claim or a value. Its reviews\nare read from the load by review key."
@@ -12801,6 +12805,18 @@
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
+    },
+    "v1FoundryReviewCite": {
+      "type": "object",
+      "properties": {
+        "docId": {
+          "type": "string"
+        },
+        "span": {
+          "$ref": "#/definitions/v1FoundryReviewSpan"
+        }
+      },
+      "description": "A place in a document a suggestion cites."
     },
     "v1FoundryReviewClaimCard": {
       "type": "object",
@@ -13054,6 +13070,35 @@
       ],
       "default": "FOUNDRY_REVIEW_LANE_UNSPECIFIED",
       "description": "Where a card goes in the review walk.\n\n - FOUNDRY_REVIEW_LANE_DECIDE: To decide.\n - FOUNDRY_REVIEW_LANE_FYI: For information: a name only the model linked, or a value whose table\nrow's value stands."
+    },
+    "v1FoundryReviewModelAdvice": {
+      "type": "object",
+      "properties": {
+        "choice": {
+          "$ref": "#/definitions/v1FoundryReviewChoice"
+        },
+        "rationale": {
+          "type": "string",
+          "description": "One or two sentences, at most 300 characters: plain text, never markup,\nsanitized of control and bidi characters."
+        },
+        "cites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewCite"
+          },
+          "description": "The quotes it stands on, at least one."
+        },
+        "offered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryReviewChoice"
+          },
+          "description": "The card's choices the model was offered, in order."
+        }
+      },
+      "description": "Founder's model's suggestion for a review card: one of the card's choices\nwhen it was written, with why, from the quotes it cites. Unmeasured and\nnever batched: a person takes it as any other choice. Show it only while\nthe card's choices are still `offered`."
     },
     "v1FoundryReviewNameCard": {
       "type": "object",
@@ -13798,10 +13843,11 @@
         "FOUNDRY_USAGE_TASK_LOADS",
         "FOUNDRY_USAGE_TASK_API_SOURCES",
         "FOUNDRY_USAGE_TASK_QUESTIONS",
-        "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS"
+        "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS",
+        "FOUNDRY_USAGE_TASK_REVIEW_ADVICE"
       ],
       "default": "FOUNDRY_USAGE_TASK_UNSPECIFIED",
-      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd.\n - FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS: Workflow runs' assessments charged this month (the ontology agent's\nAssess, on the questions model), capped by\nfoundry.workflows.assess.monthly_usd, apart from questions'."
+      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd.\n - FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS: Workflow runs' assessments charged this month (the ontology agent's\nAssess, on the questions model), capped by\nfoundry.workflows.assess.monthly_usd, apart from questions'.\n - FOUNDRY_USAGE_TASK_REVIEW_ADVICE: Review advice charged this month: Founder's model's suggestions on the\nreview cards the rules leave undecided, on the verify model, capped by\nfoundry.reviews.advise.monthly_usd, apart from every other task's."
     },
     "v1FoundryWorkflow": {
       "type": "object",

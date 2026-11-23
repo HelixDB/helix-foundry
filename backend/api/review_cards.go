@@ -6,15 +6,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/reviewadvice"
 	"github.com/helixdb/helix-foundry/backend/reviewcards"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -206,6 +210,13 @@ func (s *Service) ListFoundryReviewCards(ctx context.Context, req *foundryv1.Lis
 		case reviewcards.KindValue:
 			card.Card = &foundryv1.FoundryReviewCard_Value{Value: &foundryv1.FoundryReviewValueCard{ReviewKey: c.ReviewKey}}
 		}
+		if c.Advice != nil && c.Lane == reviewcards.LaneDecide && c.Kind != reviewcards.KindClaim {
+			advice, err := reviewModelAdviceProto(c.Advice)
+			if err != nil {
+				log.From(ctx).Warn("review cards: stored advice doesn't read; it is left out", "card", card.CardId, "err", err)
+			}
+			card.ModelAdvice = advice
+		}
 		out.Cards = append(out.Cards, card)
 	}
 	for _, n := range nameDecisions {
@@ -224,6 +235,37 @@ func (s *Service) ListFoundryReviewCards(ctx context.Context, req *foundryv1.Lis
 		for _, b := range p.Bands {
 			out.Precision.Bands = append(out.Precision.Bands, &foundryv1.FoundryReviewPrecision_Band{Band: b.Band, Right: int32(b.Right), Total: int32(b.Total)})
 		}
+	}
+	return out, nil
+}
+
+// reviewModelAdviceProto is stored advice as the walk reads it: its choice
+// and the choices offered (each a FoundryReviewChoice's JSON, read with
+// protojson), its rationale and its cites. Advice that doesn't read is an
+// error, and none.
+func reviewModelAdviceProto(a *foundrymodel.FoundryReviewAdvice) (*foundryv1.FoundryReviewModelAdvice, error) {
+	out := &foundryv1.FoundryReviewModelAdvice{Rationale: a.Rationale, Choice: &foundryv1.FoundryReviewChoice{}}
+	if err := protojson.Unmarshal(a.Choice, out.Choice); err != nil {
+		return nil, fmt.Errorf("its choice: %w", err)
+	}
+	var offered []json.RawMessage
+	if err := json.Unmarshal(a.Offered, &offered); err != nil {
+		return nil, fmt.Errorf("what it was offered: %w", err)
+	}
+	for _, raw := range offered {
+		c := &foundryv1.FoundryReviewChoice{}
+		if err := protojson.Unmarshal(raw, c); err != nil {
+			return nil, fmt.Errorf("a choice it was offered: %w", err)
+		}
+		out.Offered = append(out.Offered, c)
+	}
+	var cites []reviewadvice.Cite
+	if err := json.Unmarshal(a.Cites, &cites); err != nil || len(cites) == 0 || out.Choice.GetChoice() == nil {
+		return nil, fmt.Errorf("its cites or choice don't read (%v)", err)
+	}
+	for _, c := range cites {
+		out.Cites = append(out.Cites, &foundryv1.FoundryReviewCite{DocId: c.DocID,
+			Span: &foundryv1.FoundryReviewSpan{Section: c.Section, Start: c.Start, End: c.End}})
 	}
 	return out, nil
 }

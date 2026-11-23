@@ -26,6 +26,7 @@ type usageStore struct {
 	sources   int64
 	questions foundrymodel.FoundryQuestionSpend
 	assessed  int64
+	advised   int64
 	failing   string
 	asked     []string
 }
@@ -66,6 +67,13 @@ func (s *usageStore) SumFoundryWorkflowAssessmentSpend(_ context.Context, ws str
 	return s.assessed, s.ask("assessments", ws, since)
 }
 
+func (s *usageStore) SumFoundryReviewAdviceSpend(_ context.Context, ws string, month time.Time) (int64, error) {
+	if ws != "ws-1" {
+		return 0, s.ask("advice", ws, month)
+	}
+	return s.advised, s.ask("advice", ws, month)
+}
+
 // usageService has prod's caps: $50 of loads, $20 of API sources' work no
 // person started, $15 of questions.
 func usageService(store *usageStore) *Service {
@@ -74,6 +82,7 @@ func usageService(store *usageStore) *Service {
 	cfg.Foundry.Events.MaxSystemUSDPerWorkspaceMonth = 20
 	cfg.Foundry.Ask.MonthlyUSD = 15
 	cfg.Foundry.Workflows.Assess.MonthlyUSD = 5
+	cfg.Foundry.Reviews.Advise.MonthlyUSD = 2
 	return &Service{deps: &runtimeDeps{DB: store, Cfg: &cfg}}
 }
 
@@ -113,7 +122,7 @@ func TestGetFoundryUsage(t *testing.T) {
 	// out. Every sum reads the same UTC month, from its first instant.
 	t.Run("reads each task's month with its cap", func(t *testing.T) {
 		store := &usageStore{loads: 12_400_000, sources: 1_200_000, questions: foundrymodel.FoundryQuestionSpend{SpentMicros: 4_800_000, ReservedMicros: 500_000},
-			assessed: 300_000}
+			assessed: 300_000, advised: 250_000}
 		before := monthOf(time.Now())
 		out, err := usageService(store).GetFoundryUsage(ctx, &foundryv1.GetFoundryUsageRequest{WorkspaceId: "ws-1"})
 		if err != nil {
@@ -124,7 +133,7 @@ func TestGetFoundryUsage(t *testing.T) {
 		if !start.Equal(before) && !start.Equal(monthOf(time.Now())) {
 			t.Fatalf("month_start = %v", start)
 		}
-		if !u.GetResetsAt().AsTime().Equal(start.AddDate(0, 1, 0)) || u.GetTotalUsdMicros() != 17_500_000 {
+		if !u.GetResetsAt().AsTime().Equal(start.AddDate(0, 1, 0)) || u.GetTotalUsdMicros() != 17_750_000 {
 			t.Fatalf("usage = %+v", u)
 		}
 		equal(t, entries(u), []string{
@@ -132,9 +141,11 @@ func TestGetFoundryUsage(t *testing.T) {
 			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_API_SOURCES, 1_200_000, 0, 20_000_000),
 			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_QUESTIONS, 4_800_000, 500_000, 15_000_000),
 			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS, 300_000, 0, 5_000_000),
+			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_REVIEW_ADVICE, 250_000, 0, 2_000_000),
 		})
 		since := start.Format(time.RFC3339Nano)
-		equal(t, store.asked, []string{"loads ws-1 " + since, "sources:events ws-1 " + since, "questions ws-1 " + since, "assessments ws-1 " + since})
+		equal(t, store.asked, []string{"loads ws-1 " + since, "sources:events ws-1 " + since, "questions ws-1 " + since, "assessments ws-1 " + since,
+			"advice ws-1 " + since})
 	})
 
 	// A month with no spend reads as zero everywhere, caps still set.
@@ -151,6 +162,7 @@ func TestGetFoundryUsage(t *testing.T) {
 			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_API_SOURCES, 0, 0, 20_000_000),
 			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_QUESTIONS, 0, 0, 15_000_000),
 			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS, 0, 0, 5_000_000),
+			entry(foundryv1.FoundryUsageTask_FOUNDRY_USAGE_TASK_REVIEW_ADVICE, 0, 0, 2_000_000),
 		})
 	})
 
@@ -162,7 +174,8 @@ func TestGetFoundryUsage(t *testing.T) {
 			t.Fatalf("usage = (%+v, %v)", out, err)
 		}
 		since := out.GetUsage().GetMonthStart().AsTime().Format(time.RFC3339Nano)
-		equal(t, store.asked, []string{"loads ws-2 " + since, "sources:events ws-2 " + since, "questions ws-2 " + since, "assessments ws-2 " + since})
+		equal(t, store.asked, []string{"loads ws-2 " + since, "sources:events ws-2 " + since, "questions ws-2 " + since, "assessments ws-2 " + since,
+			"advice ws-2 " + since})
 	})
 
 	t.Run("needs a workspace", func(t *testing.T) {
@@ -175,7 +188,7 @@ func TestGetFoundryUsage(t *testing.T) {
 
 	// A sum that fails fails the read, saying which; nothing is guessed.
 	t.Run("fails with the sum that failed", func(t *testing.T) {
-		for _, sum := range []string{"loads", "sources:events", "questions", "assessments"} {
+		for _, sum := range []string{"loads", "sources:events", "questions", "assessments", "advice"} {
 			_, err := usageService(&usageStore{failing: sum}).GetFoundryUsage(ctx, &foundryv1.GetFoundryUsageRequest{WorkspaceId: "ws-1"})
 			if status.Code(err) != codes.Internal {
 				t.Fatalf("%s: err = %v", sum, err)

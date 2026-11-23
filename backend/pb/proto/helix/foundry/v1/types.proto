@@ -1688,6 +1688,10 @@ enum FoundryUsageTask {
   // Assess, on the questions model), capped by
   // foundry.workflows.assess.monthly_usd, apart from questions'.
   FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS = 4;
+  // Review advice charged this month: Founder's model's suggestions on the
+  // review cards the rules leave undecided, on the verify model, capped by
+  // foundry.reviews.advise.monthly_usd, apart from every other task's.
+  FOUNDRY_USAGE_TASK_REVIEW_ADVICE = 5;
 }
 
 // FoundryUsageEntry is one task's month.
@@ -2136,6 +2140,30 @@ message FoundryReviewCard {
     FoundryReviewClaimCard claim = 6;
     FoundryReviewValueCard value = 7;
   }
+  // Founder's model's suggestion, on a name or value card of the decide lane
+  // the rules leave undecided, once the model picked one of its choices.
+  FoundryReviewModelAdvice model_advice = 8;
+}
+
+// Founder's model's suggestion for a review card: one of the card's choices
+// when it was written, with why, from the quotes it cites. Unmeasured and
+// never batched: a person takes it as any other choice. Show it only while
+// the card's choices are still `offered`.
+message FoundryReviewModelAdvice {
+  FoundryReviewChoice choice = 1;
+  // One or two sentences, at most 300 characters: plain text, never markup,
+  // sanitized of control and bidi characters.
+  string rationale = 2;
+  // The quotes it stands on, at least one.
+  repeated FoundryReviewCite cites = 3;
+  // The card's choices the model was offered, in order.
+  repeated FoundryReviewChoice offered = 4;
+}
+
+// A place in a document a suggestion cites.
+message FoundryReviewCite {
+  string doc_id = 1;
+  FoundryReviewSpan span = 2;
 }
 
 // A name of a document: every review of it shares one resolve decision.

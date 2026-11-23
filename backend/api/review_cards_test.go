@@ -329,3 +329,43 @@ func TestListFoundryReviewDecisionsByID(t *testing.T) {
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
 	}
 }
+
+// An advised name or value card carries its model advice and the choices it
+// was offered; advice that doesn't read, or on a held claim, is left out. A
+// grantee never reads cards, so never advice.
+func TestListFoundryReviewCardsModelAdvice(t *testing.T) {
+	s, db := cardService(t, nil)
+	name, value, broken, held := card(0, reviewcards.KindName), card(1, reviewcards.KindValue), card(2, reviewcards.KindName), card(3, reviewcards.KindClaim)
+	name.Advice = &foundrymodel.FoundryReviewAdvice{Choice: []byte(`{"resolve":{"entityKey":"scus_2"}}`),
+		Offered:   []byte(`[{"resolve":{"entityKey":"scus_1"}},{"resolve":{"entityKey":"scus_2"}},{"resolve":{"notInData":true}}]`),
+		Rationale: "The quote names the London office.", Cites: []byte(`[{"docId":"doc-1","section":2,"start":10,"end":40}]`)}
+	value.Advice = &foundrymodel.FoundryReviewAdvice{Choice: []byte(`{"prop":{"integer":"9007199254740993"}}`),
+		Offered: []byte(`[{"prop":{"integer":"9007199254740993"}},{"prop":{"number":12.5}}]`), Rationale: "Two quotes.",
+		Cites: []byte(`[{"docId":"doc-1","section":0,"start":0,"end":5}]`)}
+	broken.Advice = &foundrymodel.FoundryReviewAdvice{Choice: []byte(`{"resolve":{"entity":"x"}}`), Offered: []byte(`[]`), Rationale: "x",
+		Cites: []byte(`[]`)}
+	held.Advice = value.Advice
+	db.cards = []*foundrymodel.FoundryReviewListedCard{name, value, broken, held}
+
+	out, err := s.ListFoundryReviewCards(reviewerContext(), &foundryv1.ListFoundryReviewCardsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
+	require.NoError(t, err)
+	require.Len(t, out.GetCards(), 4)
+	a := out.GetCards()[0].GetModelAdvice()
+	require.NotNil(t, a)
+	assert.Equal(t, "scus_2", a.GetChoice().GetResolve().GetEntityKey())
+	require.Len(t, a.GetOffered(), 3)
+	assert.True(t, a.GetOffered()[2].GetResolve().GetNotInData())
+	assert.Equal(t, "The quote names the London office.", a.GetRationale())
+	require.Len(t, a.GetCites(), 1)
+	assert.Equal(t, "doc-1", a.GetCites()[0].GetDocId())
+	assert.Equal(t, int64(2), a.GetCites()[0].GetSpan().GetSection())
+	assert.Equal(t, int64(40), a.GetCites()[0].GetSpan().GetEnd())
+	v := out.GetCards()[1].GetModelAdvice()
+	require.NotNil(t, v)
+	assert.Equal(t, int64(9007199254740993), v.GetChoice().GetProp().GetInteger(), "to the digit")
+	assert.Equal(t, 12.5, v.GetOffered()[1].GetProp().GetNumber())
+	assert.Nil(t, out.GetCards()[2].GetModelAdvice(), "advice that doesn't read")
+	assert.Nil(t, out.GetCards()[3].GetModelAdvice(), "a held claim is never advised")
+
+	assert.False(t, access.GranteeAdmits(foundryv1.FoundryService_ListFoundryReviewCards_FullMethodName), "a grantee reads no cards")
+}
