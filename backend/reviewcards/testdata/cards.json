@@ -1,0 +1,832 @@
+[
+ {
+  "name": "a name's reviews make one card, settled by a review with a candidate the load asks about",
+  "reviews": [
+   {
+    "review_key": "r1",
+    "reason": "adjudicated",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "norm_name": "globex",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "r2",
+    "reason": "unresolved",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "norm_name": "globex",
+    "section": 0,
+    "start": 30,
+    "end": 35,
+    "candidates": [
+     "scus_1"
+    ],
+    "suggested_link": "partner_of"
+   },
+   {
+    "review_key": "r3",
+    "reason": "ambiguous",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "norm_name": "globex",
+    "section": 0,
+    "start": 60,
+    "end": 65
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "decide",
+    "review_key": "r2",
+    "review_keys": [
+     "r2",
+     "r1",
+     "r3"
+    ],
+    "review_count": 3,
+    "blocked": 1,
+    "facts": 1,
+    "per_decision": 1
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "a held claim of a name linked by part of a name waits on its card",
+  "reviews": [
+   {
+    "review_key": "n1",
+    "reason": "part_name",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Company",
+    "norm_name": "westmere",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "h1",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Company\", \"name\": \"Westmere\"}, \"object\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "decide",
+    "review_key": "n1",
+    "review_keys": [
+     "n1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 0.5
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h1",
+    "review_keys": [
+     "h1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6",
+    "on": [
+     "Company",
+     "westmere"
+    ]
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "an own-name identifier holds its claim",
+  "reviews": [
+   {
+    "review_key": "n1",
+    "reason": "own_name",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Company",
+    "norm_name": "westmere",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "h1",
+    "reason": "unverified",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"object\": {\"type\": \"Company\", \"name\": \"Westmere\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": null
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "decide",
+    "review_key": "n1",
+    "review_keys": [
+     "n1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 0.5
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h1",
+    "review_keys": [
+     "h1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "none",
+    "on": [
+     "Company",
+     "westmere"
+    ]
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "a legal form holds a claim only on a link that holds one value",
+  "single": [
+   "ceo_of"
+  ],
+  "reviews": [
+   {
+    "review_key": "n1",
+    "reason": "legal_form",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Company",
+    "norm_name": "globex ltd",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "h1",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Company\", \"name\": \"Globex Ltd\"}, \"object\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "h2",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Company\", \"name\": \"Globex Ltd\"}, \"object\": {\"type\": \"Person\", \"name\": \"Bea\"}, \"props\": {}}",
+    "claim_key": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 30,
+    "end": 40,
+    "suggested_link": "ceo_of",
+    "confidence": 0.95
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "decide",
+    "review_key": "n1",
+    "review_keys": [
+     "n1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 0.5
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h1",
+    "review_keys": [
+     "h1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6"
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h2",
+    "review_keys": [
+     "h2"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.9",
+    "on": [
+     "Company",
+     "globex ltd"
+    ]
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "a name the load matched to nothing holds a claim one end of which isn't in the graph",
+  "reviews": [
+   {
+    "review_key": "n1",
+    "reason": "unresolved",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "norm_name": "initech",
+    "section": 0,
+    "start": 0,
+    "end": 5,
+    "candidates": [
+     "scus_2"
+    ],
+    "suggested_link": "partner_of"
+   },
+   {
+    "review_key": "h1",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Customer\", \"name\": \"Initech\"}, \"object\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "h2",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Customer\", \"name\": \"Initech\"}, \"object\": {\"type\": \"Person\", \"name\": \"Bea\"}, \"props\": {}}",
+    "claim_key": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 30,
+    "end": 40,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "decide",
+    "review_key": "n1",
+    "review_keys": [
+     "n1"
+    ],
+    "review_count": 1,
+    "blocked": 1,
+    "facts": 2,
+    "per_decision": 1
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h1",
+    "review_keys": [
+     "h1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6",
+    "on": [
+     "Customer",
+     "initech"
+    ]
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h2",
+    "review_keys": [
+     "h2"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6"
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "a claim read two ways, and a conflict on a link that holds many values, go to the pool",
+  "single": [
+   "ceo_of"
+  ],
+  "reviews": [
+   {
+    "review_key": "a1",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"object\": {\"type\": \"Company\", \"name\": \"Acme\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "a2",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"object\": {\"type\": \"Company\", \"name\": \"Acme Corp\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "c1",
+    "reason": "conflict",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Person\", \"name\": \"Bea\"}, \"object\": {\"type\": \"Company\", \"name\": \"Acme\"}, \"props\": {}}",
+    "claim_key": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 30,
+    "end": 40,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "c2",
+    "reason": "conflict",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Person\", \"name\": \"Cy\"}, \"object\": {\"type\": \"Company\", \"name\": \"Acme\"}, \"props\": {}}",
+    "claim_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 50,
+    "end": 60,
+    "suggested_link": "ceo_of",
+    "confidence": 0.65
+   }
+  ],
+  "want": [
+   {
+    "kind": "release",
+    "lane": "pool",
+    "review_key": "a1",
+    "review_keys": [
+     "a1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6"
+   },
+   {
+    "kind": "release",
+    "lane": "pool",
+    "review_key": "c1",
+    "review_keys": [
+     "c1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6"
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "c2",
+    "review_keys": [
+     "c2"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6"
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "stale and unsettled reviews are no cards",
+  "reviews": [
+   {
+    "review_key": "s1",
+    "reason": "unresolved",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer"
+   },
+   {
+    "review_key": "s2",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "section": 0,
+    "start": 1,
+    "end": 2,
+    "suggested_link": "x"
+   },
+   {
+    "review_key": "s3",
+    "reason": "conflict",
+    "doc_id": "D0000000000000000000000001",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "section": 0,
+    "start": 1,
+    "end": 2,
+    "suggested_link": "x"
+   },
+   {
+    "review_key": "s4",
+    "reason": "unmatched_link",
+    "doc_id": "D0000000000000000000000001"
+   },
+   {
+    "review_key": "s5",
+    "reason": "prop_conflict",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "entity_key": "",
+    "prop": "currency",
+    "values": "[{\"value\": \"GBP\", \"doc_id\": \"D0000000000000000000000001\", \"quote\": \"billed in GBP\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 5}}]",
+    "concerned": []
+   },
+   {
+    "review_key": "s6",
+    "reason": "prop_conflict",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "entity_key": "scus_1",
+    "prop": "currency",
+    "values": "[]",
+    "concerned": [
+     {
+      "type": "Customer",
+      "key": "scus_1",
+      "props": {}
+     }
+    ]
+   },
+   {
+    "review_key": "s7",
+    "reason": "unresolved",
+    "doc_id": "D0000000000000000000000002",
+    "type": "Customer",
+    "norm_name": "x"
+   }
+  ],
+  "want": [],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "a field no column holds drops its review as invalid",
+  "reviews": [
+   {
+    "review_key": "i1",
+    "reason": "unresolved",
+    "doc_id": "D0000000000000000000000001",
+    "type": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+    "norm_name": "x",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "i2",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"A\", \"name\": \"a\"}, \"object\": {\"type\": \"B\", \"name\": \"b\"}, \"props\": {}}",
+    "claim_key": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "i3",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"A\", \"name\": \"a\"}, \"object\": {\"type\": \"B\", \"name\": \"b\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "i4",
+    "reason": "unresolved",
+    "doc_id": "D0000000000000000000000001",
+    "type": "T",
+    "norm_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "i5",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"A\", \"name\": \"a\"}, \"object\": {\"type\": \"B\", \"name\": \"b\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 5,
+    "end": 5,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   }
+  ],
+  "invalid": 5,
+  "want": [],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": []
+ },
+ {
+  "name": "a name only the model linked, and a value the table holds, are for information",
+  "reviews": [
+   {
+    "review_key": "f1",
+    "reason": "adjudicated",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "norm_name": "umbrella",
+    "section": 0,
+    "start": 0,
+    "end": 5,
+    "candidates": [
+     "scus_9"
+    ]
+   },
+   {
+    "review_key": "v1",
+    "reason": "prop_conflict",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "entity_key": "scus_1",
+    "prop": "currency",
+    "values": "[{\"value\": \"GBP\", \"doc_id\": \"D0000000000000000000000001\", \"quote\": \"billed in GBP\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 5}}]",
+    "concerned": [
+     {
+      "type": "Customer",
+      "key": "scus_1",
+      "props": {
+       "currency": "USD"
+      }
+     }
+    ]
+   },
+   {
+    "review_key": "v2",
+    "reason": "prop_conflict",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Customer",
+    "entity_key": "scus_2",
+    "prop": "currency",
+    "values": "[{\"value\": \"GBP\", \"doc_id\": \"D0000000000000000000000001\", \"quote\": \"billed in GBP\", \"span\": {\"section\": 0, \"start\": 1, \"end\": 5}}]",
+    "concerned": [
+     {
+      "type": "Customer",
+      "key": "scus_2",
+      "props": {}
+     }
+    ]
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "fyi",
+    "review_key": "f1",
+    "review_keys": [
+     "f1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 0,
+    "per_decision": 0
+   },
+   {
+    "kind": "prop",
+    "lane": "fyi",
+    "review_key": "v1",
+    "review_keys": [
+     "v1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 0,
+    "per_decision": 1
+   },
+   {
+    "kind": "prop",
+    "lane": "decide",
+    "review_key": "v2",
+    "review_keys": [
+     "v2"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 0,
+    "per_decision": 1
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "decisions": [],
+  "invalid": 0
+ },
+ {
+  "name": "a name's rank leaves out the held claims already decided",
+  "decisions": [
+   {
+    "kind": "release",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "statement_hash": "HASH:partner_of:{\"subject\": {\"type\": \"Company\", \"name\": \"Westmere\"}, \"object\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"props\": {}}"
+   },
+   {
+    "kind": "release",
+    "section": 0,
+    "start": 30,
+    "end": 40,
+    "claim_key": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "statement_hash": "old"
+   }
+  ],
+  "reviews": [
+   {
+    "review_key": "n1",
+    "reason": "part_name",
+    "doc_id": "D0000000000000000000000001",
+    "type": "Company",
+    "norm_name": "westmere",
+    "section": 0,
+    "start": 0,
+    "end": 5
+   },
+   {
+    "review_key": "h1",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Company\", \"name\": \"Westmere\"}, \"object\": {\"type\": \"Person\", \"name\": \"Ada\"}, \"props\": {}}",
+    "claim_key": "abababababababababababababababababababababababababababababababab",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 10,
+    "end": 20,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   },
+   {
+    "review_key": "h2",
+    "reason": "low_confidence",
+    "doc_id": "D0000000000000000000000001",
+    "statement": "{\"subject\": {\"type\": \"Company\", \"name\": \"Westmere\"}, \"object\": {\"type\": \"Person\", \"name\": \"Bea\"}, \"props\": {}}",
+    "claim_key": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "claim": "{\"about\": [0, 1]}",
+    "section": 0,
+    "start": 30,
+    "end": 40,
+    "suggested_link": "partner_of",
+    "confidence": 0.65
+   }
+  ],
+  "want": [
+   {
+    "kind": "resolve",
+    "lane": "decide",
+    "review_key": "n1",
+    "review_keys": [
+     "n1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 0.5
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h1",
+    "review_keys": [
+     "h1"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6",
+    "on": [
+     "Company",
+     "westmere"
+    ]
+   },
+   {
+    "kind": "release",
+    "lane": "decide",
+    "review_key": "h2",
+    "review_keys": [
+     "h2"
+    ],
+    "review_count": 1,
+    "blocked": 0,
+    "facts": 1,
+    "per_decision": 1,
+    "band": "0.6",
+    "on": [
+     "Company",
+     "westmere"
+    ]
+   }
+  ],
+  "load": "L0000000000000000000000001",
+  "doc": "D0000000000000000000000001",
+  "single": [],
+  "invalid": 0
+ }
+]
