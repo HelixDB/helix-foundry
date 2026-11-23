@@ -685,10 +685,10 @@ func (s *mysqlDB) ListFoundryReviewNameDecisions(ctx context.Context, ontologyID
 	// Each name's decisions, newest first, with their name's total and
 	// choices; a hash's other name (a collision) is left out by comparing.
 	rows, err := s.db.QueryContext(ctx, `SELECT `+foundryReviewDecisionDrawnColumns+`, total, choices FROM (
-  SELECT d.*, COUNT(*) OVER w AS total, ROW_NUMBER() OVER (w ORDER BY d.decided_at DESC, d.id DESC) AS n
+  SELECT d.*, COUNT(*) OVER (PARTITION BY d.type, d.norm_name) AS total,
+    ROW_NUMBER() OVER (PARTITION BY d.type, d.norm_name ORDER BY d.decided_at DESC, d.id DESC) AS n
   FROM foundry_review_decisions d
-  WHERE d.ontology_id=? AND d.kind='resolve' AND d.name_hash IN (`+hashes+`)
-  WINDOW w AS (PARTITION BY d.type, d.norm_name)) t
+  WHERE d.ontology_id=? AND d.kind='resolve' AND d.name_hash IN (`+hashes+`)) t
 JOIN (SELECT type AS ct, norm_name AS cn, COUNT(DISTINCT COALESCE(entity_key, '')) AS choices FROM foundry_review_decisions
   WHERE ontology_id=? AND kind='resolve' AND name_hash IN (`+hashes+`) GROUP BY type, norm_name) c ON c.ct=t.type AND c.cn=t.norm_name
 WHERE t.n <= 20 ORDER BY t.type, t.norm_name, t.n`, append(args, args...)...)
