@@ -51,6 +51,17 @@ describe("nudgeShown", () => {
     ).toBeUndefined();
     expect(nudgeShown(counting, [s("a", 1)])?.ontologyId).toBe("a");
   });
+  it("reads a count the WFE left out as none", () => {
+    const counting = { ontologyId: "a", loadId: "L-a", indexing: true };
+    expect(
+      nudgeShown({}, [{ ontologyId: "z", loadId: "L-z" }]),
+    ).toBeUndefined();
+    expect(nudgeShown({}, [counting, s("b", 1)])?.ontologyId).toBe("b");
+    expect(
+      nudgeShown({}, [s("b", 0, { indexing: true }), counting])?.ontologyId,
+    ).toBe("a");
+    expect(nudgeLater({}, counting)).toEqual({ a: { loadId: "L-a", open: 0 } });
+  });
 });
 
 describe("parseNudgeState", () => {

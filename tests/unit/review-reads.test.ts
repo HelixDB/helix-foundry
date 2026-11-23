@@ -63,6 +63,13 @@ describe("bands, scores and places", () => {
     );
     expect(labelPlace(x)).not.toBe(labelPlace({ ...x, claimStart: 11 }));
     expect(labelPlace(x)).not.toBe(labelPlace({ ...x, link: "owns" }));
+    // The WFE leaves zeros and an empty link out.
+    expect(labelPlace({ docId: "doc-1" })).toBe(
+      claimPlace(
+        { documentId: "doc-1", section: 0, start: 0, end: 0 },
+        undefined,
+      ),
+    );
   });
 });
 
