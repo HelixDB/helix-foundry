@@ -632,6 +632,44 @@ describe("walkReducer", () => {
     });
     expect(current(r)).toBe("c");
   });
+  it("keeps the finish when a read of the same load opens cards it had again", () => {
+    // A link covering b and c, which the load then won't apply in place.
+    const w = run(
+      walkOf(["a", "b", "c"]),
+      {
+        type: "decide",
+        key: "a",
+        choice: approve,
+        how: "accepted",
+        covers: ["b", "c"],
+      },
+      { type: "sent", key: "a", decision: decision("a") },
+      { type: "uncover", by: new Set(["a"]) },
+    );
+    expect(current(w)).toBeNull();
+    expect(undecided(w.order, w.outcomes)).toBe(2);
+    const read = (
+      more: Partial<Extract<WalkAction, { type: "rebase" }>> = {},
+    ) =>
+      run(w, {
+        type: "rebase",
+        loadId: "L",
+        order: ["b", "c"],
+        gone: new Set(["a"]),
+        ...more,
+      });
+    // The cards read again: the finish stays, offering b and c.
+    const stays = read();
+    expect(stays.order).toEqual(["a", "b", "c"]);
+    expect(current(stays)).toBeNull();
+    expect(stays.at).toBe(3);
+    // A card the walk hadn't read goes on, as the next page's would.
+    expect(current(read({ order: ["b", "d", "c"] }))).toBe("d");
+    // A filter the person chose starts at its first card to decide.
+    expect(current(read({ refiltered: true }))).toBe("b");
+    // So does another load.
+    expect(current(read({ loadId: "L2", gone: new Set() }))).toBe("b");
+  });
 });
 
 describe("decides", () => {

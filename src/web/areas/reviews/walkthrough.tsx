@@ -78,6 +78,7 @@ import {
   changedElsewhere,
   undecided,
   walkReducer,
+  type AdviceFilter,
   type How,
   type Walk,
   type WalkOrder,
@@ -208,6 +209,7 @@ export function useWalk() {
     loadId: string;
     order: readonly string[];
     filter: string;
+    by: AdviceFilter;
   }>(undefined);
   const undoing = useRef(false);
   // The choices still sending when a new load became current.
@@ -555,19 +557,22 @@ export function useWalk() {
      * keep their places. A card missing past the last the read still lists
      * may only have moved to a page not read yet, so it is dropped, not
      * marked decided elsewhere; so is every card another of the index's
-     * filters (`filter`) leaves out, which keeps what became of it.
+     * filters (`filter`) leaves out, which keeps what became of it. Only a
+     * filter the person chose (the index's, or Founder's `by`) moves the
+     * walk to its first card to decide: a read alone never moves it back.
      */
     rebase: (
       loadId: string,
       { decide: order, cards: inQueue, advice, covered }: WalkOrder,
       more: boolean,
       filter: string,
+      by: AdviceFilter,
     ) => {
       const w = now.current,
         moved = w.loadId !== "" && w.loadId !== loadId,
         cover = new Set(covered);
       const before = last.current;
-      last.current = { loadId, order, filter };
+      last.current = { loadId, order, filter, by };
       const refiltered = before?.filter !== filter;
       for (const [k, card] of inQueue)
         seen.current.set(k, { card, advice: advice.get(k) });
@@ -600,6 +605,7 @@ export function useWalk() {
         type: "rebase",
         loadId,
         order,
+        refiltered: refiltered || before?.by !== by,
         // Cards a link now covers have left the walk too, here or elsewhere.
         gone: new Set(
           w.loadId === loadId
@@ -671,7 +677,7 @@ export function ReviewWalkthrough({
   const order = q.all!;
   const filterKey = JSON.stringify([kind ?? "", type, doc]);
   useEffect(() => {
-    api.rebase(load.id, order, q.hasMore, filterKey);
+    api.rebase(load.id, order, q.hasMore, filterKey, adviceFilter);
   }, [load.id, order]);
   useEffect(() => api.setMore(q.hasMore), [q.hasMore]);
   // The types and documents the filters offer: every one this visit's reads

@@ -109,13 +109,15 @@ export type WalkAction =
   // The next page of cards read: its keys go after the order, the card shown
   // stays.
   | { type: "extend"; loadId: string; keys: readonly string[] }
-  // The cards read again: a new order (another load's, or a filter's), and
-  // the keys the index no longer lists (decided, here or elsewhere).
+  // The cards read again: a new order (another load's, or a filter's, which
+  // `refiltered` says the person chose), and the keys the index no longer
+  // lists (decided, here or elsewhere).
   | {
       type: "rebase";
       loadId: string;
       order: readonly string[];
       gone: ReadonlySet<string>;
+      refiltered?: boolean;
     };
 
 /**
@@ -315,7 +317,12 @@ const nextOpen = (
  *   still sending, whose answers are yet to come, stay, less links taken
  *   back (the new load asks again); the card shown
  *   stays if it is still in the order, else the next of the old order that
- *   is, else the first to decide.
+ *   is; else, on another load or a filter the person chose, the first to
+ *   decide; else (the same load read again) the first
+ *   card to decide the walk hadn't read, as `extend` shows one, or the
+ *   finish still: a card the walk had that opens again (a link the load
+ *   won't apply in place, another person's decision removed) is the
+ *   finish's to offer, so a read never moves the walk back.
  * An action that changes nothing returns the walk itself.
  *
  * @example
@@ -569,15 +576,23 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
         ...(stays.get(null) ?? []),
         ...a.order.flatMap((k) => [k, ...(stays.get(k) ?? [])]),
       ];
-      const inNew = new Set(order);
+      const inNew = new Set(order),
+        had = new Set(w.order);
       const kept = w.order.slice(w.at).find((k) => inNew.has(k));
+      const unread = order.findIndex(
+        (k) => !had.has(k) && open(outcomes.get(k)),
+      );
       return {
         loadId: a.loadId,
         order,
         at:
-          kept === undefined
-            ? nextOpen(order, outcomes, 0)
-            : order.indexOf(kept),
+          kept !== undefined
+            ? order.indexOf(kept)
+            : !same || a.refiltered
+              ? nextOpen(order, outcomes, 0)
+              : unread < 0
+                ? order.length
+                : unread,
         outcomes,
         undo: w.undo
           .map((e) => e.filter((k) => outcomes.has(k)))

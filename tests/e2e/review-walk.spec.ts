@@ -406,7 +406,7 @@ test("undoing a link the load applied in place shows it taken back, not to decid
   await expect(progress(page)).not.toContainText("elsewhere");
 });
 
-test("a link the load can't apply in place waits for the next load, and its other documents are to decide again", async ({
+test("a link the load can't apply in place waits for the next load, and the finish offers its other documents again without moving the walk", async ({
   page,
 }) => {
   await naming(page, "not_replayed");
@@ -425,6 +425,20 @@ test("a link the load can't apply in place waits for the next load, and its othe
     "From the next load1 choice the current load doesn’t take in place",
   );
   await expect(done.getByRole("link", { name: "Load again" })).toBeVisible();
+  // The reads that follow (the settle's job ends, the cards and decisions
+  // are read again) never move the walk back to a card on its own: the
+  // finish stays, offering the two.
+  await page.waitForTimeout(5000);
+  await expect(done).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
+  // Nor does coming back to Facts, which takes the cards read again.
+  await page.getByRole("tab", { name: /^Ontology/ }).click();
+  await expect(done).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(done).toBeVisible();
+  await page.waitForTimeout(500);
+  await expect(done).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
   await done
     .getByRole("button", { name: "Go to the first still to decide" })
     .click();
