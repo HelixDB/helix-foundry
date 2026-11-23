@@ -102,6 +102,7 @@ const combinePages = (results: UseQueryResult<QueueReview[]>[]) => {
  * the walk's Decide lane without a filter (names, held claims and values;
  * not those for information, names a link covers or the spot checks),
  * less those decided in this walk; unset until the queue is read.
+ * `suggested` is how many of them Founder has a suggestion for.
  */
 export function useReviewQueue() {
   const { id: ws, user } = useWorkspace(),
@@ -265,11 +266,14 @@ export function useReviewQueue() {
     void labels.refetch();
   };
   const walk = useWalk();
-  const open =
+  const outcomes =
+    walk.state.loadId === loadId ? walk.state.outcomes : new Map();
+  const open = all && undecided(all.decide, outcomes);
+  const suggested =
     all &&
     undecided(
-      all.decide,
-      walk.state.loadId === loadId ? walk.state.outcomes : new Map(),
+      all.decide.filter((k) => all.advice.get(k)?.kind === "suggest"),
+      outcomes,
     );
   return {
     access,
@@ -297,6 +301,7 @@ export function useReviewQueue() {
     failed,
     retry,
     open,
+    suggested,
     walk,
   };
 }

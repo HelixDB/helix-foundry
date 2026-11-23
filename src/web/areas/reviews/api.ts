@@ -96,8 +96,11 @@ export const reviewQueries = {
   }),
 };
 
-/** The Facts tab's open count, and the load it was counted on. */
-export type OpenFacts = { loadId: string; open: number };
+/**
+ * The Facts tab's open count, how many of those Founder has a suggestion
+ * for, and the load they were counted on.
+ */
+export type OpenFacts = { loadId: string; open: number; suggested: number };
 // Every label of the ontology, a page (100) at a time: what the review queue
 // measures precision from, and leaves out of its draws.
 export const labelQueries = {

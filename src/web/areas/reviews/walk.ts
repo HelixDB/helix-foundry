@@ -13,7 +13,8 @@ import {
   type AdviceContext,
   type Decidable,
 } from "./advice";
-import type { Queue, QueueCard } from "./queue";
+import { formatNumber } from "../../kit/util";
+import { BAND_TEXT, type Queue, type QueueCard } from "./queue";
 
 // The review walkthrough's state: one card at a time over the queue's
 // decide lane, in its ranked order, and what became of each card. Pure: the
@@ -515,4 +516,35 @@ export function batchOf(
       : [];
   });
   return items.length > 1 ? { batchKey, items } : null;
+}
+
+/**
+ * What Accept all like this says of Founder's suggestion for its `n` cards: the
+ * choice (`label`, the card's word for it) and what it stands on, in one
+ * sentence; null without a suggestion.
+ *
+ * @example
+ * batchReason(measured, "Approve", 3);
+ * // "Founder suggests Approve for all 3: random checks of claims scored 0.7 to 0.8 were right 80 of 80 times."
+ */
+export function batchReason(
+  advice: Advice,
+  label: string | undefined,
+  n: number,
+): string | null {
+  if (advice.kind !== "suggest") return null;
+  const head = `Founder suggests ${label ?? "the same choice"} for ${n === 1 ? "it" : `all ${formatNumber(n)}`}`;
+  const s = advice.strength;
+  switch (s.kind) {
+    case "measured": {
+      const [band] = advice.basis.flatMap((b) =>
+        b.kind === "verifier" && b.band !== "none" ? [b.band] : [],
+      );
+      return `${head}: random checks of claims${band ? ` scored ${BAND_TEXT[band]}` : ""} were right ${formatNumber(s.right)} of ${formatNumber(s.total)} times.`;
+    }
+    case "repeat":
+      return `${head}: ${s.by === "you" ? "you" : "the team"} chose it for this name ${s.decisions === 1 ? "once" : `${formatNumber(s.decisions)} times`} before.`;
+    case "unmeasured":
+      return `${head}.`;
+  }
 }

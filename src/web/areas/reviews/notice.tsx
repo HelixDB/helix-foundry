@@ -1,14 +1,21 @@
 // The overview's review notice (../ontology/home.tsx): tells an owner or
-// admin that the current load's documents left reviews for a person, with
-// Start reviewing (the Review page's walkthrough) and Later, which hides it
-// for that load in this browser, so a new load shows it again. Once the
-// Review page has read the load, it says the page's count, the cards still
-// to decide (none: no notice); until then, what the load's documents left,
-// worded as reviews, settled since or not (the load says nothing of what is
-// still open, and one card may settle several reviews).
+// admin that the current load's documents left reviews for a person, in a
+// title and one short line, with Start reviewing (the Review page's
+// walkthrough) and Later, which hides it for that load in this browser, so a
+// new load shows it again. Once the Review page has read the load, it says
+// the page's count, the cards still to decide (none: no notice), and how
+// many Founder has a suggestion for; until then, the reviews the load's
+// documents left, settled since or not (the load says nothing of what is
+// still open, and one card may settle several reviews), and what they are.
 import { useQuery } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
-import { Button, ButtonLink, plural, useStoredState } from "../../kit";
+import {
+  Button,
+  ButtonLink,
+  formatNumber,
+  plural,
+  useStoredState,
+} from "../../kit";
 import { paths } from "../../paths";
 import { reviewQueries } from "./api";
 import { canManage, useWorkspace } from "../../ui";
@@ -33,7 +40,8 @@ export function ReviewNotice() {
     enabled: shown,
   }).data?.load;
   const facts = useQuery(reviewQueries.openFacts(id, o)).data;
-  const toDecide = facts?.loadId === loadId ? facts.open : undefined;
+  const counted = facts?.loadId === loadId ? facts : undefined;
+  const toDecide = counted?.open;
   const reviews = (load && loadDocumentTotals(load)?.reviews) || 0;
   if (!shown || !(toDecide ?? reviews)) return null;
   return (
@@ -42,10 +50,14 @@ export function ReviewNotice() {
       tone="muted"
       title={
         toDecide === undefined
-          ? `This load’s documents left ${plural(reviews, "review")} for a person`
-          : `This load has ${plural(toDecide, "card")} to decide`
+          ? `${plural(reviews, "review")} waiting`
+          : `${plural(toDecide, "card")} to decide`
       }
-      text="Names it couldn’t match, claims it held back and values documents disagree on; one choice may settle several reviews. Founder suggests a choice where its rules can; each one you settle applies now or from the next load."
+      text={
+        counted?.suggested
+          ? `Founder has a suggestion for ${formatNumber(counted.suggested)}.`
+          : "Names, held claims and values the load couldn’t settle."
+      }
       action={
         <span className="on-card-actions">
           <ButtonLink size="sm" variant="primary" to={paths.review(o)}>

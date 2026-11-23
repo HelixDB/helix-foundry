@@ -9,6 +9,7 @@ import type {
 } from "@/web/areas/reviews/queue";
 import {
   batchOf,
+  batchReason,
   batchTakes,
   current,
   drawnLike,
@@ -653,5 +654,72 @@ describe("batchOf", () => {
     expect(batchOf(["a", "b", "c", "d"], advice, "e")).toBeNull();
     expect(batchOf(["a", "b", "c", "d"], advice, "z")).toBeNull();
     expect(batchOf(["a", "b", "c", "d"], advice, "b")).toBeNull();
+  });
+});
+
+describe("batchReason", () => {
+  const suggest = (
+    strength: Extract<Advice, { kind: "suggest" }>["strength"],
+    basis: Extract<Advice, { kind: "suggest" }>["basis"] = [],
+  ): Advice => ({
+    kind: "suggest",
+    rule: "confident_claim",
+    choice: approve,
+    basis,
+    strength,
+    batchKey: "claim:x",
+  });
+  it("says the choice, how many, and the random checks that measure it", () => {
+    expect(
+      batchReason(
+        suggest({ kind: "measured", right: 80, total: 80, lower: 0.96 }, [
+          { kind: "verifier", score: 0.72, band: "0.7" },
+        ]),
+        "Approve",
+        3,
+      ),
+    ).toBe(
+      "Founder suggests Approve for all 3: random checks of claims scored 0.7 to 0.8 were right 80 of 80 times.",
+    );
+    // Claims with no score: no band to name.
+    expect(
+      batchReason(
+        suggest({ kind: "measured", right: 1200, total: 1210, lower: 0.98 }, [
+          { kind: "verifier", band: "none" },
+        ]),
+        "Approve",
+        1,
+      ),
+    ).toBe(
+      "Founder suggests Approve for it: random checks of claims were right 1,200 of 1,210 times.",
+    );
+  });
+  it("says whose earlier choice it repeats, and how often", () => {
+    expect(
+      batchReason(
+        suggest({ kind: "repeat", decisions: 1, by: "you" }),
+        "Not in data",
+        2,
+      ),
+    ).toBe(
+      "Founder suggests Not in data for all 2: you chose it for this name once before.",
+    );
+    expect(
+      batchReason(
+        suggest({ kind: "repeat", decisions: 4, by: "team" }),
+        undefined,
+        5,
+      ),
+    ).toBe(
+      "Founder suggests the same choice for all 5: the team chose it for this name 4 times before.",
+    );
+  });
+  it("says only the choice when unmeasured, and nothing without a suggestion", () => {
+    expect(batchReason(suggest({ kind: "unmeasured" }), "Approve", 2)).toBe(
+      "Founder suggests Approve for all 2.",
+    );
+    expect(batchReason({ kind: "none", why: "unscored" }, "Approve", 2)).toBe(
+      null,
+    );
   });
 });

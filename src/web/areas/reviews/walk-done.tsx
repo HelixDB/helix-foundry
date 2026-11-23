@@ -55,15 +55,22 @@ export function WalkDone({
   const covered = of(["covered"]).length;
   return (
     <section className="rv-done" aria-labelledby="rv-done-title">
-      <h2 id="rv-done-title" ref={headingRef} tabIndex={-1}>
-        {left.length
-          ? `${plural(left.length, "card")} still to decide`
-          : empty
-            ? "Nothing to decide"
-            : skipped.length
-              ? `Through to the end, ${formatNumber(skipped.length)} skipped`
-              : "All caught up"}
-      </h2>
+      <div className="rv-done-head">
+        <h2 id="rv-done-title" ref={headingRef} tabIndex={-1}>
+          {left.length
+            ? `${plural(left.length, "card")} still to decide`
+            : empty
+              ? "Nothing to decide"
+              : skipped.length
+                ? `Through to the end, ${formatNumber(skipped.length)} skipped`
+                : "All caught up"}
+        </h2>
+        {walk.order.length > 0 && (
+          <Button size="sm" variant="ghost" onClick={onBack}>
+            <ArrowLeft size={14} aria-hidden /> Back
+          </Button>
+        )}
+      </div>
       {empty && (
         <p className="on-muted">
           No card of the current load’s queue
@@ -90,41 +97,34 @@ export function WalkDone({
           </div>
         </dl>
       )}
-      <div className="hf-form-actions rv-done-actions">
-        {walk.order.length > 0 && (
-          <Button variant="ghost" onClick={onBack}>
-            <ArrowLeft size={14} aria-hidden /> Back
-          </Button>
-        )}
-        {left[0] !== undefined && (
-          <Button onClick={() => onJump(left[0]!)}>
-            Go to the first still to decide
-          </Button>
-        )}
-        {skipped.length > 0 && (
-          <Button onClick={() => onReopen(skipped)}>
-            Go through {formatNumber(skipped.length)} skipped
-          </Button>
-        )}
-        {later > 0 && (
-          <ButtonLink to={paths.newLoad(o)} variant="primary">
-            Load again
-          </ButtonLink>
-        )}
-        {empty && onClearFilters && (
-          <Button onClick={onClearFilters}>Clear filters</Button>
-        )}
-      </div>
+      {(left.length > 0 ||
+        skipped.length > 0 ||
+        later > 0 ||
+        (empty && onClearFilters)) && (
+        <div className="hf-form-actions rv-done-actions">
+          {left[0] !== undefined && (
+            <Button onClick={() => onJump(left[0]!)}>
+              Go to the first still to decide
+            </Button>
+          )}
+          {skipped.length > 0 && (
+            <Button onClick={() => onReopen(skipped)}>
+              Go through {formatNumber(skipped.length)} skipped
+            </Button>
+          )}
+          {later > 0 && (
+            <ButtonLink to={paths.newLoad(o)} variant="primary">
+              Load again
+            </ButtonLink>
+          )}
+          {empty && onClearFilters && (
+            <Button onClick={onClearFilters}>Clear filters</Button>
+          )}
+        </div>
+      )}
       <section className="rv-spot" aria-labelledby="rv-spot-title">
         <div className="rv-spot-head">
-          <div>
-            <h3 id="rv-spot-title">Spot checks</h3>
-            <p className="on-muted">
-              A few claims drawn at random, to measure how often claims at each
-              score are right. That measure is what lets Founder suggest
-              approving a score’s claims, all at once once it’s high enough.
-            </p>
-          </div>
+          <h3 id="rv-spot-title">Spot checks</h3>
           <Button
             size="sm"
             variant="ghost"
@@ -133,6 +133,11 @@ export function WalkDone({
             {spotShown ? "Skip" : "Show"}
           </Button>
         </div>
+        <p className="on-muted rv-spot-intro">
+          A few claims drawn at random, to measure how often claims at each
+          score are right. That measure is what lets Founder suggest approving a
+          score’s claims, all at once once it’s high enough.
+        </p>
         {spotShown && spot}
       </section>
     </section>

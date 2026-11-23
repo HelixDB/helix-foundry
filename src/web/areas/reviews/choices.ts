@@ -82,3 +82,49 @@ export function choicesOf(
       return [];
   }
 }
+
+/**
+ * How a card offers its choices: Founder's suggestion (`primary`, one of
+ * the choices), which Enter takes, then every other choice in order with
+ * its key (`rest`): N for Not in data, X for Reject, and the rest numbered
+ * 1 to 9 as they show (none past 9). Digit n takes `numbered[n - 1]`, so
+ * the digits are the ones shown; the suggestion has none, as it shows none.
+ */
+export type ChoiceLayout = {
+  primary?: Choice;
+  rest: readonly { choice: Choice; key?: string }[];
+  numbered: readonly Choice[];
+};
+
+/**
+ * Lays `choices` out around the suggested one (none: no primary).
+ *
+ * @example
+ * const [approve, reject] = choicesOf(held, nameOf);
+ * layoutChoices([approve, reject], approve);
+ * // { primary: approve, rest: [{ choice: reject, key: "X" }], numbered: [] }
+ */
+export function layoutChoices(
+  choices: readonly Choice[],
+  suggested?: Choice,
+): ChoiceLayout {
+  const rest = choices.filter((c) => c !== suggested);
+  const numbered = rest
+    .filter((c) => c.kind !== "not_in_data" && c.kind !== "reject")
+    .slice(0, 9);
+  return {
+    ...(suggested && choices.includes(suggested) ? { primary: suggested } : {}),
+    rest: rest.map((choice) => {
+      const key =
+        choice.kind === "not_in_data"
+          ? "N"
+          : choice.kind === "reject"
+            ? "X"
+            : numbered.includes(choice)
+              ? String(numbered.indexOf(choice) + 1)
+              : undefined;
+      return key ? { choice, key } : { choice };
+    }),
+    numbered,
+  };
+}

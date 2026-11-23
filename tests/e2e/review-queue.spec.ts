@@ -60,9 +60,9 @@ test("walks what writes facts first, evidence before the score, values a table k
   // Held claims (a fact each, at once) before names.
   const lines = await rail(page).allTextContents();
   const claims = lines.flatMap((l, i) =>
-    l.includes("signed_with") ? [i] : [],
+    l.includes("Held claim · ") ? [i] : [],
   );
-  const names = lines.flatMap((l, i) => (l.endsWith("· Customer") ? [i] : []));
+  const names = lines.flatMap((l, i) => (l.includes("Name · ") ? [i] : []));
   expect(claims.length).toBe(2);
   expect(names.length).toBeGreaterThan(0);
   expect(Math.max(...claims)).toBeLessThan(Math.min(...names));

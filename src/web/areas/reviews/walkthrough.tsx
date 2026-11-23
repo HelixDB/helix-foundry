@@ -24,14 +24,10 @@ import type {
   FoundryReviewChoice,
   FoundryReviewDecision,
 } from "../../../shared/wfe";
-import { ListFilter } from "lucide-react";
 import {
   Button,
   Dialog,
-  DropdownMenu,
-  MenuItem,
-  MenuLabel,
-  MenuSeparator,
+  FilterSelect,
   Segmented,
   SkeletonText,
   cx,
@@ -47,6 +43,7 @@ import { useDocumentNames } from "../documents/documents-api";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import {
+  cardName,
   effectOf,
   founderSeed,
   settleOf,
@@ -56,12 +53,12 @@ import {
 } from "./advice";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
 import { BatchDialog } from "./batch-dialog";
-import { choicesOf, type Choice } from "./choices";
+import { choicesOf, layoutChoices, type Choice } from "./choices";
 import { CoveredCards, FyiCards } from "./fyi";
 import type { ReviewQueue } from "./index";
 import { useWalkKeys, type KeyCommand } from "./keys";
 import type { Queue, QueueCard } from "./queue";
-import { ReviewCard, cardLine } from "./review-card";
+import { KIND_TEXT, ReviewCard, cardLine } from "./review-card";
 import { settleAll } from "./settle-pool";
 import { SpotChecks } from "./spot-checks";
 import {
@@ -88,9 +85,9 @@ const FAILED_PRECONDITION = 9;
 const TOAST_MS = 6000;
 /** How many cards the rail lists: two before the one shown, and the rest after. */
 const RAIL = 12;
-/** What the Filter menu calls each choice of Founder's suggestion (`advice`). */
+/** What the Suggestion filter calls each choice of Founder's suggestion (`advice`). */
 const ADVICE_TEXT = {
-  any: "All cards",
+  any: "Any",
   suggested: "Suggested",
   none: "Needs you",
 } as const;
@@ -377,7 +374,8 @@ export function useWalk() {
 export type WalkApi = ReturnType<typeof useWalk>;
 
 const KINDS = ["name", "claim", "value"] as const;
-const KIND_TEXT: Record<(typeof KINDS)[number], string> = {
+/** What the Kind filter calls each kind. */
+const KIND_FILTER: Record<(typeof KINDS)[number], string> = {
   name: "Names",
   claim: "Held claims",
   value: "Values",
@@ -392,8 +390,8 @@ const decidable = (c: QueueCard | undefined): Decidable | undefined =>
 
 /**
  * The Facts tab's walk of the queue (`cards`) of the current load: the
- * lanes (`lane`, in the URL) and progress first, the filters behind one
- * Filter menu (in the URL: `kind`, one kind; `advice`, `type`, `doc`), then
+ * lanes (`lane`, in the URL) and the filters first (in the URL: `kind`, one
+ * kind; `advice`, `type`, `doc`), then the progress, then
  * the rail of next cards (the cards still to decide, at the finish) beside
  * the card shown, or the finish.
  */
@@ -485,11 +483,18 @@ export function ReviewWalkthrough({
   const siblings = (card && order.siblings.get(card.key)) ?? [];
   const effectFor = (c: Decidable, choice: FoundryReviewChoice) =>
     effectOf(c, choice, (order.siblings.get(c.key) ?? []).length, single);
-  const suggestion =
-    advice?.kind === "suggest" &&
-    choices.some((c) => same(c.decision, advice.choice))
-      ? advice.choice
-      : undefined;
+  // Founder's suggestion among the card's choices, laid out first.
+  const layout = useMemo(
+    () =>
+      layoutChoices(
+        choices,
+        advice?.kind === "suggest"
+          ? choices.find((c) => same(c.decision, advice.choice))
+          : undefined,
+      ),
+    [choices, advice],
+  );
+  const suggestion = layout.primary?.decision;
   // What the suggestion does; with none, what every choice does alike, and
   // nothing when choices differ (no line reads as a recommendation).
   const shownEffect = (() => {
@@ -538,7 +543,13 @@ export function ReviewWalkthrough({
 
   const [dialog, setDialog] = useState<
     | { kind: "help" }
-    | { kind: "batch"; batch: NonNullable<typeof batch>; advice: Advice }
+    | {
+        kind: "batch";
+        batch: NonNullable<typeof batch>;
+        advice: Advice;
+        // The suggested choice's words, as the card showed them.
+        label?: string;
+      }
     | null
   >(null);
   const toasts = useRef(0);
@@ -602,7 +613,7 @@ export function ReviewWalkthrough({
         if (suggestion) decide(suggestion, "accepted");
         return;
       case "choose":
-        return choose(choices[c.index]);
+        return choose(layout.numbered[c.index]);
       case "not_in_data":
       case "reject":
         return choose(choices.find((x) => x.kind === c.kind));
@@ -622,7 +633,13 @@ export function ReviewWalkthrough({
         void undo();
         return;
       case "batch":
-        if (batch && advice) setDialog({ kind: "batch", batch, advice });
+        if (batch && advice)
+          setDialog({
+            kind: "batch",
+            batch,
+            advice,
+            label: layout.primary?.label,
+          });
         return;
       case "open":
         if (card)
@@ -645,7 +662,7 @@ export function ReviewWalkthrough({
     }
   };
   // Members move, open and ask with keys too; deciding needs `manage`.
-  useWalkKeys(on, synced && lane === "decide", choices.length);
+  useWalkKeys(on, synced && lane === "decide", layout.numbered.length);
 
   const covered = [
     ...new Set([
@@ -715,87 +732,55 @@ export function ReviewWalkthrough({
             onChange={(v) => setParam("lane", v === "decide" ? "" : v)}
             options={lanes}
           />
-          <DropdownMenu
-            label={`Filter cards${filters ? `, ${plural(filters, "filter")} on` : ""}`}
-            align="end"
-            triggerClassName="hf-btn hf-btn--secondary hf-btn--sm"
-            trigger={
-              <>
-                <ListFilter size={14} aria-hidden /> Filter
-                {filters > 0 && (
-                  <span className="rv-filter-count">{filters}</span>
-                )}
-              </>
-            }
-          >
-            <MenuLabel>Kind</MenuLabel>
-            <MenuItem checked={!kind} onSelect={() => setParam("kind", "")}>
-              Every kind
-            </MenuItem>
-            {KINDS.map((k) => (
-              <MenuItem
-                key={k}
-                checked={kind === k}
-                onSelect={() => setParam("kind", k)}
-              >
-                {KIND_TEXT[k]}
-              </MenuItem>
-            ))}
-            <MenuSeparator />
-            <MenuLabel>Founder’s suggestion</MenuLabel>
-            {(["any", "suggested", "none"] as const).map((a) => (
-              <MenuItem
-                key={a}
-                checked={filter.advice === a}
-                onSelect={() => setParam("advice", a === "any" ? "" : a)}
-              >
-                {ADVICE_TEXT[a]}
-              </MenuItem>
-            ))}
+          <div className="rv-filters">
+            <FilterSelect
+              label="Kind"
+              value={kind ?? ""}
+              onChange={(v) => setParam("kind", v)}
+              options={[
+                { value: "", label: "Any" },
+                ...KINDS.map((k) => ({ value: k, label: KIND_FILTER[k] })),
+              ]}
+            />
+            <FilterSelect
+              label="Suggestion"
+              value={filter.advice}
+              onChange={(v) => setParam("advice", v === "any" ? "" : v)}
+              options={(["any", "suggested", "none"] as const).map((a) => ({
+                value: a,
+                label: ADVICE_TEXT[a],
+              }))}
+            />
             {/* Each shows while it offers a choice, or while it filters (a
                 value the queue no longer has stays, to clear). */}
             {(offered.types.length > 1 || type) && (
-              <>
-                <MenuSeparator />
-                <MenuLabel>Type</MenuLabel>
-                {[
+              <FilterSelect
+                label="Type"
+                value={type}
+                onChange={(v) => setParam("type", v)}
+                options={[
                   "",
                   ...new Set([...offered.types, ...(type ? [type] : [])]),
-                ].map((t) => (
-                  <MenuItem
-                    key={t}
-                    checked={type === t}
-                    onSelect={() => setParam("type", t)}
-                  >
-                    {t || "Any type"}
-                  </MenuItem>
-                ))}
-              </>
+                ].map((t) => ({ value: t, label: t || "Any" }))}
+              />
             )}
             {(offered.docs.length > 1 || doc) && (
-              <>
-                <MenuSeparator />
-                <MenuLabel>Document</MenuLabel>
-                {["", ...new Set([...offered.docs, ...(doc ? [doc] : [])])].map(
-                  (d) => (
-                    <MenuItem
-                      key={d}
-                      checked={doc === d}
-                      onSelect={() => setParam("doc", d)}
-                    >
-                      {d ? docName(d) : "Any document"}
-                    </MenuItem>
-                  ),
-                )}
-              </>
+              <FilterSelect
+                label="Document"
+                value={doc}
+                onChange={(v) => setParam("doc", v)}
+                options={[
+                  "",
+                  ...new Set([...offered.docs, ...(doc ? [doc] : [])]),
+                ].map((d) => ({ value: d, label: d ? docName(d) : "Any" }))}
+              />
             )}
             {filters > 0 && (
-              <>
-                <MenuSeparator />
-                <MenuItem onSelect={clearFilters}>Clear filters</MenuItem>
-              </>
+              <Button size="sm" variant="ghost" onClick={clearFilters}>
+                Clear filters
+              </Button>
             )}
-          </DropdownMenu>
+          </div>
         </div>
         <p role="status" className="rv-progress">
           {formatNumber(p.total - p.left)} of {formatNumber(p.total)} ·{" "}
@@ -840,6 +825,7 @@ export function ReviewWalkthrough({
                     <button
                       type="button"
                       aria-current={r.key === key ? "step" : undefined}
+                      title={cardLine(r.card)}
                       onClick={() => jump(r.key)}
                     >
                       <span
@@ -847,7 +833,19 @@ export function ReviewWalkthrough({
                         data-state={r.state}
                         aria-hidden
                       />
-                      <span className="rv-rail-line">{cardLine(r.card)}</span>
+                      <span className="rv-rail-text">
+                        <span className="rv-rail-line">
+                          {r.card.kind === "claim"
+                            ? settleOf(r.card).statement.object.name
+                            : r.card.kind === "name"
+                              ? `“${cardName(r.card)}”`
+                              : cardLine(r.card)}
+                        </span>
+                        <span className="rv-rail-meta">
+                          {KIND_TEXT[r.card.kind]} ·{" "}
+                          {docName(r.card.review.documentId)}
+                        </span>
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -861,6 +859,7 @@ export function ReviewWalkthrough({
                 card={card}
                 advice={advice}
                 choices={choices}
+                layout={layout}
                 effect={shownEffect}
                 outcome={outcome}
                 applied={
@@ -875,6 +874,7 @@ export function ReviewWalkthrough({
                 naming={naming}
                 headingRef={heading}
                 onCommand={on}
+                onChoose={choose}
               />
             ) : (
               <WalkDone
@@ -925,6 +925,7 @@ export function ReviewWalkthrough({
           items={dialog.batch.items}
           cards={order.cards}
           advice={dialog.advice}
+          label={dialog.label}
           drawn={drawnLike(
             order.spot,
             order.cards,

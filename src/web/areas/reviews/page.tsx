@@ -44,14 +44,15 @@ export function ReviewPage() {
   const audits = suggestions.data?.enabled !== false;
   const [tab] = useTabParam(audits ? ["facts", "ontology"] : ["facts"]);
   const loadId = queue.load?.id ?? "",
-    open = queue.open;
+    { open, suggested } = queue;
   useEffect(() => {
-    if (open !== undefined && loadId)
+    if (open !== undefined && suggested !== undefined && loadId)
       qc.setQueryData<OpenFacts>(reviewQueries.openFacts(ws, o).queryKey, {
         loadId,
         open,
+        suggested,
       });
-  }, [qc, ws, o, loadId, open]);
+  }, [qc, ws, o, loadId, open, suggested]);
   return (
     <Page>
       <PageHeader

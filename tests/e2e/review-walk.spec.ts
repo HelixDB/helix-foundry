@@ -37,6 +37,8 @@ const MEASURED = (right: number) => ({
 });
 
 const card = (page: Page) => page.getByRole("article");
+const choiceButtons = (page: Page) =>
+  card(page).getByRole("list", { name: "Choices" }).getByRole("button");
 const heading = (page: Page) => card(page).getByRole("heading", { level: 2 });
 const progress = (page: Page) => page.locator(".rv-progress");
 const lane = (page: Page, name: "Decide" | "FYI" | "Covered") =>
@@ -117,6 +119,20 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   await expect(card(page)).toContainText(
     "Founder suggests ApproveRuleMeasured · right 40 of 40",
   );
+  // The suggestion is the primary choice, shown once, and Enter takes it;
+  // the other choice follows with its key.
+  await expect(choiceButtons(page)).toHaveText([
+    /^Approve\s*$/,
+    /^X\s*Reject$/,
+  ]);
+  await expect(choiceButtons(page).first()).toHaveAttribute(
+    "aria-keyshortcuts",
+    "Enter",
+  );
+  await expect(choiceButtons(page).nth(1)).toHaveAttribute(
+    "aria-keyshortcuts",
+    "X",
+  );
   // Measured, but not enough to accept them all at once.
   await expect(
     page.getByRole("button", { name: /Accept all like this/ }),
@@ -152,10 +168,17 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
     "1 of 4 · 0 accepted · 0 changed · 1 skipped",
   );
 
-  // A digit saves that choice at once.
-  sent = page.waitForRequest(isSettle);
+  // A choice's key saves it at once; no digit is shown, so none chooses.
   await page.keyboard.press("1");
-  expect(body(await sent)).toEqual(RELEASE);
+  await expect(heading(page)).toContainText(other);
+  sent = page.waitForRequest(isSettle);
+  await page.keyboard.press("x");
+  expect(body(await sent)).toEqual({
+    decision: {
+      reject: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    },
+    drawn: "ranked",
+  });
   // A name the load linked by its legal form: a choice applies from the
   // next load.
   await expect(heading(page)).toContainText("names “Umbrella Holdings");
@@ -186,7 +209,7 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
     "Through to the end, 1 skipped",
   );
   await expect(progress(page)).toHaveText(
-    "4 of 4 · 2 accepted · 1 changed · 1 skipped",
+    "4 of 4 · 1 accepted · 2 changed · 1 skipped",
   );
   await expect(done).toContainText("From the next load2 choices");
   await expect(done.getByRole("link", { name: "Load again" })).toHaveAttribute(
@@ -199,9 +222,7 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   // counted no cards), and starts the walk too; back from the walk, it says
   // the walk's count of cards still to decide: the one skipped.
   await page.goto(O);
-  await expect(
-    page.getByText(/^This load’s documents left \d+ reviews for a person$/),
-  ).toBeVisible();
+  await expect(page.getByText(/^\d+ reviews waiting$/)).toBeVisible();
   await page.getByRole("link", { name: "Start reviewing" }).click();
   await expect(page).toHaveURL(new RegExp(`${O}/review$`));
   const facts = page
@@ -219,10 +240,9 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   await expect(page).toHaveURL(new RegExp(`${O}$`));
   if (left)
     await expect(
-      page.getByText(
-        `This load has ${left} ${left === 1 ? "card" : "cards"} to decide`,
-        { exact: true },
-      ),
+      page.getByText(`${left} ${left === 1 ? "card" : "cards"} to decide`, {
+        exact: true,
+      }),
     ).toBeVisible();
   else
     await expect(
@@ -245,6 +265,11 @@ async function naming(page: Page, nameInPlace: "written" | "not_replayed") {
   await expect(card(page)).toContainText(
     "Applies now to 3 documents asking about this name.",
   );
+  // The only record the load found is the suggestion: the primary choice.
+  await expect(choiceButtons(page)).toHaveText([
+    /^Link to .+\S\s*$/,
+    /^N\s*Not in data$/,
+  ]);
   await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/);
   const sent = page.waitForRequest(isSettle);
   await page.keyboard.press("Enter");
@@ -338,7 +363,11 @@ test("accepts all like this from a ticked list: untick one, see it go, then take
   ).toBeVisible();
   await page.keyboard.press("g");
   const dialog = page.getByRole("dialog", { name: "Accept all like this" });
-  await expect(dialog).toContainText("Measured · right 80 of 80");
+  await expect(dialog).toContainText(
+    "Founder suggests Approve for all 4: random checks of claims scored 0.7 to 0.8 were right 80 of 80 times. Untick any you want to read yourself.",
+  );
+  // It opens on its confirm.
+  await expect(dialog.getByRole("button", { name: "Approve 4" })).toBeFocused();
   const ticks = dialog.getByRole("checkbox", { name: "Include this card" });
   await expect(ticks).toHaveCount(4);
   for (const t of await ticks.all()) await expect(t).toBeChecked();
@@ -372,6 +401,12 @@ test("puts a refused choice back next, saying why, to choose again", async ({
 }) => {
   await walk(page, [file("variant.md", HEDGED)], { settleRefusals: 1 });
   const { first, other } = await claims(page);
+  // No suggestion (nothing measures the score yet): no primary, the
+  // choices numbered as they show.
+  await expect(choiceButtons(page)).toHaveText([
+    /^1\s*Approve$/,
+    /^X\s*Reject$/,
+  ]);
   const sent = page.waitForResponse((r) => isSettle(r.request()));
   await page.keyboard.press("1");
   expect((await sent).status()).toBe(400);
@@ -535,6 +570,11 @@ test("F asks Founder: the dock opens with the card in its composer, and nothing 
   await page.keyboard.press("Escape");
   await expect(help).toHaveCount(0);
   await expect(heading(page)).toContainText(first);
+  // The card's ? button opens them too.
+  await card(page).getByRole("button", { name: "Keyboard shortcuts" }).click();
+  await expect(help).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(help).toHaveCount(0);
 
   // Enter on a focused button is that button's: Skip skips, nothing is saved.
   await card(page).getByRole("button", { name: /^Skip/ }).focus();
@@ -554,4 +594,59 @@ test("F asks Founder: the dock opens with the card in its composer, and nothing 
   );
   expect(posts.filter((u) => /:settle$/.test(u))).toHaveLength(1);
   expect(removes).toEqual([]);
+});
+
+test("the rail tells cards apart in two lines, and the filters drop below their own fields", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await walk(page, [file("variant.md", HEDGED), file("second.md", SECOND)]);
+  const rail = page
+    .getByRole("navigation", { name: "Next cards" })
+    .getByRole("listitem");
+  // A claim by the customer it names, then its kind and document.
+  const lines = await rail.allTextContents();
+  expect(
+    lines.filter((l) =>
+      /^(Globex Corporation|Initech LLC)Held claim · (variant|second)\.md$/.test(
+        l,
+      ),
+    ),
+  ).toHaveLength(4);
+  expect(new Set(lines).size).toBe(lines.length);
+  expect(lines.some((l) => /^“.+”Name · \S+\.md$/.test(l))).toBe(true);
+
+  // Each filter is a field of its own: its list opens under it, on the
+  // option chosen.
+  const kind = page.getByRole("combobox", { name: "Kind" });
+  await expect(kind).toHaveText("Any");
+  await kind.click();
+  const list = page.getByRole("listbox", { name: "Kind" });
+  await expect(list.getByRole("option", { name: "Any" })).toBeFocused();
+  const [field, popover] = await Promise.all([
+    kind.boundingBox(),
+    list.boundingBox(),
+  ]);
+  expect(popover!.y).toBeGreaterThanOrEqual(field!.y + field!.height);
+  await list.getByRole("option", { name: "Held claims" }).click();
+  await expect(page).toHaveURL(/[?&]kind=claim/);
+  await expect(kind).toHaveText("Held claims");
+  await expect(progress(page)).toHaveText(
+    "0 of 4 · 0 accepted · 0 changed · 0 skipped",
+  );
+  await kind.click();
+  await expect(list.getByRole("option", { name: "Held claims" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  const doc = page.getByRole("combobox", { name: "Document" });
+  await doc.click();
+  await page
+    .getByRole("listbox", { name: "Document" })
+    .getByRole("option", { name: "second.md" })
+    .click();
+  await expect(progress(page)).toHaveText(
+    "0 of 2 · 0 accepted · 0 changed · 0 skipped",
+  );
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(page).not.toHaveURL(/[?&](kind|doc)=/);
+  await expect(kind).toHaveText("Any");
 });

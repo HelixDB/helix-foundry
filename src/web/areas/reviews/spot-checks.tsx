@@ -311,13 +311,8 @@ function LabelButtons({
   };
   return (
     <>
-      <div className="hf-form-actions">
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={pending}
-          onClick={() => void say("wrong")}
-        >
+      <div className="rq-verdict">
+        <Button size="sm" disabled={pending} onClick={() => void say("wrong")}>
           Wrong
         </Button>
         <Button
@@ -631,13 +626,8 @@ function RecheckButtons({ item }: { item: Recheck }) {
     );
   return (
     <>
-      <div className="hf-form-actions">
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={pending}
-          onClick={() => void say("wrong")}
-        >
+      <div className="rq-verdict">
+        <Button size="sm" disabled={pending} onClick={() => void say("wrong")}>
           Wrong
         </Button>
         <Button

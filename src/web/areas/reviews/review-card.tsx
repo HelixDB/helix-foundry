@@ -10,11 +10,12 @@ import type { DecisionApplied } from "../../../shared/wfe";
 import {
   ArrowLeft,
   ArrowRight,
+  CircleHelp,
   CornerDownLeft,
   MessageCircle,
   Undo2,
 } from "lucide-react";
-import { Button, Tag, plural } from "../../kit";
+import { Button, IconButton, Tag, plural } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
@@ -29,7 +30,7 @@ import {
   type Decidable,
   type Effect,
 } from "./advice";
-import type { Choice } from "./choices";
+import type { Choice, ChoiceLayout } from "./choices";
 import type { KeyCommand } from "./keys";
 import {
   holdingEnds,
@@ -175,9 +176,12 @@ export function cardLine(card: Decidable): string {
   }
 }
 
-/** The key a button's choice has, as the walkthrough's keys read it. */
-const keyOf = (c: Choice, i: number) =>
-  c.kind === "not_in_data" ? "N" : c.kind === "reject" ? "X" : String(i + 1);
+/** What a card is, in a word: its tag, and the rail's second line. */
+export const KIND_TEXT: Record<Decidable["kind"], string> = {
+  name: "Name",
+  claim: "Held claim",
+  value: "Value",
+};
 
 /**
  * What became of a card in this walk, said on it; for a name's choice, also
@@ -271,10 +275,12 @@ const Kbd = ({ children }: { children: ReactNode }) => (
 /**
  * One card of the walkthrough: the question, the evidence, what the card
  * concerns, Founder's suggestion and what a choice does (`effect`), what
- * became of it (`outcome`), then its actions, each a command the walkthrough
- * also takes from a key: Accept (with a suggestion), the numbered choices,
- * Skip, Back, Undo, Accept all like this (`batch`, the cards it takes), Ask
- * Founder (`founder`). `readOnly` (a member, or a load that isn't current)
+ * became of it (`outcome`), then its choices as `layout` lays them out: the
+ * suggested one first, as the primary button (Enter), then the others, each
+ * with its key (`onChoose`). Under them Back, Skip and Undo, then Accept
+ * all like this (`batch`, the cards it takes), Ask Founder (`founder`) and
+ * the shortcuts, each a command the walkthrough also takes from a key
+ * (`onCommand`). `readOnly` (a member, or a load that isn't current)
  * shows the card without its choices, its reading keys (Back, Next, Ask
  * Founder, the shortcuts) still working; a card decided in this walk shows
  * what became of it instead.
@@ -283,6 +289,7 @@ export function ReviewCard({
   card,
   advice,
   choices,
+  layout,
   effect,
   outcome,
   applied,
@@ -293,10 +300,12 @@ export function ReviewCard({
   naming,
   headingRef,
   onCommand,
+  onChoose,
 }: {
   card: Decidable;
   advice: Advice;
   choices: readonly Choice[];
+  layout: ChoiceLayout;
   effect: Effect | null;
   outcome?: Outcome;
   // What the current load made of the saved decision, as last read.
@@ -308,30 +317,19 @@ export function ReviewCard({
   naming: Naming;
   headingRef: Ref<HTMLHeadingElement>;
   onCommand: (c: KeyCommand) => void;
+  onChoose: (c: Choice) => void;
 }) {
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology();
   const docName = useDocumentNames(ws, "A document");
   const open =
     !outcome || outcome.kind === "refused" || outcome.kind === "skipped";
-  const suggested =
-    advice.kind === "suggest"
-      ? choices.find(
-          (c) => JSON.stringify(c.decision) === JSON.stringify(advice.choice),
-        )
-      : undefined;
   // A card's key may hold spaces and quotes (a name's is JSON), no IDREF.
   const headingId = useId();
   return (
     <article className="rv-card" aria-labelledby={headingId}>
       <header className="rv-card-head">
-        <Tag>
-          {card.kind === "name"
-            ? "Name"
-            : card.kind === "claim"
-              ? "Held claim"
-              : "Value"}
-        </Tag>
+        <Tag>{KIND_TEXT[card.kind]}</Tag>
         <h2 id={headingId} ref={headingRef} tabIndex={-1}>
           {card.kind === "name"
             ? `${docName(card.review.documentId)} names “${cardName(card)}”. Which ${settleOf(card).type} is it?`
@@ -371,7 +369,7 @@ export function ReviewCard({
       <FounderSuggestion
         advice={advice}
         effect={effect}
-        label={suggested?.label}
+        label={layout.primary?.label}
       />
       <OutcomeLine
         outcome={outcome}
@@ -383,32 +381,36 @@ export function ReviewCard({
         <p className="on-muted">Owners and admins settle reviews.</p>
       ) : (
         open && (
-          <div className="rv-actions">
-            {suggested && (
-              <Button
-                variant="primary"
-                aria-keyshortcuts="Enter"
-                onClick={() => onCommand({ kind: "accept" })}
-              >
-                Accept{" "}
-                <Kbd>
-                  <CornerDownLeft size={12} />
-                </Kbd>
-              </Button>
+          <ul className="rv-choices" aria-label="Choices">
+            {layout.primary && (
+              <li>
+                <Button
+                  variant="primary"
+                  aria-keyshortcuts="Enter"
+                  onClick={() => onCommand({ kind: "accept" })}
+                >
+                  {layout.primary.kind === "link"
+                    ? `Link to ${layout.primary.label}`
+                    : layout.primary.kind === "value"
+                      ? `Use ${layout.primary.label}`
+                      : layout.primary.label}{" "}
+                  <Kbd>
+                    <CornerDownLeft size={12} />
+                  </Kbd>
+                </Button>
+              </li>
             )}
-            <ul className="rv-choices" aria-label="Choices">
-              {choices.map((c, i) => (
-                <li key={c.id}>
-                  <Button
-                    aria-keyshortcuts={keyOf(c, i)}
-                    onClick={() => onCommand({ kind: "choose", index: i })}
-                  >
-                    <Kbd>{keyOf(c, i)}</Kbd> {c.label}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </div>
+            {layout.rest.map(({ choice, key }) => (
+              <li key={choice.id}>
+                <Button
+                  aria-keyshortcuts={key}
+                  onClick={() => onChoose(choice)}
+                >
+                  {key && <Kbd>{key}</Kbd>} {choice.label}
+                </Button>
+              </li>
+            ))}
+          </ul>
         )
       )}
       {/* What a held claim's approval writes, its score and how it's
@@ -432,25 +434,25 @@ export function ReviewCard({
         </div>
       )}
       <div className="rv-nav">
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="ArrowLeft"
-          onClick={() => onCommand({ kind: "back" })}
-        >
-          <ArrowLeft size={14} aria-hidden /> Back
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="S"
-          onClick={() => onCommand({ kind: "skip" })}
-        >
-          {open && !readOnly ? "Skip" : "Next"}{" "}
-          <ArrowRight size={14} aria-hidden />
-        </Button>
-        {!readOnly && (
-          <>
+        <div className="rv-nav-side">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-keyshortcuts="ArrowLeft"
+            onClick={() => onCommand({ kind: "back" })}
+          >
+            <ArrowLeft size={14} aria-hidden /> Back
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-keyshortcuts="S"
+            onClick={() => onCommand({ kind: "skip" })}
+          >
+            {open && !readOnly ? "Skip" : "Next"}{" "}
+            <ArrowRight size={14} aria-hidden />
+          </Button>
+          {!readOnly && (
             <Button
               size="sm"
               variant="ghost"
@@ -459,35 +461,36 @@ export function ReviewCard({
             >
               <Undo2 size={14} aria-hidden /> Undo
             </Button>
-            {batch > 1 && open && (
-              <Button
-                size="sm"
-                aria-keyshortcuts="G"
-                onClick={() => onCommand({ kind: "batch" })}
-              >
-                Accept all like this ({batch}) <Kbd>G</Kbd>
-              </Button>
-            )}
-          </>
-        )}
-        {founder && (
-          <Button
+          )}
+        </div>
+        <div className="rv-nav-side">
+          {!readOnly && batch > 1 && open && (
+            <Button
+              size="sm"
+              aria-keyshortcuts="G"
+              onClick={() => onCommand({ kind: "batch" })}
+            >
+              Accept all like this ({batch}) <Kbd>G</Kbd>
+            </Button>
+          )}
+          {founder && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-keyshortcuts="F"
+              onClick={() => onCommand({ kind: "founder" })}
+            >
+              <MessageCircle size={14} aria-hidden /> Ask Founder
+            </Button>
+          )}
+          <IconButton
             size="sm"
-            variant="ghost"
-            aria-keyshortcuts="F"
-            onClick={() => onCommand({ kind: "founder" })}
-          >
-            <MessageCircle size={14} aria-hidden /> Ask Founder
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="Shift+?"
-          onClick={() => onCommand({ kind: "help" })}
-        >
-          Shortcuts <Kbd>?</Kbd>
-        </Button>
+            label="Keyboard shortcuts"
+            icon={CircleHelp}
+            aria-keyshortcuts="Shift+?"
+            onClick={() => onCommand({ kind: "help" })}
+          />
+        </div>
       </div>
     </article>
   );

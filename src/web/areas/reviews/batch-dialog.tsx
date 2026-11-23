@@ -12,7 +12,7 @@ import { useDocumentNames } from "../documents/documents-api";
 import type { Advice } from "./advice";
 import type { QueueCard } from "./queue";
 import { cardLine } from "./review-card";
-import { strengthText } from "./suggestion";
+import { batchReason } from "./walk";
 
 /** What became of one card of a batch. */
 export type BatchResult = { key: string; failed?: string; stopped?: boolean };
@@ -39,6 +39,7 @@ export function BatchDialog({
   items,
   cards,
   advice,
+  label,
   drawn,
   run,
   undo,
@@ -48,6 +49,8 @@ export function BatchDialog({
   cards: ReadonlyMap<string, QueueCard>;
   // The shown card's suggestion, which every item shares.
   advice: Advice;
+  // The suggested choice's words, as the card shows them.
+  label?: string;
   // How many cards like these are spot checks, which the batch leaves out.
   drawn: number;
   // Sends the ticked cards the walk still takes: a result for each sent.
@@ -96,8 +99,8 @@ export function BatchDialog({
     <Dialog
       title="Accept all like this"
       description={
-        advice.kind === "suggest"
-          ? `Founder suggests the same for each: ${strengthText(advice.strength)}. Untick any you want to read yourself.`
+        stage.kind === "choose"
+          ? `${batchReason(advice, label, rows.length) ?? ""} Untick any you want to read yourself.`.trim()
           : undefined
       }
       size="lg"
@@ -109,6 +112,7 @@ export function BatchDialog({
             <Button onClick={onClose}>Cancel</Button>
             <Button
               variant="primary"
+              data-autofocus
               disabled={stage.off.size === rows.length}
               onClick={() =>
                 void start(
