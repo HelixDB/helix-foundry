@@ -84,7 +84,14 @@ type jobQueue interface {
 	ParkFoundryGraphJob(ctx context.Context, jobID, workerID string, until time.Time) (bool, error)
 }
 
-// Task runs queued graph jobs one at a time.
+// Task runs queued graph jobs one at a time: its agent sidecar and work
+// volume are sized for one load's snapshots. A deployment runs more jobs at
+// once with more replicas of the worker, each with its own sidecar. The
+// claim (ClaimFoundryGraphJob, FOR UPDATE SKIP LOCKED) hands each job to one
+// worker, an ontology has at most one live job, and renewLease stops an
+// attempt before its lease could lapse, so no two workers ever write one
+// load. Each job boosts only its own database (boost), and the proxy sends
+// a query the gateway rate limited (429) again with backoff.
 type Task struct {
 	deps  Deps
 	cfg   config.GraphConfig
