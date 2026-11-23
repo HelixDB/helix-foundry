@@ -18,7 +18,8 @@ import (
 // every live ontology's current load created before it in the database at
 // dsn (store.RebuildFoundryLoads), and writes to out what it queued, what is
 // still reloading, what a live job held back and what it gave up on
-// (store.MaxFoundryRebuilds reloads of it failed). Run again until nothing is
+// (store.MaxFoundryRebuilds reloads of it failed), and the samples it
+// doesn't reload (store.FoundryRebuildSample). Run again until nothing is
 // queued, reloading or held back. It fails on arguments it can't read,
 // before opening the database, and with every ontology it couldn't queue,
 // after writing what it did.
@@ -50,5 +51,6 @@ func runRebuildLoads(ctx context.Context, dsn string, args []string, out io.Writ
 	fmt.Fprintf(out, "held back by a live job, %d (run again once it ends): %s\n", len(got.Busy), strings.Join(got.Busy, " "))
 	fmt.Fprintf(out, "given up after %d reloads that failed, %d (load each again by hand): %s\n", store.MaxFoundryRebuilds, len(got.GaveUp),
 		strings.Join(got.GaveUp, " "))
+	fmt.Fprintf(out, "samples not reloaded, %d (a queued reload of one withdrawn): %s\n", len(got.Samples), strings.Join(got.Samples, " "))
 	return err
 }
