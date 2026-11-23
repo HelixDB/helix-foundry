@@ -39,13 +39,17 @@
 -- place (document, section, byte range and link), a held claim with its key
 -- and the hash of its statement, a fact's quote with its fact's key.
 --
+-- foundry_review_reads is each database's (tenant's) next read slot for the
+-- indexer, shared by every replica, so a database is read at most once a
+-- gap however many indexers run.
+--
 -- foundry_review_decisions.name_hash is the hash of a resolve's type and
 -- name, indexed with its ontology and kind, so the decisions of a name are
 -- read by an index of about 150 bytes a key; a reader compares type and
 -- norm_name too, so two names never merge on a collision.
 -- foundry_review_labels_place_idx reads the labels at a place.
 --
--- Additive: five new tables, a virtual column and two indexes; nothing here
+-- Additive: six new tables, a virtual column and two indexes; nothing here
 -- changes or deletes a row.
 --
 -- Rollback. A deploy request carries schema only and a rollback restores the
@@ -178,6 +182,11 @@ CREATE TABLE foundry_review_draws (
   )
 );
 
+CREATE TABLE foundry_review_reads (
+  tenant_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+  next_at   DATETIME(6) NOT NULL
+);
+
 ALTER TABLE foundry_review_decisions
   ADD COLUMN name_hash BINARY(32) GENERATED ALWAYS AS (UNHEX(SHA2(CAST(JSON_ARRAY(type, norm_name) AS CHAR), 256))) VIRTUAL,
   ADD INDEX foundry_review_decisions_names_idx (ontology_id, kind, name_hash);
@@ -191,6 +200,7 @@ ALTER TABLE foundry_review_labels
 ALTER TABLE foundry_review_decisions
   DROP INDEX foundry_review_decisions_names_idx,
   DROP COLUMN name_hash;
+DROP TABLE foundry_review_reads;
 DROP TABLE foundry_review_draws;
 DROP TABLE foundry_review_cards;
 DROP TABLE foundry_review_docs;

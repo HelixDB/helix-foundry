@@ -2374,9 +2374,13 @@ func (u Unimplemented) ClearFoundryReviewLoads(context.Context, int) (int, error
 	u.unimplemented("ClearFoundryReviewLoads")
 	return 0, nil
 }
-func (u Unimplemented) DropFoundryReviewLoad(context.Context, string) error {
-	u.unimplemented("DropFoundryReviewLoad")
+func (u Unimplemented) ParkFoundryReviewLoad(context.Context, string) error {
+	u.unimplemented("ParkFoundryReviewLoad")
 	return nil
+}
+func (u Unimplemented) ReserveFoundryReviewRead(context.Context, string, time.Duration) (time.Duration, error) {
+	u.unimplemented("ReserveFoundryReviewRead")
+	return 0, nil
 }
 func (u Unimplemented) ClaimFoundryReviewDocuments(context.Context, string, time.Duration) ([]model.FoundryReviewClaim, error) {
 	u.unimplemented("ClaimFoundryReviewDocuments")

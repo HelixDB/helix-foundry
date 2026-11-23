@@ -2115,7 +2115,9 @@ message FoundryReviewSummary {
   // Open cards to decide, at most 10,000; more says there are more.
   int32 open = 3;
   bool more = 4;
-  // The index is still being built: open may be too low.
+  // The load's index is still first being built (no pass has indexed every
+  // document yet): open may be too low. Documents owed again later don't
+  // set it.
   bool indexing = 5;
 }
 

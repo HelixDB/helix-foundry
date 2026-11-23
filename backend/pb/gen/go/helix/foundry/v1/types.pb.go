@@ -12215,7 +12215,9 @@ type FoundryReviewSummary struct {
 	// Open cards to decide, at most 10,000; more says there are more.
 	Open int32 `protobuf:"varint,3,opt,name=open,proto3" json:"open,omitempty"`
 	More bool  `protobuf:"varint,4,opt,name=more,proto3" json:"more,omitempty"`
-	// The index is still being built: open may be too low.
+	// The load's index is still first being built (no pass has indexed every
+	// document yet): open may be too low. Documents owed again later don't
+	// set it.
 	Indexing bool `protobuf:"varint,5,opt,name=indexing,proto3" json:"indexing,omitempty"`
 }
 

@@ -5241,7 +5241,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-spot-checks:draw": {
       "post": {
-        "summary": "Tops the current load's spot checks up to five not yet labelled: each\ndrawn once, the same for everyone, and never changed. Idempotent.",
+        "summary": "Tops the current load's spot checks up to five not yet labelled: each\ndrawn once, the same for everyone, and never changed. Idempotent. While\nthe load's index is first being built (indexing) it draws none.",
         "operationId": "FoundryService_DrawFoundryReviewSpotChecks",
         "responses": {
           "200": {
@@ -13170,7 +13170,7 @@
         },
         "indexing": {
           "type": "boolean",
-          "description": "The index is still being built: open may be too low."
+          "description": "The load's index is still first being built (no pass has indexed every\ndocument yet): open may be too low. Documents owed again later don't\nset it."
         }
       },
       "description": "An ontology's current load and how many cards it asks to decide."
@@ -14801,7 +14801,7 @@
         },
         "indexing": {
           "type": "boolean",
-          "description": "The index is still being built: more cards may come, and the walk is\nnot done when it runs out."
+          "description": "The load's index is still first being built: more cards may come, and\nthe walk is not done when it runs out."
         },
         "cards": {
           "type": "array",

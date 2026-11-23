@@ -37,6 +37,8 @@ type cardStore struct {
 	quoteDocs []string
 	byID      []string
 	withdraws bool
+	// indexed: the load's index is whole (not indexing).
+	indexed bool
 }
 
 func (s *cardStore) GetFoundryOntology(_ context.Context, ws, id string) (*foundrymodel.FoundryOntology, error) {
@@ -57,7 +59,9 @@ func (s *cardStore) ListFoundryReviewSummaries(_ context.Context, ws string) ([]
 	}
 	return s.summaries, nil
 }
-func (s *cardStore) FoundryReviewIndexing(context.Context, string) (bool, error) { return true, nil }
+func (s *cardStore) FoundryReviewIndexing(context.Context, string) (bool, error) {
+	return !s.indexed, nil
+}
 func (s *cardStore) ListFoundryReviewCards(_ context.Context, _, _ string, filter foundrymodel.FoundryReviewCardFilter,
 	after *foundrymodel.FoundryReviewCardCursor, limit int) ([]*foundrymodel.FoundryReviewListedCard, error) {
 	s.after, s.filters = append(s.after, after), append(s.filters, filter)
@@ -267,6 +271,15 @@ func TestDrawFoundryReviewSpotChecks(t *testing.T) {
 	_, err := s.DrawFoundryReviewSpotChecks(reviewerContext(), &foundryv1.DrawFoundryReviewSpotChecksRequest{WorkspaceId: "workspace-a", OntologyId: "o",
 		LoadId: "load-0"})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "a load not current")
+
+	// While the load's index isn't whole, nothing is drawn: draws are for
+	// good, and the pool is only the documents indexed so far.
+	early, err := s.DrawFoundryReviewSpotChecks(reviewerContext(), &foundryv1.DrawFoundryReviewSpotChecksRequest{WorkspaceId: "workspace-a",
+		OntologyId: "o", LoadId: "load-1"})
+	require.NoError(t, err)
+	assert.Empty(t, early.GetDraws())
+	assert.Zero(t, reads)
+	db.indexed = true
 
 	resp, err := s.DrawFoundryReviewSpotChecks(reviewerContext(), &foundryv1.DrawFoundryReviewSpotChecksRequest{WorkspaceId: "workspace-a",
 		OntologyId: "o", LoadId: "load-1"})

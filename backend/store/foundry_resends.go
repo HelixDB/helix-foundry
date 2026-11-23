@@ -984,7 +984,8 @@ WHERE load_id=? AND id=? AND kind='resolve' AND doc_id=? AND applied_status IN (
 // it failed (contract 4.22.0), which join the row's names
 // (mergeFoundryDocumentNames). The job's load is the one its row names, while
 // workerID holds its lease; ErrNotFound means it lost it, and nothing was
-// written.
+// written. The document's review cards are owed a rebuild in the same
+// transaction.
 func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome,
 	names []model.FoundryDocumentName) error {
 	if len(outcomes) == 0 && len(names) == 0 {
@@ -992,9 +993,9 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		var loadID string
-		if err := tx.db.QueryRowContext(ctx, `SELECT load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
-			Scan(&loadID); err != nil {
+		var ontologyID, loadID string
+		if err := tx.db.QueryRowContext(ctx, `SELECT ontology_id, load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
+			Scan(&ontologyID, &loadID); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
@@ -1003,7 +1004,12 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 		if err := tx.mergeFoundryDocumentNames(ctx, loadID, docID, names); err != nil {
 			return err
 		}
-		return tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true)
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true); err != nil {
+			return err
+		}
+		// A withdraw taken back, or a name settled, changed the document's
+		// reviews in the graph: its cards are owed a rebuild.
+		return tx.oweFoundryReviewDocument(ctx, ontologyID, loadID, docID)
 	})
 }
 

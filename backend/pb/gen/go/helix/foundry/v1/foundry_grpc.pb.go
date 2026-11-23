@@ -323,7 +323,8 @@ type FoundryServiceClient interface {
 	// and the decisions and labels at their places. Read only.
 	ListFoundryReviewSpotChecks(ctx context.Context, in *ListFoundryReviewSpotChecksRequest, opts ...grpc.CallOption) (*FoundryReviewSpotChecksResponse, error)
 	// Tops the current load's spot checks up to five not yet labelled: each
-	// drawn once, the same for everyone, and never changed. Idempotent.
+	// drawn once, the same for everyone, and never changed. Idempotent. While
+	// the load's index is first being built (indexing) it draws none.
 	DrawFoundryReviewSpotChecks(ctx context.Context, in *DrawFoundryReviewSpotChecksRequest, opts ...grpc.CallOption) (*FoundryReviewSpotChecksResponse, error)
 	// Self-healing suggestions: what audits of the ontology's current load
 	// found its ontology and mappings lack, the top open ones by support.
@@ -2504,7 +2505,8 @@ type FoundryServiceServer interface {
 	// and the decisions and labels at their places. Read only.
 	ListFoundryReviewSpotChecks(context.Context, *ListFoundryReviewSpotChecksRequest) (*FoundryReviewSpotChecksResponse, error)
 	// Tops the current load's spot checks up to five not yet labelled: each
-	// drawn once, the same for everyone, and never changed. Idempotent.
+	// drawn once, the same for everyone, and never changed. Idempotent. While
+	// the load's index is first being built (indexing) it draws none.
 	DrawFoundryReviewSpotChecks(context.Context, *DrawFoundryReviewSpotChecksRequest) (*FoundryReviewSpotChecksResponse, error)
 	// Self-healing suggestions: what audits of the ontology's current load
 	// found its ontology and mappings lack, the top open ones by support.

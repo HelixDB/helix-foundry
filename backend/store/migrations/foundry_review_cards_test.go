@@ -160,7 +160,7 @@ WHERE ontology_id='o' AND kind='resolve' AND name_hash=UNHEX(SHA2(CAST(JSON_ARRA
 	if err := goose.Down(db, "."); err != nil {
 		t.Fatalf("down: %v", err)
 	}
-	for _, table := range []string{"foundry_review_loads", "foundry_review_owed", "foundry_review_docs", "foundry_review_cards", "foundry_review_draws"} {
+	for _, table := range []string{"foundry_review_loads", "foundry_review_owed", "foundry_review_docs", "foundry_review_cards", "foundry_review_draws", "foundry_review_reads"} {
 		var n int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?`, table).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s outlived the down (%v)", table, err)

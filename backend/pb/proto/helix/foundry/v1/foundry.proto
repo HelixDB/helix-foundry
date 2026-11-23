@@ -386,7 +386,8 @@ service FoundryService {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks"};
   }
   // Tops the current load's spot checks up to five not yet labelled: each
-  // drawn once, the same for everyone, and never changed. Idempotent.
+  // drawn once, the same for everyone, and never changed. Idempotent. While
+  // the load's index is first being built (indexing) it draws none.
   rpc DrawFoundryReviewSpotChecks(DrawFoundryReviewSpotChecksRequest) returns (FoundryReviewSpotChecksResponse) {
     option (google.api.http) = {
       post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-spot-checks:draw"
@@ -2152,8 +2153,8 @@ message ListFoundryReviewCardsRequest {
 }
 message ListFoundryReviewCardsResponse {
   string load_id = 1;
-  // The index is still being built: more cards may come, and the walk is
-  // not done when it runs out.
+  // The load's index is still first being built: more cards may come, and
+  // the walk is not done when it runs out.
   bool indexing = 2;
   // At most 50, in the walk's order.
   repeated FoundryReviewCard cards = 3;

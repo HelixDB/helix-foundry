@@ -36,11 +36,16 @@ import (
 // them from the graph and stores their cards only while its lease holds, so
 // a slow worker never stores an older graph over a newer one and replicas
 // split the work. A document owed again meanwhile is owed after the store.
+// Replicas share each database's read pace (foundry_review_reads), so the
+// indexer reads a database at most once a gap however many run.
 //
 // A card is open while no decision decides it (openFoundryReviewCard) and no
 // spot check drew it. The open count is kept on foundry_review_loads,
 // recounted when a settle, a removal, a draw or a store marked it dirty, so
-// the summary reads rows only.
+// the summary reads rows only. A load is indexing until a pass of this
+// builder indexed every document it owed (version): never "nothing to
+// review" before its first full index, and never again for the documents a
+// routine pass owes.
 
 const (
 	// foundryReviewClaimRows is how many due rows one claim reads, and of
@@ -58,6 +63,9 @@ const (
 	// foundryReviewSetAside is where a quarantined document's due_at goes:
 	// no claim reaches it until it is owed again.
 	foundryReviewSetAside = "9999-12-31 00:00:00"
+	// foundryReviewParked is how long a load whose ontology or database
+	// can't be found waits before its next pass.
+	foundryReviewParked = time.Hour
 )
 
 // openFoundryReviewCard is the SQL condition, over the card with alias c,
@@ -151,8 +159,13 @@ WHERE full_owed_at IS NULL AND (version IS NULL OR version < ? OR indexed_at < N
 // and the last pass ended reviewcards.FullPassEvery ago, unless the load was
 // never indexed or by an older builder), owes each running pass's next
 // chunk of the load's extracted documents while fewer than a chunk are owed,
-// and ends a pass whose documents are all owed and indexed: the load is
-// then of this builder's version. It reports how many passes started.
+// and ends a pass whose documents are all owed and indexed or set aside.
+// The load is then of this builder's version only when the pass set none
+// of its documents aside: one set aside (owed since the pass started) keeps
+// the load indexing, and its pass is asked for again; setting a document
+// aside takes about an hour of failed reads, so such a load is read again
+// about hourly, as the daily refresh would. It reports how many passes
+// started.
 func (s *mysqlDB) AdvanceFoundryReviewPasses(ctx context.Context) (started int, err error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE foundry_review_loads SET full_started_at=NOW(6), full_cursor=''
 WHERE full_owed_at IS NOT NULL AND full_started_at IS NULL AND (retry_at IS NULL OR retry_at <= NOW(6))
@@ -203,12 +216,15 @@ SELECT load_id, document_id FROM foundry_load_extractions WHERE load_id=? AND do
 		if owed > 0 {
 			continue
 		}
-		// full_owed_at goes first, as it reads full_started_at: a request
-		// since the pass started is one more pass.
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_review_loads
-SET full_owed_at=IF(full_owed_at > full_started_at, full_owed_at, NULL), full_started_at=NULL, full_cursor=NULL, version=?,
-  indexed_at=NOW(6), dirty_at=NOW(6), attempts=0, retry_at=NULL
-WHERE load_id=? AND full_started_at IS NOT NULL`, reviewcards.Version, p.load); err != nil {
+		// full_owed_at and version go first, as they read full_started_at:
+		// a request since the pass started is one more pass, and a document
+		// this pass owed that is set aside leaves the version as it was.
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_review_loads r
+SET full_owed_at=IF(full_owed_at > full_started_at, full_owed_at, NULL),
+  version=IF(EXISTS (SELECT 1 FROM foundry_review_owed w WHERE w.load_id=r.load_id AND w.attempts >= ? AND w.owed_at >= r.full_started_at),
+    version, ?),
+  full_started_at=NULL, full_cursor=NULL, indexed_at=NOW(6), dirty_at=NOW(6), attempts=0, retry_at=NULL
+WHERE load_id=? AND full_started_at IS NOT NULL`, model.FoundryReviewQuarantine, reviewcards.Version, p.load); err != nil {
 			return 0, err
 		}
 	}
@@ -218,6 +234,9 @@ WHERE load_id=? AND full_started_at IS NOT NULL`, reviewcards.Version, p.load); 
 // RecountFoundryReviewLoads recounts at most limit loads whose open count is
 // stale: every open card of the decide lane, held claims on a name's card
 // included, up to foundryReviewCountCap. It reports how many it recounted.
+// The count stands only while the load's dirty mark is the one read with
+// it: a settle or store that marked it in a transaction the count's read
+// didn't see leaves it dirty, so it is counted again.
 func (s *mysqlDB) RecountFoundryReviewLoads(ctx context.Context, limit int) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT load_id FROM foundry_review_loads WHERE counted_at IS NULL OR dirty_at > counted_at LIMIT ?`, limit)
 	if err != nil {
@@ -231,16 +250,22 @@ func (s *mysqlDB) RecountFoundryReviewLoads(ctx context.Context, limit int) (int
 		return 0, err
 	}
 	for _, load := range loads {
-		// The time the count starts: a load marked dirty during it is
-		// counted again.
-		var at time.Time
+		// The dirty mark and the count, read in one statement's snapshot;
+		// the update compares the mark under its lock, so a mark committed
+		// since (with a decision the count didn't see) wins.
+		var dirty string
 		var open int
-		if err := s.db.QueryRowContext(ctx, `SELECT NOW(6), (SELECT COUNT(*) FROM (SELECT 1 FROM foundry_review_cards c
-WHERE c.load_id=? AND c.lane='decide' AND `+openFoundryReviewCard("c")+` LIMIT ?) t)`, load, foundryReviewCountCap).Scan(&at, &open); err != nil {
+		err := s.db.QueryRowContext(ctx, `SELECT CAST(r.dirty_at AS CHAR), (SELECT COUNT(*) FROM (SELECT 1 FROM foundry_review_cards c
+WHERE c.load_id=r.load_id AND c.lane='decide' AND `+openFoundryReviewCard("c")+` LIMIT ?) t) FROM foundry_review_loads r WHERE r.load_id=?`,
+			foundryReviewCountCap, load).Scan(&dirty, &open)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
 			return 0, err
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_review_loads SET open_cards=?, more_cards=?, counted_at=? WHERE load_id=?`,
-			min(open, foundryReviewCountCap-1), open >= foundryReviewCountCap, at, load); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_review_loads SET open_cards=?, more_cards=?, counted_at=dirty_at
+WHERE load_id=? AND dirty_at=?`, min(open, foundryReviewCountCap-1), open >= foundryReviewCountCap, load, dirty); err != nil {
 			return 0, err
 		}
 	}
@@ -272,19 +297,30 @@ LIMIT ?`, limit)
 		if err := s.clearFoundryReviewLoad(ctx, load); err != nil {
 			return 0, err
 		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_loads WHERE load_id=?`, load); err != nil {
+			return 0, err
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_draws WHERE load_id IN (SELECT id FROM (
   SELECT DISTINCT w.load_id AS id FROM foundry_review_draws w LEFT JOIN foundry_loads l ON l.id=w.load_id
   WHERE l.id IS NULL OR l.status='deleted' LIMIT 50) t)`); err != nil {
 		return 0, err
 	}
+	// A database no one has read for a day forgets its pace.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_reads WHERE next_at < NOW(6) - INTERVAL 1 DAY LIMIT 1000`); err != nil {
+		return 0, err
+	}
 	return len(loads), nil
 }
 
-// clearFoundryReviewLoad deletes a load's cards, documents and owed rows a
-// chunk at a time, then its row.
+// clearFoundryReviewLoad deletes a load's index, a chunk at a time, but its
+// row. Owed rows go first: a store in flight holds its owed rows' locks, so
+// this waits for it, and its cards then go with the rest; a store after
+// finds its rows gone and writes nothing. So no card outlives its load's
+// row, which goes last (ClearFoundryReviewLoads) and is what a cleanup
+// that stopped halfway starts from again.
 func (s *mysqlDB) clearFoundryReviewLoad(ctx context.Context, load string) error {
-	for _, table := range []string{"foundry_review_cards", "foundry_review_docs", "foundry_review_owed"} {
+	for _, table := range []string{"foundry_review_owed", "foundry_review_cards", "foundry_review_docs"} {
 		for {
 			res, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE load_id=? LIMIT ?`, load, foundryReviewClearChunk)
 			if err != nil {
@@ -295,15 +331,22 @@ func (s *mysqlDB) clearFoundryReviewLoad(ctx context.Context, load string) error
 			}
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_loads WHERE load_id=?`, load)
-	return err
+	return nil
 }
 
-// DropFoundryReviewLoad forgets a load whose ontology or database is gone:
-// its cards, documents, owed rows and row. A load still current gets its row
-// again from RequestFoundryReviewPasses.
-func (s *mysqlDB) DropFoundryReviewLoad(ctx context.Context, loadID string) error {
-	return s.clearFoundryReviewLoad(ctx, loadID)
+// ParkFoundryReviewLoad sets aside a load whose ontology or database can't
+// be found: its cards, documents and owed rows go, and its row stays with a
+// pass asked for an hour from now, so a live ontology whose database is
+// gone is tried hourly, not owed again every housekeeping. A load no longer
+// live is cleared by ClearFoundryReviewLoads.
+func (s *mysqlDB) ParkFoundryReviewLoad(ctx context.Context, loadID string) error {
+	if err := s.clearFoundryReviewLoad(ctx, loadID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE foundry_review_loads SET full_owed_at=NOW(6), full_started_at=NULL, full_cursor=NULL,
+  attempts=LEAST(attempts + 1, 60000), retry_at=NOW(6) + INTERVAL ? SECOND, dirty_at=NOW(6) WHERE load_id=?`,
+		int(foundryReviewParked.Seconds()), loadID)
+	return err
 }
 
 // ClaimFoundryReviewDocuments claims due owed documents for workerID for
@@ -530,18 +573,24 @@ WHERE ontology_id=? AND kind IN ('release', 'reject') AND doc_id IN (`+idPlaceho
 	return scanAll(rows, scanFoundryReviewDecisionDrawn)
 }
 
+// foundryReviewIndexed is the SQL condition, over a load's row with alias
+// r (NULL when it has none), that its index is whole: a pass of this
+// builder indexed every document it owed, and the load was counted since.
+// Rows a later pass or an Extract owes don't make it indexing again: its
+// cards and count stand meanwhile, a document's at most a pass behind.
+func foundryReviewIndexed(r string) string {
+	return r + `.version >= ` + strconv.Itoa(reviewcards.Version) + ` AND ` + r + `.counted_at IS NOT NULL`
+}
+
 // ListFoundryReviewSummaries is what each live ontology of the workspace with
 // a current load asks a person to decide, read from foundry_review_loads
-// alone. A load is indexing while it has no row, was never indexed or by an
-// older builder, has a document owed that isn't set aside, or was never
-// counted.
+// alone. A load is indexing until its index is first whole
+// (foundryReviewIndexed).
 func (s *mysqlDB) ListFoundryReviewSummaries(ctx context.Context, workspaceID string) ([]model.FoundryReviewSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.current_load_id, COALESCE(r.open_cards, 0), COALESCE(r.more_cards, FALSE),
-  r.load_id IS NULL OR r.version IS NULL OR r.version < ? OR r.counted_at IS NULL OR EXISTS (
-    SELECT 1 FROM foundry_review_owed w WHERE w.load_id=o.current_load_id AND w.attempts < ?)
+  NOT COALESCE(`+foundryReviewIndexed("r")+`, FALSE)
 FROM foundry_ontologies o LEFT JOIN foundry_review_loads r ON r.load_id=o.current_load_id
-WHERE o.workspace_id=? AND o.deleted_at IS NULL AND o.current_load_id IS NOT NULL ORDER BY o.id`,
-		reviewcards.Version, model.FoundryReviewQuarantine, workspaceID)
+WHERE o.workspace_id=? AND o.deleted_at IS NULL AND o.current_load_id IS NOT NULL ORDER BY o.id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -551,14 +600,32 @@ WHERE o.workspace_id=? AND o.deleted_at IS NULL AND o.current_load_id IS NOT NUL
 	})
 }
 
-// FoundryReviewIndexing reports whether load loadID's cards are still being
-// built, as ListFoundryReviewSummaries says it.
+// FoundryReviewIndexing reports whether load loadID's index isn't whole
+// yet, as ListFoundryReviewSummaries says it.
 func (s *mysqlDB) FoundryReviewIndexing(ctx context.Context, loadID string) (bool, error) {
 	var indexing bool
-	err := s.db.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM foundry_review_loads r WHERE r.load_id=? AND r.version >= ?)
-  OR EXISTS (SELECT 1 FROM foundry_review_owed w WHERE w.load_id=? AND w.attempts < ?)`,
-		loadID, reviewcards.Version, loadID, model.FoundryReviewQuarantine).Scan(&indexing)
+	err := s.db.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM foundry_review_loads r WHERE r.load_id=? AND `+foundryReviewIndexed("r")+`)`,
+		loadID).Scan(&indexing)
 	return indexing, err
+}
+
+// ReserveFoundryReviewRead takes the indexer's next read of database
+// tenantID, shared by every replica: its slot is gap after the last slot
+// taken, or now when that has passed. It reports how long until the slot.
+// The row is locked by the upsert (an exclusive lock, even on a duplicate),
+// so racing replicas take one slot each, a gap apart.
+func (s *mysqlDB) ReserveFoundryReviewRead(ctx context.Context, tenantID string, gap time.Duration) (time.Duration, error) {
+	var wait int64
+	err := s.WithTx(ctx, func(db Store) error {
+		tx := db.(*mysqlDB)
+		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_review_reads (tenant_id, next_at) VALUES (?, NOW(6) + INTERVAL ? MICROSECOND)
+ON DUPLICATE KEY UPDATE next_at=GREATEST(next_at, NOW(6)) + INTERVAL ? MICROSECOND`, tenantID, gap.Microseconds(), gap.Microseconds()); err != nil {
+			return err
+		}
+		return tx.db.QueryRowContext(ctx, `SELECT TIMESTAMPDIFF(MICROSECOND, NOW(6), next_at) - ? FROM foundry_review_reads WHERE tenant_id=?`,
+			gap.Microseconds(), tenantID).Scan(&wait)
+	})
+	return max(time.Duration(wait)*time.Microsecond, 0), err
 }
 
 // foundryReviewCardColumns are a card's columns as scanFoundryReviewCard

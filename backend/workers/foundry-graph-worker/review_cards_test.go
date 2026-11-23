@@ -3,6 +3,8 @@ package foundrygraphworker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,16 +29,19 @@ type reviewMem struct {
 	stored map[string]*model.FoundryReviewIndexed
 	// leaseLost makes every store find its lease lost.
 	leaseLost              bool
-	dropped, loadBackOffs  int
+	parked, loadBackOffs   int
 	requested, advanced    int
 	recounted, cleared     int
 	claimDecisionDocuments []string
+	// next is each database's next read slot, shared by every indexer of
+	// this store.
+	next map[string]time.Time
 }
 
 const reviewLoad = "load-1"
 
 func newReviewMem(s *memStore, docs ...string) *reviewMem {
-	return &reviewMem{memStore: s, owed: docs, attempts: map[string]int{}, stored: map[string]*model.FoundryReviewIndexed{}}
+	return &reviewMem{memStore: s, owed: docs, attempts: map[string]int{}, stored: map[string]*model.FoundryReviewIndexed{}, next: map[string]time.Time{}}
 }
 
 func (m *reviewMem) RequestFoundryReviewPasses(context.Context) (int, error) {
@@ -55,12 +60,26 @@ func (m *reviewMem) ClearFoundryReviewLoads(context.Context, int) (int, error) {
 	m.cleared++
 	return 0, nil
 }
-func (m *reviewMem) DropFoundryReviewLoad(context.Context, string) error {
+func (m *reviewMem) ParkFoundryReviewLoad(context.Context, string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.dropped++
+	m.parked++
 	m.owed = nil
 	return nil
+}
+
+// ReserveFoundryReviewRead takes the database's next slot, as the store's
+// row does.
+func (m *reviewMem) ReserveFoundryReviewRead(_ context.Context, tenant string, gap time.Duration) (time.Duration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	slot := m.next[tenant]
+	if slot.Before(now) {
+		slot = now
+	}
+	m.next[tenant] = slot.Add(gap)
+	return slot.Sub(now), nil
 }
 
 // ClaimFoundryReviewDocuments claims every owed document not set aside, 20 at
@@ -121,11 +140,12 @@ func (m *reviewMem) ListFoundryClaimDecisions(_ context.Context, _ string, docs 
 
 // reviewGraph answers the indexer's reads: each document asked for that
 // it holds, with one unresolved name each; a read naming a bad document
-// fails, and status, when set, answers every read.
+// fails with its status (500 the database's failure, 400 the document's),
+// and status, when set, answers every read.
 type reviewGraph struct {
 	mu      sync.Mutex
 	holds   map[string]bool
-	bad     map[string]bool
+	bad     map[string]int
 	status  int
 	reads   [][]string
 	tenants []string
@@ -145,8 +165,8 @@ func (g *reviewGraph) Query(_ context.Context, _, tenant string, body []byte, _ 
 	}
 	answer := map[string][]map[string]any{"documents": {}, "evidence": {}, "reviews": {}}
 	for i, d := range docs {
-		if g.bad[d] {
-			return helixgateway.Response{StatusCode: 500, Body: []byte(`boom`)}, nil
+		if code := g.bad[d]; code != 0 {
+			return helixgateway.Response{StatusCode: code, Body: []byte(`boom`)}, nil
 		}
 		if !g.holds[d] {
 			continue
@@ -164,7 +184,7 @@ func newReviewIndexer(t *testing.T, docs ...string) (*indexer, *reviewMem, *revi
 	t.Helper()
 	h := newHarness(t)
 	mem := newReviewMem(h.store, docs...)
-	g := &reviewGraph{holds: map[string]bool{}, bad: map[string]bool{}}
+	g := &reviewGraph{holds: map[string]bool{}, bad: map[string]int{}}
 	for _, d := range docs {
 		g.holds[d] = true
 	}
@@ -201,10 +221,11 @@ func TestIndexerStoresOwedDocuments(t *testing.T) {
 }
 
 // A read that fails splits down to one document: the rest are stored, and
-// only that one backs off, until it is set aside.
+// only that one backs off, until it is set aside, when the failure is its
+// own (here a 400).
 func TestIndexerSplitsAFailingRead(t *testing.T) {
 	x, mem, g := newReviewIndexer(t, "doc-a", "doc-b", "doc-c", "doc-d")
-	g.bad["doc-c"] = true
+	g.bad["doc-c"] = http.StatusBadRequest
 	for range model.FoundryReviewQuarantine + 2 {
 		x.tick(context.Background())
 	}
@@ -224,6 +245,59 @@ func TestIndexerSplitsAFailingRead(t *testing.T) {
 	if got := len(g.reads); got < 4 {
 		t.Fatalf("reads %v", g.reads)
 	}
+}
+
+// The database failing a document's read (a 5xx) charges the document only
+// beside one that read fine: alone, it backs the load off instead.
+func TestIndexerChargesTheDatabaseOnlyBesideAGoodRead(t *testing.T) {
+	x, mem, g := newReviewIndexer(t, "doc-a", "doc-b", "doc-c")
+	g.bad["doc-b"] = http.StatusInternalServerError
+	// The tick reads all three (b charged beside a and c), then b again
+	// alone: its 500 is the database's as much as its own, so the load
+	// backs off and b isn't charged again.
+	x.tick(context.Background())
+	if mem.stored["doc-a"] == nil || mem.stored["doc-c"] == nil || mem.stored["doc-b"] != nil {
+		t.Fatalf("stored %v", mem.stored)
+	}
+	if mem.attempts["doc-b"] != 1 || mem.loadBackOffs != 1 {
+		t.Fatalf("%d attempts, %d load back-offs", mem.attempts["doc-b"], mem.loadBackOffs)
+	}
+}
+
+// A database that fails every read (an outage: transport errors, 401, 403,
+// 5xx) backs the load off and charges no document, so an outage never sets
+// a load's documents aside, and it costs a read or two a level of the
+// split, not one a document.
+func TestIndexerOutageChargesNoDocument(t *testing.T) {
+	for _, code := range []int{http.StatusBadGateway, http.StatusInternalServerError, http.StatusUnauthorized, http.StatusForbidden} {
+		docs := make([]string, 20)
+		for i := range docs {
+			docs[i] = fmt.Sprintf("doc-%02d", i)
+		}
+		x, mem, g := newReviewIndexer(t, docs...)
+		g.status = code
+		x.tick(context.Background())
+		if len(mem.attempts) != 0 || mem.loadBackOffs != 1 || len(mem.stored) != 0 {
+			t.Fatalf("%d: attempts %v, %d load back-offs, %d stored", code, mem.attempts, mem.loadBackOffs, len(mem.stored))
+		}
+		if len(g.reads) > 10 {
+			t.Fatalf("%d: an outage cost %d reads of 20 documents", code, len(g.reads))
+		}
+	}
+	// A transport error too.
+	x, mem, _ := newReviewIndexer(t, "doc-a", "doc-b")
+	x.gateway = failingGateway{}
+	x.tick(context.Background())
+	if len(mem.attempts) != 0 || mem.loadBackOffs != 1 {
+		t.Fatalf("transport: attempts %v, %d load back-offs", mem.attempts, mem.loadBackOffs)
+	}
+}
+
+// failingGateway fails every read before it reaches the database.
+type failingGateway struct{}
+
+func (failingGateway) Query(context.Context, string, string, []byte, http.Header) (helixgateway.Response, error) {
+	return helixgateway.Response{}, errors.New("connection refused")
 }
 
 // A database still starting, rate limited or paused backs the load off,
@@ -247,8 +321,8 @@ func TestIndexerBacksOffAndDrops(t *testing.T) {
 	x, mem, g = newReviewIndexer(t, "doc-a")
 	mem.ontology = nil
 	x.tick(context.Background())
-	if mem.dropped != 1 || len(g.reads) != 0 {
-		t.Fatalf("a deleted ontology: %d drops, %d reads", mem.dropped, len(g.reads))
+	if mem.parked != 1 || len(g.reads) != 0 {
+		t.Fatalf("a deleted ontology: %d parked, %d reads", mem.parked, len(g.reads))
 	}
 
 	x, mem, _ = newReviewIndexer(t, "doc-a")
@@ -259,13 +333,16 @@ func TestIndexerBacksOffAndDrops(t *testing.T) {
 	}
 }
 
-// Reads of one database keep readGap apart.
+// Reads of one database keep readGap apart, across every indexer (replica)
+// of one store.
 func TestIndexerPacesReads(t *testing.T) {
-	x, _, _ := newReviewIndexer(t)
+	x, mem, g := newReviewIndexer(t)
 	x.readGap = 30 * time.Millisecond
+	other := newIndexer(mem, nil, g, "w2")
+	other.readGap = x.readGap
 	start := time.Now()
-	for range 3 {
-		if !x.pace(context.Background(), "tenant-1") {
+	for _, by := range []*indexer{x, other, x} {
+		if !by.pace(context.Background(), "tenant-1") {
 			t.Fatal("pace ended early")
 		}
 	}

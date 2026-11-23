@@ -8731,8 +8731,8 @@ type ListFoundryReviewCardsResponse struct {
 	unknownFields protoimpl.UnknownFields
 
 	LoadId string `protobuf:"bytes,1,opt,name=load_id,json=loadId,proto3" json:"load_id,omitempty"`
-	// The index is still being built: more cards may come, and the walk is
-	// not done when it runs out.
+	// The load's index is still first being built: more cards may come, and
+	// the walk is not done when it runs out.
 	Indexing bool `protobuf:"varint,2,opt,name=indexing,proto3" json:"indexing,omitempty"`
 	// At most 50, in the walk's order.
 	Cards []*FoundryReviewCard `protobuf:"bytes,3,rep,name=cards,proto3" json:"cards,omitempty"`

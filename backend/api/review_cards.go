@@ -279,7 +279,8 @@ func (s *Service) ListFoundryReviewSpotChecks(ctx context.Context, req *foundryv
 // shuffle at a free place) or a fact's quote (a document drawn by its band's
 // quotes, read from the load, its first free quote by the load's order).
 // Two requests at once race on n: the loser reads again. Idempotent: with
-// enough undone draws it draws nothing.
+// enough undone draws it draws nothing, and while the load's index isn't
+// whole it draws nothing yet.
 func (s *Service) DrawFoundryReviewSpotChecks(ctx context.Context, req *foundryv1.DrawFoundryReviewSpotChecksRequest) (*foundryv1.FoundryReviewSpotChecksResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -291,6 +292,15 @@ func (s *Service) DrawFoundryReviewSpotChecks(ctx context.Context, req *foundryv
 	}
 	if req.GetLoadId() != load.ID {
 		return nil, status.Error(codes.FailedPrecondition, "load_id is not the current load: read the spot checks again")
+	}
+	// Draws are for good, so none is drawn from a pool still being built:
+	// it would favour the documents indexed first.
+	indexing, err := s.deps.DB.FoundryReviewIndexing(ctx, load.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read whether the load is indexed: %v", err)
+	}
+	if indexing {
+		return s.spotChecks(ctx, o, load.ID)
 	}
 	// The bands whose held claims or quotes this request found none of,
 	// whatever the counts say.

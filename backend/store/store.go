@@ -449,7 +449,8 @@ type Store interface {
 	AdvanceFoundryReviewPasses(ctx context.Context) (int, error)
 	RecountFoundryReviewLoads(ctx context.Context, limit int) (int, error)
 	ClearFoundryReviewLoads(ctx context.Context, limit int) (int, error)
-	DropFoundryReviewLoad(ctx context.Context, loadID string) error
+	ParkFoundryReviewLoad(ctx context.Context, loadID string) error
+	ReserveFoundryReviewRead(ctx context.Context, tenantID string, gap time.Duration) (time.Duration, error)
 	ClaimFoundryReviewDocuments(ctx context.Context, workerID string, lease time.Duration) ([]model.FoundryReviewClaim, error)
 	StoreFoundryReviewDocuments(ctx context.Context, workerID string, claim model.FoundryReviewClaim, indexed []model.FoundryReviewIndexed) (bool, error)
 	BackOffFoundryReviewDocument(ctx context.Context, workerID, loadID, docID string) (bool, error)

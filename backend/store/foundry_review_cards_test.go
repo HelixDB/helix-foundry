@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,17 @@ func TestFoundryReviewCardOwing(t *testing.T) {
 		ReindexReviews: true})
 	require.NoError(t, err)
 	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_loads WHERE load_id=? AND full_owed_at IS NOT NULL`, f.load))
+
+	// A resend's outcomes recorded for a document (its withdraws taken back,
+	// its names settled) owe it too, in the same transaction.
+	_, err = testDB.Exec(`DELETE FROM foundry_review_owed`)
+	require.NoError(t, err)
+	d := f.held(f.a, 2, strings.Repeat("ef", 32))
+	f.approve(t, "rco-3", d)
+	job = f.claim(t)
+	require.NoError(t, f.db.RecordFoundryReleaseOutcomes(ctx, job.ID, f.worker, f.a,
+		[]model.FoundryReleaseOutcome{refused(d, model.FoundryReleaseDocumentFailed)}, nil))
+	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_owed WHERE load_id=? AND doc_id=?`, f.load, f.a))
 }
 
 func TestFoundryReviewCardClaimAndStore(t *testing.T) {
@@ -252,9 +264,152 @@ ON DUPLICATE KEY UPDATE owed_at=NOW(6), due_at=IF(attempts >= 8, NOW(6), GREATES
 	// A load whose database can't be read waits, its documents with it.
 	require.NoError(t, f.db.BackOffFoundryReviewLoad(ctx, f.load))
 	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_owed WHERE doc_id=? AND claimed_by IS NULL AND due_at > NOW(6) + INTERVAL 20 SECOND`, f.b))
-	require.NoError(t, f.db.DropFoundryReviewLoad(ctx, f.load))
-	assert.Equal(t, 0, f.count(t, `SELECT COUNT(*) FROM foundry_review_cards`)+f.count(t, `SELECT COUNT(*) FROM foundry_review_owed`)+
+
+	// One whose database is gone is parked: its index goes, its row stays
+	// with a pass asked for an hour on, so housekeeping neither makes it
+	// again nor starts it meanwhile.
+	require.NoError(t, f.db.ParkFoundryReviewLoad(ctx, f.load))
+	assert.Equal(t, 0, f.count(t, `SELECT COUNT(*) FROM foundry_review_cards`)+f.count(t, `SELECT COUNT(*) FROM foundry_review_owed`))
+	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_loads WHERE load_id=? AND full_owed_at IS NOT NULL
+ AND full_started_at IS NULL AND retry_at > NOW(6) + INTERVAL 50 MINUTE`, f.load))
+	_, err = f.db.RequestFoundryReviewPasses(ctx)
+	require.NoError(t, err)
+	started, err := f.db.AdvanceFoundryReviewPasses(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, started)
+	assert.Equal(t, 0, f.count(t, `SELECT COUNT(*) FROM foundry_review_owed`))
+}
+
+// A store in flight when its load stops being live writes nothing: the
+// cleanup takes the owed rows first, so the store's lease check finds them
+// gone, and no card outlives the load's row.
+func TestFoundryReviewCardClearBeforeStore(t *testing.T) {
+	ctx := context.Background()
+	f := newCardsFixture(t, "rcx")
+	claims, err := f.db.ClaimFoundryReviewDocuments(ctx, "w1", time.Minute)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	_, err = testDB.Exec(`UPDATE foundry_ontologies SET current_load_id=NULL WHERE id=?`, f.ontology.ID)
+	require.NoError(t, err)
+	cleared, err := f.db.ClearFoundryReviewLoads(ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleared)
+	built := reviewcards.Build(f.load, f.a, docReviews(f.a, "a"), nil, func(string) bool { return false })
+	stored, err := f.db.StoreFoundryReviewDocuments(ctx, "w1", claims[0],
+		[]model.FoundryReviewIndexed{{DocID: f.a, Present: true, Cards: built.Cards}, {DocID: f.b, Present: true}})
+	require.NoError(t, err)
+	assert.False(t, stored)
+	assert.Equal(t, 0, f.count(t, `SELECT COUNT(*) FROM foundry_review_cards`)+f.count(t, `SELECT COUNT(*) FROM foundry_review_docs`)+
 		f.count(t, `SELECT COUNT(*) FROM foundry_review_loads`))
+}
+
+// A database's read slots are shared: each reservation is a gap after the
+// last, another database's are its own.
+func TestFoundryReviewCardReadPace(t *testing.T) {
+	ctx := context.Background()
+	db := store.NewMySQL(testDB, hostWorkspaces{})
+	tenant := "tenant-" + id26("rcr")
+	first, err := db.ReserveFoundryReviewRead(ctx, tenant, 2*time.Second)
+	require.NoError(t, err)
+	assert.Zero(t, first)
+	second, err := db.ReserveFoundryReviewRead(ctx, tenant, 2*time.Second)
+	require.NoError(t, err)
+	assert.InDelta(t, 2*time.Second, second, float64(500*time.Millisecond))
+	third, err := db.ReserveFoundryReviewRead(ctx, tenant, 2*time.Second)
+	require.NoError(t, err)
+	assert.InDelta(t, 4*time.Second, third, float64(500*time.Millisecond))
+	other, err := db.ReserveFoundryReviewRead(ctx, tenant+"-2", 2*time.Second)
+	require.NoError(t, err)
+	assert.Zero(t, other)
+}
+
+// A pass that sets a document aside ends without this builder's version, so
+// a load never indexed stays indexing rather than say nothing is to review;
+// once a pass indexes every document, documents owed again (an Extract's,
+// a routine pass's) don't make it indexing again.
+func TestFoundryReviewCardIndexingWhole(t *testing.T) {
+	ctx := context.Background()
+	f := newCardsFixture(t, "rcq")
+	indexing := func() bool {
+		t.Helper()
+		v, err := f.db.FoundryReviewIndexing(ctx, f.load)
+		require.NoError(t, err)
+		summaries, err := f.db.ListFoundryReviewSummaries(ctx, f.ontology.WorkspaceID)
+		require.NoError(t, err)
+		require.Len(t, summaries, 1)
+		require.Equal(t, v, summaries[0].Indexing, "the summary and the cards agree")
+		return v
+	}
+	started, err := f.db.AdvanceFoundryReviewPasses(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, started)
+	claims, err := f.db.ClaimFoundryReviewDocuments(ctx, "w1", time.Minute)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	c := claims[0]
+	c.Owed = slices.DeleteFunc(c.Owed, func(o model.FoundryReviewOwed) bool { return o.DocID == f.b })
+	built := reviewcards.Build(f.load, f.a, docReviews(f.a, "a"), nil, func(string) bool { return false })
+	stored, err := f.db.StoreFoundryReviewDocuments(ctx, "w1", c, []model.FoundryReviewIndexed{{DocID: f.a, Present: true, Cards: built.Cards}})
+	require.NoError(t, err)
+	require.True(t, stored)
+	_, err = testDB.Exec(`UPDATE foundry_review_owed SET attempts=?, due_at='9999-12-31', claimed_by=NULL WHERE doc_id=?`, model.FoundryReviewQuarantine, f.b)
+	require.NoError(t, err)
+	_, err = f.db.AdvanceFoundryReviewPasses(ctx)
+	require.NoError(t, err)
+	_, err = f.db.RecountFoundryReviewLoads(ctx, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_loads WHERE load_id=? AND version IS NULL AND indexed_at IS NOT NULL
+ AND full_started_at IS NULL`, f.load), "the pass ended, without the version")
+	assert.True(t, indexing(), "a document set aside keeps a load never indexed indexing")
+
+	// The pass is asked for again and reads it; this time it reads fine.
+	f.pass(t)
+	assert.False(t, indexing())
+	_, err = testDB.Exec(`INSERT INTO foundry_review_owed (load_id, doc_id) VALUES (?, ?)`, f.load, f.a)
+	require.NoError(t, err)
+	assert.False(t, indexing(), "a document owed again leaves an indexed load's count standing")
+}
+
+// A settle that marks the load dirty in a transaction the recount's read
+// didn't see keeps it dirty: the recount compares the mark, so the next one
+// counts the decision.
+func TestFoundryReviewCardRecountKeepsALateMark(t *testing.T) {
+	ctx := context.Background()
+	f := newCardsFixture(t, "rck")
+	f.pass(t)
+	open := func() int {
+		t.Helper()
+		summaries, err := f.db.ListFoundryReviewSummaries(ctx, f.ontology.WorkspaceID)
+		require.NoError(t, err)
+		return summaries[0].Open
+	}
+	require.Equal(t, 8, open())
+	// Dirty already (a draw, say), then a settle's transaction marks it
+	// again with its decision.
+	_, err := testDB.Exec(`UPDATE foundry_review_loads SET dirty_at=NOW(6) WHERE load_id=?`, f.load)
+	require.NoError(t, err)
+	tx, err := testDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.Exec(`UPDATE foundry_review_loads SET dirty_at=NOW(6) WHERE ontology_id=?`, f.ontology.ID)
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO foundry_review_decisions (id, ontology_id, kind, type, doc_id, norm_name, decided_by_user_id)
+ VALUES (?, ?, 'resolve', 'Company', ?, 'westmere', 'u')`, id26("late"), f.ontology.ID, f.a)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.db.RecountFoundryReviewLoads(ctx, 10)
+		done <- err
+	}()
+	// The recount reads its count without the decision, then waits on the
+	// mark's lock until the settle commits.
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, <-done)
+	_, err = f.db.RecountFoundryReviewLoads(ctx, 10)
+	require.NoError(t, err)
+	// The name closed, its held claim on it is a card of its own: 8 still,
+	// less the name.
+	assert.Equal(t, 7, open())
 }
 
 func TestFoundryReviewCardPasses(t *testing.T) {

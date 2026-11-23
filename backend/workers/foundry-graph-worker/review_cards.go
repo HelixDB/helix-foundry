@@ -35,13 +35,19 @@ import (
 //
 // A database takes one read a second (the site's tenant limiter), and the
 // boost covers job attempts only: the indexer reads each database at most
-// once every reviewReadGap, half of that, so people keep the rest. A read
-// that fails or answers too much is split in half, down to one document,
-// and only that document backs off (and is set aside after
-// model.FoundryReviewQuarantine failures); one the gateway turned away
-// (rate limited, a database still starting) or a database paused backs the
-// whole load off; one whose ontology or database is gone drops the load's
-// rows.
+// once every reviewReadGap, half of that, so people keep the rest. The pace
+// is shared by every replica (store.ReserveFoundryReviewRead), so more
+// replicas read more databases at once, never one database more often.
+//
+// A read the gateway turned away (rate limited, a database still starting,
+// paused) backs the whole load off. Any other failed read is split in half,
+// down to one document, but a document is charged with it (backs off, and
+// is set aside after model.FoundryReviewQuarantine failures) only where the
+// failure is its own: its answer was too large or unreadable, or the
+// database failed it (transport, 401, 403, 5xx) while another document of
+// the claim read fine. A database that fails every read backs the load off
+// and charges no document, after a read or two a level of the split. A load
+// whose ontology or database is gone is parked for an hour.
 
 const (
 	// reviewLoadsInFlight is how many loads' claims a tick reads at once.
@@ -86,7 +92,8 @@ type reviewStore interface {
 	AdvanceFoundryReviewPasses(ctx context.Context) (int, error)
 	RecountFoundryReviewLoads(ctx context.Context, limit int) (int, error)
 	ClearFoundryReviewLoads(ctx context.Context, limit int) (int, error)
-	DropFoundryReviewLoad(ctx context.Context, loadID string) error
+	ParkFoundryReviewLoad(ctx context.Context, loadID string) error
+	ReserveFoundryReviewRead(ctx context.Context, tenantID string, gap time.Duration) (time.Duration, error)
 	ClaimFoundryReviewDocuments(ctx context.Context, workerID string, lease time.Duration) ([]model.FoundryReviewClaim, error)
 	StoreFoundryReviewDocuments(ctx context.Context, workerID string, claim model.FoundryReviewClaim, indexed []model.FoundryReviewIndexed) (bool, error)
 	BackOffFoundryReviewDocument(ctx context.Context, workerID, loadID, docID string) (bool, error)
@@ -103,16 +110,12 @@ type indexer struct {
 	now      func() time.Time
 	// readGap is the least time between two reads of one database.
 	readGap time.Duration
-
-	mu sync.Mutex
-	// lastRead is when each database (tenant) was last read.
-	lastRead map[string]time.Time
 	// housekept is when the last housekeeping ran.
 	housekept time.Time
 }
 
 func newIndexer(db reviewStore, dbs ports.Databases, gateway graphproxy.Querier, workerID string) *indexer {
-	return &indexer{db: db, dbs: dbs, gateway: gateway, workerID: workerID, now: time.Now, readGap: reviewReadGap, lastRead: map[string]time.Time{}}
+	return &indexer{db: db, dbs: dbs, gateway: gateway, workerID: workerID, now: time.Now, readGap: reviewReadGap}
 }
 
 // tick runs one round: housekeeping, then claims until none is due.
@@ -171,9 +174,9 @@ func (x *indexer) index(ctx context.Context, c model.FoundryReviewClaim) {
 	switch status.Code(err) {
 	case codes.OK:
 	case codes.NotFound:
-		logger.Info("review cards: the load's ontology or database is gone; dropping its index", "err", err)
-		if err := x.db.DropFoundryReviewLoad(ctx, c.LoadID); err != nil {
-			logger.Warn("review cards: drop failed", "err", err)
+		logger.Info("review cards: the load's ontology or database is gone; parking its index for an hour", "err", err)
+		if err := x.db.ParkFoundryReviewLoad(ctx, c.LoadID); err != nil {
+			logger.Warn("review cards: park failed", "err", err)
 		}
 		return
 	default:
@@ -200,10 +203,28 @@ func (x *indexer) index(ctx context.Context, c model.FoundryReviewClaim) {
 		decisions[*d.DocID] = append(decisions[*d.DocID], reviewcards.ClaimDecision{Kind: string(d.Kind), Section: d.ClaimSpan.Section,
 			Start: d.ClaimSpan.Start, End: d.ClaimSpan.End, ClaimKey: *d.ClaimKey, StatementHash: *d.StatementHash})
 	}
-	read, refused := x.read(ctx, binding, c, c.DocIDs())
-	if refused {
-		x.backOffLoad(ctx, c.LoadID)
+	r := x.read(ctx, binding, c, c.DocIDs(), false)
+	if r.stopped {
+		return
 	}
+	// The database's failures count against a document only beside a
+	// document that read fine; with none, the database failed, not them.
+	theirs := len(r.read) > 0 && !r.down
+	backOff := r.refused || r.down
+	for doc, f := range r.failed {
+		if f.database && !theirs {
+			backOff = true
+			continue
+		}
+		x.backOffDocument(ctx, c.LoadID, doc, f.err)
+	}
+	if backOff {
+		// After the store: a load's back-off ends every claim of it, this
+		// one's lease too.
+		logger.Info("review cards: the database failed the claim's reads; backing the load off")
+		defer x.backOffLoad(ctx, c.LoadID)
+	}
+	read := r.read
 	if len(read) == 0 {
 		return
 	}
@@ -246,69 +267,118 @@ func (x *indexer) index(ctx context.Context, c model.FoundryReviewClaim) {
 	}
 }
 
-// read reads docIDs of the claim, splitting a read that fails in half down
-// to one document, which then backs off on its own. It returns what each
-// read found by document, and refused when the gateway turned a read away
-// (rate limited, a database still starting, queries paused): the rest of
-// the claim isn't read, and the load backs off.
-func (x *indexer) read(ctx context.Context, binding graphproxy.Binding, c model.FoundryReviewClaim, docIDs []string) (map[string]reviewcards.Read, bool) {
+// readFailure is why a document's read failed alone.
+type readFailure struct {
+	err error
+	// database: the database or the way to it failed (transport, 401, 403,
+	// 5xx), which is the document's only beside one that read fine.
+	database bool
+}
+
+// readResult is what reading some of a claim's documents found.
+type readResult struct {
+	// read is what each document read fine found.
+	read map[string]reviewcards.Read
+	// failed are the documents whose read failed alone, and why.
+	failed map[string]readFailure
+	// refused: the gateway turned a read away; the rest went unread.
+	refused bool
+	// down: a read of several documents failed at the database after none
+	// before it read fine, so they went unread and uncharged.
+	down bool
+	// stopped: ctx ended, or the pace couldn't be read; nothing is charged.
+	stopped bool
+}
+
+func (r *readResult) merge(o readResult) {
+	for d, v := range o.read {
+		r.read[d] = v
+	}
+	for d, f := range o.failed {
+		r.failed[d] = f
+	}
+	r.refused, r.down, r.stopped = r.refused || o.refused, r.down || o.down, r.stopped || o.stopped
+}
+
+// read reads docIDs of the claim in one gateway read, splitting a read that
+// fails in half down to one document. After a half that read nothing and
+// failed only at the database, the other half is read whole (probe) and,
+// failing at the database too, isn't split: the database is down, and
+// splitting it would cost a read a document.
+func (x *indexer) read(ctx context.Context, binding graphproxy.Binding, c model.FoundryReviewClaim, docIDs []string, probe bool) readResult {
+	out := readResult{read: map[string]reviewcards.Read{}, failed: map[string]readFailure{}}
 	body, err := reviewcards.ReadQuery(c.LoadID, docIDs)
 	if err != nil {
-		return nil, false
+		for _, d := range docIDs {
+			out.failed[d] = readFailure{err: err}
+		}
+		return out
 	}
 	if !x.pace(ctx, binding.TenantID) {
-		return nil, false
+		out.stopped = true
+		return out
 	}
 	resp, err := x.gateway.Query(ctx, binding.Endpoint, binding.TenantID, body, nil)
 	if err == nil && refusal(resp) {
 		log.From(ctx).Info("review cards: the database turned a read away; backing off", "load", c.LoadID, "status", resp.StatusCode)
-		return nil, true
+		out.refused = true
+		return out
 	}
-	var read reviewcards.Read
+	// The database's failure, not the documents': it may fail any read.
+	database := err != nil && !errors.Is(err, helixgateway.ErrResponseTooLarge) ||
+		err == nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode >= 500)
 	if err == nil && resp.StatusCode != http.StatusOK {
 		err = fmt.Errorf("the database answered %d", resp.StatusCode)
 	}
+	var read reviewcards.Read
 	if err == nil {
 		read, err = reviewcards.ParseRead(resp.Body, docIDs)
 	}
-	if err == nil {
-		out := map[string]reviewcards.Read{}
+	switch {
+	case err == nil:
 		for _, d := range docIDs {
-			out[d] = read
+			out.read[d] = read
 		}
-		return out, false
+		return out
+	case ctx.Err() != nil:
+		out.stopped = true
+		return out
+	case len(docIDs) == 1:
+		out.failed[docIDs[0]] = readFailure{err: err, database: database}
+		return out
+	case probe && database:
+		out.down = true
+		return out
 	}
-	if ctx.Err() != nil {
-		return nil, false
+	half := len(docIDs) / 2
+	first := x.read(ctx, binding, c, docIDs[:half], false)
+	out.merge(first)
+	if out.refused || out.stopped || out.down {
+		return out
 	}
-	if len(docIDs) > 1 {
-		half := len(docIDs) / 2
-		first, refused := x.read(ctx, binding, c, docIDs[:half])
-		if refused {
-			return first, true
-		}
-		second, refused := x.read(ctx, binding, c, docIDs[half:])
-		for d, r := range second {
-			if first == nil {
-				first = map[string]reviewcards.Read{}
-			}
-			first[d] = r
-		}
-		return first, refused
+	unread := len(first.read) == 0
+	for _, f := range first.failed {
+		unread = unread && f.database
 	}
-	quarantined, berr := x.db.BackOffFoundryReviewDocument(ctx, x.workerID, c.LoadID, docIDs[0])
+	out.merge(x.read(ctx, binding, c, docIDs[half:], unread))
+	return out
+}
+
+// backOffDocument puts off a document whose read failed on its own, and
+// sets it aside after model.FoundryReviewQuarantine failures.
+func (x *indexer) backOffDocument(ctx context.Context, loadID, docID string, err error) {
+	quarantined, berr := x.db.BackOffFoundryReviewDocument(ctx, x.workerID, loadID, docID)
 	switch {
 	case berr != nil:
-		log.From(ctx).Warn("review cards: back off a document failed", "load", c.LoadID, "document", docIDs[0], "err", berr)
+		log.From(ctx).Warn("review cards: back off a document failed", "load", loadID, "document", docID, "err", berr)
 	case quarantined:
 		reviewIndexDocuments.WithLabelValues("quarantined").Inc()
 		log.From(ctx).Error("review cards: a document's reviews can't be read; it is set aside until it is owed again",
-			"load", c.LoadID, "document", docIDs[0], "err", err)
+			"load", loadID, "document", docID, "err", err)
 	default:
 		reviewIndexDocuments.WithLabelValues("failed").Inc()
-		log.From(ctx).Warn("review cards: a document's reviews could not be read; it backs off", "load", c.LoadID, "document", docIDs[0], "err", err)
+		log.From(ctx).Warn("review cards: a document's reviews could not be read; it backs off", "load", loadID, "document", docID, "err", err)
 	}
-	return nil, false
 }
 
 // refusal reports whether the gateway turned a read away before running
@@ -322,20 +392,19 @@ func refusal(resp helixgateway.Response) bool {
 	return false
 }
 
-// pace waits until the database was last read readGap ago, then marks it
-// read. It reports false when ctx ended first.
+// pace takes the database's next read slot, shared by every replica, and
+// waits for it. It reports false when ctx ended first, or the slot couldn't
+// be taken.
 func (x *indexer) pace(ctx context.Context, tenant string) bool {
-	x.mu.Lock()
-	next := x.lastRead[tenant].Add(x.readGap)
-	now := x.now()
-	if next.Before(now) {
-		next = now
+	wait, err := x.db.ReserveFoundryReviewRead(ctx, tenant, x.readGap)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.From(ctx).Warn("review cards: could not take a read slot", "tenant", tenant, "err", err)
+		}
+		return false
 	}
-	x.lastRead[tenant] = next
-	x.mu.Unlock()
-	wait := next.Sub(now)
 	if wait <= 0 {
-		return true
+		return ctx.Err() == nil
 	}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
