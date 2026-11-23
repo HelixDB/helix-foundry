@@ -157,8 +157,18 @@ export function AutomationPage() {
   );
 }
 
-/** /automations/new?template=: a draft from a template, on the canvas, until its first save. */
-export function DraftPage({ templateId }: { templateId: string }) {
+/**
+ * /automations/new?template=&ontology=: a draft from a template, on the
+ * canvas, until its first save, on the ontology named when the workspace
+ * lists it, else its first.
+ */
+export function DraftPage({
+  templateId,
+  ontologyId,
+}: {
+  templateId: string;
+  ontologyId?: string;
+}) {
   const { id: ws } = useWorkspace(),
     lists = useNames(ws);
   const template =
@@ -171,11 +181,13 @@ export function DraftPage({ templateId }: { templateId: string }) {
         ? template.build({
             timeZone: here(),
             connector: lists.connectors[0],
-            ontology: lists.ontologies[0],
+            ontology:
+              lists.ontologies.find((o) => o.id === ontologyId) ??
+              lists.ontologies[0],
             set: lists.sets[0],
           })
         : undefined,
-    [lists.ready, template],
+    [lists.ready, template, ontologyId],
   );
   if (!start)
     return (

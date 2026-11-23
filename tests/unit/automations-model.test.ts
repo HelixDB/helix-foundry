@@ -244,6 +244,35 @@ describe("parseSpec", () => {
       ok({ kind: "generation_finished", ontology_id: "o1", outcome: "failed" }),
     ).toBe(true);
     expect(
+      ok({ kind: "reviews_waiting", ontology_id: "o1", at_least: 1 }),
+    ).toBe(true);
+    expect(
+      ok({ kind: "reviews_waiting", ontology_id: "o1", at_least: 10_000 }),
+    ).toBe(true);
+    for (const wrong of [
+      { kind: "reviews_waiting", ontology_id: "o1" },
+      { kind: "reviews_waiting", ontology_id: "o1", at_least: 0 },
+      { kind: "reviews_waiting", ontology_id: "o1", at_least: 10_001 },
+      { kind: "reviews_waiting", ontology_id: "o1", at_least: 2.5 },
+      { kind: "reviews_waiting", ontology_id: "o1", at_least: "5" },
+      { kind: "reviews_waiting", at_least: 5 },
+      {
+        kind: "reviews_waiting",
+        ontology_id: "o1",
+        at_least: 5,
+        outcome: "any",
+      },
+    ])
+      expect(why(wrong), JSON.stringify(wrong)).toBe(
+        'node start: a reviews_waiting trigger is {kind: "reviews_waiting", ontology_id, at_least: 1 to 10000}',
+      );
+    expect(why({ kind: "load_ready", ontology_id: "o1", at_least: 5 })).toMatch(
+      /a load_ready trigger is/,
+    );
+    expect(why({ kind: "reviews_piling" })).toMatch(
+      /reviews_waiting or manual$/,
+    );
+    expect(
       why({ kind: "schedule", every: "hour", minute: 60, time_zone: "UTC" }),
     ).toMatch(/^node start: a schedule trigger is/);
     expect(
@@ -351,7 +380,7 @@ describe("parseSpec", () => {
       "node if can't check node start: an answer is a Founder step's",
     );
     expect(one(most)).toBe(
-      "node if can't check node start: a count is a Founder step's, or a document_arrived or sync_finished trigger's",
+      "node if can't check node start: a count is a Founder step's, or a document_arrived, sync_finished or reviews_waiting trigger's",
     );
     // A count follows the documents that arrived.
     const arrived = node("start", "trigger", {
@@ -491,6 +520,42 @@ describe("parseSpec", () => {
     ).toBe(
       "node ask loads the ontology its trigger waits on, so each run would start another: start it on a schedule instead",
     );
+    // A reviews_waiting trigger waits on its ontology's loads too, and its
+    // count is one a condition may check.
+    const waiting = node("start", "trigger", {
+      kind: "reviews_waiting",
+      ontology_id: "o1",
+      at_least: 50,
+    });
+    const loads = (ontology_id: string) =>
+      node("load", "action", { operation: "create_load", ontology_id });
+    expect(
+      error(spec([waiting, loads("o1")], [{ from: "start", to: "load" }])),
+    ).toBe(
+      "node load loads the ontology its trigger waits on, so each run would start another: start it on a schedule instead",
+    );
+    expect(
+      error(spec([waiting, loads("o2")], [{ from: "start", to: "load" }])),
+    ).toBe("");
+    expect(
+      error(
+        spec(
+          [
+            waiting,
+            node("many", "condition", {
+              check: "count",
+              op: "at_least",
+              value: 1000,
+            }),
+            node("mail", "notify", { message: "Many" }),
+          ],
+          [
+            { from: "start", to: "many" },
+            { from: "many", to: "mail", branch: "true" },
+          ],
+        ),
+      ),
+    ).toBe("");
   });
 
   it("reads every template, its targets chosen, and says what is missing", () => {
@@ -506,6 +571,10 @@ describe("parseSpec", () => {
         t.id,
       ).toBe(true);
       if (t.id !== "blank") expect(read(filled.spec).ok, t.id).toBe(true);
+      if (t.id === "reviews-digest")
+        expect(canonicalJson(filled.spec)).toContain(
+          '{"kind":"reviews_waiting","ontology_id":"o1","at_least":50}',
+        );
       const empty = t.build({ timeZone: "UTC" });
       const missing = empty.spec.nodes.map(incomplete).filter(Boolean);
       expect(missing.length, t.id).toBe(
@@ -515,6 +584,7 @@ describe("parseSpec", () => {
           "load-after-sync": 2,
           "check-documents": 1,
           "load-ready-report": 1,
+          "reviews-digest": 1,
           blank: 0,
         }[t.id],
       );
@@ -786,6 +856,21 @@ describe("words", () => {
     ).toBe("a sync of a connection ends");
     expect(triggerText({ kind: "load_ready", ontology_id: "o1" }, names)).toBe(
       "a load of “Sales” is ready",
+    );
+    expect(
+      triggerText(
+        { kind: "reviews_waiting", ontology_id: "o1", at_least: 1500 },
+        names,
+      ),
+    ).toBe("at least 1,500 cards wait for review in “Sales”");
+    expect(
+      triggerText(
+        { kind: "reviews_waiting", ontology_id: "x", at_least: 1 },
+        names,
+      ),
+    ).toBe("at least 1 card waits for review in an ontology");
+    expect(listTriggerText("reviews_waiting", "o1", names)).toBe(
+      "When reviews wait in “Sales”",
     );
     expect(triggerText({ kind: "document_arrived", set_id: "s1" }, names)).toBe(
       "documents arrive in “General”",
@@ -1340,9 +1425,15 @@ describe("edits", () => {
       "load_ready",
       "document_arrived",
       "generation_finished",
+      "reviews_waiting",
       "manual",
     ] as const)
       expect(triggerOfKind(k, sched, "UTC").kind).toBe(k);
+    expect(triggerOfKind("reviews_waiting", sched, "UTC")).toEqual({
+      kind: "reviews_waiting",
+      ontology_id: "",
+      at_least: 50,
+    });
     expect(newNodeId(simple, "notify")).toBe("notify-1");
   });
 });
@@ -1514,6 +1605,37 @@ describe("runs", () => {
     expect(
       eventText({ kind: "generation_finished", at: "" }, undefined, names),
     ).toBe("A draft of its ontology finished");
+    const waiting = {
+      kind: "reviews_waiting",
+      ontology_id: "o1",
+      at_least: 50,
+    } as const;
+    expect(
+      eventText(
+        { kind: "reviews_waiting", at: "", count: 1214 },
+        waiting,
+        names,
+      ),
+    ).toBe("1,214 to review in “Sales”");
+    expect(
+      eventText(
+        { kind: "reviews_waiting", at: "", count: 10_000 },
+        waiting,
+        names,
+      ),
+    ).toBe("10,000+ to review in “Sales”");
+    expect(
+      eventText(
+        { kind: "reviews_waiting", at: "", count: 60 },
+        undefined,
+        names,
+      ),
+    ).toBe("60 to review in its ontology");
+    expect(
+      parseEvent(
+        '{"kind":"reviews_waiting","at":"x","load_id":"l1","count":60}',
+      ),
+    ).toEqual({ kind: "reviews_waiting", at: "x", count: 60 });
   });
 
   it("places each step of a run, and reads its spend", () => {
@@ -1784,6 +1906,9 @@ describe("the workflows' paths", () => {
     expect(automationPaths.automations()).toBe("/workflows");
     expect(automationPaths.newAutomation("blank")).toBe(
       "/workflows/new?template=blank",
+    );
+    expect(automationPaths.newAutomation("reviews-digest", "o 1")).toBe(
+      "/workflows/new?template=reviews-digest&ontology=o+1",
     );
     expect(automationPaths.automation("a b", "runs")).toBe(
       "/workflows/a%20b?tab=runs",

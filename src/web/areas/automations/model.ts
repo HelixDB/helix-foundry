@@ -104,6 +104,8 @@ export function here(): string {
 // ---------------------------------------------------------------- reading
 
 const id = z.string().regex(TARGET_ID);
+/** The most a reviews_waiting trigger waits for: the review index counts open cards up to it. */
+export const MAX_REVIEWS_WAITING = 10_000;
 const outcome = z.enum(["succeeded", "failed", "any"]);
 const zone = z.string().refine(validZone);
 const clock = z.string().regex(CLOCK);
@@ -139,6 +141,11 @@ const TRIGGER = z.union([
     ontology_id: id,
     outcome,
   }),
+  z.strictObject({
+    kind: z.literal("reviews_waiting"),
+    ontology_id: id,
+    at_least: z.number().int().min(1).max(MAX_REVIEWS_WAITING),
+  }),
   z.strictObject({ kind: z.literal("manual") }),
 ]) satisfies z.ZodType<AutomationTrigger>;
 const TRIGGER_SHAPES: Record<AutomationTrigger["kind"], string> = {
@@ -147,6 +154,7 @@ const TRIGGER_SHAPES: Record<AutomationTrigger["kind"], string> = {
   load_ready: `{kind: "load_ready", ontology_id}`,
   document_arrived: `{kind: "document_arrived", set_id}`,
   generation_finished: `{kind: "generation_finished", ontology_id, outcome: "succeeded" | "failed" | "any"}`,
+  reviews_waiting: `{kind: "reviews_waiting", ontology_id, at_least: 1 to 10000}`,
   manual: `{kind: "manual"}`,
 };
 const ACTION = z.union([
@@ -222,7 +230,7 @@ function readTrigger(raw: unknown): AutomationTrigger | string {
   if (!isRecord(raw)) return "a trigger: its config is a JSON object";
   if (typeof kind !== "string") return "a trigger: its config names its kind";
   if (!Object.hasOwn(TRIGGER_SHAPES, kind))
-    return `a trigger's kind is "${kind}"; it is schedule, sync_finished, load_ready, document_arrived, generation_finished or manual`;
+    return `a trigger's kind is "${kind}"; it is schedule, sync_finished, load_ready, document_arrived, generation_finished, reviews_waiting or manual`;
   const shape = TRIGGER_SHAPES[kind as AutomationTrigger["kind"]];
   if (
     kind === "schedule" &&
@@ -347,7 +355,8 @@ function checks(c: AutomationNodeConfig, from: AutomationNode) {
   return (
     from.kind === "trigger" &&
     (from.config.kind === "document_arrived" ||
-      from.config.kind === "sync_finished")
+      from.config.kind === "sync_finished" ||
+      from.config.kind === "reviews_waiting")
   );
 }
 
@@ -505,7 +514,7 @@ function checkGraph(
         error: `${name(n.id)} can't check ${name(from.id)}: ${
           n.config.check === "answer"
             ? "an answer is a Founder step's"
-            : "a count is a Founder step's, or a document_arrived or sync_finished trigger's"
+            : "a count is a Founder step's, or a document_arrived, sync_finished or reviews_waiting trigger's"
         }`,
         nodeId: n.id,
       };
@@ -528,7 +537,8 @@ function checkGraph(
         a.connector_id === waitsOn.connector_id
           ? "syncs the connector"
           : waitsOn &&
-              waitsOn.kind === "load_ready" &&
+              (waitsOn.kind === "load_ready" ||
+                waitsOn.kind === "reviews_waiting") &&
               a.operation === "create_load" &&
               a.ontology_id === waitsOn.ontology_id
             ? "loads the ontology"
@@ -614,6 +624,7 @@ export function canonicalJson(spec: AutomationSpec): string {
           ...("ontology_id" in t && { ontology_id: t.ontology_id }),
           ...("set_id" in t && { set_id: t.set_id }),
           ...("outcome" in t && { outcome: t.outcome }),
+          ...("at_least" in t && { at_least: t.at_least }),
         };
       }
       case "assistant":
@@ -824,6 +835,8 @@ export function triggerText(t: AutomationTrigger, names: Names) {
       return `documents arrive in ${quoted(names.set(t.set_id), "a document set")}`;
     case "generation_finished":
       return `a draft of ${quoted(names.ontology(t.ontology_id), "an ontology")} ${OUTCOME_WORDS[t.outcome]}`;
+    case "reviews_waiting":
+      return `at least ${t.at_least.toLocaleString("en-US")} ${t.at_least === 1 ? "card waits" : "cards wait"} for review in ${quoted(names.ontology(t.ontology_id), "an ontology")}`;
     case "manual":
       return "you run it";
   }
@@ -853,6 +866,8 @@ export function listTriggerText(
       return `When documents arrive in ${quoted(names.set(t), "a document set")}`;
     case "generation_finished":
       return `After drafts of ${quoted(names.ontology(t), "an ontology")}`;
+    case "reviews_waiting":
+      return `When reviews wait in ${quoted(names.ontology(t), "an ontology")}`;
     default:
       return "Run by hand";
   }
@@ -1046,7 +1061,9 @@ export function incomplete(n: AutomationNode): string | undefined {
       if (t.kind === "sync_finished" && !t.connector_id)
         return "Choose a connection";
       if (
-        (t.kind === "load_ready" || t.kind === "generation_finished") &&
+        (t.kind === "load_ready" ||
+          t.kind === "generation_finished" ||
+          t.kind === "reviews_waiting") &&
         !t.ontology_id
       )
         return "Choose an ontology";
@@ -1283,6 +1300,7 @@ export type TemplateId =
   | "load-after-sync"
   | "check-documents"
   | "load-ready-report"
+  | "reviews-digest"
   | "blank";
 export type Template = {
   id: TemplateId;
@@ -1526,6 +1544,39 @@ export const TEMPLATES: readonly Template[] = [
           { from: "start", to: "check" },
           { from: "check", to: "email" },
         ],
+      },
+    }),
+  },
+  {
+    id: "reviews-digest",
+    title: "Email me when reviews wait",
+    description:
+      "When at least 50 cards wait in an ontology’s current load, email you a link to the walkthrough.",
+    needs: ["ontology"],
+    build: (c) => ({
+      name: `Reviews waiting in ${c.ontology?.name || "an ontology"}`,
+      description: "An email when cards pile up for review.",
+      spec: {
+        v: 1,
+        nodes: [
+          {
+            id: "start",
+            kind: "trigger",
+            config: {
+              kind: "reviews_waiting",
+              ontology_id: c.ontology?.id || "",
+              at_least: 50,
+            },
+            position: at(0, 0),
+          },
+          {
+            id: "email",
+            kind: "notify",
+            config: { message: "Reviews are waiting" },
+            position: at(0, ROW),
+          },
+        ],
+        edges: [{ from: "start", to: "email" }],
       },
     }),
   },
@@ -1979,6 +2030,8 @@ export function triggerOfKind(
       return { kind, set_id: "" };
     case "generation_finished":
       return { kind, ontology_id: "", outcome: "succeeded" };
+    case "reviews_waiting":
+      return { kind, ontology_id: "", at_least: 50 };
     case "manual":
       return { kind };
   }
@@ -2061,6 +2114,10 @@ export function eventText(
     }
     case "generation_finished":
       return `A draft of ${quoted(trigger?.kind === "generation_finished" ? names.ontology(trigger.ontology_id) : undefined, "its ontology")} ${e.outcome === "failed" ? "failed" : "finished"}`;
+    case "reviews_waiting": {
+      const n = e.count ?? 0;
+      return `${n >= MAX_REVIEWS_WAITING ? "10,000+" : n.toLocaleString("en-US")} to review in ${quoted(trigger?.kind === "reviews_waiting" ? names.ontology(trigger.ontology_id) : undefined, "its ontology")}`;
+    }
   }
 }
 

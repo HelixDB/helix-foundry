@@ -3963,6 +3963,10 @@ export type AutomationTrigger =
       ontology_id: string;
       outcome: "succeeded" | "failed" | "any";
     }
+  // The ontology's current load has at least at_least (1 to 10,000) review
+  // cards open, once its reviews are sorted; again for a new load, or after
+  // the count fell below and rose past it.
+  | { kind: "reviews_waiting"; ontology_id: string; at_least: number }
   | { kind: "manual" };
 
 /**
@@ -3985,7 +3989,7 @@ export type AutomationNodeConfig =
     }
   | { kind: "action"; config: AutomationAction }
   // answer: the Assistant step before it said yes or no; count: its count,
-  // or a document_arrived or sync_finished trigger's.
+  // or a document_arrived, sync_finished or reviews_waiting trigger's.
   | {
       kind: "condition";
       config:
@@ -4065,6 +4069,7 @@ export type AutomationTriggerEvent = {
   generation_id?: string;
   document_ids?: string[];
   outcome?: string;
+  // How many ended or arrived; reviews_waiting: the cards to review.
   count?: number;
   rows?: number;
   by_user_id?: string;

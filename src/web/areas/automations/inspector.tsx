@@ -16,6 +16,7 @@ import {
 import {
   KIND_HEADS,
   LIMITS,
+  MAX_REVIEWS_WAITING,
   WEEKDAYS,
   actionText,
   edgesOutOf,
@@ -48,6 +49,7 @@ const TRIGGERS: SelectOption<AutomationTrigger["kind"]>[] = [
   { value: "load_ready", label: "When a load of an ontology is ready" },
   { value: "document_arrived", label: "When documents arrive in a set" },
   { value: "generation_finished", label: "When a draft of an ontology ends" },
+  { value: "reviews_waiting", label: "When reviews wait in an ontology" },
   { value: "manual", label: "Only when I run it" },
 ];
 const OUTCOMES: SelectOption<"succeeded" | "failed" | "any">[] = [
@@ -337,7 +339,9 @@ function TriggerFields({
           </label>
         </>
       )}
-      {(t.kind === "load_ready" || t.kind === "generation_finished") && (
+      {(t.kind === "load_ready" ||
+        t.kind === "generation_finished" ||
+        t.kind === "reviews_waiting") && (
         <label className="hf-field">
           <span>Ontology</span>
           <Select
@@ -360,6 +364,30 @@ function TriggerFields({
           />
         </label>
       )}
+      {t.kind === "reviews_waiting" && (
+        <label className="hf-field">
+          <span>Cards to review, at least</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_REVIEWS_WAITING}
+            value={t.at_least}
+            onChange={(e) =>
+              onChange({
+                ...t,
+                at_least: Math.max(
+                  1,
+                  Math.min(
+                    MAX_REVIEWS_WAITING,
+                    Math.trunc(Number(e.target.value) || 1),
+                  ),
+                ),
+              })
+            }
+          />
+        </label>
+      )}
       {t.kind === "document_arrived" && (
         <label className="hf-field">
           <span>Document set</span>
@@ -377,12 +405,22 @@ function TriggerFields({
           It never starts on its own: you run it from its page.
         </p>
       )}
-      {t.kind !== "schedule" && t.kind !== "manual" && (
+      {t.kind === "reviews_waiting" && (
         <p className="au-hint">
-          Foundry checks every half minute or so, and starts it a couple of
-          minutes after what it waits for ends. Several at once start it once.
+          Runs when at least this many cards wait in the ontology’s current
+          load, once its reviews are sorted, including the load that is current
+          when you turn it on. It runs again for a new load, or after the count
+          drops below this and rises past it again.
         </p>
       )}
+      {t.kind !== "schedule" &&
+        t.kind !== "manual" &&
+        t.kind !== "reviews_waiting" && (
+          <p className="au-hint">
+            Foundry checks every half minute or so, and starts it a couple of
+            minutes after what it waits for ends. Several at once start it once.
+          </p>
+        )}
     </>
   );
 }
