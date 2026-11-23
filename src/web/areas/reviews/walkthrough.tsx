@@ -920,7 +920,12 @@ export function ReviewWalkthrough({
         // sends it.
         if (card && shell.assistant.available)
           shell.assistant.compose(
-            founderAsk(advice?.kind === "suggest" ? layout.primary : undefined),
+            founderAsk(
+              advice?.kind === "suggest" ? layout.primary : undefined,
+              advice?.kind === "suggest" && advice.rule === "model"
+                ? "model"
+                : "rule",
+            ),
             "review",
           );
         return;

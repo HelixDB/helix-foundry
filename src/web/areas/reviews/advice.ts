@@ -4,6 +4,8 @@ import type {
   FoundryReviewNameDecisions,
   ReviewDecision,
 } from "../../../shared/wfe";
+import { choicesOf } from "./choices";
+import type { Span } from "../explore/model";
 import {
   approvable,
   holdingEnds,
@@ -43,7 +45,15 @@ import {
 //   share right at least BATCH_LOWER over at least BATCH_LABELS labels;
 // - majority_value (values): no table value, at least MIN_QUOTES quotes, at
 //   least two thirds of them stating one value. Never batched.
-// Otherwise the card says why there is none (NoAdvice).
+// Otherwise the card says why there is none (NoAdvice), unless the rules
+// abstain where Founder's model may advise (MODEL_WHYS: a name between
+// candidates, a value the documents split on or state too rarely) and the
+// index sent the model's pick (`modelAdvice`, the graph worker's, written
+// from the quotes): it shows only while the card offers exactly the
+// choices the model was offered, as "model", unmeasured and never batched.
+// This is the only gate on what model advice shows; the backend's port of
+// these abstentions (backend/reviewadvice Why) decides only what it pays
+// for, so whatever it sends anywhere else is ignored.
 
 /** A card a person decides in the walkthrough. */
 export type Decidable = NameCard | ClaimCard | ValueCard;
@@ -52,7 +62,9 @@ export type RuleId =
   | "precedent"
   | "single_candidate"
   | "confident_claim"
-  | "majority_value";
+  | "majority_value"
+  // Founder's model, where the rules abstain (MODEL_WHYS).
+  | "model";
 
 /**
  * How far a suggestion is to be trusted, from data, never self-reported: a
@@ -69,7 +81,13 @@ export type Basis =
   | { kind: "precedent"; decisions: number; latest: string }
   | { kind: "only_candidate"; name: string }
   | { kind: "verifier"; score?: number; band: Band }
-  | { kind: "majority"; agree: number; of: number };
+  | { kind: "majority"; agree: number; of: number }
+  // The model's own words (plain text, never markup) and the quotes it
+  // cites.
+  | { kind: "model"; rationale: string; cites: ModelCite[] };
+
+/** A place in a document Founder's model cites. */
+export type ModelCite = Span & { documentId: string };
 
 /** Why a card has no suggestion: a closed set its card words. */
 export type NoAdvice =
@@ -306,22 +324,134 @@ export function coveredBy(
 const none = (why: NoAdvice): Advice => ({ kind: "none", why });
 
 /**
- * Founder's suggestion for a card, by the first rule that fires; none, with
- * why, when none does. A card for information gets none.
+ * The rules' abstentions Founder's model may advise on: a name between
+ * candidates, a value the documents split on or state too rarely.
+ */
+export const MODEL_WHYS: ReadonlySet<NoAdvice> = new Set<NoAdvice>([
+  "tied_candidates",
+  "values_split",
+  "few_quotes",
+]);
+
+/**
+ * Founder's suggestion for a card, by the first rule that fires; else, where
+ * the rules abstain on a name or a value (MODEL_WHYS), Founder's model's
+ * (modelAdvised); none, with why, when there is neither. A card for
+ * information gets none.
  *
  * @example
  * advise(heldClaimOfAMeasuredBand, ctx); // { kind: "suggest", rule: "confident_claim", … }
+ * advise(tiedNameWithModelAdvice, ctx); // { kind: "suggest", rule: "model", strength: { kind: "unmeasured" }, batchKey: null, … }
  */
 export function advise(card: Decidable, ctx: AdviceContext): Advice {
   if (laneOf(card) === "fyi") return none("fyi");
-  switch (card.kind) {
-    case "name":
-      return adviseName(card, ctx);
-    case "claim":
-      return adviseClaim(card, ctx);
-    case "value":
-      return adviseValue(card);
-  }
+  const rules =
+    card.kind === "name"
+      ? adviseName(card, ctx)
+      : card.kind === "claim"
+        ? adviseClaim(card, ctx)
+        : adviseValue(card);
+  return rules.kind === "none" && MODEL_WHYS.has(rules.why)
+    ? (modelAdvised(card) ?? rules)
+    : rules;
+}
+
+/**
+ * A choice's identity, as two choices are compared: its kind and value (an
+ * integer by its digits, a number by its value), or undefined for one this
+ * page doesn't know.
+ *
+ * @example
+ * choiceKey({ prop: { integer: "012" } }) === choiceKey({ prop: { integer: "12" } }); // true
+ * choiceKey({ prop: { integer: "12" } }) === choiceKey({ prop: { number: 12 } }); // false
+ */
+export function choiceKey(
+  c: FoundryReviewChoice | undefined,
+): string | undefined {
+  if (c?.resolve)
+    return c.resolve.entityKey
+      ? `entity:${c.resolve.entityKey}`
+      : c.resolve.notInData
+        ? "not_in_data"
+        : undefined;
+  const v = c?.prop;
+  if (!v) return undefined;
+  if (typeof v.text === "string") return `text:${v.text}`;
+  if (v.integer !== undefined && /^-?\d+$/.test(String(v.integer)))
+    return `integer:${BigInt(String(v.integer)).toString()}`;
+  if (typeof v.number === "number" && Number.isFinite(v.number))
+    return `number:${v.number}`;
+  if (typeof v.boolean === "boolean") return `boolean:${v.boolean}`;
+  return undefined;
+}
+
+/**
+ * A model's rationale as it may show, as plain text: control characters and
+ * line breaks made spaces, bidi marks, embeddings, overrides and isolates
+ * removed, trimmed; "" when nothing is left or more than 300 characters
+ * are. The backend sanitizes it so too; this keeps the page safe whatever
+ * it is sent.
+ *
+ * @example
+ * plainRationale("Quote 2 names\n\u202eGlobex\u202c Ltd."); // "Quote 2 names Globex Ltd."
+ */
+export function plainRationale(s: unknown): string {
+  if (typeof s !== "string") return "";
+  const out = s
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
+    .replace(/[\p{Cc}\s\u2028\u2029]+/gu, " ")
+    .trim();
+  return [...out].length > 300 ? "" : out;
+}
+
+/**
+ * Founder's model's suggestion on a name or value card, when the index sent
+ * one that still fits: the card offers exactly the choices the model was
+ * offered (none gained or lost since), its pick is one of them, and it has
+ * a rationale and a quote it cites. It is unmeasured and never batched, as
+ * no random checks measure it. Null otherwise.
+ *
+ * @example
+ * modelAdvised(tiedName); // { kind: "suggest", rule: "model", choice: { resolve: { entityKey: "scus_2" } }, … }
+ * modelAdvised(tiedNameThatGainedACandidate); // null
+ */
+export function modelAdvised(card: Decidable): Advice | null {
+  const a = card.kind === "claim" ? undefined : card.modelAdvice;
+  if (!a) return null;
+  const choices = choicesOf(card.review, (c) => c.key);
+  const offered = (a.offered ?? []).map(choiceKey);
+  const has = new Set(choices.map((c) => choiceKey(c.decision)));
+  if (
+    offered.some((k) => k === undefined) ||
+    new Set(offered).size !== has.size ||
+    offered.some((k) => !has.has(k))
+  )
+    return null;
+  const chosen = choices.find(
+    (c) => choiceKey(c.decision) === choiceKey(a.choice),
+  );
+  const rationale = plainRationale(a.rationale);
+  const cites = (a.cites ?? []).flatMap((c): ModelCite[] => {
+    const [section, start, end] = [
+      c.span?.section,
+      c.span?.start,
+      c.span?.end,
+    ].map((n) => Number(n ?? 0));
+    return c.docId &&
+      [section, start, end].every((n) => Number.isSafeInteger(n) && n! >= 0) &&
+      end! > start!
+      ? [{ documentId: c.docId, section: section!, start: start!, end: end! }]
+      : [];
+  });
+  if (!chosen || !rationale || !cites.length) return null;
+  return {
+    kind: "suggest",
+    rule: "model",
+    choice: chosen.decision,
+    basis: [{ kind: "model", rationale, cites }],
+    strength: { kind: "unmeasured" },
+    batchKey: null,
+  };
 }
 
 function adviseName(card: NameCard, ctx: AdviceContext): Advice {

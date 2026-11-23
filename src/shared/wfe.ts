@@ -471,7 +471,9 @@ export type FoundryUsageTask =
   | "FOUNDRY_USAGE_TASK_LOADS"
   | "FOUNDRY_USAGE_TASK_API_SOURCES"
   | "FOUNDRY_USAGE_TASK_QUESTIONS"
-  | "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS";
+  | "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS"
+  // Founder's model's review suggestions, on their own monthly budget.
+  | "FOUNDRY_USAGE_TASK_REVIEW_ADVICE";
 
 /** v1FoundryUsageEntry: one task's month. */
 export type FoundryUsageEntry = {
@@ -4785,6 +4787,9 @@ export type FoundryReviewCard = {
   docId: string;
   // The facts its decisions write.
   facts?: number;
+  // Founder's model's suggestion, on a name or value card the rules leave
+  // undecided; shown only while the card offers what it was offered.
+  modelAdvice?: FoundryReviewModelAdvice;
 } & (
   | { name: FoundryReviewNameCard; claim?: never; value?: never }
   | { claim: FoundryReviewClaimCard; name?: never; value?: never }
@@ -4819,6 +4824,20 @@ export type ListFoundryReviewCardsResponse = {
   nextPageToken?: string;
 };
 /** A place in a document: int64s, as strings. */
+/**
+ * v1FoundryReviewModelAdvice: Founder's model's pick of one of a card's
+ * choices, with a plain-text rationale (at most 300 characters, sanitized)
+ * and the quotes it cites. Unmeasured and never batched; `offered` are the
+ * card's choices when it was written.
+ */
+export type FoundryReviewModelAdvice = {
+  choice?: FoundryReviewChoice;
+  rationale?: string;
+  cites?: FoundryReviewCite[];
+  offered?: FoundryReviewChoice[];
+};
+/** v1FoundryReviewCite: a place in a document a suggestion cites. */
+export type FoundryReviewCite = { docId?: string; span?: FoundryReviewSpan };
 export type FoundryReviewSpan = {
   section?: string;
   start?: string;

@@ -54,6 +54,7 @@ import {
 } from "./ontologies";
 import { ontologyVersion } from "./ontology";
 import { ontologyLabels } from "./reviews";
+import { modelAdviceOf } from "../review-advice";
 
 // The review cards routes, as the backend serves them (api/review_cards.go
 // over store/foundry_review_cards.go): the open count of each current load
@@ -67,8 +68,16 @@ import { ontologyLabels } from "./reviews";
 // Test knobs, through POST /__mock/config:
 // - `reviewCardsPage` n: a page lists n cards, not 50;
 // - `reviewIndexing`: the summary and the cards say the index is still
-//   first being built, and the draw draws nothing.
-type Knobs = { reviewCardsPage?: number; reviewIndexing?: boolean };
+//   first being built, and the draw draws nothing;
+// - `reviewModelAdvice` false: no card carries Founder's model's advice
+//   (../review-advice.ts), as with foundry.reviews.advise off;
+// - `reviewModelAdviceRationale`: every advice's rationale, as sent.
+type Knobs = {
+  reviewCardsPage?: number;
+  reviewIndexing?: boolean;
+  reviewModelAdvice?: boolean;
+  reviewModelAdviceRationale?: string;
+};
 const knobs = config as typeof config & Knobs;
 const PAGE = 50;
 const COUNT_CAP = 10_000;
@@ -95,6 +104,8 @@ onReset(() => {
   draws.clear();
   delete knobs.reviewCardsPage;
   delete knobs.reviewIndexing;
+  delete knobs.reviewModelAdvice;
+  delete knobs.reviewModelAdviceRationale;
 });
 
 /** A load's cards and quotes of facts, as its index would hold them. */
@@ -103,6 +114,8 @@ type Index = {
   cards: Card[];
   // Each document's quotes of facts, at their places.
   quotes: Map<string, Quote[]>;
+  // Every review, by its key, as the graph holds it.
+  reviews: Map<string, Review>;
 };
 
 const text = (v: unknown) => (typeof v === "string" ? v : "");
@@ -116,7 +129,8 @@ function indexOf(o: StoredOntology, load: string): Index {
     currentLoadVersionId(o.id) || "",
   )?.definition;
   const byDoc = new Map<string, Review[]>(),
-    quotes = new Map<string, Quote[]>();
+    quotes = new Map<string, Quote[]>(),
+    reviews = new Map<string, Review>();
   const sectionOf = (id: number) => {
     const at = (g.outgoing.get(id) || [])
       .map((e) => g.edges.get(e)!)
@@ -160,33 +174,33 @@ function indexOf(o: StoredOntology, load: string): Index {
         ? []
         : [{ type: to.label, key: key || norm, props: to.props }];
     });
-    byDoc.set(doc, [
-      ...(byDoc.get(doc) ?? []),
-      {
-        review_key: text(p.review_key),
-        reason: text(p.reason),
-        type: text(p.type),
-        doc_id: doc,
-        norm_name: text(p.norm_name),
-        candidates: Array.isArray(p.candidates)
-          ? p.candidates.filter((c): c is string => typeof c === "string")
-          : [],
-        entity_key: text(p.entity_key),
-        prop: text(p.prop),
-        // The engine keeps them as JSON text; the mock's loads, as values.
-        values:
-          typeof p.values === "string" ? p.values : JSON.stringify(p.values),
-        suggested_link: text(p.suggested_link),
-        statement: text(p.statement),
-        claim_key: text(p.claim_key),
-        claim: text(p.claim),
-        section: num(p.section),
-        start: num(p.start),
-        end: num(p.end),
-        confidence: score(p.confidence) ?? null,
-        concerned,
-      },
-    ]);
+    const review: Review = {
+      review_key: text(p.review_key),
+      reason: text(p.reason),
+      type: text(p.type),
+      doc_id: doc,
+      norm_name: text(p.norm_name),
+      candidates: Array.isArray(p.candidates)
+        ? p.candidates.filter((c): c is string => typeof c === "string")
+        : [],
+      entity_key: text(p.entity_key),
+      prop: text(p.prop),
+      // The engine keeps them as JSON text; the mock's loads, as values.
+      values:
+        typeof p.values === "string" ? p.values : JSON.stringify(p.values),
+      suggested_link: text(p.suggested_link),
+      statement: text(p.statement),
+      claim_key: text(p.claim_key),
+      claim: text(p.claim),
+      section: num(p.section),
+      start: num(p.start),
+      end: num(p.end),
+      confidence: score(p.confidence) ?? null,
+      concerned,
+    };
+    byDoc.set(doc, [...(byDoc.get(doc) ?? []), review]);
+    if (!reviews.has(review.review_key!))
+      reviews.set(review.review_key!, review);
   }
   const saved = decisions.get(o.id) || [];
   const cards = [...byDoc].flatMap(
@@ -212,7 +226,7 @@ function indexOf(o: StoredOntology, load: string): Index {
         (link) => holdsOne(definition, link),
       ).cards,
   );
-  return { load, cards, quotes };
+  return { load, cards, quotes, reviews };
 }
 
 /**
@@ -734,6 +748,17 @@ export const reviewCardRoutes: MockRoute[] = [
             : c.kind === "release"
               ? { claim: claim(c) }
               : { value: { reviewKey: c.reviewKey } }),
+          ...(() => {
+            const advice =
+              knobs.reviewModelAdvice === false
+                ? undefined
+                : modelAdviceOf(
+                    c,
+                    index.reviews.get(c.reviewKey),
+                    knobs.reviewModelAdviceRationale,
+                  );
+            return advice ? { modelAdvice: advice } : {};
+          })(),
         }),
       );
       const nameKeys = [

@@ -4705,6 +4705,8 @@ describe("review decisions", () => {
     const knobs = config as typeof config & {
       reviewCardsPage?: number;
       reviewIndexing?: boolean;
+      reviewModelAdvice?: boolean;
+      reviewModelAdviceRationale?: string;
     };
     const SUMMARY = "/v1/workspaces/ws_acme/foundry/review-summary";
     const hedged = Buffer.from(
@@ -4823,6 +4825,34 @@ describe("review decisions", () => {
       knobs.reviewIndexing = true;
       expect((await summaryOf()).indexing).toBe(true);
       expect((await call("GET", `${O}/review-cards`)).body.indexing).toBe(true);
+    });
+
+    it("serves Founder's model's advice on names and values, unless it is off", async () => {
+      await uploaded("contract.md", CONTRACT);
+      await uploaded(
+        "tied.md",
+        Buffer.from("# Tied\n\nGlobex Initech Holdings signed order form 9.\n"),
+      );
+      await loaded("first");
+      const all = await walk();
+      const advised = all.filter((c) => c.modelAdvice);
+      expect(advised.length).toBeGreaterThan(0);
+      for (const c of advised) {
+        expect(c.claim).toBeUndefined();
+        expect(c.modelAdvice.offered).toContainEqual(c.modelAdvice.choice);
+        expect(c.modelAdvice.cites).toHaveLength(1);
+        expect(c.modelAdvice.rationale).toBeTruthy();
+      }
+      const tied = advised.find((c) => c.name?.normName.includes("initech"));
+      // Two candidates or more, then Not in data.
+      expect(tied?.modelAdvice.offered.length).toBeGreaterThanOrEqual(3);
+      knobs.reviewModelAdviceRationale = "<b>Read</b> https://x.test";
+      expect(
+        (await walk()).find((c) => c.cardId === tied.cardId).modelAdvice
+          .rationale,
+      ).toBe("<b>Read</b> https://x.test");
+      knobs.reviewModelAdvice = false;
+      expect((await walk()).some((c) => c.modelAdvice)).toBe(false);
     });
 
     it("draws spot checks once, the same for everyone, and a drawn claim is no card to decide", async () => {

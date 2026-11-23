@@ -56,7 +56,8 @@ export type NameLink = Settleable & {
  * in the held claims' documents (`links`), which say what holds a claim
  * (markDiffering). A card whose review the load no longer holds as the
  * index built it (read since, or another kind's) is left out until the
- * index rebuilds it; so is a held claim on a name's card.
+ * index rebuilds it; so is a held claim on a name's card. A name's or a
+ * value's model advice rides along, for ./advice.ts to decide on.
  *
  * @example
  * cardsOf(page.cards, reviewsByKey, links); // [{ kind: "name", key: "9f…", … }]
@@ -110,6 +111,7 @@ export function cardsOf(
             const card = claim(h.reviewKey, h.band, all);
             return card ? [card] : [];
           }),
+          ...(c.modelAdvice ? { modelAdvice: c.modelAdvice } : {}),
         },
       ];
     }
@@ -118,7 +120,17 @@ export function cardsOf(
       return card ? [card] : [];
     }
     const review = of(c.value.reviewKey, "prop");
-    return review ? [{ kind: "value", key: c.cardId, lane, review }] : [];
+    return review
+      ? [
+          {
+            kind: "value",
+            key: c.cardId,
+            lane,
+            review,
+            ...(c.modelAdvice ? { modelAdvice: c.modelAdvice } : {}),
+          },
+        ]
+      : [];
   });
 }
 

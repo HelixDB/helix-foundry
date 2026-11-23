@@ -1,10 +1,24 @@
-// Founder's suggestion on a walkthrough card (./advice.ts advise), in fixed
-// words over its evidence, never model text: the choice, its source (a rule),
-// how far it is measured, why, and what the choice does. A card with none
-// says why a person decides it.
+// Founder's suggestion on a walkthrough card (./advice.ts advise): the
+// choice, its source (a rule, or Founder's model), how far it is measured,
+// why, and what the choice does. A rule's why is fixed words over its
+// evidence; the model's is its rationale, shown as plain text (a text node,
+// never markup or links), and the quotes it cites, linked by this page. A
+// card with none says why a person decides it.
 import { Sparkles } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Tag, formatDate, formatNumber, plural } from "../../kit";
-import type { Advice, Basis, Effect, NoAdvice, Strength } from "./advice";
+import { paths } from "../../paths";
+import { useWorkspace } from "../../ui";
+import { useDocumentNames } from "../documents/documents-api";
+import { useOntology } from "../ontology/scope";
+import type {
+  Advice,
+  Basis,
+  Effect,
+  ModelCite,
+  NoAdvice,
+  Strength,
+} from "./advice";
 import { BAND_TEXT, scoreText } from "./queue";
 
 /** Why a card has no suggestion, as it says it. */
@@ -53,7 +67,28 @@ function whyText(b: Basis, s: Strength): string {
       } right.`;
     case "majority":
       return `${b.agree} of ${b.of} quotes state this value.`;
+    case "model":
+      return `Founder’s model: ${b.rationale}`;
   }
+}
+
+/** The quotes Founder's model cites: each section, linked at the quote. */
+function ModelCites({ cites }: { cites: readonly ModelCite[] }) {
+  const { id: ws } = useWorkspace(),
+    { id: o } = useOntology();
+  const name = useDocumentNames(ws, "a document");
+  return (
+    <span className="rv-cites">
+      {cites.map((c, i) => (
+        <span key={i}>
+          {i > 0 ? ", " : " "}
+          <Link to={paths.document(o, c.documentId, "review", c)}>
+            Section {c.section + 1} of {name(c.documentId)}
+          </Link>
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /** What a choice does, and when. */
@@ -99,7 +134,7 @@ export function FounderSuggestion({
           <span>
             Founder suggests <strong>{label}</strong>
           </span>
-          <Tag>Rule</Tag>
+          <Tag>{advice.rule === "model" ? "Founder’s model" : "Rule"}</Tag>
           <Tag
             tone={advice.strength.kind === "unmeasured" ? "neutral" : "success"}
           >
@@ -108,7 +143,10 @@ export function FounderSuggestion({
         </p>
         <ul className="rv-why" aria-label="Why">
           {advice.basis.map((b, i) => (
-            <li key={i}>{whyText(b, advice.strength)}</li>
+            <li key={i}>
+              {whyText(b, advice.strength)}
+              {b.kind === "model" && <ModelCites cites={b.cites} />}
+            </li>
           ))}
         </ul>
         {effectLine}

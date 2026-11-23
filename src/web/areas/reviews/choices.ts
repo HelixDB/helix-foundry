@@ -164,16 +164,20 @@ export function layoutChoices(
 }
 
 /**
- * What F puts in Founder's composer on a card: the rule's suggestion in
- * words, when it makes one (`suggested`, the card's suggested choice), then
- * the ask. The page context tells Founder the card; nothing is sent until
- * the person sends it.
+ * What F puts in Founder's composer on a card: the suggestion in words, when
+ * there is one (`suggested`, the card's suggested choice, by `source`: a
+ * rule's, or Founder's model's), then the ask. The page context tells Founder
+ * the card; nothing is sent until the person sends it.
  *
  * @example
  * founderAsk({ kind: "link", label: "Acme Ltd", … }); // "The rule suggests linking Acme Ltd. Help me decide this review."
+ * founderAsk({ kind: "value", label: "12 months", … }, "model"); // "Founder’s model suggests the value 12 months. Help me decide this review."
  * founderAsk(undefined); // "Help me decide this review."
  */
-export function founderAsk(suggested: Choice | undefined): string {
+export function founderAsk(
+  suggested: Choice | undefined,
+  source: "rule" | "model" = "rule",
+): string {
   const ask = "Help me decide this review.";
   if (!suggested) return ask;
   const words = {
@@ -183,5 +187,5 @@ export function founderAsk(suggested: Choice | undefined): string {
     approve: "approving it",
     reject: "rejecting it",
   }[suggested.kind];
-  return `The rule suggests ${words}. ${ask}`;
+  return `${source === "model" ? "Founder’s model" : "The rule"} suggests ${words}. ${ask}`;
 }

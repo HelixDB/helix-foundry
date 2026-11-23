@@ -1,4 +1,7 @@
-import type { FoundryReviewLabel } from "../../../shared/wfe";
+import type {
+  FoundryReviewLabel,
+  FoundryReviewModelAdvice,
+} from "../../../shared/wfe";
 import type { EntityReview } from "../explore/model";
 
 // The review walk's cards, as the page renders them: each card the review
@@ -109,6 +112,9 @@ export type NameCard = {
   reviewCount: number;
   blocked: number;
   held: ClaimCard[];
+  // Founder's model's suggestion as the index sent it (./advice.ts decides
+  // whether it shows).
+  modelAdvice?: FoundryReviewModelAdvice;
 };
 
 /** A disputed value's card; one a table row keeps against documents is for information. */
@@ -117,6 +123,7 @@ export type ValueCard = {
   key: string;
   lane: Lane;
   review: QueueReview;
+  modelAdvice?: FoundryReviewModelAdvice;
 };
 
 export type QueueCard = ClaimCard | NameCard | ValueCard;

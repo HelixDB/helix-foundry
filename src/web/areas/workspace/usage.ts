@@ -58,6 +58,12 @@ const TASKS: readonly {
     hint: "Assessing how much your ontologies helped your use cases’ runs",
     within: false,
   },
+  {
+    task: "FOUNDRY_USAGE_TASK_REVIEW_ADVICE",
+    label: "Review suggestions",
+    hint: "Founder’s model suggesting choices where the review rules can’t",
+    within: false,
+  },
 ];
 
 /** From this share of a cap on, its bar warns. */
