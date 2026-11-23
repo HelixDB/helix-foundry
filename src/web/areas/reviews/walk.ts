@@ -107,8 +107,14 @@ export type WalkAction =
   // elsewhere, and the cards its link covered are to decide again.
   | { type: "changed"; keys: ReadonlySet<string> }
   // The next page of cards read: its keys go after the order, the card shown
-  // stays.
-  | { type: "extend"; loadId: string; keys: readonly string[] }
+  // stays. `read`: the cards the walk read before outside its order (the
+  // Covered and FYI lanes), which it had too.
+  | {
+      type: "extend";
+      loadId: string;
+      keys: readonly string[];
+      read?: ReadonlySet<string>;
+    }
   // The cards read again: a new order (another load's, or a filter's, which
   // `refiltered` says the person chose), and the keys the index no longer
   // lists (decided, here or elsewhere).
@@ -118,6 +124,7 @@ export type WalkAction =
       order: readonly string[];
       gone: ReadonlySet<string>;
       refiltered?: boolean;
+      read?: ReadonlySet<string>;
     };
 
 /**
@@ -306,7 +313,9 @@ const nextOpen = (
  *   decided elsewhere keeps its outcome and only leaves the stack;
  * - `uncover` opens again the cards that the keys' choices covered;
  * - `extend` adds a page's keys after the order (those not in it), the
- *   card shown staying; past the end, the first of them is shown;
+ *   card shown staying; past the end, the first of them to decide that the
+ *   walk hadn't read (in its order or `read`) is shown, else the finish
+ *   stays;
  * - `rebase` takes a new order: on the same load every outcome stays (a
  *   filter, or a refresh), and each card of the old order gone from the
  *   queue (`gone`) keeps its place, after the card before it that the new
@@ -319,8 +328,9 @@ const nextOpen = (
  *   stays if it is still in the order, else the next of the old order that
  *   is; else, on another load or a filter the person chose, the first to
  *   decide; else (the same load read again) the first
- *   card to decide the walk hadn't read, as `extend` shows one, or the
- *   finish still: a card the walk had that opens again (a link the load
+ *   card to decide the walk hadn't read (in its order or `read`), as
+ *   `extend` shows one, or the finish still: a card the walk had (one it
+ *   read in the Covered or FYI lane too) that opens again (a link the load
  *   won't apply in place, another person's decision removed) is the
  *   finish's to offer, so a read never moves the walk back.
  * An action that changes nothing returns the walk itself.
@@ -537,7 +547,19 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
       if (a.loadId !== w.loadId) return w;
       const has = new Set(w.order);
       const more = a.keys.filter((k) => !has.has(k));
-      return more.length ? { ...w, order: [...w.order, ...more] } : w;
+      if (!more.length) return w;
+      const order = [...w.order, ...more];
+      // Past the end, a card the walk had (read in another lane) that opens
+      // again is the finish's to offer, as a rebase leaves it.
+      const unread = order.findIndex(
+        (k, j) =>
+          j >= w.order.length && !a.read?.has(k) && open(w.outcomes.get(k)),
+      );
+      return {
+        ...w,
+        order,
+        at: w.at < w.order.length ? w.at : unread < 0 ? order.length : unread,
+      };
     }
     case "rebase": {
       const same = a.loadId === w.loadId,
@@ -577,7 +599,7 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
         ...a.order.flatMap((k) => [k, ...(stays.get(k) ?? [])]),
       ];
       const inNew = new Set(order),
-        had = new Set(w.order);
+        had = new Set([...w.order, ...(a.read ?? [])]);
       const kept = w.order.slice(w.at).find((k) => inNew.has(k));
       const unread = order.findIndex(
         (k) => !had.has(k) && open(outcomes.get(k)),

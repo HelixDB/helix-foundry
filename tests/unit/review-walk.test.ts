@@ -665,6 +665,13 @@ describe("walkReducer", () => {
     expect(stays.at).toBe(3);
     // A card the walk hadn't read goes on, as the next page's would.
     expect(current(read({ order: ["b", "d", "c"] }))).toBe("d");
+    // One it read as covered (or FYI), outside its order, is the finish's.
+    const covered = read({ order: ["b", "d", "c"], read: new Set(["d"]) });
+    expect(covered.order).toEqual(["a", "b", "d", "c"]);
+    expect(current(covered)).toBeNull();
+    expect(
+      current(read({ order: ["b", "d", "e"], read: new Set(["d"]) })),
+    ).toBe("e");
     // A filter the person chose starts at its first card to decide.
     expect(current(read({ refiltered: true }))).toBe("b");
     // So does another load.
@@ -800,6 +807,35 @@ describe("extend", () => {
     expect(
       walkReducer(done, { type: "extend", loadId: done.loadId, keys: ["c"] }),
     ).toMatchObject({ order: ["a", "c"], at: 1 });
+    // Past the end, cards the walk read in another lane (Covered, FYI)
+    // that open again stay the finish's; the first it hadn't read shows.
+    expect(
+      walkReducer(done, {
+        type: "extend",
+        loadId: done.loadId,
+        keys: ["c", "d"],
+        read: new Set(["c", "d"]),
+      }),
+    ).toMatchObject({ order: ["a", "c", "d"], at: 3 });
+    expect(
+      walkReducer(done, {
+        type: "extend",
+        loadId: done.loadId,
+        keys: ["c", "d"],
+        read: new Set(["c"]),
+      }),
+    ).toMatchObject({ order: ["a", "c", "d"], at: 2 });
+    // A new key this walk already decided (covered by a link) isn't shown.
+    const decided = walkOf(["a"], { at: 1 }, [
+      ["c", { kind: "covered", by: "a" }],
+    ]);
+    expect(
+      walkReducer(decided, {
+        type: "extend",
+        loadId: decided.loadId,
+        keys: ["c"],
+      }),
+    ).toMatchObject({ order: ["a", "c"], at: 2 });
     // Nothing new, or another load's page: the walk itself.
     expect(
       walkReducer(w, { type: "extend", loadId: w.loadId, keys: ["a"] }),

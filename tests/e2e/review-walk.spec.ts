@@ -453,6 +453,59 @@ test("a link the load can't apply in place waits for the next load, and the fini
   );
 });
 
+test("a walk that starts with a name's other documents covered keeps its finish when the link's job opens them again", async ({
+  page,
+}) => {
+  // The mock runs a name's link without a job whose end reads the cards
+  // again, so the walk reads them as the person comes back to the tab, once
+  // they are stale (30 s).
+  test.setTimeout(150_000);
+  await mock.configure({ loadStepMs: 200, nameInPlace: "not_replayed" });
+  await signIn(page);
+  await uploadNaming(page, "Umbrella Holdings", 3);
+  await makeContractsCurrent(page);
+  await loadVersion3(page);
+  // The link's job waits a long step, so a new walk reads the name's two
+  // other documents covered, never in the walk's order.
+  await mock.configure({ loadStepMs: 8000 });
+  await page.goto(`${O}/review`);
+  await expect(heading(page)).toContainText("names “Umbrella Holdings");
+  const sent = page.waitForRequest(isBatch);
+  await page.keyboard.press("Enter");
+  await sent;
+  await expect(
+    toast(page, "Linked, with 2 other documents asking about this name."),
+  ).toBeVisible();
+  await page.goto("/data");
+  await page.goto(`${O}/review`);
+  await expect(lane(page, "Covered")).toHaveText(/^Covered\s*2$/);
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Nothing to decide" }),
+  ).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
+  // The job ends refusing it in place: the next read of the cards lists
+  // the two to decide, and the finish offers them without moving the walk
+  // to one.
+  const done = page.getByRole("region", { name: "2 cards still to decide" });
+  await expect(async () => {
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("visibilitychange")),
+    );
+    await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/, {
+      timeout: 2000,
+    });
+  }).toPass({ timeout: 75_000, intervals: [3000] });
+  await expect(done).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
+  await page.waitForTimeout(3000);
+  await expect(done).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
+  await done
+    .getByRole("button", { name: "Go to the first still to decide" })
+    .click();
+  await expect(heading(page)).toContainText("names “Umbrella Holdings");
+});
+
 test("accepts all like this from a ticked list: untick one, see it go, then take back the batch", async ({
   page,
 }) => {

@@ -574,6 +574,10 @@ export function useWalk() {
       const before = last.current;
       last.current = { loadId, order, filter, by };
       const refiltered = before?.filter !== filter;
+      // Every card read before this read, in any lane: one of them that
+      // opens again (a name shown as covered whose link didn't hold) is the
+      // finish's to offer, never a card the walk moves to.
+      const read = new Set(seen.current.keys());
       for (const [k, card] of inQueue)
         seen.current.set(k, { card, advice: advice.get(k) });
       if (
@@ -587,6 +591,7 @@ export function useWalk() {
           type: "extend",
           loadId,
           keys: order.slice(before.order.length),
+          read,
         });
         return;
       }
@@ -606,6 +611,7 @@ export function useWalk() {
         loadId,
         order,
         refiltered: refiltered || before?.by !== by,
+        read,
         // Cards a link now covers have left the walk too, here or elsewhere.
         gone: new Set(
           w.loadId === loadId
