@@ -1,7 +1,5 @@
 import {
   Braces,
-  ChartLine,
-  Contact,
   Database,
   FileUp,
   Globe2,
@@ -25,6 +23,8 @@ const logoFiles: Record<string, string> = {
   slack: "slack",
   notion: "notion",
   google: "google",
+  databuddy: "databuddy",
+  attio: "attio",
   stripe: "stripe",
   s3: "s3",
   postgres: "postgresql",
@@ -58,12 +58,9 @@ const labels: Record<string, string> = {
   api: "Ingestion API",
   pipeline: "Pipeline output",
 };
-// Kinds without a logo file draw these; Databuddy's and Attio's marks aren't
-// vendored.
+// Kinds without a logo file draw these.
 const generic: Record<string, LucideIcon> = {
   events: Braces,
-  databuddy: ChartLine,
-  attio: Contact,
   neo4j: Waypoints,
   upload: FileUp,
   rest: Globe2,
@@ -91,6 +88,8 @@ const darkLogos = new Set([
   "granola",
   "slack",
   "notion",
+  "databuddy",
+  "attio",
 ]);
 /** The URL of a logo file in public/connectors, in the page's theme. */
 const logoUrl = (file: string, theme: Theme) =>

@@ -68,4 +68,11 @@ Brand guidelines: https://about.google/brand-resource-center/brand-elements/
 Source: https://github.com/simple-icons/simple-icons
 License: https://creativecommons.org/publicdomain/zero/1.0/
 
-Dark variants (`<name>-dark.svg`, shown in the dark theme by `logoUrl` in `src/web/kit/SourceLogo.tsx`): the same artwork with its near-black or dark-blue parts made white, as the brands show on dark backgrounds. `planetscale-dark.svg` fills the mark with white, `mysql-wordmark-dark.svg` makes the blue wordmark white and keeps the orange dolphin, `posthog-dark.svg` makes the black hedgehog white, and `github-dark.svg`, `calcom-dark.svg`, `granola-dark.svg`, `slack-dark.svg` (its aubergine) and `notion-dark.svg` make the mark white.
+Databuddy logomark from its brand assets, unmodified: `databuddy.svg` is its black logomark and `databuddy-dark.svg` its white one.
+Source: https://www.databuddy.cc/brand/logomark/black.svg and https://www.databuddy.cc/brand/logomark/white.svg
+
+Attio logomark from its brand page, unmodified artwork in black #000.
+Source: https://attio.com/brand/v1/attio-logomark.svg
+Brand guidelines: https://attio.com/brand
+
+Dark variants (`<name>-dark.svg`, shown in the dark theme by `logoUrl` in `src/web/kit/SourceLogo.tsx`): the same artwork with its near-black or dark-blue parts made white, as the brands show on dark backgrounds. `planetscale-dark.svg` fills the mark with white, `mysql-wordmark-dark.svg` makes the blue wordmark white and keeps the orange dolphin, `posthog-dark.svg` makes the black hedgehog white, and `github-dark.svg`, `calcom-dark.svg`, `granola-dark.svg`, `slack-dark.svg` (its aubergine) `notion-dark.svg` and `attio-dark.svg` make the mark white, and `databuddy-dark.svg` is Databuddy's own white logomark.
