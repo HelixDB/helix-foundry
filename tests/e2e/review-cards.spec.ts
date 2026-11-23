@@ -93,7 +93,7 @@ test("draws the spot checks once, the same for two people", async ({
   await other.context().close();
 });
 
-test("counts the cards to decide where no one has opened Review: the panel, the dock and the nudge, one fewer after a choice", async ({
+test("counts the cards to decide where no one has opened Review: the panel, the dock and the nudge, one fewer after a choice, the nudge standing aside while the dock offers Review", async ({
   page,
 }) => {
   await mock.configure({ loadStepMs: 1500, documentUnmatched: true });
@@ -111,15 +111,20 @@ test("counts the cards to decide where no one has opened Review: the panel, the 
   const review = dock.getByRole("link", { name: /^Review \d+$/ });
   const n = Number((await review.textContent())!.replace("Review ", ""));
   expect(n).toBeGreaterThan(1);
-  // The nudge names it, with as many.
-  await expect(nudge(page)).toContainText(`${n} to review`);
-  await expect(nudge(page)).toContainText("Customer contracts");
+  // The dock's card offers this load's Review: the nudge doesn't say it
+  // again.
+  const ours = () => nudge(page).filter({ hasText: "Customer contracts" });
+  await expect(ours()).toHaveCount(0);
   // The panel counts it, Review unopened (on a page that doesn't show the
-  // load, so the dock keeps following it).
+  // load, so the dock keeps following it), the same number as the dock.
   await page.goto(`${O}/connections`);
   await expect(reviewLink(page)).toHaveAccessibleName(
     new RegExp(`^Review: ${n} cards to decide`),
   );
+  await expect(reviewLink(page).locator(".hf-nav-badge")).toHaveText(
+    new RegExp(`^${n}( · \\d+)?$`),
+  );
+  await expect(ours()).toHaveCount(0);
   // A choice in the walk takes one off every count.
   await reviewLink(page).click();
   await expect(card(page)).toBeVisible();
@@ -135,6 +140,12 @@ test("counts the cards to decide where no one has opened Review: the panel, the 
   await expect(dock.getByRole("link", { name: /^Review \d+$/ })).toHaveText(
     `Review ${n - 1}`,
   );
+  // Once the dock's card is dismissed, the nudge names the load, with as
+  // many.
+  await page.goto("/data");
+  await expect(ours()).toHaveCount(0);
+  await dock.getByRole("button", { name: "Dismiss Data loaded" }).click();
+  await expect(ours()).toContainText(new RegExp(`^${n - 1} cards? to decide`));
 });
 
 test("the nudge opens the walk, and Later hides it for that load", async ({
@@ -142,7 +153,7 @@ test("the nudge opens the walk, and Later hides it for that load", async ({
 }) => {
   await loaded(page);
   await page.goto("/data");
-  await expect(nudge(page)).toContainText(/\d+ to review/);
+  await expect(nudge(page)).toContainText(/\d+ cards? to decide/);
   const name = (await nudge(page).locator(".on-job-card-name").textContent())!;
   await nudge(page).getByRole("link", { name: "Start" }).click();
   await expect(page).toHaveURL(

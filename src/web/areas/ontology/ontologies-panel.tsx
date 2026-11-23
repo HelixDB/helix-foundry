@@ -56,11 +56,12 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       ...ontologyQueries.ontology(ws, open),
       enabled: !!open,
     }).data?.ontology;
-  // Review counts what is open on both its tabs, and says each part: Facts'
-  // cards to decide on the current load, as the review cards index counts
-  // them (the summary, less the walk's own choices), and Ontology's
-  // suggestions where audits run. A total waits for Facts' part; no grantee
-  // reaches Review.
+  // Review counts what is open on each of its tabs, apart ("7 · 4"), and
+  // says each part: Facts' cards to decide on the current load, as the
+  // review cards index counts them (the summary, less the walk's own
+  // choices), the number the job dock, the nudge and the overview's notice
+  // show, and Ontology's suggestions where audits run. The counts wait for
+  // Facts' part; no grantee reaches Review.
   const heal = useQuery({
       ...suggestionQueries.list(ws, open),
       enabled: !!open && !grantee,
@@ -246,8 +247,14 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           <span>Review</span>
                           {reviewOpen > 0 && (
                             <span className="hf-nav-badge" aria-hidden>
-                              {formatNumber(reviewOpen)}
-                              {more && "+"}
+                              {[
+                                factsOpen &&
+                                  `${formatNumber(factsOpen)}${more ? "+" : ""}`,
+                                suggestionsOpen &&
+                                  formatNumber(suggestionsOpen),
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
                             </span>
                           )}
                         </Link>

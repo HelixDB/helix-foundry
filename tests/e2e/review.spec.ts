@@ -60,9 +60,12 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
   await expect(countOf(page, "Facts")).toHaveText(/^\d+$/);
   const cards = Number(await countOf(page, "Facts").textContent());
   await expect(decideLane(page)).toHaveText(new RegExp(`^Decide\\s*${cards}$`));
-  // The panel's link counts what both tabs hold, and says each part.
+  // The panel's link counts what each tab holds, apart, and says each part.
   await expect(reviewLink(page)).toHaveAccessibleName(
     `Review: ${cards} cards to decide, 4 ontology suggestions`,
+  );
+  await expect(reviewLink(page).locator(".hf-nav-badge")).toHaveText(
+    `${cards} · 4`,
   );
   await walkCard(page)
     .getByRole("button", { name: "Approve", exact: true })
