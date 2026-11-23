@@ -287,8 +287,8 @@ WHERE load_id=? AND dirty_at=?`, min(open, foundryReviewCountCap-1), open >= fou
 
 // ClearFoundryReviewLoads clears what belongs to at most limit loads that
 // are no longer live (deleted, or neither current nor written by a job):
-// their cards, documents and owed rows, a chunk a statement and outside any
-// ontology's lock, then their row. A load deleted, or gone, loses its spot
+// their cards, documents and owed rows, then their advice, a chunk a
+// statement and outside any ontology's lock, then their row. A load deleted, or gone, loses its spot
 // checks too. It reports how many loads it cleared.
 func (s *mysqlDB) ClearFoundryReviewLoads(ctx context.Context, limit int) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT r.load_id FROM foundry_review_loads r
@@ -308,6 +308,14 @@ LIMIT ?`, limit)
 	}
 	for _, load := range loads {
 		if err := s.clearFoundryReviewLoad(ctx, load); err != nil {
+			return 0, err
+		}
+		// Its advice: the row a store in flight holds first, so this waits
+		// for it, and a store after finds it gone and writes nothing.
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_advice_loads WHERE load_id=?`, load); err != nil {
+			return 0, err
+		}
+		if err := s.deleteChunked(ctx, "foundry_review_advice", load); err != nil {
 			return 0, err
 		}
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_review_loads WHERE load_id=?`, load); err != nil {
@@ -334,17 +342,24 @@ LIMIT ?`, limit)
 // that stopped halfway starts from again.
 func (s *mysqlDB) clearFoundryReviewLoad(ctx context.Context, load string) error {
 	for _, table := range []string{"foundry_review_owed", "foundry_review_cards", "foundry_review_docs"} {
-		for {
-			res, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE load_id=? LIMIT ?`, load, foundryReviewClearChunk)
-			if err != nil {
-				return err
-			}
-			if n, _ := res.RowsAffected(); n < foundryReviewClearChunk {
-				break
-			}
+		if err := s.deleteChunked(ctx, table, load); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// deleteChunked deletes table's rows of load, a chunk a statement.
+func (s *mysqlDB) deleteChunked(ctx context.Context, table, load string) error {
+	for {
+		res, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE load_id=? LIMIT ?`, load, foundryReviewClearChunk)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n < foundryReviewClearChunk {
+			return nil
+		}
+	}
 }
 
 // ParkFoundryReviewLoad sets aside a load whose ontology or database can't
@@ -478,6 +493,10 @@ WHERE load_id=? AND doc_id IN (`+idPlaceholders(len(ids))+`)`, append([]any{clai
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_loads SET dirty_at=NOW(6), attempts=0, retry_at=NULL WHERE load_id=?`,
 			claim.LoadID); err != nil {
+			return err
+		}
+		// New cards may be advised; a load not current waits for it.
+		if err := tx.oweFoundryReviewAdvice(ctx, claim.WorkspaceID, claim.OntologyID, claim.LoadID); err != nil {
 			return err
 		}
 		stored = true
@@ -700,6 +719,9 @@ func (s *mysqlDB) ListFoundryReviewCards(ctx context.Context, ontologyID, loadID
 		where = append(where, "c.doc_id=?")
 		args = append(args, filter.DocumentID)
 	}
+	if filter.Unadvised {
+		where = append(where, "NOT EXISTS (SELECT 1 FROM foundry_review_advice a WHERE a.load_id=c.load_id AND a.card_id=c.card_id)")
+	}
 	if a := after; a != nil {
 		where = append(where, `(c.per_decision < ? OR c.per_decision = ? AND (c.facts < ? OR c.facts = ? AND (c.kind_order > ? OR c.kind_order = ?
   AND (c.shuffle > ? OR c.shuffle = ? AND c.card_id > ?))))`)
@@ -716,15 +738,19 @@ ORDER BY c.per_decision DESC, c.facts DESC, c.kind_order, c.shuffle, c.card_id L
 	}
 	listed := make([]*model.FoundryReviewListedCard, len(cards))
 	var docs []string
-	var nameIDs []any
+	var nameIDs, ids []any
 	at := map[reviewcards.ID]*model.FoundryReviewListedCard{}
 	for i, c := range cards {
 		listed[i] = &model.FoundryReviewListedCard{Card: c}
+		at[c.ID] = listed[i]
+		ids = append(ids, c.ID[:])
 		if c.Kind == reviewcards.KindName {
 			docs = append(docs, c.DocID)
 			nameIDs = append(nameIDs, c.ID[:])
-			at[c.ID] = listed[i]
 		}
+	}
+	if err := s.joinFoundryReviewAdvice(ctx, loadID, ids, at); err != nil {
+		return nil, err
 	}
 	if len(nameIDs) == 0 {
 		return listed, nil
@@ -742,11 +768,42 @@ WHERE c.load_id=? AND c.doc_id IN (`+idPlaceholders(len(docs))+`) AND c.on_card 
 		return nil, err
 	}
 	for _, h := range held {
-		if n := at[*h.OnCard]; n != nil {
+		if n := at[*h.OnCard]; n != nil && n.Kind == reviewcards.KindName {
 			n.Held = append(n.Held, h)
 		}
 	}
 	return listed, nil
+}
+
+// joinFoundryReviewAdvice reads the advised rows of the listed cards ids
+// (top-level cards: a held claim listed on its name's card gets none) into
+// their Advice.
+func (s *mysqlDB) joinFoundryReviewAdvice(ctx context.Context, loadID string, ids []any, at map[reviewcards.ID]*model.FoundryReviewListedCard) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT card_id, choice, offered, rationale, cites FROM foundry_review_advice
+WHERE load_id=? AND outcome='advised' AND card_id IN (`+idPlaceholders(len(ids))+`)`, append([]any{loadID}, ids...)...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id []byte
+		var a model.FoundryReviewAdvice
+		if err := rows.Scan(&id, &a.Choice, &a.Offered, &a.Rationale, &a.Cites); err != nil {
+			return err
+		}
+		var card reviewcards.ID
+		if len(id) != len(card) {
+			return fmt.Errorf("stored review advice has a card id of %d bytes", len(id))
+		}
+		copy(card[:], id)
+		if c := at[card]; c != nil {
+			c.Advice = &a
+		}
+	}
+	return rows.Err()
 }
 
 // GetFoundryReviewCard reads one card of load loadID by its id, and whether

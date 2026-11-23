@@ -261,6 +261,7 @@ type ReadStore interface {
 	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
 	CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error)
 	SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+	SumFoundryReviewAdviceSpend(ctx context.Context, workspaceID string, month time.Time) (int64, error)
 	LatestFoundryWorkflowAssessments(ctx context.Context, workflowIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
 	// Automations' workflows (foundry_automation_workflows.go)
 	GetFoundryAutomationWorkflowRun(ctx context.Context, automationRunID, ontologyID string) (*model.FoundryWorkflowRun, error)
@@ -449,6 +450,13 @@ type Store interface {
 	StoreFoundryReviewDocuments(ctx context.Context, workerID string, claim model.FoundryReviewClaim, indexed []model.FoundryReviewIndexed) (bool, error)
 	BackOffFoundryReviewDocument(ctx context.Context, workerID, loadID, docID string) (bool, error)
 	BackOffFoundryReviewLoad(ctx context.Context, loadID string) error
+	ClaimFoundryReviewAdvice(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryReviewAdviceClaim, error)
+	RenewFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, lease time.Duration) (bool, error)
+	FinishFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, why model.FoundryReviewAdviceStop,
+		recheck time.Duration) (bool, error)
+	BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim) (bool, error)
+	StoreFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, rows []model.FoundryReviewAdviceRow) (bool, error)
+	ChargeFoundryReviewAdvice(ctx context.Context, workspaceID string, usdMicros int64) error
 	DrawFoundryHeldClaim(ctx context.Context, loadID string, seq, band int) (bool, error)
 	InsertFoundryReviewQuoteDraw(ctx context.Context, d model.FoundryReviewDraw) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error

@@ -1254,6 +1254,10 @@ func (u Unimplemented) CountFoundryWorkflowVerdicts(context.Context, []string) (
 	u.unimplemented("CountFoundryWorkflowVerdicts")
 	return nil, nil
 }
+func (u Unimplemented) SumFoundryReviewAdviceSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryReviewAdviceSpend")
+	return 0, nil
+}
 func (u Unimplemented) SumFoundryWorkflowAssessmentSpend(context.Context, string, time.Time) (int64, error) {
 	u.unimplemented("SumFoundryWorkflowAssessmentSpend")
 	return 0, nil
@@ -2383,6 +2387,31 @@ func (u Unimplemented) BackOffFoundryReviewDocument(context.Context, string, str
 }
 func (u Unimplemented) BackOffFoundryReviewLoad(context.Context, string) error {
 	u.unimplemented("BackOffFoundryReviewLoad")
+	return nil
+}
+func (u Unimplemented) ClaimFoundryReviewAdvice(context.Context, string, time.Duration) (*model.FoundryReviewAdviceClaim, error) {
+	u.unimplemented("ClaimFoundryReviewAdvice")
+	return nil, nil
+}
+func (u Unimplemented) RenewFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, time.Duration) (bool, error) {
+	u.unimplemented("RenewFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) FinishFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, model.FoundryReviewAdviceStop,
+	time.Duration) (bool, error) {
+	u.unimplemented("FinishFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) BackOffFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim) (bool, error) {
+	u.unimplemented("BackOffFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) StoreFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, []model.FoundryReviewAdviceRow) (bool, error) {
+	u.unimplemented("StoreFoundryReviewAdvice")
+	return false, nil
+}
+func (u Unimplemented) ChargeFoundryReviewAdvice(context.Context, string, int64) error {
+	u.unimplemented("ChargeFoundryReviewAdvice")
 	return nil
 }
 func (u Unimplemented) DrawFoundryHeldClaim(context.Context, string, int, int) (bool, error) {

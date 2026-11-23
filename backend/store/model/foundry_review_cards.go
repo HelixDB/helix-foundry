@@ -66,6 +66,8 @@ type FoundryReviewCardFilter struct {
 	Kinds      []reviewcards.Kind
 	Type       string
 	DocumentID string
+	// Unadvised leaves out cards with any advice row: the advisor's own.
+	Unadvised bool
 }
 
 // FoundryReviewCardCursor is where a page of cards starts: after the card
@@ -79,10 +81,12 @@ type FoundryReviewCardCursor struct {
 }
 
 // FoundryReviewListedCard is a card of a page, and for a name the held
-// claims that wait on it while it is open.
+// claims that wait on it while it is open, and its model advice, when the
+// model picked a choice of it.
 type FoundryReviewListedCard struct {
 	*reviewcards.Card
-	Held []*reviewcards.Card
+	Held   []*reviewcards.Card
+	Advice *FoundryReviewAdvice
 }
 
 // FoundryReviewNameDecisions are the resolve decisions of one name across

@@ -364,6 +364,11 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 	if err := s.requestFoundryReviewPass(ctx, o.ID, loadID); err != nil {
 		return err
 	}
+	// Its cards may have been indexed while a job wrote it, owing advice
+	// that waited for it to be current.
+	if err := s.oweFoundryReviewAdvice(ctx, o.WorkspaceID, o.ID, loadID); err != nil {
+		return err
+	}
 	return s.carryFoundryResolves(ctx, o)
 }
 
