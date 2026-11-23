@@ -92,9 +92,11 @@ type agent interface {
 	Clues(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 }
 
-// resolver is where a workspace's model calls go; *ai.Resolver resolves it.
+// resolver is where a workspace's model calls go; *ai.Resolver resolves it:
+// a load's through the agent (ResolveServed), review advice's directly.
 type resolver interface {
 	ResolveServed(ctx context.Context, workspaceID string, providers []string) (ai.Resolved, error)
+	Resolve(ctx context.Context, workspaceID string) (ai.Resolved, error)
 }
 
 // documentStore is where documents and their artifacts live (document.Store).

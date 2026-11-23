@@ -25,6 +25,7 @@ import (
 	"go.uber.org/dig"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -103,8 +104,10 @@ type Task struct {
 	workerID string
 	now      func() time.Time
 	worker   tasks.Worker
-	// reviews keeps the review cards index beside the jobs.
+	// reviews keeps the review cards index beside the jobs, and advice
+	// asks the model about the cards the rules leave undecided.
 	reviews *indexer
+	advice  *advisor
 	// refreshLag records how long a refresh load waited for its first claim.
 	refreshLag prometheus.Observer
 }
@@ -118,6 +121,10 @@ func New(d Deps) (*Task, error) {
 		return nil, errors.New("foundry-graph-worker: foundry.graph.load_rate_limit is set, but the host has no rate-limit boosts")
 	}
 	resolver, err := ai.NewResolver(d.Cfg, d.DB, d.Plans)
+	if err != nil {
+		return nil, fmt.Errorf("foundry-graph-worker: %w", err)
+	}
+	catalog, err := ai.VendoredCatalog()
 	if err != nil {
 		return nil, fmt.Errorf("foundry-graph-worker: %w", err)
 	}
@@ -151,13 +158,19 @@ func New(d Deps) (*Task, error) {
 		},
 	}
 	t.reviews = newIndexer(d.DB, d.Databases, t.runner.gateway, workerID)
+	t.advice = &advisor{
+		db: d.DB, dbs: d.Databases, gateway: t.runner.gateway, ai: resolver, plans: resolver.Plans, local: d.Cfg.Host.Local,
+		models: llm.NewFor, catalog: catalog, cfg: d.Cfg.Foundry.Reviews.Advise, workerID: workerID, now: time.Now,
+		readGap: reviewReadGap, retryWait: adviceRetryWait,
+	}
 	return t, nil
 }
 
 func (t *Task) Name() string { return Name }
 
 // Start claims jobs every PollInterval and, beside them, keeps the review
-// cards index every PollInterval (review_cards.go) and sweeps lapsed load
+// cards index every PollInterval (review_cards.go), advises review cards
+// while foundry.reviews.advise is on (review_advice.go), and sweeps lapsed load
 // boosts every boost.SweepEvery, so a long job holds neither up; Stop waits
 // for both.
 // First it removes what attempts staged under the work dir's jobs/: each
@@ -175,6 +188,13 @@ func (t *Task) Start(ctx context.Context) error {
 			go func() {
 				defer sweeping.Done()
 				tasks.Tick(ctx, t.cfg.PollInterval, t.reviews.tick)
+			}()
+		}
+		if t.advice != nil && t.advice.cfg.Enabled {
+			sweeping.Add(1)
+			go func() {
+				defer sweeping.Done()
+				tasks.Tick(ctx, t.cfg.PollInterval, t.advice.tick)
 			}()
 		}
 		if t.boosts != nil {

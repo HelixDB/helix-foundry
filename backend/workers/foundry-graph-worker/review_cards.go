@@ -396,7 +396,16 @@ func refusal(resp helixgateway.Response) bool {
 // waits for it. It reports false when ctx ended first, or the slot couldn't
 // be taken.
 func (x *indexer) pace(ctx context.Context, tenant string) bool {
-	wait, err := x.db.ReserveFoundryReviewRead(ctx, tenant, x.readGap)
+	return paceRead(ctx, x.db, tenant, x.readGap)
+}
+
+// paceRead takes database tenant's next read slot, a gap after the last
+// slot any replica took for the index or its advice, and waits for it. It
+// reports false when ctx ended first, or the slot couldn't be taken.
+func paceRead(ctx context.Context, db interface {
+	ReserveFoundryReviewRead(ctx context.Context, tenantID string, gap time.Duration) (time.Duration, error)
+}, tenant string, gap time.Duration) bool {
+	wait, err := db.ReserveFoundryReviewRead(ctx, tenant, gap)
 	if err != nil {
 		if ctx.Err() == nil {
 			log.From(ctx).Warn("review cards: could not take a read slot", "tenant", tenant, "err", err)
