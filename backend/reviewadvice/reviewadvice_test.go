@@ -229,13 +229,13 @@ func TestParse(t *testing.T) {
 	sent := []Card{name, value}
 
 	got, err := Parse(json.RawMessage(`{"advice": [
-  {"card": "c1", "choice": "o2", "rationale": "Quote e1 names\nGlobex 2's‮ office.", "cites": ["e1", "e1", "e9"]},
+  {"card": "c1", "choice": "o2", "rationale": "The quote names\nGlobex 2's‮ office.", "cites": ["e1", "e1", "e9"]},
   {"card": "c2", "choice": null, "rationale": "Split.", "cites": []},
   {"card": "c1", "choice": "o1", "rationale": "A repeat.", "cites": ["e1"]},
   {"card": "c3", "choice": "o1", "rationale": "Not sent.", "cites": ["e1"]}]}`), sent)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	assert.Equal(t, Advice{Card: 0, Choice: &Choice{Resolve: &Resolve{EntityKey: "k2"}}, Rationale: "Quote e1 names Globex 2's office.",
+	assert.Equal(t, Advice{Card: 0, Choice: &Choice{Resolve: &Resolve{EntityKey: "k2"}}, Rationale: "The quote names Globex 2's office.",
 		Cites: []Cite{{DocID: "doc_a", Section: 0, Start: 4, End: 10}}}, got[0])
 	assert.Equal(t, Advice{Card: 1}, got[1], "null is an answer, without a rationale or cites")
 
@@ -247,6 +247,8 @@ func TestParse(t *testing.T) {
 		"a rationale of control characters": `{"card": "c1", "choice": "o1", "rationale": "\u0007‪ \n", "cites": ["e1"]}`,
 		"a rationale over 300 runes":        `{"card": "c1", "choice": "o1", "rationale": "` + strings.Repeat("é", 301) + `", "cites": ["e1"]}`,
 		"a choice that isn't a string":      `{"card": "c1", "choice": 2, "rationale": "x", "cites": ["e1"]}`,
+		"a rationale naming ids":            `{"card": "c1", "choice": "o2", "rationale": "e1 names Globex London, so o2.", "cites": ["e1"]}`,
+		"a rationale naming a document id":  `{"card": "c1", "choice": "o2", "rationale": "As d1 says (Globex).", "cites": ["e1"]}`,
 		"an unknown card":                   `{"card": "c7", "choice": null, "rationale": "x", "cites": []}`,
 	} {
 		_, err := Parse(json.RawMessage(`{"advice": [`+entry+`]}`), sent)
