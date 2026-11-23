@@ -26,6 +26,7 @@ import { useOntology } from "../ontology/scope";
 import {
   cardName,
   settleOf,
+  statesScore,
   type Advice,
   type Decidable,
   type Effect,
@@ -40,7 +41,7 @@ import {
 } from "./model";
 import { BAND_TEXT, bandOf, scoreText } from "./queue";
 import { ClaimWritten } from "./settle";
-import { FounderSuggestion } from "./suggestion";
+import { FounderSuggestion, effectText } from "./suggestion";
 import type { Outcome } from "./walk";
 
 export function CardHead({
@@ -135,7 +136,11 @@ export function HeldHow({
     evidenceShape?: string;
   };
 }) {
-  const shape = evidenceShapeText(review.evidenceShape);
+  // A sentence is how most claims are stated: saying so adds nothing.
+  const shape =
+    review.evidenceShape === "prose_sentence"
+      ? undefined
+      : evidenceShapeText(review.evidenceShape);
   const copy = reviewCopy(
     review.reason,
     review.candidates.length,
@@ -339,12 +344,9 @@ export function ReviewCard({
         </h2>
       </header>
       <Evidence at={card.review} quote={card.review.quote} />
-      {card.kind === "name" && (card.blocked > 0 || card.held.length > 0) && (
+      {card.kind === "name" && card.held.length > 0 && (
         <p className="rv-card-body">
-          {card.blocked > 0 &&
-            `Settling it writes ${plural(card.blocked, "fact")} the load holds back for it. `}
-          {card.held.length > 0 &&
-            `${plural(card.held.length, "held claim")} ${card.held.length > 1 ? "wait" : "waits"} on it, next.`}
+          {`${plural(card.held.length, "held claim")} ${card.held.length > 1 ? "wait" : "waits"} on it, next.`}
         </p>
       )}
       {card.kind === "value" && (
@@ -368,7 +370,16 @@ export function ReviewCard({
       )}
       <FounderSuggestion
         advice={advice}
-        effect={effect}
+        effect={
+          [
+            effect && effectText(effect),
+            card.kind === "name" &&
+              card.blocked > 0 &&
+              `Settling it writes ${plural(card.blocked, "fact")} the load holds back for it.`,
+          ]
+            .filter(Boolean)
+            .join(" ") || null
+        }
         label={layout.primary?.label}
       />
       <OutcomeLine
@@ -429,7 +440,9 @@ export function ReviewCard({
             )}
             link={(path) => path}
           />
-          <Score confidence={card.review.confidence} />
+          {!statesScore(advice) && (
+            <Score confidence={card.review.confidence} />
+          )}
           <HeldHow review={card.review} />
         </div>
       )}

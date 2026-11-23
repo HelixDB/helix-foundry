@@ -70,12 +70,15 @@ export function FilterSelect<V extends string>({
   onChange,
   options,
   className,
+  align,
 }: {
   label: string;
   value: V;
   onChange: (value: V) => void;
   options: readonly SelectOption<V>[];
   className?: string;
+  // Select's: the edge of the pill its list lines up with.
+  align?: "start" | "end";
 }) {
   return (
     <label className={cx("hf-filter-select", className)}>
@@ -85,6 +88,7 @@ export function FilterSelect<V extends string>({
         value={value}
         onChange={onChange}
         options={options}
+        align={align}
       />
     </label>
   );

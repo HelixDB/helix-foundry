@@ -449,9 +449,22 @@ export function ReviewWalkthrough({
     api.rebase(load.id, order);
   }, [load.id, order]);
   // The types and documents the filters offer: every card's to decide.
+  // The types and documents the filters offer: every one this visit's reads
+  // of the load had a card of, so the row stays as it was while cards are
+  // decided and leave the queue, to the finish.
+  const seenOffered = useRef<{
+    load: string;
+    types: Set<string>;
+    docs: Set<string>;
+  }>(undefined);
   const offered = useMemo(() => {
-    const types = new Set<string>(),
-      docs = new Set<string>();
+    if (seenOffered.current?.load !== load.id)
+      seenOffered.current = {
+        load: load.id,
+        types: new Set(),
+        docs: new Set(),
+      };
+    const { types, docs } = seenOffered.current;
     for (const k of q.all?.advice.keys() ?? []) {
       const c = decidable(q.all?.cards.get(k));
       if (!c) continue;
@@ -462,7 +475,7 @@ export function ReviewWalkthrough({
       } else types.add(settleOf(c).type);
     }
     return { types: [...types].sort(), docs: [...docs] };
-  }, [q.all]);
+  }, [q.all, load.id]);
 
   const synced = w.loadId === load.id;
   const key = synced ? current(w) : null;
@@ -767,6 +780,7 @@ export function ReviewWalkthrough({
             {(offered.docs.length > 1 || doc) && (
               <FilterSelect
                 label="Document"
+                align="end"
                 value={doc}
                 onChange={(v) => setParam("doc", v)}
                 options={[

@@ -76,8 +76,10 @@ export function effectText(e: Effect): string {
 
 /**
  * Founder's suggestion (`advice`), its choice by the card's word for it
- * (`label`), and what the choice does (`effect`, the suggestion's, else a
- * card's first choice's).
+ * (`label`), and what the choice does (`effect`: the suggestion's, else a
+ * card's first choice's, worded). With a suggestion, what the choice does is
+ * in its box; without one, why a person decides it and what a choice does
+ * are plain lines over the choices.
  */
 export function FounderSuggestion({
   advice,
@@ -85,41 +87,41 @@ export function FounderSuggestion({
   label,
 }: {
   advice: Advice;
-  effect: Effect | null;
+  effect: string | null;
   label?: string;
 }) {
-  return (
-    <section className="rv-suggest" aria-label="Founder’s suggestion">
-      {advice.kind === "suggest" && label ? (
-        <>
-          <p className="rv-suggest-head">
-            <Sparkles size={14} aria-hidden />
-            <span>
-              Founder suggests <strong>{label}</strong>
-            </span>
-            <Tag>Rule</Tag>
-            <Tag
-              tone={
-                advice.strength.kind === "unmeasured" ? "neutral" : "success"
-              }
-            >
-              {strengthText(advice.strength)}
-            </Tag>
-          </p>
-          <ul className="rv-why" aria-label="Why">
-            {advice.basis.map((b, i) => (
-              <li key={i}>{whyText(b, advice.strength)}</li>
-            ))}
-          </ul>
-        </>
-      ) : (
+  const effectLine = effect && <p className="rv-effect">{effect}</p>;
+  if (advice.kind === "suggest" && label)
+    return (
+      <section className="rv-suggest" aria-label="Founder’s suggestion">
         <p className="rv-suggest-head">
-          {advice.kind === "none"
-            ? NO_ADVICE[advice.why]
-            : "Needs you: Founder’s suggestion isn’t among the choices."}
+          <Sparkles size={14} aria-hidden />
+          <span>
+            Founder suggests <strong>{label}</strong>
+          </span>
+          <Tag>Rule</Tag>
+          <Tag
+            tone={advice.strength.kind === "unmeasured" ? "neutral" : "success"}
+          >
+            {strengthText(advice.strength)}
+          </Tag>
         </p>
-      )}
-      {effect && <p className="rv-effect">{effectText(effect)}</p>}
+        <ul className="rv-why" aria-label="Why">
+          {advice.basis.map((b, i) => (
+            <li key={i}>{whyText(b, advice.strength)}</li>
+          ))}
+        </ul>
+        {effectLine}
+      </section>
+    );
+  return (
+    <section className="rv-card-body" aria-label="Founder’s suggestion">
+      <p className="rv-needs">
+        {advice.kind === "none"
+          ? NO_ADVICE[advice.why]
+          : "Needs you: Founder’s suggestion isn’t among the choices."}
+      </p>
+      {effectLine}
     </section>
   );
 }

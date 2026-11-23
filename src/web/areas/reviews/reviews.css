@@ -110,6 +110,7 @@
 .rq-precision th,
 .rq-precision td {
   padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--hf-border);
   text-align: left;
 }
 
@@ -169,15 +170,38 @@
   align-items: center;
   gap: 6px;
 }
+/* A phone: the lanes on their own row, the filters two by two across it. */
+@container (max-width: 599px) {
+  .rv-walk-bar {
+    display: grid;
+    justify-items: start;
+  }
+  .rv-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .rv-filters .hf-filter-select {
+    min-width: 0;
+  }
+  .rv-filters .hf-select {
+    flex: 1;
+  }
+  .rv-filters > .hf-btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
 .rv-walk-body {
   display: grid;
   grid-template-columns: 200px minmax(0, 760px);
   align-items: start;
   gap: 24px;
 }
-/* No rail: every card decided, or none to decide. */
+/* No rail: every card decided, or none to decide. The finish takes the
+   bar's width. */
 .rv-walk-body.is-solo {
-  grid-template-columns: minmax(0, 760px);
+  grid-template-columns: minmax(0, 1fr);
 }
 .rv-walk-main {
   display: grid;
@@ -339,6 +363,10 @@
   margin: 0;
   font-weight: 500;
 }
+.rv-needs {
+  margin: 0;
+  color: var(--hf-text-2);
+}
 .rv-outcome {
   margin: 0;
   color: var(--hf-text-2);
@@ -493,8 +521,8 @@
   border: 1px solid var(--hf-border);
   background: var(--hf-surface);
 }
-/* The batch's tick column: ticks, so no type icon in its head. */
-.hf-grid-th.rv-tick .hf-grid-type {
+/* The batch's list: no type icons in its heads. */
+.hf-grid-th.rv-plain .hf-grid-type {
   display: none;
 }
 .rv-failed {

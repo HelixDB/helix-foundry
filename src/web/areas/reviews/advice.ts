@@ -10,6 +10,7 @@ import {
   type Settle,
   type StatedValue,
 } from "./model";
+import { normalizeName } from "../explore/naming";
 import {
   BLOCKING,
   type Band,
@@ -409,17 +410,34 @@ export const claimBatchKey = (card: ClaimCard): string =>
   `claim:${JSON.stringify([settleOf(card).link, card.band])}`;
 
 /**
- * A name card's name as its document says it: the review's quote, else its
- * normalized name, without the closing punctuation of a sentence the quote
- * ends (a name quoted in a sentence of its own), so a line that goes on
- * after it never doubles its stop.
+ * A name card's name: the words of the review's quote that are the name it
+ * identifies (its normalized name, as the document spells it), else the
+ * normalized name. The quote is the sentence the name is in, so it stays
+ * the card's evidence and never its name.
  *
  * @example
- * cardName(nameQuoted("Umbrella Holdings signed order form 3.")); // "Umbrella Holdings signed order form 3"
+ * cardName(nameOf("umbrella holdings", "Umbrella Holdings signed order form 3.")); // "Umbrella Holdings"
+ * cardName(nameOf("umbrella holdings", "The holding company signed.")); // "umbrella holdings"
  */
 export function cardName(card: NameCard): string {
-  const quoted = card.review.quote.trim().replace(/[\s.,;:!?…]+$/u, "");
-  return quoted || settleOf(card).normName;
+  const { normName } = settleOf(card),
+    { quote } = card.review;
+  const words = [...quote.matchAll(/\S+/gu)];
+  // The shortest run of the quote's words that folds to the name: a name
+  // folds to as many words as it has, give or take what the fold joins or
+  // splits.
+  const most = normName.split(" ").length + 2;
+  for (let n = 1; n <= most; n++)
+    for (let i = 0; i + n <= words.length; i++) {
+      const from = words[i]!.index,
+        last = words[i + n - 1]!,
+        run = quote.slice(from, last.index + last[0].length);
+      if (normalizeName(run) === normName)
+        return run
+          .replace(/^[^\p{L}\p{N}+#&@$.]+/u, "")
+          .replace(/[\s.,;:!?…"'”’)\]]+$/u, "");
+    }
+  return normName;
 }
 
 function adviseValue(card: ValueCard): Advice {
@@ -442,6 +460,17 @@ function adviseValue(card: ValueCard): Advice {
     batchKey: null,
   };
 }
+
+/**
+ * Whether a suggestion already says the verifier's score, so its card
+ * needn't say it again.
+ *
+ * @example
+ * statesScore({ kind: "none", why: "unscored" }); // false
+ */
+export const statesScore = (advice: Advice) =>
+  advice.kind === "suggest" &&
+  advice.basis.some((b) => b.kind === "verifier" && b.score !== undefined);
 
 /**
  * When a choice on a card takes effect: a held claim's approval is written

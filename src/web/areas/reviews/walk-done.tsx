@@ -79,22 +79,22 @@ export function WalkDone({
       )}
       {decided.length > 0 && (
         <dl className="rv-done-groups">
-          <div>
-            <dt>Applied now</dt>
-            <dd>
-              {decided.length > later
-                ? `${plural(decided.length - later, "choice")}${covered > 0 ? `, and ${plural(covered, "name")} they settled` : ""}: the current load takes them as their jobs run.`
-                : "None."}
-            </dd>
-          </div>
-          <div>
-            <dt>From the next load</dt>
-            <dd>
-              {later
-                ? `${plural(later, "choice")} the current load doesn’t take in place: names it links already or was read before it could link, and claims a name holds. Load again to apply them.`
-                : "None."}
-            </dd>
-          </div>
+          {decided.length > later && (
+            <div>
+              <dt>Applied now</dt>
+              <dd>
+                {`${plural(decided.length - later, "choice")}${covered > 0 ? `, and ${plural(covered, "name")} they settled` : ""}: the current load takes them as their jobs run.`}
+              </dd>
+            </div>
+          )}
+          {later > 0 && (
+            <div>
+              <dt>From the next load</dt>
+              <dd>
+                {`${plural(later, "choice")} the current load doesn’t take in place: names it links already or was read before it could link, and claims a name holds. Load again to apply them.`}
+              </dd>
+            </div>
+          )}
         </dl>
       )}
       {(left.length > 0 ||

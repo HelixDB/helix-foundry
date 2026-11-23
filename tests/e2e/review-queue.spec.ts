@@ -66,9 +66,10 @@ test("walks what writes facts first, evidence before the score, values a table k
   expect(claims.length).toBe(2);
   expect(names.length).toBeGreaterThan(0);
   expect(Math.max(...claims)).toBeLessThan(Math.min(...names));
-  // The name in no row writes the claim it holds back.
+  // The name in no row writes the claim it holds back. It goes by the name,
+  // not the sentence it is in.
   await rail(page)
-    .filter({ hasText: "Umbrella Holdings was copied" })
+    .filter({ hasText: /“Umbrella Holdings”Name · variant\.md/ })
     .getByRole("button")
     .click();
   await expect(card(page)).toContainText(

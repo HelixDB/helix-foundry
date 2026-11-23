@@ -330,7 +330,8 @@ test("a link the load can't apply in place waits for the next load, and its othe
     "1 of 3 · 1 accepted · 0 changed · 0 skipped",
   );
   const done = page.getByRole("region", { name: "2 cards still to decide" });
-  await expect(done).toContainText("Applied nowNone.");
+  // Nothing applied now: no group for it.
+  await expect(done).not.toContainText("Applied now");
   await expect(done).toContainText(
     "From the next load1 choice the current load doesn’t take in place",
   );

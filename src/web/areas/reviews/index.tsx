@@ -19,7 +19,14 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
-import { Button, EmptyState, SkeletonText, formatNumber } from "../../kit";
+import {
+  Button,
+  EmptyState,
+  SkeletonText,
+  formatNumber,
+  readStorage,
+  writeStorage,
+} from "../../kit";
 import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
 import { useReadAccess } from "../explore/graph-reader";
@@ -38,6 +45,7 @@ import {
   labelPlace,
   precision,
   queuePins,
+  storedDraws,
   type QueuePins,
   type QueueReview,
 } from "./queue";
@@ -189,8 +197,11 @@ export function useReviewQueue() {
     [naming],
   );
   // What this visit's reads of the load drew and ranked. Each read adds its
-  // own, which a read of the same inputs would draw and rank again.
+  // own, which a read of the same inputs would draw and rank again. The
+  // draws are kept in this browser too, so a card drawn at random stays a
+  // spot check on a later visit, whatever was settled or reloaded since.
   const pins = useRef<{ load: string; pins: QueuePins }>(undefined);
+  const drawsKey = `foundry.review.draws.v1:${ws}:${o}`;
   const queue = useMemo(() => {
     if (
       !reviews ||
@@ -201,7 +212,9 @@ export function useReviewQueue() {
     )
       return undefined;
     const earlier =
-      pins.current?.load === loadId ? pins.current.pins : undefined;
+      pins.current?.load === loadId
+        ? pins.current.pins
+        : storedDraws(readStorage(drawsKey), loadId);
     const built = buildQueue({
       reviews,
       decisions: decisions.data,
@@ -214,8 +227,14 @@ export function useReviewQueue() {
       pins: earlier,
     });
     pins.current = { load: loadId, pins: queuePins(built, earlier) };
+    if (pins.current.pins.drawn.length !== earlier?.drawn.length)
+      writeStorage(
+        drawsKey,
+        JSON.stringify({ load: loadId, drawn: pins.current.pins.drawn }),
+      );
     return built;
   }, [
+    drawsKey,
     reviews,
     decisions.data,
     labels.data,

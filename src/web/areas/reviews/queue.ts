@@ -37,8 +37,9 @@ import {
 // Cards go by facts per decision, then facts, then held claims before
 // names before values, then in an order drawn from the load's id.
 //
-// The random slice: about one card in ten (one after every nine ranked) is
-// a claim drawn at random from a score band, the bands taken in turn. A
+// The random slice: about one card in ten (one for every nine the load
+// asks for, decided or not, placed after every nine ranked) is a claim
+// drawn at random from a score band, the bands taken in turn. A
 // band's claims are every claim the load holds at a place with a score in
 // it, held or written: its held claims (decided, undecided, or such that no
 // approval writes them) and its documents' quotes of facts (accepted ones at
@@ -391,9 +392,11 @@ function waitsOn(
  * earlier read of the same load on this page drew and ranked (`pins`,
  * queuePins), so a card stays where it was while the page is open: a card
  * drawn then is drawn again first (while its pool still has it), and one
- * ranked then is never drawn. Without them a read after decisions draws
- * afresh, and a card the walk counted could leave it for the spot checks,
- * or one drawn come back to it, as the number of ranked cards changes.
+ * ranked then is never drawn. The slice's size is taken from every card
+ * the load asks for, decided or not, so deciding cards never changes what
+ * is drawn; reviews leaving the load (a name applied at once) can, and the
+ * pins keep a card drawn or ranked as it was. A page keeps the draws in its
+ * browser for later visits (storedDraws).
  */
 export function buildQueue({
   reviews,
@@ -433,6 +436,13 @@ export function buildQueue({
       string,
       { reviews: QueueReview[]; weak: boolean; blocking: boolean }
     >();
+  // The cards the load asks for, decided or not (asked), which the random
+  // slice's size is taken from: what is decided never changes it.
+  const asked = {
+    claims: [] as Release[],
+    names: new Map<string, { weak: boolean; blocking: boolean }>(),
+    values: 0,
+  };
   for (const r of markDiffering([...reviews])) {
     const s = r.settle;
     if (!s) {
@@ -453,6 +463,15 @@ export function buildQueue({
       left.blocked += 1;
       blocked.push(r);
       continue;
+    }
+    if (s.kind === "release") asked.claims.push(s);
+    else if (s.kind === "prop") asked.values += 1;
+    else {
+      const key = nameKey(s.type, s.docId, s.normName),
+        name = asked.names.get(key) ?? { weak: false, blocking: false };
+      name.weak ||= r.reason !== "adjudicated" && !BLOCKING.has(r.reason);
+      name.blocking ||= BLOCKING.has(r.reason);
+      asked.names.set(key, name);
     }
     // A card decided on the page keeps its place: a claim's or a value's by
     // its review, a name's by its decision (every review of the name).
@@ -569,7 +588,16 @@ export function buildQueue({
       { held: pools.get(b)!.length, quotes: quotesLeft.get(b)! },
     ]),
   ) as Queue["pool"];
-  const randoms = Math.ceil(ranked().length / RANKED_PER_RANDOM);
+  // One draw for every RANKED_PER_RANDOM cards the load asks for, as if
+  // none were decided: a count from the cards left would shrink as people
+  // decide, and a claim drawn on an earlier visit would come back ranked.
+  const randoms = Math.ceil(
+    (asked.claims.filter((s) => !waitsOn(s, asked.names, single(s.link)))
+      .length +
+      asked.names.size +
+      asked.values) /
+      RANKED_PER_RANDOM,
+  );
   const drawn: (Drawable | QuoteCard)[] = [];
   const draws = new Map<Band, number>();
   // Out of its rank, or off its name's card.
@@ -681,6 +709,30 @@ export function queuePins(queue: Queue, pins?: QueuePins): QueuePins {
     drawn: [...new Set([...(pins?.drawn ?? []), ...drawn])],
     ranked: new Set([...(pins?.ranked ?? []), ...ranked]),
   };
+}
+
+/**
+ * The draws kept for `load` (`{load, drawn}`, as the Review page keeps a load's draws in this
+ * browser), none for
+ * another load or anything else.
+ *
+ * @example
+ * storedDraws('{"load":"L","drawn":["a"]}', "L"); // { drawn: ["a"], ranked: Set {} }
+ * storedDraws('{"load":"L","drawn":["a"]}', "M"); // undefined
+ */
+export function storedDraws(raw: string, load: string): QueuePins | undefined {
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (typeof v !== "object" || v === null) return undefined;
+    const { load: at, drawn } = v as { load?: unknown; drawn?: unknown };
+    return at === load &&
+      Array.isArray(drawn) &&
+      drawn.every((k) => typeof k === "string")
+      ? { drawn, ranked: new Set() }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

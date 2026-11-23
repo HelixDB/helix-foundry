@@ -202,6 +202,7 @@ function SpotCards({
               link={(path) => path}
               naming={naming}
               drawn={card.drawn}
+              compact
               onSettled={() => settled(card.key)}
             />
           </li>
@@ -267,7 +268,7 @@ function SpotCards({
 }
 
 const RANDOM_NOTE =
-  "Drawn at random from its score band, to measure how often claims scored so are right: approve it only if the quote says it, reject it if not.";
+  "Drawn at random from its score band, to measure how often claims scored so are right. Approve it only if the quote says it.";
 
 /**
  * Right and Wrong on a claim, a label (`request`), or what this person said

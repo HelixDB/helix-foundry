@@ -38,6 +38,7 @@ import {
   quoteOffsets,
   rechecks,
   scoreText,
+  storedDraws,
   type NameCard,
   type QueueCard,
   type QueueReview,
@@ -474,15 +475,16 @@ describe("buildQueue", () => {
     }));
     const open = held(20, { confidence: 0.75 });
     const queue = build([...decidedElsewhere, open], { decisions });
-    // One ranked card (the open claim), so one draw, from all ten.
+    // Ten cards the load asks for, decided or not, so two draws, from all ten.
     expect(queue.pool["0.7"]).toEqual({ held: 10, quotes: 0 });
     const random = queue.cards.find((c) => c.drawn === "random")!;
     expect(["decided", "claim"]).toContain(random.kind);
-    // Over many loads, the decided nine are drawn about nine times in ten.
+    expect(queue.cards.filter((c) => c.drawn === "random")).toHaveLength(2);
+    // Over many loads, the first draw is a decided one about nine times in ten.
     const decided = Array.from({ length: 400 }, (_, i) =>
       build([...decidedElsewhere, open], { decisions, seed: `load-${i}` }),
-    ).filter((q) =>
-      q.cards.some((c) => c.drawn === "random" && c.kind === "decided"),
+    ).filter(
+      (q) => q.cards.find((c) => c.drawn === "random")?.kind === "decided",
     ).length;
     expect(decided).toBeGreaterThan(320);
     expect(decided).toBeLessThan(390);
@@ -683,6 +685,100 @@ describe("buildQueue", () => {
     expect(
       build(claims, { quotes: {} }).cards.filter((c) => c.drawn === "random"),
     ).toHaveLength(1);
+  });
+
+  it("draws the same cards for a load however many are decided, on a visit with no pins", () => {
+    // Four held claims at 0.72, six documents asking about a name, and
+    // accepted facts at the top: ten cards, so two drawn, a fact and a claim.
+    const claims = [1, 2, 3, 4].map((n) => held(n, { confidence: 0.72 }));
+    const names = Array.from({ length: 6 }, (_, i) =>
+      name(`n-${i}`, "umbrella", { doc: `doc-${i}` }),
+    );
+    const reviews = [...claims, ...names];
+    const quotes = { "0.9": 40 };
+    const first = build(reviews, { quotes });
+    const drawn = (q: ReturnType<typeof build>) =>
+      q.cards.flatMap((c) => (c.drawn === "random" ? [c.key] : []));
+    expect(drawn(first)).toHaveLength(2);
+    const spot = first.cards.find(
+      (c) => c.drawn === "random" && c.kind === "claim",
+    )!;
+    expect(spot).toBeDefined();
+    // Every other card decided: the claims approved, the names linked.
+    const decisions: ReviewDecision[] = [
+      ...claims
+        .filter((r) => (r.settle as { reviewId: string }).reviewId !== spot.key)
+        .map((r): ReviewDecision => {
+          const s = r.settle as Extract<
+            QueueReview["settle"],
+            { kind: "release" }
+          >;
+          return {
+            kind: "release",
+            type: "",
+            docId: s.docId,
+            claimKey: s.claimKey,
+            claimSection: s.section,
+            claimStart: s.start,
+            claimEnd: s.end,
+            statementHash: s.hash,
+          };
+        }),
+      ...names.map(
+        (r): ReviewDecision => ({
+          kind: "resolve",
+          type: "Account",
+          docId: r.documentId,
+          normName: "umbrella",
+          entityKey: "acct_1",
+        }),
+      ),
+    ];
+    const after = build(reviews, { quotes, decisions });
+    // Nothing is left ranked, and the claim is still a spot check, as are
+    // the rest of the draws.
+    expect(after.cards.filter((c) => c.drawn === "ranked")).toEqual([]);
+    expect(after.cards.find((c) => c.key === spot.key)).toMatchObject({
+      kind: "claim",
+      drawn: "random",
+    });
+    expect(drawn(after)).toEqual(drawn(first));
+    // Half decided: the same.
+    expect(
+      drawn(build(reviews, { quotes, decisions: decisions.slice(0, 4) })),
+    ).toEqual(drawn(first));
+  });
+
+  it("reads the draws a browser kept for its load, and nothing else", () => {
+    expect(
+      storedDraws('{"load":"L","drawn":["a","quote-0.9-0"]}', "L"),
+    ).toEqual({ drawn: ["a", "quote-0.9-0"], ranked: new Set() });
+    expect(storedDraws('{"load":"L","drawn":["a"]}', "M")).toBeUndefined();
+    expect(storedDraws('{"load":"L","drawn":[1]}', "L")).toBeUndefined();
+    expect(storedDraws('{"load":"L"}', "L")).toBeUndefined();
+    expect(storedDraws("null", "L")).toBeUndefined();
+    expect(storedDraws("", "L")).toBeUndefined();
+    expect(storedDraws("{", "L")).toBeUndefined();
+    // Kept draws keep a claim drawn even once its draw would go elsewhere.
+    const claims = Array.from({ length: 9 }, (_, n) =>
+      held(n, { confidence: 0.72 }),
+    );
+    const first = build(claims);
+    const pins = storedDraws(
+      JSON.stringify({ load: "load-1", drawn: queuePins(first).drawn }),
+      "load-1",
+    );
+    const spot = first.cards.find((c) => c.drawn === "random")!;
+    // Most of the claims leave the load: one draw would be the top band's fact.
+    const left = claims.filter(
+      (r, i) =>
+        i < 2 || (r.settle as { reviewId: string }).reviewId === spot.key,
+    );
+    expect(
+      build(left, { quotes: { "0.9": 40 }, pins }).cards.find(
+        (c) => c.key === spot.key,
+      ),
+    ).toMatchObject({ drawn: "random" });
   });
 
   it("draws nothing where there is nothing ranked, or no pool", () => {

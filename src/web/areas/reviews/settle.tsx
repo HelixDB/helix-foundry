@@ -212,6 +212,7 @@ export function SettleReview({
   link,
   naming,
   drawn,
+  compact,
   onSettled,
 }: {
   review: Settleable & { reason: string };
@@ -220,6 +221,9 @@ export function SettleReview({
   // The rules of the page's version: which links hold one value.
   naming: Naming;
   drawn?: ReviewDrawn;
+  // A spot check's: Reject and Approve alike in one row, as Wrong and
+  // Right are, without the notes on what each does.
+  compact?: boolean;
   onSettled?: () => void;
 }) {
   const { id: ws, role } = useWorkspace();
@@ -480,7 +484,7 @@ export function SettleReview({
       )}
       {canManage(role) && editable && (approves || rejects) && (
         <div className="on-stack">
-          {approves && (
+          {approves && !compact && (
             <p className="on-muted">
               On your word, from this sentence alone.{" "}
               {unsettled.length
@@ -495,11 +499,11 @@ export function SettleReview({
               {error || query.error?.message}
             </p>
           )}
-          <div className="hf-form-actions">
+          <div className={compact ? "rq-verdict" : "hf-form-actions"}>
             {rejects && (
               <Button
                 size="sm"
-                variant="ghost"
+                variant={compact ? undefined : "ghost"}
                 disabled={pending}
                 onClick={() => void (rejection && save(rejection.decision))}
               >
@@ -517,7 +521,7 @@ export function SettleReview({
               </Button>
             )}
           </div>
-          {rejects && (
+          {rejects && !compact && (
             <p className="on-muted">
               Reject it if it’s wrong: nothing is written, and it leaves Needs
               review in this load and later ones. Remove the decision under

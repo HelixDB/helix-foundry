@@ -156,8 +156,8 @@ export function BatchDialog({
           {drawn > 0 && (
             <p role="note" className="on-muted">
               {drawn === 1
-                ? "1 more like these is a spot check: drawn at random to measure how often claims scored like this are right, so you decide it on its own at the end."
-                : `${formatNumber(drawn)} more like these are spot checks: drawn at random to measure how often claims scored like this are right, so you decide each on its own at the end.`}
+                ? "One more card like these was drawn at random as a spot check, so it isn’t included: you’ll check it on its own at the end."
+                : `${formatNumber(drawn)} more cards like these were drawn at random as spot checks, so they aren’t included: you’ll check each on its own at the end.`}
             </p>
           )}
           <DataGrid
@@ -166,13 +166,14 @@ export function BatchDialog({
             getRowKey={(r) => r.key}
             maxHeight={360}
             columns={[
+              // A short list, read in the walk's order: no sorting, and no
+              // type icons in the heads.
               {
                 key: "tick",
                 label: "Include",
                 width: 84,
                 sortable: false,
-                // Ticks, not text: no type icon in its head.
-                className: "rv-tick",
+                className: "rv-plain",
                 render: (r) => (
                   <input
                     type="checkbox"
@@ -187,8 +188,20 @@ export function BatchDialog({
                   />
                 ),
               },
-              { key: "what", label: "Card", width: 360 },
-              { key: "document", label: "Document", width: 220 },
+              {
+                key: "what",
+                label: "Card",
+                width: 360,
+                sortable: false,
+                className: "rv-plain",
+              },
+              {
+                key: "document",
+                label: "Document",
+                width: 220,
+                sortable: false,
+                className: "rv-plain",
+              },
             ]}
           />
         </div>

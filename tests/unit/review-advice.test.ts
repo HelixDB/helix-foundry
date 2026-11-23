@@ -11,6 +11,7 @@ import {
   founderSeed,
   laneOf,
   settleOf,
+  statesScore,
   wilsonLower,
   type Advice,
   type Decidable,
@@ -529,24 +530,56 @@ describe("effectOf", () => {
 });
 
 describe("cardName", () => {
-  const quoted = (quote: string) => {
-    const c = nameCard("umbrella holdings");
+  const quoted = (quote: string, norm = "umbrella holdings") => {
+    const c = nameCard(norm);
     return { ...c, review: { ...c.review, quote } };
   };
-  it("quotes the name without the stop of a sentence it ends", () => {
+  it("names the card by the name the review identifies, as the quote spells it", () => {
+    // The quote is the sentence the name is in: never the name.
     expect(cardName(quoted("Umbrella Holdings signed order form 3."))).toBe(
-      "Umbrella Holdings signed order form 3",
+      "Umbrella Holdings",
+    );
+    expect(cardName(quoted("“Umbrella  Holdings”, it said."))).toBe(
+      "Umbrella  Holdings",
+    );
+    expect(cardName(quoted("We met umbrella-holdings today"))).toBe(
+      "umbrella-holdings",
     );
     expect(cardName(quoted("  Umbrella Holdings?! … "))).toBe(
       "Umbrella Holdings",
     );
-    expect(cardName(quoted("Initech LLC"))).toBe("Initech LLC");
-    // A stop inside the name stays.
-    expect(cardName(quoted("Acme Co. Ltd"))).toBe("Acme Co. Ltd");
+    // A stop inside the name stays; the sentence's stop goes.
+    expect(cardName(quoted("Signed by Acme Co. Ltd.", "acme co ltd"))).toBe(
+      "Acme Co. Ltd",
+    );
+    // The shortest run that is the name, not a longer one around it.
+    expect(cardName(quoted("Initech LLC and Initech", "initech"))).toBe(
+      "Initech",
+    );
   });
-  it("falls back to the normalized name for a quote of punctuation alone", () => {
+  it("falls back to the normalized name where the quote doesn't spell it", () => {
     expect(cardName(quoted(""))).toBe("umbrella holdings");
     expect(cardName(quoted(" . "))).toBe("umbrella holdings");
+    expect(cardName(quoted("The holding company signed."))).toBe(
+      "umbrella holdings",
+    );
+  });
+});
+
+describe("statesScore", () => {
+  it("says whether a suggestion already states the verifier's score", () => {
+    const precision = bands(
+      { band: "0.9", right: 80, total: 80 },
+      { band: "none", right: 3, total: 4 },
+    );
+    expect(statesScore(advise(heldCard(1), ctxOf({ precision })))).toBe(true);
+    // An unscored claim's suggestion names its band only.
+    expect(
+      statesScore(
+        advise(heldCard(1, { confidence: null }), ctxOf({ precision })),
+      ),
+    ).toBe(false);
+    expect(statesScore({ kind: "none", why: "unscored" })).toBe(false);
   });
 });
 
