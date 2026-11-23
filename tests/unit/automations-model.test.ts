@@ -56,6 +56,7 @@ import {
   usdText,
   validZone,
   here,
+  wholeNumber,
   type Names,
 } from "@/web/areas/automations/model";
 import {
@@ -1435,6 +1436,23 @@ describe("edits", () => {
       at_least: 50,
     });
     expect(newNodeId(simple, "notify")).toBe("notify-1");
+  });
+});
+
+describe("wholeNumber", () => {
+  it("commits nothing while the field is empty or no number, so it can be retyped", () => {
+    for (const text of ["", " ", "-", "e", "abc"])
+      expect(wholeNumber(text, 1, 10_000)).toBeUndefined();
+  });
+  it("commits the number typed, truncated and clamped", () => {
+    expect(wholeNumber("200", 1, 10_000)).toBe(200);
+    expect(wholeNumber("050", 1, 10_000)).toBe(50);
+    expect(wholeNumber("2.9", 1, 10_000)).toBe(2);
+    expect(wholeNumber("0", 1, 10_000)).toBe(1);
+    expect(wholeNumber("-3", 0)).toBe(0);
+    expect(wholeNumber("20000", 1, 10_000)).toBe(10_000);
+    expect(wholeNumber("75", 0, 59)).toBe(59);
+    expect(wholeNumber("123456789", 0)).toBe(123_456_789);
   });
 });
 

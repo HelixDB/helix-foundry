@@ -106,6 +106,22 @@ export function here(): string {
 const id = z.string().regex(TARGET_ID);
 /** The most a reviews_waiting trigger waits for: the review index counts open cards up to it. */
 export const MAX_REVIEWS_WAITING = 10_000;
+
+/**
+ * What a whole-number field's text commits: its number, truncated and
+ * clamped to `min`..`max`, or nothing while the text is empty or no number,
+ * so a field can be emptied and retyped without a fallback digit leading.
+ */
+export function wholeNumber(
+  text: string,
+  min: number,
+  max = Infinity,
+): number | undefined {
+  const n = Number(text);
+  return text.trim() === "" || !Number.isFinite(n)
+    ? undefined
+    : Math.max(min, Math.min(max, Math.trunc(n)));
+}
 const outcome = z.enum(["succeeded", "failed", "any"]);
 const zone = z.string().refine(validZone);
 const clock = z.string().regex(CLOCK);

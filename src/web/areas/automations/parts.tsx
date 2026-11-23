@@ -17,6 +17,7 @@ import type {
   FoundryAutomation,
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
+import { LOCAL } from "../../../shared/deployment";
 import { useWorkspace } from "../../ui";
 import {
   actionText,
@@ -216,12 +217,13 @@ const NEEDS: Record<Template["needs"][number], string> = {
 /**
  * The templates a new automation starts from on the canvas, each saying what
  * it needs that the workspace lacks. Where notify steps send no email (the
- * list's `email`, false on a local build), the reviews digest, an email and
- * nothing else, isn't offered.
+ * list's `email`, false on a local build; until it is read, or when the JSON
+ * leaves a false out, the build's), the reviews digest, an email and nothing
+ * else, isn't offered.
  */
 export function Templates({ lists }: { lists: ReturnType<typeof useNames> }) {
   const { id: ws } = useWorkspace();
-  const email = useQuery(automationQueries.list(ws)).data?.email ?? true;
+  const email = useQuery(automationQueries.list(ws)).data?.email ?? !LOCAL;
   const has = {
     connector: !!lists.connectors.length,
     ontology: !!lists.ontologies.length,

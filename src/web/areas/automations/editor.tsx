@@ -31,6 +31,7 @@ import type {
   FoundryAutomation,
   FoundryAutomationRun,
 } from "../../../shared/wfe";
+import { LOCAL } from "../../../shared/deployment";
 import { ApiError, sentence as asSentence } from "../../api";
 import {
   Button,
@@ -319,7 +320,9 @@ function Editor({
     navigate = useNavigate(),
     qc = useQueryClient(),
     lists = useNames(ws);
-  const email = useQuery(automationQueries.list(ws)).data?.email ?? true;
+  // Whether notify steps email: the list's, else (unread, or a false the
+  // JSON left out) the build's.
+  const email = useQuery(automationQueries.list(ws)).data?.email ?? !LOCAL;
   const phone = useMedia("(max-width: 760px)");
   const [params] = useSearchParams();
   const asked = params.get("tab") as Tab | null;
