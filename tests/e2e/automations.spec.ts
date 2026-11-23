@@ -1180,14 +1180,50 @@ test("emails when reviews wait in the current load: once, again after the count 
   await expect(page.getByText("No runs yet")).toBeVisible();
   await page.reload();
   await expect(page.getByText("No runs yet")).toBeVisible();
+});
 
-  // The walk's link drafts the template on the ontology it came from.
-  await page.goto(
-    "/workflows/new?template=reviews-digest&ontology=ont_acme_contracts",
+test("the walk's link drafts the reviews digest on the ontology it names, whose threshold can be emptied and retyped", async ({
+  page,
+}) => {
+  await signIn(page);
+  const drafted = inspector(page).getByRole("list", { name: "Steps" });
+  // An id the workspace lacks drafts on its first ontology.
+  await page.goto("/workflows/new?template=reviews-digest&ontology=ont_nope");
+  await expect(drafted).toContainText(
+    "at least 50 cards wait for review in “Customer contracts”",
   );
-  await expect(
-    inspector(page).getByRole("list", { name: "Steps" }),
-  ).toContainText("at least 50 cards wait for review in “Customer contracts”");
+  // Sales graph isn't the first: the draft is on the one the link names.
+  await page.goto(
+    "/workflows/new?template=reviews-digest&ontology=ont_acme_sales",
+  );
+  await expect(drafted).toContainText(
+    "at least 50 cards wait for review in “Sales graph”",
+  );
+  await canvas(page)
+    .locator(".react-flow__node")
+    .filter({ hasText: "cards wait for review" })
+    .click();
+  const atLeast = inspector(page).getByRole("spinbutton", {
+    name: "Cards to review, at least",
+  });
+  await expect(atLeast).toHaveValue("50");
+  // Emptied, it stays empty: 200 typed is 200, not 1200.
+  await atLeast.press("End");
+  await atLeast.press("Backspace");
+  await atLeast.press("Backspace");
+  await expect(atLeast).toHaveValue("");
+  await atLeast.pressSequentially("200");
+  await expect(atLeast).toHaveValue("200");
+  // Left empty, it shows the number kept.
+  await atLeast.fill("");
+  await atLeast.blur();
+  await expect(atLeast).toHaveValue("200");
+  await inspector(page)
+    .getByRole("button", { name: "Back to the summary" })
+    .click();
+  await expect(drafted).toContainText(
+    "at least 200 cards wait for review in “Sales graph”",
+  );
 });
 
 test("waits for the load its step started, and skips the sync another automation it set off started, saying why", async ({
