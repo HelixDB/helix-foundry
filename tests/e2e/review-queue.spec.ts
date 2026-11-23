@@ -101,16 +101,22 @@ test("a decision from the walk says it was ranked, and read again its card has l
 }) => {
   await queued(page);
   await expect(card(page)).toContainText("may have signed");
-  const sent = page.waitForRequest(
-    (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
+  // The walk sends its choices in batches, which settle ranked.
+  const sent = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" && /\/reviews:batchSettle$/.test(r.url()),
   );
   await card(page).getByRole("button", { name: "Reject" }).click();
-  expect(body(await sent)).toEqual({
-    decision: {
-      reject: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+  const answer = await sent;
+  expect(body(answer.request()).items).toEqual([
+    {
+      reviewId: expect.any(String),
+      decision: {
+        reject: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+      },
     },
-    drawn: "ranked",
-  });
+  ]);
+  expect((await answer.json()).results[0].decision.drawn).toBe("ranked");
   const before = await rail(page).count();
   await page.reload();
   await expect(card(page)).toBeVisible();
@@ -169,10 +175,10 @@ test("offers a second person a re-check of another's queue decision, with what t
   const held = card(page);
   await expect(held).toContainText("may have signed");
   const saved = page.waitForResponse(
-    (r) => r.request().method() === "POST" && /:settle$/.test(r.url()),
+    (r) => r.request().method() === "POST" && /:batchSettle$/.test(r.url()),
   );
   await held.getByRole("button", { name: "Reject" }).click();
-  const decision = (await (await saved).json()).decision;
+  const decision = (await (await saved).json()).results[0].decision;
   await expect(page.locator(".rv-toast")).toContainText("Rejected.");
   const id = sampledId();
   await page.route(/\/review-spot-checks(:draw)?$/, async (route) => {

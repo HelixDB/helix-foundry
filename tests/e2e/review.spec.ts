@@ -97,7 +97,9 @@ test("switches between Facts and Ontology, each with its open count, the tab in 
   await tab(page, "Ontology").focus();
   await page.keyboard.press("ArrowLeft");
   await expect(tab(page, "Facts")).toHaveAttribute("aria-selected", "true");
-  await expect(page).toHaveURL(new RegExp(`${O}/review$`));
+  await expect(page).toHaveURL(
+    new RegExp(`${O}/review(\\?card=[0-9a-f]{64})?$`),
+  );
   await expect(walkCard(page)).toBeVisible();
 });
 

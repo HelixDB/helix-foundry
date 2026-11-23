@@ -18,7 +18,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FoundryLoad,
@@ -895,8 +895,24 @@ export function ReviewWalkthrough({
         return;
       }
     }
-    if ((params.get("card") ?? "") !== (key ?? "")) setParam("card", key ?? "");
+    // The URL as it is now: a render's params may be a step behind.
+    const shown = new URLSearchParams(window.location.search).get("card");
+    if ((shown ?? "") !== (key ?? "")) setParam("card", key ?? "");
   }, [synced, key]);
+  // Leaving the walk (another tab of the page) leaves the card out of the
+  // URL, so Founder isn't told of a card no longer shown. It reads the URL
+  // as the navigation that unmounted the walk left it.
+  const navigate = useNavigate();
+  useEffect(
+    () => () => {
+      const { pathname, search } = window.location;
+      const p = new URLSearchParams(search);
+      if (!pathname.endsWith("/review") || !p.has("card")) return;
+      p.delete("card");
+      navigate({ pathname, search: p.size ? `?${p}` : "" }, { replace: true });
+    },
+    [],
+  );
   // A settle_review Founder ran from the dock on a card of this walk, the
   // person's own: taken as their choice (it moves on, Undo takes it back).
   useEffect(

@@ -1,4 +1,4 @@
-import type { Page, Request } from "@playwright/test";
+import type { Page, Request, Route } from "@playwright/test";
 import {
   CONTRACT,
   expect,
@@ -47,8 +47,30 @@ const lane = (page: Page, name: "Decide" | "FYI" | "Covered") =>
     .getByRole("radio", { name: new RegExp(`^${name}`) });
 const toast = (page: Page, text: string) =>
   page.locator(".rv-toast").filter({ hasText: text });
+// A card's own settle (the FYI lane, spot checks), and the walk's: through
+// its outbox, a batch of the choices made while one was in flight.
 const isSettle = (r: Request) =>
   r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url());
+const isBatch = (r: Request) =>
+  r.method() === "POST" && /\/reviews:batchSettle$/.test(r.url());
+type BatchBody = {
+  loadId: string;
+  expectOpen: boolean;
+  items: { reviewId: string; decision: unknown }[];
+};
+/** The choices a walk's request sends, each expecting its card open. */
+const choices = (r: Request) => {
+  const b = r.postDataJSON() as BatchBody;
+  expect(b.expectOpen).toBe(true);
+  expect(b.loadId).toMatch(/^load_/);
+  return b.items.map((it) => ({ decision: it.decision }));
+};
+/** The one choice a walk's request sends. */
+const choice = (r: Request) => {
+  const [only, ...rest] = choices(r);
+  expect(rest).toEqual([]);
+  return only;
+};
 const isRemove = (r: Request) =>
   r.method() === "DELETE" && /\/review-decisions\/[^/]+$/.test(r.url());
 const body = (r: Request) => r.postDataJSON() as Record<string, unknown>;
@@ -70,7 +92,6 @@ const RELEASE = {
   decision: {
     release: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
   },
-  drawn: "ranked",
 };
 
 /** Loads the contract and `more`, then opens the walkthrough. */
@@ -108,7 +129,9 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   const dock = page.getByRole("region", { name: "Jobs in progress" });
   await expect(dock).toContainText("Data loaded", { timeout: 30_000 });
   await dock.getByRole("link", { name: "Review 4", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`${O}/review$`));
+  await expect(page).toHaveURL(
+    new RegExp(`${O}/review(\\?card=[0-9a-f]{64})?$`),
+  );
   const { first, other } = await claims(page);
   await expect(heading(page)).toHaveText(
     `Is this right: Hedged deal → signed_with → ${first}?`,
@@ -139,9 +162,9 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   ).toHaveCount(0);
 
   // Enter accepts the suggestion, saved at once, and moves on.
-  let sent = page.waitForRequest(isSettle);
+  let sent = page.waitForRequest(isBatch);
   await page.keyboard.press("Enter");
-  expect(body(await sent)).toEqual(RELEASE);
+  expect(choice(await sent)).toEqual(RELEASE);
   await expect(heading(page)).toContainText(other);
   await expect(heading(page)).toBeFocused();
   await expect(progress(page)).toHaveText(
@@ -171,23 +194,21 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   // A choice's key saves it at once; no digit is shown, so none chooses.
   await page.keyboard.press("1");
   await expect(heading(page)).toContainText(other);
-  sent = page.waitForRequest(isSettle);
+  sent = page.waitForRequest(isBatch);
   await page.keyboard.press("x");
-  expect(body(await sent)).toEqual({
+  expect(choice(await sent)).toEqual({
     decision: {
       reject: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
     },
-    drawn: "ranked",
   });
   // A name the load linked by its legal form: a choice applies from the
   // next load.
   await expect(heading(page)).toContainText("names “Umbrella Holdings");
   await expect(card(page)).toContainText("Applies from the next load.");
-  sent = page.waitForRequest(isSettle);
+  sent = page.waitForRequest(isBatch);
   await page.keyboard.press("n");
-  expect(body(await sent)).toEqual({
+  expect(choice(await sent)).toEqual({
     decision: { resolve: { notInData: true } },
-    drawn: "ranked",
   });
   // The same name in the other document: Founder suggests the choice just
   // made, as a repeat of it.
@@ -195,11 +216,10 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   await expect(card(page)).toContainText(
     "Founder suggests Not a Customer we haveRuleYour earlier choice ×1",
   );
-  sent = page.waitForRequest(isSettle);
+  sent = page.waitForRequest(isBatch);
   await page.keyboard.press("Enter");
-  expect(body(await sent)).toEqual({
+  expect(choice(await sent)).toEqual({
     decision: { resolve: { notInData: true } },
-    drawn: "ranked",
   });
 
   // The finish: what applies now, what waits for the next load, and the
@@ -235,7 +255,9 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
       page.getByText("1 card to decide", { exact: true }),
     ).toBeVisible();
     await page.getByRole("link", { name: "Start reviewing" }).click();
-    await expect(page).toHaveURL(new RegExp(`${O}/review$`));
+    await expect(page).toHaveURL(
+      new RegExp(`${O}/review(\\?card=[0-9a-f]{64})?$`),
+    );
   } else
     await expect(
       page.getByRole("link", { name: "Start reviewing" }),
@@ -273,11 +295,10 @@ async function naming(
     card(page).getByRole("button", { name: "Not a Customer we have" }),
   ).toHaveAccessibleDescription(none);
   await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/);
-  const sent = page.waitForRequest(isSettle);
+  const sent = page.waitForRequest(isBatch);
   await page.keyboard.press("Enter");
-  expect(body(await sent)).toEqual({
+  expect(choice(await sent)).toEqual({
     decision: { resolve: { entityKey: expect.any(String) } },
-    drawn: "ranked",
   });
   await expect(
     toast(page, "Linked, with 2 other documents asking about this name."),
@@ -349,11 +370,10 @@ test("a link whose job failed before saying offers its choices again, and is sti
     /^Saved: .+, but the job that applies it failed before it said whether it did\. Choose it again to finish\.$/,
   );
   await expect(choiceButtons(page)).toHaveCount(2);
-  const sent = page.waitForRequest(isSettle);
+  const sent = page.waitForRequest(isBatch);
   await page.keyboard.press("Enter");
-  expect(body(await sent)).toEqual({
+  expect(choice(await sent)).toEqual({
     decision: { resolve: { entityKey: expect.any(String) } },
-    drawn: "ranked",
   });
 });
 
@@ -438,12 +458,14 @@ test("accepts all like this from a ticked list: untick one, see it go, then take
   const settles: Request[] = [],
     removes: Request[] = [];
   page.on("request", (r) => {
-    if (isSettle(r)) settles.push(r);
+    if (isBatch(r)) settles.push(r);
     if (isRemove(r)) removes.push(r);
   });
   await dialog.getByRole("button", { name: "Approve 3" }).click();
   await expect(dialog.getByRole("status")).toHaveText("Saved 3 choices.");
-  expect(settles.map(body)).toEqual([RELEASE, RELEASE, RELEASE]);
+  // One request for the batch, three choices in it.
+  expect(settles).toHaveLength(1);
+  expect(settles.flatMap(choices)).toEqual([RELEASE, RELEASE, RELEASE]);
   await expect(progress(page)).toHaveText(
     "3 of 6 · 3 accepted · 0 changed · 0 skipped",
   );
@@ -470,9 +492,11 @@ test("puts a refused choice back next, saying why, to choose again", async ({
     /^1\s*Approve$/,
     /^X\s*Reject$/,
   ]);
-  const sent = page.waitForResponse((r) => isSettle(r.request()));
+  const sent = page.waitForResponse((r) => isBatch(r.request()));
   await page.keyboard.press("1");
-  expect((await sent).status()).toBe(400);
+  expect((await (await sent).json()).results[0].refused).toMatchObject({
+    reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE",
+  });
   // The card shown is the next; the refused one follows it.
   await expect(heading(page)).toContainText(other);
   const rail = page.getByRole("navigation", { name: "Next cards" });
@@ -485,9 +509,9 @@ test("puts a refused choice back next, saying why, to choose again", async ({
   await expect(card(page).getByRole("alert")).toHaveText(
     "Couldn’t save it: this claim reads differently now; reload the review and decide on what it says Choose again.",
   );
-  const again = page.waitForResponse((r) => isSettle(r.request()));
+  const again = page.waitForResponse((r) => isBatch(r.request()));
   await page.keyboard.press("1");
-  expect((await again).status()).toBe(200);
+  expect((await (await again).json()).results[0].decision).toBeTruthy();
   await expect(progress(page)).toHaveText(
     "2 of 4 · 0 accepted · 1 changed · 1 skipped",
   );
@@ -499,9 +523,9 @@ test("a new load made current mid-walk says so and rebuilds the walk", async ({
 }) => {
   await walk(page, [file("variant.md", HEDGED)], MEASURED(40));
   const { other } = await claims(page);
-  const saved = page.waitForResponse((r) => isSettle(r.request()));
+  const saved = page.waitForResponse((r) => isBatch(r.request()));
   await page.keyboard.press("Enter");
-  expect((await saved).status()).toBe(200);
+  expect((await (await saved).json()).results[0].decision).toBeTruthy();
   await expect(progress(page)).toHaveText(
     "1 of 4 · 1 accepted · 0 changed · 0 skipped",
   );
@@ -547,7 +571,7 @@ test("members read the cards, with Next and the reading keys, but no choices", a
     await expect(card(page).getByRole("button", { name })).toHaveCount(0);
   const settles: Request[] = [];
   page.on("request", (r) => {
-    if (isSettle(r)) settles.push(r);
+    if (isBatch(r)) settles.push(r);
   });
   await page.keyboard.press("Enter");
   await page.keyboard.press("1");
@@ -605,11 +629,13 @@ test("FYI holds a name the model linked, with Undo link", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("F asks Founder: the dock opens with the card in its composer, and nothing is sent; keys typed there, in a dialog or on a button are theirs", async ({
+test("F asks Founder: the dock opens composed, and nothing is sent; keys typed there, in a dialog or on a button are theirs", async ({
   page,
 }) => {
   await walk(page, [file("variant.md", HEDGED)]);
   const { first } = await claims(page);
+  // The card shown is in the URL, for Founder's page context.
+  await expect(page).toHaveURL(/[?&]card=[0-9a-f]{64}/);
   const posts: string[] = [];
   page.on("request", (r) => {
     if (r.method() === "POST") posts.push(r.url());
@@ -619,11 +645,9 @@ test("F asks Founder: the dock opens with the card in its composer, and nothing 
     .getByRole("complementary", { name: "Founder" })
     .getByRole("textbox", { name: "Message" });
   await expect(composer).toBeVisible();
-  await expect(composer).toHaveValue(
-    new RegExp(
-      `^Help me decide review [0-9a-f]+ in “variant\\.md”\\. Is this claim right: Hedged deal \\(Contract\\) → signed_with → ${first} \\(Customer\\)\\?.*don’t settle it\\.$`,
-    ),
-  );
+  // No rule suggests a choice here (nothing measures the score yet): only
+  // the ask; the page context names the card.
+  await expect(composer).toHaveValue("Help me decide this review.");
   expect(posts.filter((u) => !u.includes("/review-labels"))).toEqual([]);
 
   // Typing in the composer settles, skips and undoes nothing.
@@ -674,7 +698,7 @@ test("F asks Founder: the dock opens with the card in its composer, and nothing 
   await expect(progress(page)).toHaveText(
     /^2 of \d+ · 0 accepted · 1 changed · 1 skipped$/,
   );
-  expect(posts.filter((u) => /:settle$/.test(u))).toHaveLength(1);
+  expect(posts.filter((u) => /:batchSettle$/.test(u))).toHaveLength(1);
   expect(removes).toEqual([]);
 });
 
@@ -731,4 +755,221 @@ test("the rail tells cards apart in two lines, and the filters drop below their 
   await page.getByRole("button", { name: "Clear filters" }).click();
   await expect(page).not.toHaveURL(/[?&](kind|doc)=/);
   await expect(kind).toHaveText("Any");
+});
+
+/** The ontology's saved releases, as the walk's person reads them. */
+async function releases(page: Page) {
+  const r = await page.request.get(
+    "/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/review-decisions",
+  );
+  return (
+    (await r.json()).decisions as {
+      id: string;
+      kind: string;
+      decidedByUserId: string;
+    }[]
+  ).filter((d) => d.kind === "release");
+}
+
+test("quick choices share requests: one in flight, the next carrying the rest", async ({
+  page,
+}) => {
+  await walk(
+    page,
+    [file("variant.md", HEDGED), file("second.md", SECOND)],
+    MEASURED(40),
+  );
+  await claims(page);
+  // Each request takes a while, so the choices made meanwhile wait for it.
+  const batches: Request[] = [];
+  await page.route("**/papi/**/reviews:batchSettle", async (route: Route) => {
+    batches.push(route.request());
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  for (let i = 0; i < 4; i += 1) await page.keyboard.press("Enter");
+  await expect(progress(page)).toHaveText(
+    /^4 of \d+ · 4 accepted · 0 changed · 0 skipped$/,
+  );
+  await expect(async () => {
+    expect(batches.flatMap(choices)).toHaveLength(4);
+  }).toPass({ timeout: 10_000 });
+  expect(batches.length).toBeLessThanOrEqual(2);
+  await expect(async () =>
+    expect(await releases(page)).toHaveLength(4),
+  ).toPass();
+});
+
+test("a retried choice after a dropped answer keeps one decision, the person's", async ({
+  page,
+}) => {
+  await walk(page, [file("variant.md", HEDGED)], MEASURED(40));
+  const { first, other } = await claims(page);
+  // The first request reaches the backend, which saves the choice, but its
+  // answer is lost on the way back.
+  let dropped = false;
+  await page.route("**/papi/**/reviews:batchSettle", async (route: Route) => {
+    if (dropped) return route.continue();
+    dropped = true;
+    await route.fetch();
+    await route.abort("failed");
+  });
+  await page.keyboard.press("Enter");
+  await expect(heading(page)).toContainText(other);
+  await page.keyboard.press("s");
+  await expect(heading(page)).toContainText(first);
+  await expect(card(page).getByRole("alert")).toContainText("Couldn’t save it");
+  // Choosing again settles it again: the person's own decision, never a
+  // second one, and the walk shows it saved.
+  const again = page.waitForResponse((r) => isBatch(r.request()));
+  await page.keyboard.press("Enter");
+  const result = (await (await again).json()).results[0];
+  expect(result.decision.decidedByUserId).toBe("usr_ada");
+  await expect(progress(page)).toHaveText(
+    "2 of 4 · 1 accepted · 0 changed · 1 skipped",
+  );
+  const saved = await releases(page);
+  expect(saved).toHaveLength(1);
+  expect(saved[0]!.id).toBe(result.decision.id);
+});
+
+test("two admins on one card: the second is told who decided it, and their Undo removes nothing of the first's", async ({
+  page,
+  browser,
+}) => {
+  await walk(page, [file("variant.md", HEDGED)], {
+    ...MEASURED(40),
+    alanRole: "WORKSPACE_ROLE_ADMIN",
+  });
+  const { first } = await claims(page);
+  // Alan opens the walk too: everyone walks one order, so his first card
+  // is Ada's.
+  const alanContext = await browser.newContext();
+  const alan = await alanContext.newPage();
+  await signIn(alan, "alan@example.com");
+  await alan.goto(`${O}/review`);
+  await expect(heading(alan)).toContainText(first);
+  // Ada approves it first.
+  const sent = page.waitForResponse((r) => isBatch(r.request()));
+  await page.keyboard.press("Enter");
+  const ada = (await (await sent).json()).results[0].decision;
+  expect(ada.decidedByUserId).toBe("usr_ada");
+  // Alan's approval is refused, naming her; hers stands.
+  const refused = alan.waitForResponse((r) => isBatch(r.request()));
+  await alan.keyboard.press("Enter");
+  expect((await (await refused).json()).results[0].refused).toMatchObject({
+    reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
+    decided: { id: ada.id },
+  });
+  await alan.keyboard.press("ArrowLeft");
+  await expect(heading(alan)).toContainText(first);
+  await expect(card(alan).locator(".rv-outcome")).toHaveText(
+    "Decided by Ada Lovelace. Their choice stands; yours wasn’t saved.",
+  );
+  await expect(progress(alan)).toContainText("1 decided elsewhere");
+  // Alan's Undo has nothing of his to take back: nothing is removed.
+  const removes: Request[] = [];
+  alan.on("request", (r) => {
+    if (isRemove(r)) removes.push(r);
+  });
+  await alan.keyboard.press("z");
+  await expect(card(alan).locator(".rv-outcome")).toContainText("Decided by");
+  expect(removes).toHaveLength(0);
+  await alanContext.close();
+  const saved = await releases(page);
+  expect(saved.map((d) => [d.id, d.decidedByUserId])).toEqual([
+    [ada.id, "usr_ada"],
+  ]);
+});
+
+test("F asks Founder about the card: the message carries it, and the reply recommends one choice", async ({
+  page,
+}) => {
+  await walk(page, [file("variant.md", HEDGED)], {
+    ...MEASURED(40),
+    agentStepMs: 100,
+  });
+  await claims(page);
+  const cardId = new URL(page.url()).searchParams.get("card");
+  expect(cardId).toMatch(/^[0-9a-f]{64}$/);
+  await page.keyboard.press("f");
+  const dock = page.getByRole("complementary", { name: "Founder" });
+  const composer = dock.getByRole("textbox", { name: "Message" });
+  // The rule's suggestion, in words, then the ask: composed, not sent.
+  await expect(composer).toHaveValue(
+    "The rule suggests approving it. Help me decide this review.",
+  );
+  await expect(dock).toContainText("this review");
+  const turn = page.waitForRequest(
+    (r) => r.method() === "POST" && r.url().endsWith("/foundry/agent/turns"),
+  );
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await turn).postDataJSON().pageContext).toMatchObject({
+    ontologyId: "ont_acme_contracts",
+    reviewCardId: cardId,
+  });
+  await expect(
+    dock.getByText(/^I recommend approving it\./).first(),
+  ).toBeVisible({ timeout: 15_000 });
+  // Founder prepares nothing unasked.
+  await expect(dock.getByRole("region", { name: /^Action:/ })).toHaveCount(0);
+});
+
+test("a settle Founder runs from the dock is the walk's choice: it moves on, and Undo takes it back", async ({
+  page,
+}) => {
+  await mock.configure({ agentStepMs: 100, loadStepMs: 200 });
+  await signIn(page);
+  await makeContractsCurrent(page);
+  await uploadInData(page, [
+    file(
+      "variant.md",
+      "# Variant contract\n\nGlobexx Corporation signed. The Agreement runs for 24 months.\n",
+    ),
+  ]);
+  await loadVersion3(page);
+  await page.goto(`${O}/review`);
+  await expect(heading(page)).toBeVisible();
+  await expect(progress(page)).toHaveText(/^0 of \d+ · 0 accepted · 0 changed/);
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary", { name: "Founder" });
+  await dock
+    .getByRole("textbox", { name: "Message" })
+    .fill("Settle the review about Globexx in Customer contracts");
+  await dock.getByRole("button", { name: "Send", exact: true }).click();
+  const action = dock.getByRole("region", {
+    name: "Action: Link “globexx corporation” to Globex Corporation",
+  });
+  await action.getByRole("button", { name: "Link", exact: true }).click();
+  await expect(action.getByText("Ran", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  // The walk took it as the person's own choice.
+  await expect(progress(page)).toHaveText(
+    /^\d+ of \d+ · 0 accepted · 1 changed/,
+  );
+  await expect(toast(page, "Founder’s choice saved.")).toBeVisible();
+  const removed = page.waitForRequest(isRemove);
+  await toast(page, "Founder’s choice saved.")
+    .getByRole("button", { name: /^Undo/ })
+    .click();
+  await removed;
+  // A name's link the load applied in place: taken back, kept by this load.
+  await expect(
+    toast(page, "Choice removed: it stops applying from the next load."),
+  ).toBeVisible();
+  await expect(progress(page)).toHaveText(
+    /· 0 accepted · 0 changed · 0 skipped · 1 taken back$/,
+  );
+});
+
+test("a reload on ?card= lands on that card", async ({ page }) => {
+  await walk(page, [file("variant.md", HEDGED)]);
+  const { other } = await claims(page);
+  await page.keyboard.press("s");
+  await expect(heading(page)).toContainText(other);
+  const shown = await heading(page).textContent();
+  await expect(page).toHaveURL(/[?&]card=[0-9a-f]{64}/);
+  await page.reload();
+  await expect(heading(page)).toHaveText(shown!);
 });

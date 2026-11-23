@@ -235,14 +235,14 @@ function ApproveAll({
         </p>
       ) : (
         result && (
-          <p role="status">
-            {result}{" "}
+          <div className="dc-review-actions">
+            <p role="status">{result}</p>
             {mine.length > 0 && (
               <Button size="sm" variant="ghost" onClick={() => void undo()}>
                 Undo these {mine.length}
               </Button>
             )}
-          </p>
+          </div>
         )
       )}
       {confirming && ready.length > 0 && (

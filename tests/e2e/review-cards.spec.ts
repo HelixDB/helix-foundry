@@ -148,7 +148,9 @@ test("the nudge opens the walk, and Later hides it for that load", async ({
   await expect(nudge(page)).toContainText(/\d+ to review/);
   const name = (await nudge(page).locator(".on-job-card-name").textContent())!;
   await nudge(page).getByRole("link", { name: "Start" }).click();
-  await expect(page).toHaveURL(/\/ontology\/[^/]+\/review$/);
+  await expect(page).toHaveURL(
+    /\/ontology\/[^/]+\/review(\?card=[0-9a-f]{64})?$/,
+  );
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Review");
   await page.goto("/data");
   await nudge(page).getByRole("button", { name: "Later" }).click();
