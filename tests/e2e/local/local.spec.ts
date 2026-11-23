@@ -1768,6 +1768,15 @@ test("runs a workflow, which notes what it found where it can't email", async ({
 }) => {
   await configure({ agentStepMs: 60, automationStepMs: 100 });
   await page.goto("/workflows");
+  // The reviews digest is an email and nothing else: this install sends
+  // none, so it isn't offered.
+  const templates = page.getByRole("list", { name: "Templates" });
+  await expect(
+    templates.getByRole("link", { name: /^Weekly summary/ }),
+  ).toBeVisible();
+  await expect(
+    templates.getByRole("link", { name: /^Email me when reviews wait/ }),
+  ).toHaveCount(0);
   // A new one starts with Founder here too, or from scratch.
   await page.getByRole("link", { name: "New workflow" }).first().click();
   await expect(

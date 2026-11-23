@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import {
+  HEDGED,
   expect,
   file,
   mock,
@@ -14,10 +15,6 @@ import {
 // in the URL, and the old Suggestions page's address opens the Ontology tab.
 
 const O = "/ontology/ont_acme_contracts";
-// Held claims, a value in conflict and a name in no row, beside the
-// contract's facts (review-queue.spec.ts).
-const HEDGED =
-  "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n";
 
 const tab = (page: Page, name: "Facts" | "Ontology") =>
     page.getByRole("tab", { name: new RegExp(`^${name}`) }),

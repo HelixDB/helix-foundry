@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Page, Request } from "@playwright/test";
 import {
+  HEDGED,
   expect,
   file,
   mock,
@@ -17,11 +18,6 @@ import {
 // (review-walk.spec.ts walks the cards).
 
 const O = "/ontology/ont_acme_contracts";
-// Two held claims, a value in conflict, a name in no row that blocks a
-// claim, and relationships the ontology lacks; the contract adds accepted
-// facts.
-const HEDGED =
-  "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n";
 
 async function queued(page: Page) {
   await mock.configure({ loadStepMs: 200, documentUnmatched: true });

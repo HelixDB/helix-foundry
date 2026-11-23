@@ -271,6 +271,30 @@ export function reviewCardOf(
   return card && { card, open: isOpen(card, decisions.get(o.id) || [], load) };
 }
 
+/**
+ * The open cards to decide of the ontology's servable current load, as the
+ * index counts them (foundry_review_loads: at most 10,000, `more` past it),
+ * and whether the index is still being built (`reviewIndexing`); null
+ * without a servable load. The summary serves it, and a reviews_waiting
+ * workflow fires on it once the index is whole (./automations.ts).
+ */
+export function openReviews(
+  o: StoredOntology,
+): Omit<FoundryReviewSummary, "ontologyId"> | null {
+  const load = servableLoad(o.id)?.loadId;
+  if (!load) return null;
+  const saved = decisions.get(o.id) || [];
+  const open = indexOf(o, load).cards.filter(
+    (c) => c.lane === "decide" && isOpen(c, saved, load),
+  ).length;
+  return {
+    loadId: load,
+    open: Math.min(open, COUNT_CAP),
+    more: open > COUNT_CAP,
+    indexing: !!knobs.reviewIndexing,
+  };
+}
+
 /** The walk's order: per decision and facts, descending; kind, shuffle and id. */
 const walkOrder = (a: Card, b: Card) =>
   b.perDecision - a.perDecision ||
@@ -608,21 +632,8 @@ export const reviewCardRoutes: MockRoute[] = [
       if (req.grantee) return ok({} satisfies GetFoundryReviewSummaryResponse);
       const ontologies = workspaceOntologies(m.workspaceId).flatMap(
         (o): FoundryReviewSummary[] => {
-          const load = servableLoad(o.id)?.loadId;
-          if (!load) return [];
-          const saved = decisions.get(o.id) || [];
-          const open = indexOf(o, load).cards.filter(
-            (c) => c.lane === "decide" && isOpen(c, saved, load),
-          ).length;
-          return [
-            {
-              ontologyId: o.id,
-              loadId: load,
-              open: Math.min(open, COUNT_CAP),
-              more: open > COUNT_CAP,
-              indexing: !!knobs.reviewIndexing,
-            },
-          ];
+          const summary = openReviews(o);
+          return summary ? [{ ontologyId: o.id, ...summary }] : [];
         },
       );
       return ok({ ontologies } satisfies GetFoundryReviewSummaryResponse);

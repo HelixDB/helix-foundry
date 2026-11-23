@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import {
   CONTRACT,
+  HEDGED,
   expect,
   file,
   makeContractsCurrent,
@@ -20,10 +21,6 @@ import {
 // never done.
 
 const O = "/ontology/ont_acme_contracts";
-// Held claims, a value in conflict and a name in no row, beside the
-// contract's facts (review-queue.spec.ts).
-const HEDGED =
-  "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n";
 
 const card = (page: Page) => page.getByRole("article");
 const rail = (page: Page) =>

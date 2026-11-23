@@ -236,6 +236,13 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
     "href",
     `${O}?new-load=1`,
   );
+  // A workflow to be emailed when cards pile up again, on this ontology.
+  await expect(
+    done.getByRole("link", { name: "Email me when reviews wait" }),
+  ).toHaveAttribute(
+    "href",
+    "/workflows/new?template=reviews-digest&ontology=ont_acme_contracts",
+  );
   await done.getByRole("button", { name: "Go through 1 skipped" }).click();
   await expect(heading(page)).toContainText(first);
   // Every count is the index's: the card skipped, unless the finish drew it
@@ -601,6 +608,9 @@ test("members read the cards, with Next and the reading keys, but no choices", a
     name: "4 cards wait for an owner or admin",
   });
   await expect(done).not.toContainText("still to decide");
+  await expect(
+    done.getByRole("link", { name: "Email me when reviews wait" }),
+  ).toHaveCount(0);
   await done.getByRole("button", { name: "Go back to the first" }).click();
   await expect(heading(page)).toContainText(first);
 });

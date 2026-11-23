@@ -87,6 +87,9 @@ export const mock = {
     // no card carries it; a rationale, every advice's, as sent.
     reviewModelAdvice?: boolean;
     reviewModelAdviceRationale?: string;
+    // The review cards index is still first being built
+    // (mock/routes/review-cards.ts): reviews_waiting workflows fire on none.
+    reviewIndexing?: boolean;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"
@@ -560,6 +563,14 @@ export async function startContractsLoad(page: Page) {
     .getByRole("button", { name: "Load" })
     .click();
 }
+
+/**
+ * A contract beside the seeded one whose load asks people to decide: held
+ * claims, a value in conflict with the table (GBP), a name in no row that
+ * blocks a claim (Umbrella Holdings), and relationships the ontology lacks.
+ */
+export const HEDGED =
+  "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n";
 
 /**
  * Uploads the seeded contract (and `more` with it) into General, makes
