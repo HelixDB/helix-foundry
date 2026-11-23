@@ -894,6 +894,14 @@ test("two admins on one card: the second is told who decided it, and their Undo 
   await expect(heading(alan)).toContainText(first);
   await expect.poll(() => removes.length).toBe(1);
   expect(removes[0]!.url()).toContain(mine.id);
+  // The decisions read again since, Ada's card still reads hers.
+  await alan
+    .getByRole("navigation", { name: "Next cards" })
+    .getByRole("button", { name: new RegExp(`^${other}`) })
+    .click();
+  await expect(card(alan).locator(".rv-outcome")).toContainText(
+    "Decided by Ada Lovelace.",
+  );
   await alanContext.close();
   const saved = await releases(page);
   expect(saved.map((d) => [d.id, d.decidedByUserId])).toEqual([

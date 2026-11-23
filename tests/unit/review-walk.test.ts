@@ -599,6 +599,22 @@ describe("walkReducer", () => {
       gone: new Set(),
     });
     expect(back.outcomes.has("b")).toBe(false);
+    // Not a card the backend refused as decided, with the decision: a page
+    // read before that answer may still list it.
+    const theirs = { ...decision("t"), decidedByUserId: "alan" };
+    expect(
+      run(
+        walkOf(["a", "b", "c"], {}, [
+          ["b", { kind: "elsewhere", decision: theirs }],
+        ]),
+        {
+          type: "rebase",
+          loadId: "L",
+          order: ["a", "b", "c"],
+          gone: new Set(),
+        },
+      ).outcomes.get("b"),
+    ).toEqual({ kind: "elsewhere", decision: theirs });
     expect(back.order).toEqual(["a", "b", "c"]);
     expect(current(back)).toBe("c");
     expect(undecided(back.order, back.outcomes)).toBe(3);

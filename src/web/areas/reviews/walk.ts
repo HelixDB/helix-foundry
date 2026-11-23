@@ -309,7 +309,8 @@ const nextOpen = (
  *   filter, or a refresh), and each card of the old order gone from the
  *   queue (`gone`) keeps its place, after the card before it that the new
  *   order has, marked decided elsewhere unless this walk decided it, and a
- *   card decided elsewhere that is back in the order is to decide again; on
+ *   card decided elsewhere that is back in the order is to decide again
+ *   (not one the backend refused as decided, which stands on the load); on
  *   another load only the outcomes of keys in the order and of choices
  *   still sending, whose answers are yet to come, stay, less links taken
  *   back (the new load asks again); the card shown
@@ -542,9 +543,13 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
         ),
       );
       // Back in the queue: someone else's decision was removed, or no
-      // longer settles it.
-      for (const k of a.order)
-        if (outcomes.get(k)?.kind === "elsewhere") outcomes.delete(k);
+      // longer settles it. Not one the backend refused this walk's choice
+      // for (its `decision`): that answer is newer than any page read
+      // before it, which may still list the card, so it stands on this load.
+      for (const k of a.order) {
+        const o = outcomes.get(k);
+        if (o?.kind === "elsewhere" && !o.decision) outcomes.delete(k);
+      }
       // The cards gone from the queue, by the card of the new order they
       // follow (null: before the first).
       const stays = new Map<string | null, string[]>();

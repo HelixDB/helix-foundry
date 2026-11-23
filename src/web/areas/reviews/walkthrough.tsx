@@ -24,6 +24,7 @@ import type {
   FoundryLoad,
   FoundryReviewChoice,
   FoundryReviewDecision,
+  ListWorkspaceMembersResponse,
 } from "../../../shared/wfe";
 import {
   Button,
@@ -145,6 +146,17 @@ const UNDONE: Record<FoundryReviewDecision["kind"], string> = {
   resolve: "Choice removed: it stops applying from the next load.",
   prop: "Value taken back from this load.",
   withdraw: "Choice removed.",
+};
+
+/** A member's name, from the members' pages read, by user id. */
+const memberName = (
+  pages: readonly ListWorkspaceMembersResponse[] | undefined,
+  by: string | undefined,
+) => {
+  const m = pages
+    ?.flatMap((p) => p.members || [])
+    .find((m) => by && m.user?.id === by)?.user;
+  return m?.displayName || m?.email || "a teammate";
 };
 
 /** The choice a saved decision made. */
@@ -435,12 +447,10 @@ export function useWalk() {
      * stays in that load, so its cards and those it covered show it taken
      * back rather than to decide. A choice refused as another person decided
      * its card first stays theirs: there is nothing to take back, and it
-     * says who (`nameOf`, by user id). What it says, or null with nothing to
+     * says who, from the members list. What it says, or null with nothing to
      * take back or an undo already running.
      */
-    undo: async (
-      nameOf: (userId: string | undefined) => string,
-    ): Promise<{ text: string; error: boolean } | null> => {
+    undo: async (): Promise<{ text: string; error: boolean } | null> => {
       const keys = now.current.undo.at(-1);
       if (!keys || undoing.current) return null;
       undoing.current = true;
@@ -504,7 +514,7 @@ export function useWalk() {
             });
           dispatch({ type: "undone", keys: gone, kept });
         }
-        await refresh(true);
+        if (ours) await refresh(true);
         const failed = removed.flatMap((r) => (r.ok ? [] : [r.error]));
         if (failed.length)
           return {
@@ -512,10 +522,19 @@ export function useWalk() {
             error: true,
           };
         const [one] = removed;
+        const by =
+          ours === 0 && theirs.length === 1
+            ? theirs[0]!.decision?.decidedByUserId
+            : undefined;
+        const members = by
+          ? await qc
+              .ensureInfiniteQueryData(membersQuery(ws))
+              .catch(() => undefined)
+          : undefined;
         return {
           text:
             ours === 0
-              ? `Already decided by ${theirs.length > 1 ? "others" : nameOf(theirs[0]?.decision?.decidedByUserId)}: their decision stands.`
+              ? `Already decided by ${theirs.length > 1 ? "others" : memberName(members?.pages, by)}: their decision stands.`
               : removed.length > 1
                 ? `Took back ${plural(ours, "choice")}${theirs.length ? `; ${formatNumber(theirs.length)} already decided by others` : ""}.`
                 : one?.ok && "decision" in one && one.decision
@@ -828,7 +847,7 @@ export function ReviewWalkthrough({
   }, [key, synced, dialog]);
 
   const undo = async () => {
-    const r = await api.undo(memberName);
+    const r = await api.undo();
     if (!r) return;
     moved.current = true;
     say(r.text, false, r.error);
@@ -969,15 +988,9 @@ export function ReviewWalkthrough({
       (x) => x.kind === "elsewhere" && !!x.decision,
     ),
   });
-  const memberName = (by: string | undefined) => {
-    const m = members.data?.pages
-      .flatMap((p) => p.members || [])
-      .find((m) => by && m.user?.id === by)?.user;
-    return m?.displayName || m?.email || "a teammate";
-  };
   const decidedBy =
     outcome?.kind === "elsewhere" && outcome.decision
-      ? memberName(outcome.decision.decidedByUserId)
+      ? memberName(members.data?.pages, outcome.decision.decidedByUserId)
       : undefined;
   // Members move, open and ask with keys too; deciding needs `manage`.
   useWalkKeys(on, synced && lane === "decide", layout.numbered.length);
@@ -1339,7 +1352,7 @@ export function ReviewWalkthrough({
             }));
           }}
           undo={async () => {
-            const r = await api.undo(memberName);
+            const r = await api.undo();
             if (r) say(r.text, false, r.error);
           }}
           onClose={() => setDialog(null)}
