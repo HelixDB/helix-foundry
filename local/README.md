@@ -83,9 +83,11 @@ To change one, add its variable to foundry's `environment` in `local/compose.yam
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.5, `foundry` 0.1.4 and `ontology-agent` 0.1.3. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.16.0 for these). Each, and HelixDB, is pinned by its tag and digest, so a tag pushed again never changes what runs. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first: without both set, the build fails with `build tag cannot contain a digest`. A `FOUNDRY_*IMAGE` override runs as given, a plain tag too.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.6, `foundry` 0.1.5 and `ontology-agent` 0.1.4, with HelixDB v0.0.18. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.30.0 for these). Each, and HelixDB, is pinned by its tag and digest, so a tag pushed again never changes what runs. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first: without both set, the build fails with `build tag cannot contain a digest`. A `FOUNDRY_*IMAGE` override runs as given, a plain tag too.
 
-An older `FOUNDRY_IMAGE` or `FOUNDRY_AGENT_IMAGE` left in `local/.env` still starts, and then fails every draft, load and question with a contract mismatch (`the ontology agent speaks contract 4.11.0, not 4.16.0`). Remove the override, or set both to one release's images, and run `docker compose up -d` again.
+Upgrading from HelixDB v0.0.16 (`foundry` 0.1.4 and earlier) changes the stored data, once, on the first start: HelixDB rewrites its label index and turns stored RFC 3339 strings into typed datetimes in the background (a property under a text or vector index keeps its strings), and Foundry then loads every ontology's current load again, so its datetimes are written as the new agent writes them. Date filters may miss until that reload finishes. An install can't go back to v0.0.16 or older images afterwards: back up the volumes first if you might need to.
+
+An older `FOUNDRY_IMAGE` or `FOUNDRY_AGENT_IMAGE` left in `local/.env` still starts, and then fails every draft, load and question with a contract mismatch (`the ontology agent speaks contract 4.16.0, not 4.30.0`). Remove the override, or set both to one release's images, and run `docker compose up -d` again.
 
 ## Back up and restore
 
@@ -156,7 +158,7 @@ To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.e
 
 ## Slack (through Helix)
 
-Founder answers in Slack through Helix's own Slack app, Helix Foundry. Slack can't reach a computer behind your router, so Helix holds the app's install and relays between Slack and this install. It needs a Helix account that owns or administers a Helix workspace, and images after `foundry` 0.1.4 and `foundry-site` 0.1.5. It is off until you link: unlinked, Foundry only checks its own database for a link, and nothing reaches Helix. `FOUNDRY_TELEMETRY` doesn't control it.
+Founder answers in Slack through Helix's own Slack app, Helix Foundry. Slack can't reach a computer behind your router, so Helix holds the app's install and relays between Slack and this install. It needs a Helix account that owns or administers a Helix workspace, and `foundry` 0.1.5 and `foundry-site` 0.1.6 or newer. It is off until you link: unlinked, Foundry only checks its own database for a link, and nothing reaches Helix. `FOUNDRY_TELEMETRY` doesn't control it.
 
 1. **Link.** Settings › Slack, **Link to Helix**, opens Helix's site, where you sign in and link this install, by this machine's name, to a workspace you own or administer. Helix sends the link back to this computer only, at `http://localhost:3000/settings/slack`.
 2. **Add to Slack.** Slack's page adds the app to a Slack workspace; Helix finishes it and sends you back here. Each of this install's workspaces can have its own Slack workspace.
