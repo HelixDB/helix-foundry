@@ -72,7 +72,7 @@ export const cardQueries = {
   // What each current load asks a person to decide, counted by the index.
   // Polled by the badge, the nudge and the job dock, so read for a minute;
   // a job's end reads it again (../ontology/scope.tsx, the job dock), and
-  // the walk takes its own decisions off it as they save (adjustSummary),
+  // the walk takes off the cards it closes as it closes them (adjustSummary),
   // so a settle doesn't read it.
   summary: (ws: string) => ({
     queryKey: summaryKey(ws),

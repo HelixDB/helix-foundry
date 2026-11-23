@@ -99,7 +99,7 @@ function pageCards(
  * Founder's advice over them, the summary's count and the walk. The Review
  * page holds them, so the tab's count shows on either tab and what was
  * decided here keeps its place across a switch. `open` is the summary's
- * count of cards to decide, less the walk's own choices as they save;
+ * count of cards to decide, less the cards the walk closed since;
  * unset until the summary is read.
  */
 export function useReviewCards() {
