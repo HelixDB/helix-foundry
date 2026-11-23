@@ -32,7 +32,7 @@ import {
   parseEntityId,
   parseFactEvidence,
   parseLoadReviews,
-  loadReviewsRequest,
+  reviewsByKeyRequest,
   heldClaimDocs,
   isLayoutProp,
   nameLinksRequest,
@@ -1313,7 +1313,7 @@ describe("an entity's page, laid out", () => {
 describe("review shapes", () => {
   const at = { doc_id: "doc_1", section: 0, start: 0, end: 4, quote: "Text" };
   it("asks for them", () => {
-    expect(JSON.stringify(loadReviewsRequest(SCOPE, 0))).toContain(
+    expect(JSON.stringify(reviewsByKeyRequest(SCOPE, ["r"]))).toContain(
       '"evidence_shape","subject_type","object_type"',
     );
     expect(JSON.stringify(documentRequest(SCOPE, "doc_1"))).toContain(

@@ -695,16 +695,34 @@ export const papiRoutes = [
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-decisions/{id}",
   },
-  // Ontology: labels of claims the review queue drew, to measure precision.
+  // Ontology: labels of claims the review walk drew, to measure precision.
   {
     area: "ontology",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-labels",
   },
+  // Ontology: review cards, the graph worker's index of what each current
+  // load asks a person to decide: the counts, the walk's pages, and its spot
+  // checks (read, and drawn once at the finish).
   {
     area: "ontology",
     method: "GET",
-    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-labels",
+    path: "/v1/workspaces/{workspaceId}/foundry/review-summary",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-cards",
+  },
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-spot-checks",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-spot-checks:draw",
   },
 
   // Ontology: suggestions, what audits of the current load found it lacks.

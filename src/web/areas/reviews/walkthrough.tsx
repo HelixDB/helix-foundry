@@ -1,14 +1,14 @@
 // The review walkthrough, the Facts tab's body (./index.tsx): the current
-// load's cards one at a time, in the queue's order, each with Founder's
+// load's cards one at a time, in the index's order, each with Founder's
 // suggestion (./advice.ts) and the choices a person settles it with, every
 // one also a key (./keys.ts). A choice saves at once, through the same
 // settle call a document's Needs review sends, a few at a time, and the walk
 // moves on; Z takes the last choice (or batch) back. The walk (./walk.ts) is
 // held by the page (useWalk), so it keeps its place across a switch of tabs
-// and a read of the queue, and says so when a new load becomes current.
+// and a read of the cards, and says so when a new load becomes current.
 // Names the model linked and values a table keeps are for information (FYI),
-// names an earlier link settles are Covered, and the random draws wait for
-// the finish as spot checks.
+// names an earlier link settles are Covered, and spot checks, drawn at
+// random, wait for the finish.
 import {
   useEffect,
   useMemo,
@@ -51,13 +51,14 @@ import {
   type Decidable,
   type Effect,
 } from "./advice";
-import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
+import { deleteReviewDecision, settleReview } from "./api";
 import { BatchDialog } from "./batch-dialog";
+import { ADVICE_PAGES, adjustSummary } from "./cards-api";
 import { choicesOf, layoutChoices, type Choice } from "./choices";
 import { CoveredCards, FyiCards } from "./fyi";
-import type { ReviewQueue } from "./index";
+import type { ReviewCards } from "./index";
 import { useWalkKeys, type KeyCommand } from "./keys";
-import type { Queue, QueueCard } from "./queue";
+import type { QueueCard } from "./queue";
 import { KIND_TEXT, ReviewCard, cardLine } from "./review-card";
 import { settleAll } from "./settle-pool";
 import { SpotChecks } from "./spot-checks";
@@ -71,11 +72,9 @@ import {
   progress,
   unconfirmedNames,
   undecided,
-  walkOrder,
   walkReducer,
   type How,
   type Walk,
-  type WalkFilter,
   type WalkOrder,
 } from "./walk";
 import { WalkDone } from "./walk-done";
@@ -149,6 +148,8 @@ export function useWalk() {
   // Every card of the load's queue read in this walk, so one that leaves the
   // queue (decided, here or elsewhere) still shows in its place.
   const seen = useRef(new Map<string, { card: QueueCard; advice?: Advice }>());
+  // The order last taken, which a page read after it extends.
+  const last = useRef<{ loadId: string; order: readonly string[] }>(undefined);
   const undoing = useRef(false);
   // The choices still sending when a new load became current.
   const [changed, setChanged] = useState<readonly string[] | null>(null);
@@ -173,18 +174,19 @@ export function useWalk() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [sending]);
+  // The walk's own decisions, by id, and with `all` the ontology and its
+  // loads (an undo may take back what a load wrote).
+  const decidedKey = [ws, "ontology", o, "review-decided"];
   const refresh = (all: boolean) =>
-    Promise.all(
-      [
-        reviewQueries.list(ws, o).queryKey,
-        ...(all
-          ? [
-              ontologyQueries.ontology(ws, o).queryKey,
-              ontologyQueries.loads(ws, o).queryKey,
-            ]
-          : []),
-      ].map((queryKey) => qc.invalidateQueries({ queryKey, exact: true })),
-    );
+    Promise.all([
+      qc.invalidateQueries({ queryKey: decidedKey }),
+      ...(all
+        ? [
+            ontologyQueries.ontology(ws, o).queryKey,
+            ontologyQueries.loads(ws, o).queryKey,
+          ].map((queryKey) => qc.invalidateQueries({ queryKey, exact: true }))
+        : []),
+    ]);
   const send = (s: Sending): Promise<Answer> => {
     const key = s.card.key,
       g = gate.current;
@@ -201,6 +203,8 @@ export function useWalk() {
           { decision: s.choice, drawn: "ranked" },
         );
         dispatch({ type: "sent", key, decision });
+        // One card fewer to decide, until the summary is counted again.
+        adjustSummary(qc, ws, o, now.current.loadId, 1);
         return { kind: "saved", decision };
       } catch (e) {
         const message = (e as Error).message;
@@ -301,12 +305,18 @@ export function useWalk() {
           }),
         );
         const gone = removed.flatMap((r) => (r.ok ? [r.key] : []));
+        adjustSummary(
+          qc,
+          ws,
+          o,
+          now.current.loadId,
+          -removed.filter((r) => r.ok && r.decision).length,
+        );
         const read = new Map(
-          (
-            qc.getQueryData<FoundryReviewDecision[]>(
-              reviewQueries.list(ws, o).queryKey,
-            ) ?? []
-          ).map((d) => [d.id, d.applied]),
+          qc
+            .getQueriesData<FoundryReviewDecision[]>({ queryKey: decidedKey })
+            .flatMap(([, data]) => data ?? [])
+            .map((d) => [d.id, d.applied]),
         );
         const kept = new Set(
           removed.flatMap((r) =>
@@ -351,18 +361,40 @@ export function useWalk() {
       }
     },
     /**
-     * Takes the queue's new walk order (its cards to decide; every card of
-     * the queue, with Founder's advice): on another load, says which choices
-     * were still sending; on the same load, cards gone from the queue, or
-     * now covered by a link, keep their places.
+     * Takes the cards' new walk order (its cards to decide; every card read,
+     * with Founder's advice), and whether the index lists more after them:
+     * the next page's cards go after the order (extend); otherwise, on
+     * another load, it says which choices were still sending, and on the
+     * same load, cards the index no longer lists, or now covered by a link,
+     * keep their places. A card missing past the last the read still lists
+     * may only have moved to a page not read yet, so it is dropped, not
+     * marked decided elsewhere.
      */
     rebase: (
       loadId: string,
       { decide: order, cards: inQueue, advice, covered }: WalkOrder,
+      more: boolean,
     ) => {
       const w = now.current,
         moved = w.loadId !== "" && w.loadId !== loadId,
         cover = new Set(covered);
+      const before = last.current;
+      last.current = { loadId, order };
+      for (const [k, card] of inQueue)
+        seen.current.set(k, { card, advice: advice.get(k) });
+      if (
+        before?.loadId === loadId &&
+        w.loadId === loadId &&
+        before.order.length < order.length &&
+        before.order.every((k, i) => order[i] === k)
+      ) {
+        dispatch({
+          type: "extend",
+          loadId,
+          keys: order.slice(before.order.length),
+        });
+        return;
+      }
       if (moved) {
         setChanged(
           [...w.outcomes].flatMap(([k, x]) =>
@@ -370,9 +402,10 @@ export function useWalk() {
           ),
         );
         seen.current.clear();
+        for (const [k, card] of inQueue)
+          seen.current.set(k, { card, advice: advice.get(k) });
       }
-      for (const [k, card] of inQueue)
-        seen.current.set(k, { card, advice: advice.get(k) });
+      const listed = w.order.findLastIndex((k) => inQueue.has(k));
       dispatch({
         type: "rebase",
         loadId,
@@ -380,7 +413,10 @@ export function useWalk() {
         // Cards a link now covers have left the walk too, here or elsewhere.
         gone: new Set(
           w.loadId === loadId
-            ? w.order.filter((k) => !inQueue.has(k) || cover.has(k))
+            ? w.order.filter(
+                (k, i) =>
+                  (!inQueue.has(k) && (!more || i < listed)) || cover.has(k),
+              )
             : [],
         ),
       });
@@ -406,47 +442,31 @@ const decidable = (c: QueueCard | undefined): Decidable | undefined =>
     : undefined;
 
 /**
- * The Facts tab's walk of the queue (`cards`) of the current load: the
- * lanes (`lane`, in the URL) and the filters first (in the URL: `kind`, one
- * kind; `advice`, `type`, `doc`), then the progress, then
- * the rail of next cards (the cards still to decide, at the finish) beside
- * the card shown, or the finish.
+ * The Facts tab's walk of the current load's cards (`queue`): the lanes
+ * (`lane`, in the URL) and the filters first (in the URL: `kind`, one kind;
+ * `advice`, `type`, `doc`), then the progress, then the rail of next cards
+ * (the cards still to decide, at the finish) beside the card shown, or the
+ * finish.
  */
 export function ReviewWalkthrough({
   queue: q,
   load,
-  cards: queue,
 }: {
-  queue: ReviewQueue;
+  queue: ReviewCards;
   load: FoundryLoad;
-  cards: Queue;
 }) {
   const { id: ws, role } = useWorkspace(),
     { id: o } = useOntology();
+  const qc = useQueryClient();
   const shell = useShell();
   const docName = useDocumentNames(ws, "A document");
   const { naming, walk: api } = q;
   const w = api.state;
   const [params, setParams] = useSearchParams();
-  const kindParam = params.get("kind") ?? "",
-    adviceParam = params.get("advice") ?? "",
-    type = params.get("type") ?? "",
-    doc = params.get("doc") ?? "";
+  const { kind, type, doc, advice: adviceFilter } = q.filters;
   const laneParam = params.get("lane");
   const lane: Lane =
     laneParam === "fyi" || laneParam === "covered" ? laneParam : "decide";
-  const kind = KINDS.find((k) => k === kindParam);
-  const filter = useMemo((): WalkFilter => {
-    return {
-      kinds: new Set(kind ? [kind] : KINDS),
-      advice:
-        adviceParam === "suggested" || adviceParam === "none"
-          ? adviceParam
-          : "any",
-      ...(type ? { type } : {}),
-      ...(doc ? { documentId: doc } : {}),
-    };
-  }, [kind, adviceParam, type, doc]);
   const setParam = (name: string, value: string) =>
     setParams(
       (p) => {
@@ -458,16 +478,13 @@ export function ReviewWalkthrough({
       { replace: true },
     );
   const { single, ctx } = q;
-  const order = useMemo(
-    () => walkOrder(queue, ctx, filter),
-    [queue, ctx, filter],
-  );
+  const order = q.all!;
   useEffect(() => {
-    api.rebase(load.id, order);
+    api.rebase(load.id, order, q.hasMore);
   }, [load.id, order]);
   // The types and documents the filters offer: every one this visit's reads
   // of the load had a card of, so the row stays as it was while cards are
-  // decided and leave the queue, to the finish.
+  // decided and leave the index, to the finish.
   const seenOffered = useRef<{
     load: string;
     types: Set<string>;
@@ -481,8 +498,8 @@ export function ReviewWalkthrough({
         docs: new Set(),
       };
     const { types, docs } = seenOffered.current;
-    for (const k of q.all?.advice.keys() ?? []) {
-      const c = decidable(q.all?.cards.get(k));
+    for (const k of order.advice.keys()) {
+      const c = decidable(order.cards.get(k));
       if (!c) continue;
       docs.add(c.review.documentId);
       if (c.kind === "claim") {
@@ -491,7 +508,7 @@ export function ReviewWalkthrough({
       } else types.add(settleOf(c).type);
     }
     return { types: [...types].sort(), docs: [...docs] };
-  }, [q.all, load.id]);
+  }, [order, load.id]);
 
   const synced = w.loadId === load.id;
   const key = synced ? current(w) : null;
@@ -553,8 +570,8 @@ export function ReviewWalkthrough({
   // settles none of the other documents now: their cards are to decide
   // again.
   const appliedOf = useMemo(
-    () => new Map((q.decisions.data ?? []).map((d) => [d.id, d.applied])),
-    [q.decisions.data],
+    () => new Map((q.decided.data ?? []).map((d) => [d.id, d.applied])),
+    [q.decided.data],
   );
   const notInPlace = useMemo(
     () =>
@@ -579,8 +596,8 @@ export function ReviewWalkthrough({
   // A name's choice whose job failed before saying what became of it is to
   // choose again: the card offers its choices, and counts as still to decide.
   const unconfirmed = useMemo(
-    () => unconfirmedNames(w.outcomes, q.decisions.data ?? []),
-    [w.outcomes, q.decisions.data],
+    () => unconfirmedNames(w.outcomes, q.decided.data ?? []),
+    [w.outcomes, q.decided.data],
   );
   useEffect(() => {
     if (unconfirmed.size)
@@ -633,7 +650,6 @@ export function ReviewWalkthrough({
   const decide = (choice: FoundryReviewChoice, how: "accepted" | "chosen") => {
     if (!card || !manage || !open) return;
     const covers = choice.resolve?.entityKey ? siblings : [];
-    q.keepCards([card.key]);
     api.decide({ card, choice, how, covers, effect: effectFor(card, choice) });
     trackEvent("review_decided", {
       how,
@@ -741,7 +757,7 @@ export function ReviewWalkthrough({
     api.dispatch({ type: "jump", key: k });
   };
   // How many filters are on, and clearing them all.
-  const filters = [kind, filter.advice !== "any", type, doc].filter(
+  const filters = [kind, adviceFilter !== "any", type, doc].filter(
     Boolean,
   ).length;
   const clearFilters = () =>
@@ -753,8 +769,17 @@ export function ReviewWalkthrough({
       },
       { replace: true },
     );
+  // Decide counts what the index counts open, less this walk's choices,
+  // while no filter narrows it; else the cards read still to decide.
   const lanes: { value: Lane; label: string; count: number }[] = [
-    { value: "decide", label: "Decide", count: undecided(w.order, w.outcomes) },
+    {
+      value: "decide",
+      label: "Decide",
+      count:
+        !filters && q.open !== undefined
+          ? q.open
+          : undecided(w.order, w.outcomes),
+    },
     { value: "fyi", label: "FYI", count: order.fyi.length },
     { value: "covered", label: "Covered", count: covered.length },
   ];
@@ -789,7 +814,7 @@ export function ReviewWalkthrough({
             />
             <FilterSelect
               label="Suggestion"
-              value={filter.advice}
+              value={adviceFilter}
               onChange={(v) => setParam("advice", v === "any" ? "" : v)}
               options={(["any", "suggested", "none"] as const).map((a) => ({
                 value: a,
@@ -829,13 +854,22 @@ export function ReviewWalkthrough({
           </div>
         </div>
         <p role="status" className="rv-progress">
-          {formatNumber(p.total - p.left)} of {formatNumber(p.total)} ·{" "}
-          {formatNumber(p.accepted)} accepted · {formatNumber(p.chosen)} changed
-          · {formatNumber(p.skipped)} skipped
+          {formatNumber(p.total - p.left)} of {formatNumber(p.total)}
+          {q.hasMore && "+"} · {formatNumber(p.accepted)} accepted ·{" "}
+          {formatNumber(p.chosen)} changed · {formatNumber(p.skipped)} skipped
           {p.covered > 0 && ` · ${formatNumber(p.covered)} covered`}
           {elsewhere > 0 && ` · ${formatNumber(elsewhere)} decided elsewhere`}
           {takenBack > 0 && ` · ${formatNumber(takenBack)} taken back`}
         </p>
+        {q.adviceCapped && (
+          <p role="note" className="on-muted">
+            {adviceFilter === "suggested"
+              ? "Founder’s suggestions"
+              : "Cards without a suggestion"}{" "}
+            among the next {formatNumber(ADVICE_PAGES * 50)} cards. Clear the
+            filter to walk the rest.
+          </p>
+        )}
         <div className="rv-meter" aria-hidden>
           <span
             className="rv-meter-done"
@@ -848,13 +882,28 @@ export function ReviewWalkthrough({
       {!synced ? (
         <SkeletonText lines={6} />
       ) : lane === "fyi" ? (
-        <FyiCards
-          keys={order.fyi}
-          cards={order.cards}
-          load={load}
-          naming={naming}
-          settled={q.settled}
-        />
+        <>
+          <FyiCards
+            keys={order.fyi}
+            cards={order.cards}
+            load={load}
+            naming={naming}
+            settled={() =>
+              void qc.invalidateQueries({
+                queryKey: [ws, "ontology", o, "review-cards", load.id],
+              })
+            }
+          />
+          {q.fyi.hasNextPage && (
+            <Button
+              size="sm"
+              pending={q.fyi.isFetchingNextPage}
+              onClick={() => void q.fyi.fetchNextPage()}
+            >
+              Show more
+            </Button>
+          )}
+        </>
       ) : lane === "covered" ? (
         <CoveredCards
           keys={covered}
@@ -930,6 +979,7 @@ export function ReviewWalkthrough({
                 notInPlace={notInPlace}
                 member={!canManage(role)}
                 empty={!w.order.length}
+                indexing={q.indexing}
                 onClearFilters={filters ? clearFilters : undefined}
                 headingRef={heading}
                 onBack={() => on({ kind: "back" })}
@@ -938,14 +988,7 @@ export function ReviewWalkthrough({
                   api.dispatch({ type: "undone", keys });
                 }}
                 onJump={jump}
-                spot={
-                  <SpotChecks
-                    queue={q}
-                    load={load}
-                    keys={order.spot}
-                    cards={order.cards}
-                  />
-                }
+                spot={<SpotChecks queue={q} load={load} />}
               />
             )}
           </div>
@@ -974,12 +1017,7 @@ export function ReviewWalkthrough({
           cards={order.cards}
           advice={dialog.advice}
           label={dialog.label}
-          drawn={drawnLike(
-            order.spot,
-            order.cards,
-            dialog.batch.batchKey,
-            q.kept,
-          )}
+          drawn={drawnLike(q.spot.data?.draws ?? [], dialog.batch.batchKey)}
           run={async (keys, signal, onProgress) => {
             const chosen = new Set(keys);
             const items = dialog.batch.items.flatMap((it) => {
@@ -994,7 +1032,6 @@ export function ReviewWalkthrough({
                   ]
                 : [];
             });
-            q.keepCards(items.map((s) => s.card.key));
             moved.current = true;
             if (dialog.advice.kind === "suggest")
               trackEvent("review_batch_accepted", {

@@ -5,10 +5,10 @@
 // one card at a time. Ontology is the Suggestions area's
 // list: what audits of the current load found the ontology lacks, acted on
 // by drafting a new version. Where this Foundry doesn't audit loads, there
-// is no Ontology tab. Each tab counts what is open in it, and the page
-// keeps the Facts count where the Ontologies panel's Review link reads it.
-import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+// is no Ontology tab. Each tab counts what is open in it: Facts, the review
+// cards index's count (the summary, which the Ontologies panel and the job
+// dock read too), less this walk's choices.
+import { useQuery } from "@tanstack/react-query";
 import {
   Page,
   PageHeader,
@@ -22,8 +22,7 @@ import { useWorkspace } from "../../ui";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { OntologySuggestions } from "../suggestions";
 import { suggestionQueries } from "../suggestions/api";
-import { reviewQueries, type OpenFacts } from "./api";
-import { FactsReview, useReviewQueue } from "./index";
+import { FactsReview, useReviewCards } from "./index";
 
 const SUBTITLES = {
   facts:
@@ -36,23 +35,12 @@ export function ReviewPage() {
   const { id: ws } = useWorkspace(),
     { id: o, ontology } = useOntology();
   useTitle("Review");
-  const qc = useQueryClient();
-  const queue = useReviewQueue(),
+  const queue = useReviewCards(),
     suggestions = useQuery(suggestionQueries.list(ws, o));
   // The tab shows until the list says audits are off, so a link to it
   // doesn't open Facts first.
   const audits = suggestions.data?.enabled !== false;
   const [tab] = useTabParam(audits ? ["facts", "ontology"] : ["facts"]);
-  const loadId = queue.load?.id ?? "",
-    { open, suggested } = queue;
-  useEffect(() => {
-    if (open !== undefined && suggested !== undefined && loadId)
-      qc.setQueryData<OpenFacts>(reviewQueries.openFacts(ws, o).queryKey, {
-        loadId,
-        open,
-        suggested,
-      });
-  }, [qc, ws, o, loadId, open, suggested]);
   return (
     <Page>
       <PageHeader
@@ -68,7 +56,7 @@ export function ReviewPage() {
             label="Review"
             idPrefix="review"
             items={[
-              { id: "facts", label: "Facts", count: open },
+              { id: "facts", label: "Facts", count: queue.open },
               ...(audits
                 ? [
                     {

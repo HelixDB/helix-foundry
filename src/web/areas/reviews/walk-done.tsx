@@ -17,6 +17,7 @@ export function WalkDone({
   notInPlace,
   member,
   empty,
+  indexing,
   onClearFilters,
   headingRef,
   onBack,
@@ -34,6 +35,9 @@ export function WalkDone({
   member: boolean;
   // The walk took no card: nothing to decide under its filters.
   empty: boolean;
+  // The index is still sorting the load's reviews into cards: more may
+  // come, so the walk is never done.
+  indexing: boolean;
   // Clears the walk's filters; unset while none is set.
   onClearFilters?: () => void;
   headingRef: Ref<HTMLHeadingElement>;
@@ -65,11 +69,13 @@ export function WalkDone({
             ? member
               ? `${plural(left.length, "card")} ${left.length > 1 ? "wait" : "waits"} for an owner or admin`
               : `${plural(left.length, "card")} still to decide`
-            : empty
-              ? "Nothing to decide"
-              : skipped.length
-                ? `Through to the end, ${formatNumber(skipped.length)} skipped`
-                : "All caught up"}
+            : indexing
+              ? "More cards may come"
+              : empty
+                ? "Nothing to decide"
+                : skipped.length
+                  ? `Through to the end, ${formatNumber(skipped.length)} skipped`
+                  : "All caught up"}
         </h2>
         {walk.order.length > 0 && (
           <Button size="sm" variant="ghost" onClick={onBack}>
@@ -77,11 +83,19 @@ export function WalkDone({
           </Button>
         )}
       </div>
-      {empty && (
+      {indexing ? (
         <p className="on-muted">
-          No card of the current load’s queue
-          {onClearFilters ? " that these filters take" : ""} is left to decide.
+          Counting… the load’s reviews are still being sorted into cards. Come
+          back in a few minutes for the rest.
         </p>
+      ) : (
+        empty && (
+          <p className="on-muted">
+            No card of the current load
+            {onClearFilters ? " that these filters take" : ""} is left to
+            decide.
+          </p>
+        )
       )}
       {decided.length > 0 && (
         <dl className="rv-done-groups">

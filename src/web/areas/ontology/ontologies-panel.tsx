@@ -19,7 +19,7 @@ import { paths } from "../../paths";
 import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
-import { reviewQueries } from "../reviews/api";
+import { useReviewSummary } from "../reviews/cards-api";
 import { suggestionQueries } from "../suggestions/api";
 import { loadVersion } from "./model";
 import { lastLoadBadge } from "./parts";
@@ -57,17 +57,19 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       enabled: !!open,
     }).data?.ontology;
   // Review counts what is open on both its tabs, and says each part: Facts'
-  // cards to decide as the Review page last counted them on the current
-  // load (reading the load's reviews is the page's, not every page's), and
-  // Ontology's suggestions where audits run. A total waits for Facts' part;
-  // no grantee reaches Review.
+  // cards to decide on the current load, as the review cards index counts
+  // them (the summary, less the walk's own choices), and Ontology's
+  // suggestions where audits run. A total waits for Facts' part; no grantee
+  // reaches Review.
   const heal = useQuery({
       ...suggestionQueries.list(ws, open),
       enabled: !!open && !grantee,
     }),
-    facts = useQuery(reviewQueries.openFacts(ws, open)).data;
+    facts = useReviewSummary().get(open);
   const factsOpen =
-      facts && own?.currentLoad?.id === facts.loadId ? facts.open : undefined,
+      facts && own?.currentLoad?.id === facts.loadId
+        ? (facts.open ?? 0)
+        : undefined,
     suggestionsOpen = heal.data?.enabled ? heal.data.findings?.length || 0 : 0;
   const reviewOpen = factsOpen === undefined ? 0 : factsOpen + suggestionsOpen;
   const reviewParts = [

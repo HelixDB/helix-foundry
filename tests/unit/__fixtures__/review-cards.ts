@@ -2,6 +2,7 @@ import type {
   DecisionApplied,
   FoundryPropValue,
   FoundryReviewDecision,
+  FoundryReviewNameDecisions,
 } from "@/shared/wfe";
 import type { EntityRow } from "@/web/areas/explore/model";
 import { adviceContext } from "@/web/areas/reviews/advice";
@@ -70,7 +71,6 @@ export function heldCard(
     kind: "claim",
     key: `held-${n}`,
     review,
-    drawn: "ranked",
     band: bandOf(confidence ?? undefined),
   };
 }
@@ -115,11 +115,14 @@ export function nameCard(
   return {
     kind: "name",
     key: JSON.stringify([type, doc, normName]),
+    // As the index lays it out: a name only the model linked is for
+    // information.
+    lane: reasons.every((r) => r === "adjudicated") ? "fyi" : "decide",
     review: reviews[0]!,
     reviews,
+    reviewCount: reviews.length,
     blocked: 0,
     held,
-    drawn: "ranked",
   };
 }
 
@@ -130,7 +133,8 @@ export function valueCard(
   return {
     kind: "value",
     key: id,
-    drawn: "ranked",
+    // A value a table keeps against documents is for information.
+    lane: table === undefined ? "decide" : "fyi",
     review: {
       documentId: "doc-1",
       section: 2,
@@ -189,9 +193,49 @@ export const noBands: Precision = {
   rechecks: { agreed: 0, total: 0 },
 };
 
+/**
+ * The index's names of `decisions` (mock/routes/review-cards.ts's): each
+ * name's resolve decisions, how many choices they make, newest first.
+ */
+export const nameDecisions = (
+  decisions: readonly FoundryReviewDecision[],
+): FoundryReviewNameDecisions[] => {
+  const by = new Map<string, FoundryReviewDecision[]>();
+  for (const d of decisions)
+    if (d.kind === "resolve") {
+      const at = JSON.stringify([d.type, d.normName]);
+      by.set(at, [...(by.get(at) ?? []), d]);
+    }
+  return [...by].map(([at, of]) => {
+    const [type, normName] = JSON.parse(at) as [string, string];
+    return {
+      type,
+      normName,
+      total: of.length,
+      choices: new Set(
+        of.map((d) => (d.kind === "resolve" && d.entityKey) || ""),
+      ).size,
+      newest: of
+        .toSorted(
+          (a, b) =>
+            (b.decidedAt ?? "").localeCompare(a.decidedAt ?? "") ||
+            b.id.localeCompare(a.id),
+        )
+        .slice(0, 20),
+    };
+  });
+};
+
 export const ctxOf = ({
   decisions = [] as FoundryReviewDecision[],
   precision = noBands,
   single = (_: string) => false,
   user = "u-1",
-} = {}) => adviceContext({ decisions, precision, single, user });
+} = {}) =>
+  adviceContext({
+    names: nameDecisions(decisions),
+    claims: decisions,
+    precision,
+    single,
+    user,
+  });

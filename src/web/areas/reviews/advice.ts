@@ -1,6 +1,7 @@
 import type {
   FoundryReviewChoice,
   FoundryReviewDecision,
+  FoundryReviewNameDecisions,
   ReviewDecision,
 } from "../../../shared/wfe";
 import {
@@ -15,6 +16,7 @@ import {
   BLOCKING,
   type Band,
   type ClaimCard,
+  type Lane,
   type NameCard,
   type Precision,
   type ValueCard,
@@ -22,15 +24,18 @@ import {
 
 // Founder's suggestion for a card of the review walkthrough: a choice from
 // fixed rules over what the card and the saved decisions already hold, at no
-// model cost, computed whenever the queue is read and stored nowhere, so it
-// follows the decisions as they change. Pure. A suggestion is only ever
+// model cost, computed whenever the walk's cards are read and stored
+// nowhere, so it follows the decisions as they change. The index sends what
+// the rules read with each page of cards: each name's decisions across
+// documents (how many, how many choices, the newest), the decisions at each
+// held claim's place, and, on the first page, the spot checks' precision. Pure. A suggestion is only ever
 // accepted by a person, through the same settle call a card sends.
 //
 // The rules, first that fires:
 // - precedent (names): every resolve decision of the same type and name in
-//   another document chose the same, an entity this card lists and the read
-//   found, or Not in data. A repeat of the person's own choice may be
-//   accepted in a batch;
+//   another document chose the same (one choice), an entity this card lists
+//   and the read found, or Not in data. A repeat of the person's own choice
+//   (every decision theirs) may be accepted in a batch;
 // - single_candidate (names): the card lists one candidate, found in the
 //   load. Not measured, so never batched;
 // - confident_claim (held claims): Approve all would take it (approvable),
@@ -98,13 +103,6 @@ export type Advice =
     }
   | { kind: "none"; why: NoAdvice };
 
-/**
- * Where a card goes: to decide, or for information. A link the model made
- * (adjudicated) and a value a table row holds against documents are in
- * their load already and block nothing; each can still be changed.
- */
-export type Lane = "decide" | "fyi";
-
 /** When what a choice saves takes effect (the backend's rules per kind). */
 export type Effect =
   // A held claim's approval: a job writes it to the current load.
@@ -123,13 +121,23 @@ type Resolve = Extract<ReviewDecision, { kind: "resolve" }> &
   FoundryReviewDecision;
 
 /**
- * What the rules read, indexed once a queue so a card reads only its own:
- * resolve decisions by type and name (`names`), claim decisions by place
- * (`claims`), the bands' precision, which links hold one value, and the
- * person deciding (`user`).
+ * The resolve decisions of one name across the ontology's documents: how
+ * many, how many different choices, and the newest (at most 20).
+ */
+export type NameDecisions = {
+  total: number;
+  choices: number;
+  newest: readonly Resolve[];
+};
+
+/**
+ * What the rules read, indexed once a page of cards so a card reads only
+ * its own: each name's decisions by type and name (`names`), claim
+ * decisions by place (`claims`), the bands' precision, which links hold one
+ * value, and the person deciding (`user`).
  */
 export type AdviceContext = {
-  names: ReadonlyMap<string, readonly Resolve[]>;
+  names: ReadonlyMap<string, NameDecisions>;
   claims: ReadonlyMap<string, readonly FoundryReviewDecision[]>;
   precision: Precision;
   single: (link: string) => boolean;
@@ -151,33 +159,50 @@ const claimAt = (docId: string, section: number, start: number, end: number) =>
   JSON.stringify([docId, section, start, end]);
 
 /**
- * The context of `decisions`, indexed.
+ * The context of the index's `names` and the claim decisions its cards
+ * carry (`claims`), indexed.
  *
  * @example
- * adviceContext({ decisions: [], precision: { bands: [], rechecks: { agreed: 0, total: 0 } }, single: () => false, user: "u" }).names.size; // 0
+ * adviceContext({ names: [], claims: [], precision: { bands: [], rechecks: { agreed: 0, total: 0 } }, single: () => false, user: "u" }).names.size; // 0
  */
 export function adviceContext({
-  decisions,
+  names,
+  claims,
   precision,
   single,
   user,
 }: {
-  decisions: readonly FoundryReviewDecision[];
+  names: readonly FoundryReviewNameDecisions[];
+  claims: readonly FoundryReviewDecision[];
   precision: Precision;
   single: (link: string) => boolean;
   user: string;
 }): AdviceContext {
-  const names = new Map<string, Resolve[]>(),
-    claims = new Map<string, FoundryReviewDecision[]>();
-  for (const d of decisions)
-    if (d.kind === "resolve") {
-      const at = nameAt(d.type, d.normName);
-      names.set(at, [...(names.get(at) ?? []), d]);
-    } else if (d.kind !== "prop") {
+  const byPlace = new Map<string, FoundryReviewDecision[]>();
+  for (const d of claims)
+    if (d.kind !== "resolve" && d.kind !== "prop") {
       const at = claimAt(d.docId, d.claimSection, d.claimStart, d.claimEnd);
-      claims.set(at, [...(claims.get(at) ?? []), d]);
+      if (!byPlace.get(at)?.some((x) => x.id === d.id))
+        byPlace.set(at, [...(byPlace.get(at) ?? []), d]);
     }
-  return { names, claims, precision, single, user };
+  return {
+    names: new Map(
+      names.map((n) => [
+        nameAt(n.type, n.normName),
+        {
+          total: n.total ?? 0,
+          choices: n.choices ?? 0,
+          newest: (n.newest ?? []).filter(
+            (d): d is Resolve => d.kind === "resolve",
+          ),
+        },
+      ]),
+    ),
+    claims: byPlace,
+    precision,
+    single,
+    user,
+  };
 }
 
 const SETTLE_KIND = {
@@ -236,25 +261,17 @@ export const asks = (card: NameCard): boolean =>
   BLOCKING.has(card.review.reason);
 
 /**
- * A card's lane: a name the model linked, and a value a table holds against
- * documents, are for information; everything else is to decide.
+ * A card's lane, as the index lays it out: a name the model linked, and a
+ * value a table holds against documents, are in their load already and
+ * block nothing, so they are for information (each can still be changed);
+ * everything else is to decide.
  *
  * @example
  * laneOf(adjudicatedName); // "fyi"
  * laneOf(heldClaim); // "decide"
  */
-export function laneOf(card: Decidable): Lane {
-  switch (card.kind) {
-    case "name":
-      return card.reviews.every((r) => r.reason === "adjudicated")
-        ? "fyi"
-        : "decide";
-    case "value":
-      return settleOf(card).table === undefined ? "decide" : "fyi";
-    case "claim":
-      return "decide";
-  }
-}
+export const laneOf = (card: Decidable): Lane =>
+  card.kind === "claim" ? "decide" : card.lane;
 
 /**
  * The decision that already settles a name card the load still asks about:
@@ -279,7 +296,7 @@ export function coveredBy(
   if (!asks(card)) return null;
   const s = settleOf(card);
   return (
-    (ctx.names.get(nameAt(s.type, s.normName)) ?? []).find(
+    (ctx.names.get(nameAt(s.type, s.normName))?.newest ?? []).find(
       (d) =>
         d.docId !== s.docId &&
         (d.applied?.status === "pending" || d.applied?.status === "written") &&
@@ -316,15 +333,22 @@ function adviseName(card: NameCard, ctx: AdviceContext): Advice {
   // offered.
   const found = (key: string) =>
     candidates.some((c) => c.key === key && !!c.entity);
-  const earlier = (ctx.names.get(nameAt(s.type, s.normName)) ?? []).filter(
-    (d) => d.docId !== s.docId,
-  );
-  const chosen = new Set(earlier.map((d) => d.entityKey ?? null));
-  const [only] = chosen;
-  if (chosen.size === 1 && (only === null || found(only))) {
-    const by = earlier.every((d) => d.decidedByUserId === ctx.user)
-      ? "you"
-      : "team";
+  // The name's decisions are of other documents: one of this document's
+  // would decide the card. One choice across all of them is a precedent.
+  const n = ctx.names.get(nameAt(s.type, s.normName));
+  const earlier = (n?.newest ?? []).filter((d) => d.docId !== s.docId);
+  const only = earlier[0]?.entityKey ?? null;
+  if (
+    n?.choices === 1 &&
+    earlier.length > 0 &&
+    (only === null || found(only))
+  ) {
+    // Theirs alone only when every decision is read, and theirs.
+    const by =
+      n.total === n.newest.length &&
+      earlier.every((d) => d.decidedByUserId === ctx.user)
+        ? "you"
+        : "team";
     return {
       kind: "suggest",
       rule: "precedent",
@@ -335,13 +359,13 @@ function adviseName(card: NameCard, ctx: AdviceContext): Advice {
       basis: [
         {
           kind: "precedent",
-          decisions: earlier.length,
+          decisions: n.total,
           latest: earlier
             .map((d) => d.decidedAt ?? "")
             .reduce((a, b) => (b > a ? b : a), ""),
         },
       ],
-      strength: { kind: "repeat", decisions: earlier.length, by },
+      strength: { kind: "repeat", decisions: n.total, by },
       batchKey:
         by === "you"
           ? `precedent:${JSON.stringify([s.type, s.normName, only])}`

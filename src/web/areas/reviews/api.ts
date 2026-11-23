@@ -1,9 +1,7 @@
 import type {
   DeleteReviewDecisionResponse,
   FoundryReviewDecision,
-  FoundryReviewLabel,
   ListReviewDecisionsResponse,
-  ListReviewLabelsResponse,
   ReviewDecisionResponse,
   ReviewLabelResponse,
   SettleReviewLabelRequest,
@@ -77,54 +75,8 @@ export const reviewQueries = {
       return decisions;
     },
   }),
-  // What the Review page last counted open on its Facts tab, for the
-  // current load it read: the Ontologies panel's Review link shows it,
-  // since counting reads the load's reviews from its database, which the
-  // panel, on every page, can't afford. Only the page writes it; nothing
-  // fetches it.
-  openFacts: (ws: string, o: string) => ({
-    queryKey: [ws, "ontology", o, "review-open-facts"],
-    staleTime: Infinity,
-    enabled: false,
-    queryFn: ({ client }: { client: QueryClient }) =>
-      client.getQueryData<OpenFacts>([
-        ws,
-        "ontology",
-        o,
-        "review-open-facts",
-      ]) ?? null,
-  }),
 };
-
-/**
- * The Facts tab's open count, how many of those Founder has a suggestion
- * for, and the load they were counted on.
- */
-export type OpenFacts = { loadId: string; open: number; suggested: number };
-// Every label of the ontology, a page (100) at a time: what the review queue
-// measures precision from, and leaves out of its draws.
-export const labelQueries = {
-  list: (ws: string, o: string) => ({
-    queryKey: [ws, "ontology", o, "review-labels"],
-    staleTime: 30_000,
-    queryFn: async () => {
-      const labels: FoundryReviewLabel[] = [];
-      const seen = new Set<string>();
-      let token = "";
-      do {
-        const page = await api<ListReviewLabelsResponse>(
-          `${base(ws, o)}/review-labels${token ? `?pageToken=${enc(token)}` : ""}`,
-        );
-        labels.push(...(page.labels || []));
-        token = page.nextPageToken || "";
-        if (seen.has(token)) throw new Error("Labels repeated a page.");
-        seen.add(token);
-      } while (token);
-      return labels;
-    },
-  }),
-};
-/** Keeps a person's word on a claim the review queue drew (or re-checks). */
+/** Keeps a person's word on a claim the review walk drew (or re-checks). */
 export const settleLabel = async (
   ws: string,
   o: string,

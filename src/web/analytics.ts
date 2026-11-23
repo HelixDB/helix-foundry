@@ -375,6 +375,10 @@ export type AnalyticsEvents = {
   review_batch_accepted: { size_bucket: SizeBucket; rule: RuleId };
   review_undone: { kind: "choice" | "batch" };
   review_walk_finished: { size_bucket: SizeBucket };
+  // The sidebar's nudge to an owner or admin (areas/reviews/nudge.tsx): shown
+  // for a load with cards to decide, and Start pressed, by how many.
+  review_nudge_shown: { size_bucket: SizeBucket };
+  review_nudge_started: { size_bucket: SizeBucket };
   graph_exported: undefined;
   // Use cases (the Usage pages; the events keep their workflow_ names): an
   // agent's task, and the prompt that has an agent run it.

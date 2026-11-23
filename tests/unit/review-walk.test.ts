@@ -3,14 +3,9 @@ import type {
   DecisionApplied,
   FoundryReviewChoice,
   FoundryReviewDecision,
+  FoundryReviewDraw,
 } from "@/shared/wfe";
 import type { Advice } from "@/web/areas/reviews/advice";
-import type {
-  DecidedCard,
-  Queue,
-  QueueCard,
-  QuoteCard,
-} from "@/web/areas/reviews/queue";
 import {
   batchOf,
   batchReason,
@@ -19,7 +14,6 @@ import {
   drawnLike,
   linkedNow,
   notLinked,
-  SPOT_CHECKS,
   progress,
   unconfirmedNames,
   undecided,
@@ -29,7 +23,6 @@ import {
   type Outcome,
   type Walk,
   type WalkAction,
-  type WalkFilter,
 } from "@/web/areas/reviews/walk";
 import {
   ctxOf,
@@ -42,24 +35,6 @@ import {
 
 // The review walkthrough's state (reviews/walk.ts): its lanes, the reducer
 // over every action, progress and batches.
-
-const queueOf = (cards: QueueCard[]): Queue => ({
-  cards,
-  left: { decided: 0, unsettled: 0, blocked: 0, stale: 0 },
-  pool: {
-    "0.9": { held: 0, quotes: 0 },
-    "0.8": { held: 0, quotes: 0 },
-    "0.7": { held: 0, quotes: 0 },
-    "0.6": { held: 0, quotes: 0 },
-    low: { held: 0, quotes: 0 },
-    none: { held: 0, quotes: 0 },
-  },
-});
-
-const all: WalkFilter = {
-  kinds: new Set(["name", "claim", "value"]),
-  advice: "any",
-};
 
 describe("walkOrder", () => {
   const umbrella = { key: "scus_1", entity: entity("scus_1", "Umbrella") };
@@ -78,32 +53,8 @@ describe("walkOrder", () => {
   const claim = heldCard(1, { doc: "doc-5", subjectType: "Person" });
   const value = valueCard([{ text: "a" }, { text: "a" }, { text: "a" }]);
   const table = valueCard([{ text: "a" }], { table: "b", id: "v-2" });
-  const randomClaim = { ...heldCard(2), drawn: "random" as const };
-  const decided: DecidedCard = {
-    ...heldCard(3),
-    kind: "decided",
-    drawn: "random",
-  };
-  const quote: QuoteCard = {
-    kind: "quote",
-    key: "quote-0.9-0",
-    band: "0.9",
-    draw: 0,
-    drawn: "random",
-  };
-  const queue = queueOf([
-    asking,
-    claim,
-    randomClaim,
-    askingToo,
-    bound,
-    covered,
-    model,
-    decided,
-    value,
-    table,
-    quote,
-  ]);
+  // The decide lane's pages, then the FYI lane's, as the index lists them.
+  const queue = [asking, claim, askingToo, bound, covered, value, model, table];
   const ctx = ctxOf({
     decisions: [
       resolveDecision("d-1", {
@@ -114,8 +65,8 @@ describe("walkOrder", () => {
       }),
     ],
   });
-  it("puts each card in its lane, in the queue's order", () => {
-    const o = walkOrder(queue, ctx, all);
+  it("puts each card in its lane, in the index's order", () => {
+    const o = walkOrder(queue, ctx, "any");
     expect(o.decide).toEqual([
       asking.key,
       waiting.key,
@@ -126,13 +77,13 @@ describe("walkOrder", () => {
     ]);
     expect(o.fyi).toEqual([model.key, table.key]);
     expect(o.covered).toEqual([covered.key]);
-    expect(o.spot).toEqual([randomClaim.key, decided.key, quote.key]);
     // Every card, a held claim of a name too, by key.
     expect(o.cards.get(waiting.key)).toBe(waiting);
-    expect(o.cards.get(quote.key)).toBe(quote);
+    // A card a page read again lists once.
+    expect(walkOrder([...queue, claim], ctx, "any").decide).toEqual(o.decide);
   });
-  it("advises the cards to decide, and no random draw", () => {
-    const o = walkOrder(queue, ctx, all);
+  it("advises the cards", () => {
+    const o = walkOrder(queue, ctx, "any");
     expect(o.advice.get(asking.key)).toMatchObject({
       kind: "suggest",
       rule: "single_candidate",
@@ -142,43 +93,27 @@ describe("walkOrder", () => {
       why: "waits_on_name",
     });
     expect(o.advice.get(model.key)).toEqual({ kind: "none", why: "fyi" });
-    expect(o.advice.has(randomClaim.key)).toBe(false);
-    expect(o.advice.has(quote.key)).toBe(false);
   });
   it("pairs the names the load asks about in other documents", () => {
-    const o = walkOrder(queue, ctx, all);
+    const o = walkOrder(queue, ctx, "any");
     expect(o.siblings.get(asking.key)).toEqual([askingToo.key]);
     expect(o.siblings.get(askingToo.key)).toEqual([asking.key]);
     expect(o.siblings.has(bound.key)).toBe(false);
     expect(o.siblings.has(covered.key)).toBe(false);
   });
-  it("filters by kind, advice, type and document, never the spot checks", () => {
-    const claims = walkOrder(queue, ctx, { ...all, kinds: new Set(["claim"]) });
-    expect(claims.decide).toEqual([waiting.key, claim.key]);
-    expect(claims.fyi).toEqual([]);
-    expect(claims.covered).toEqual([]);
-    expect(claims.spot).toEqual([randomClaim.key, decided.key, quote.key]);
-    expect(
-      walkOrder(queue, ctx, { ...all, advice: "suggested" }).decide,
-    ).toEqual([asking.key, value.key]);
-    expect(walkOrder(queue, ctx, { ...all, advice: "none" }).decide).toEqual([
+  it("takes the cards to decide Founder has a suggestion for, or none for", () => {
+    expect(walkOrder(queue, ctx, "suggested").decide).toEqual([
+      asking.key,
+      value.key,
+    ]);
+    expect(walkOrder(queue, ctx, "none").decide).toEqual([
       waiting.key,
       claim.key,
       askingToo.key,
       bound.key,
     ]);
-    expect(walkOrder(queue, ctx, { ...all, type: "Person" }).decide).toEqual([
-      claim.key,
-    ]);
-    expect(walkOrder(queue, ctx, { ...all, type: "Customer" }).decide).toEqual([
-      asking.key,
-      askingToo.key,
-      bound.key,
-      value.key,
-    ]);
-    expect(
-      walkOrder(queue, ctx, { ...all, documentId: "doc-2" }).decide,
-    ).toEqual([askingToo.key]);
+    // Neither filter narrows the other lanes.
+    expect(walkOrder(queue, ctx, "none").fyi).toEqual([model.key, table.key]);
   });
 });
 
@@ -662,7 +597,7 @@ describe("undecided", () => {
   });
   it("is the Facts tab's count, the walk's Decide lane without a filter", () => {
     const cards = [heldCard(1), heldCard(2), nameCard("acme")];
-    const order = walkOrder(queueOf(cards), ctxOf(), all);
+    const order = walkOrder(cards, ctxOf(), "any");
     const w = walkOf(order.decide, {}, [
       [
         "held-1",
@@ -675,40 +610,58 @@ describe("undecided", () => {
 });
 
 describe("drawnLike", () => {
-  it("counts the spot checks' held claims a batch of the same link and band would take", () => {
-    const spot = [
-      { ...heldCard(1, { confidence: 0.72 }), drawn: "random" as const },
-      { ...heldCard(2, { confidence: 0.95 }), drawn: "random" as const },
-      {
-        ...heldCard(3, { confidence: 0.75 }),
-        kind: "decided" as const,
-        drawn: "random" as const,
-      },
-    ];
-    const cards = new Map<string, QueueCard>(spot.map((c) => [c.key, c]));
-    const keys = [...cards.keys(), "quote-0.7-0"];
-    const none = new Set<string>();
-    expect(drawnLike(keys, cards, 'claim:["partner_of","0.7"]', none)).toBe(1);
-    expect(drawnLike(keys, cards, 'claim:["partner_of","0.9"]', none)).toBe(1);
-    expect(drawnLike(keys, cards, 'claim:["signed_with","0.7"]', none)).toBe(0);
+  const draw = (
+    seq: number,
+    band: string,
+    { link = "partner_of", done = false, quote = false } = {},
+  ): FoundryReviewDraw => ({
+    seq: String(seq),
+    band,
+    docId: "doc-1",
+    link,
+    done,
+    ...(quote
+      ? { quote: { factKey: "f" } }
+      : { held: { claimKey: "k", statementHash: "h", reviewKey: "r" } }),
   });
+  it("counts the undone held claims drawn that a batch of the same link and band would take", () => {
+    const draws = [
+      draw(0, "0.7"),
+      draw(1, "0.9"),
+      draw(2, "0.7", { done: true }),
+      draw(3, "0.7", { quote: true }),
+      draw(4, "0.7", { link: "signed_with" }),
+    ];
+    expect(drawnLike(draws, 'claim:["partner_of","0.7"]')).toBe(1);
+    expect(drawnLike(draws, 'claim:["partner_of","0.9"]')).toBe(1);
+    expect(drawnLike(draws, 'claim:["signed_with","0.7"]')).toBe(1);
+    expect(drawnLike(draws, 'claim:["signed_with","0.9"]')).toBe(0);
+    expect(drawnLike([], 'claim:["partner_of","0.7"]')).toBe(0);
+  });
+});
 
-  it("counts only the draws the finish offers, and none decided here", () => {
-    const spot = Array.from({ length: SPOT_CHECKS + 3 }, (_, i) => ({
-      ...heldCard(i + 1, { confidence: 0.72 }),
-      drawn: "random" as const,
-    }));
-    const cards = new Map<string, QueueCard>(spot.map((c) => [c.key, c]));
-    const keys = [...cards.keys()];
-    const batch = 'claim:["partner_of","0.7"]';
-    expect(drawnLike(keys, cards, batch, new Set())).toBe(SPOT_CHECKS);
-    expect(drawnLike(keys, cards, batch, new Set([keys[0]!, keys[1]!]))).toBe(
-      SPOT_CHECKS - 2,
-    );
-    // A draw past the finish's offer is no spot check, decided or not.
-    expect(drawnLike(keys, cards, batch, new Set([keys.at(-1)!]))).toBe(
-      SPOT_CHECKS,
-    );
+describe("extend", () => {
+  it("adds a page's new keys after the order, the card shown staying", () => {
+    const w = walkOf(["a", "b"], { at: 1 });
+    const next = walkReducer(w, {
+      type: "extend",
+      loadId: w.loadId,
+      keys: ["b", "c", "d"],
+    });
+    expect(next.order).toEqual(["a", "b", "c", "d"]);
+    expect(next.at).toBe(1);
+    // Past the end, the first new card shows.
+    const done = walkOf(["a"], { at: 1 });
+    expect(
+      walkReducer(done, { type: "extend", loadId: done.loadId, keys: ["c"] }),
+    ).toMatchObject({ order: ["a", "c"], at: 1 });
+    // Nothing new, or another load's page: the walk itself.
+    expect(
+      walkReducer(w, { type: "extend", loadId: w.loadId, keys: ["a"] }),
+    ).toBe(w);
+    expect(
+      walkReducer(w, { type: "extend", loadId: "other", keys: ["z"] }),
+    ).toBe(w);
   });
 });
 

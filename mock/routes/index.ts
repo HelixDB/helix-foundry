@@ -15,6 +15,7 @@ import { documentRoutes } from "./documents";
 import { enrichmentRoutes } from "./enrichment";
 import { eventSourceRoutes } from "./event-sources";
 import { feedbackRoutes } from "./feedback";
+import { reviewCardRoutes } from "./review-cards";
 import { reviewRoutes } from "./reviews";
 import { signInRoutes } from "./sign-ins";
 import { relayRoutes } from "./relay";
@@ -46,6 +47,7 @@ export const routes: MockRoute[] = [
   ...ontologyRoutes,
   ...documentRoutes,
   ...reviewRoutes,
+  ...reviewCardRoutes,
   ...suggestionRoutes,
   ...workflowRoutes,
   ...loadRoutes,

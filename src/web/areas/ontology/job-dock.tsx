@@ -1,21 +1,25 @@
 import "./ontology.css";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, LoaderCircle, X } from "lucide-react";
-import type { FoundryLoad, OntologyGeneration } from "../../../shared/wfe";
+import type {
+  FoundryLoad,
+  FoundryReviewSummary,
+  OntologyGeneration,
+} from "../../../shared/wfe";
 import { ApiError } from "../../api";
 import { formatNumber } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { liveRead } from "../documents/model";
-import { reviewQueries } from "../reviews/api";
+import { refreshSummary, useReviewSummary } from "../reviews/cards-api";
 import {
   ProgressBar,
   useGenerationProgress,
   useLoadJobProgress,
 } from "./job-progress";
-import { generationTitle, loadDocumentTotals } from "./model";
+import { generationTitle } from "./model";
 import { isBusyLoad, isLive, isLiveJob, ontologyQueries } from "./queries";
 import { ontologyName } from "./scope";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -240,13 +244,19 @@ function LoadCard({
   const o = job.ontologyId,
     read = useQuery(ontologyQueries.load(ws, o, job.id)),
     l = read.data?.load,
-    facts = useQuery(reviewQueries.openFacts(ws, o)).data,
+    summary = useReviewSummary().get(o),
     live = l?.jobs?.find(isLiveJob),
     name = useOntologyLabel(ws, o),
     progress = useLoadJobProgress(live);
   useEffect(() => {
     if (gone(read.error)) unwatchJob(ws, job.kind, job.id);
   }, [read.error]);
+  // Its end may have made it current, with cards to decide.
+  const qc = useQueryClient(),
+    busy = !l || isBusyLoad(l);
+  useEffect(() => {
+    if (!busy) void refreshSummary(qc, ws);
+  }, [busy]);
   if (!l) return null;
   return (
     <Card
@@ -255,7 +265,7 @@ function LoadCard({
       hidden={hidden}
       name={name}
       title={live?.status === "queued" ? "Load queued" : "Loading the database"}
-      ending={loadEnding(l, o, facts?.loadId === l.id ? facts.open : undefined)}
+      ending={loadEnding(l, o, summary?.loadId === l.id ? summary : undefined)}
     >
       {progress && (
         <ProgressBar progress={progress} label={`Progress of ${name}’s load`} />
@@ -264,16 +274,14 @@ function LoadCard({
   );
 }
 
-// A load its documents left reviews in points at the Review page, else at
-// the Explorer. The count is the Review page's, the cards still to decide
-// (`toDecide`), once it has read this load; until then the load says only
-// how many reviews its documents left, which isn't that count (a name in
-// one document may hold several, and some decide nothing), so the link
-// names none.
+// A load with cards to decide points at the Review page, else at the
+// Explorer. The count is the review cards index's (`counted`, the summary
+// of this load, less the walk's own choices); while the index is still
+// sorting its reviews, the link names none.
 function loadEnding(
   l: FoundryLoad,
   o: string,
-  toDecide: number | undefined,
+  counted: FoundryReviewSummary | undefined,
 ): Ending | null {
   if (isBusyLoad(l)) return null;
   if (l.status !== "ready" && l.status !== "partial")
@@ -283,10 +291,10 @@ function loadEnding(
       go: paths.load(o, l.id),
       label: "See why",
     };
-  const review =
-    toDecide === undefined
-      ? (loadDocumentTotals(l)?.reviews ?? 0) > 0 && "Review"
-      : toDecide > 0 && `Review ${formatNumber(toDecide)}`;
+  const open = counted?.open ?? 0;
+  const review = open
+    ? `Review ${formatNumber(open)}${counted?.more ? "+" : ""}`
+    : counted?.indexing && "Review";
   return {
     tone: "done",
     title: l.status === "ready" ? "Data loaded" : "Data loaded, in part",

@@ -4608,6 +4608,239 @@ describe("review decisions", () => {
       )!.props.term_months,
     ).toBe(36);
   });
+
+  describe("review cards", () => {
+    const knobs = config as typeof config & {
+      reviewCardsPage?: number;
+      reviewIndexing?: boolean;
+    };
+    const SUMMARY = "/v1/workspaces/ws_acme/foundry/review-summary";
+    const hedged = Buffer.from(
+      "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+    );
+    const summaryOf = async (user = "usr_ada") =>
+      (await call("GET", SUMMARY, undefined, user)).body.ontologies?.find(
+        (x: { ontologyId: string }) => x.ontologyId === "ont_acme_contracts",
+      );
+    /** Every open card to decide, a page at a time. */
+    async function walk(query = "") {
+      const cards: any[] = [];
+      let token = "";
+      do {
+        const page = await call(
+          "GET",
+          `${O}/review-cards?${query}${token ? `&pageToken=${encodeURIComponent(token)}` : ""}`,
+        );
+        expect(page.status, JSON.stringify(page.body)).toBe(200);
+        cards.push(...page.body.cards);
+        token = page.body.nextPageToken;
+      } while (token);
+      return cards;
+    }
+    // A card's decisions to decide: itself, and a name's open held claims.
+    const decisionsOf = (cards: any[]) =>
+      cards.reduce((n, c) => n + 1 + (c.name?.held?.length ?? 0), 0);
+
+    it("counts, orders and pages the current load's open cards", async () => {
+      await uploaded("contract.md", CONTRACT);
+      await uploaded("variant.md", variant);
+      await uploaded("hedged.md", hedged);
+      expect(refusal(await call("GET", `${O}/review-cards`))).toEqual([
+        400,
+        "load the ontology before reading its reviews",
+      ]);
+      const g = await loaded("first");
+      const summary = await summaryOf();
+      expect(summary).toMatchObject({
+        loadId: expect.any(String),
+        more: false,
+        indexing: false,
+      });
+      expect(summary.open).toBeGreaterThan(1);
+      const all = await walk();
+      expect(decisionsOf(all)).toBe(summary.open);
+      expect(new Set(all.map((c) => c.cardId)).size).toBe(all.length);
+      // A page at a time: the same cards in the same order.
+      knobs.reviewCardsPage = 1;
+      expect((await walk()).map((c) => c.cardId)).toEqual(
+        all.map((c) => c.cardId),
+      );
+      const first = await call("GET", `${O}/review-cards`);
+      expect(first.body.precision).toEqual({
+        bands: [],
+        rechecksAgreed: 0,
+        rechecksTotal: 0,
+      });
+      expect(
+        (
+          await call(
+            "GET",
+            `${O}/review-cards?pageToken=${encodeURIComponent(first.body.nextPageToken)}`,
+          )
+        ).body.precision,
+      ).toBeUndefined();
+      // Filters: a kind, a type, a document.
+      knobs.reviewCardsPage = 50;
+      const kinds = await walk("kind=FOUNDRY_REVIEW_CARD_KIND_CLAIM");
+      expect(kinds.every((c) => c.claim)).toBe(true);
+      expect(kinds.length).toBeGreaterThan(0);
+      const doc = all[0].docId;
+      expect(
+        (await walk(`documentId=${doc}`)).every((c) => c.docId === doc),
+      ).toBe(true);
+      expect(
+        refusal(await call("GET", `${O}/review-cards?lane=SIDEWAYS`)),
+      ).toEqual([400, "lane is DECIDE or FYI"]);
+      expect(refusal(await call("GET", `${O}/review-cards?kind=FACT`))).toEqual(
+        [400, "kind is NAME, CLAIM or VALUE"],
+      );
+      expect(
+        refusal(await call("GET", `${O}/review-cards?pageToken=nope`)),
+      ).toEqual([400, "page_token is not one this list returned"]);
+      // A decision closes its card, and the summary counts one fewer.
+      const claim = kinds[0].claim;
+      const rv = [...g.nodes()].find(
+        (n) => n.props.review_key === claim.reviewKey,
+      )!;
+      const statementHash = createHash("sha256")
+        .update(`signed_with\u001f${String(rv.props.statement)}`)
+        .digest("hex");
+      await call("POST", `${O}/reviews/${claim.reviewKey}:settle`, {
+        decision: { reject: { statementHash } },
+      });
+      expect((await summaryOf()).open).toBe(summary.open - 1);
+      expect(
+        (await walk()).some((c) => c.claim?.reviewKey === claim.reviewKey),
+      ).toBe(false);
+      // Another load made current: a token of the first is refused.
+      knobs.reviewCardsPage = 1;
+      const token = (await call("GET", `${O}/review-cards`)).body.nextPageToken;
+      await loaded("second");
+      expect(
+        refusal(
+          await call(
+            "GET",
+            `${O}/review-cards?pageToken=${encodeURIComponent(token)}`,
+          ),
+        ),
+      ).toEqual([
+        400,
+        "another load became current since the first page: list the cards again",
+      ]);
+      // The index is still being built.
+      knobs.reviewIndexing = true;
+      expect((await summaryOf()).indexing).toBe(true);
+      expect((await call("GET", `${O}/review-cards`)).body.indexing).toBe(true);
+    });
+
+    it("draws spot checks once, the same for everyone, and a drawn claim is no card to decide", async () => {
+      await uploaded("contract.md", CONTRACT);
+      await uploaded("hedged.md", hedged);
+      await loaded("first");
+      const before = (await summaryOf()).open;
+      const read = (user = "usr_ada") =>
+        call("GET", `${O}/review-spot-checks`, undefined, user);
+      expect((await read()).body.draws).toEqual([]);
+      const load = (await read()).body.loadId;
+      expect(
+        refusal(
+          await call("POST", `${O}/review-spot-checks:draw`, {
+            loadId: "load_other",
+          }),
+        ),
+      ).toEqual([
+        400,
+        "load_id is not the current load: read the spot checks again",
+      ]);
+      const drawn = (
+        await call("POST", `${O}/review-spot-checks:draw`, { loadId: load })
+      ).body.draws;
+      expect(drawn.length).toBeGreaterThan(0);
+      expect(drawn.length).toBeLessThanOrEqual(5);
+      expect(drawn.map((d: { seq: string }) => d.seq)).toEqual(
+        drawn.map((_: unknown, i: number) => String(i)),
+      );
+      // Drawn again, or read by someone else: the same.
+      expect(
+        (await call("POST", `${O}/review-spot-checks:draw`, { loadId: load }))
+          .body.draws,
+      ).toEqual(drawn);
+      expect((await read("usr_alan")).body.draws).toEqual(drawn);
+      // A held claim drawn is a spot check, not a card to decide.
+      const held = drawn.filter((d: { held?: unknown }) => d.held).length;
+      expect((await summaryOf()).open).toBe(before - held);
+      // A quote labelled at random is done; the next draw tops up.
+      const quote = drawn.find((d: { quote?: unknown }) => d.quote);
+      if (quote) {
+        await call("POST", `${O}/review-labels`, {
+          fact: {
+            docId: quote.docId,
+            section: Number(quote.span.section),
+            start: Number(quote.span.start),
+            end: Number(quote.span.end),
+            factKey: quote.quote.factKey,
+          },
+          verdict: "right",
+          drawn: "random",
+        });
+        const again = (
+          await call("POST", `${O}/review-spot-checks:draw`, { loadId: load })
+        ).body;
+        expect(
+          again.draws.find((d: { seq: string }) => d.seq === quote.seq).done,
+        ).toBe(true);
+        expect(again.labels).toHaveLength(1);
+      }
+    });
+
+    it("reads decisions by id, at most 100, never with a page token", async () => {
+      await uploaded("contract.md", CONTRACT);
+      await uploaded("variant.md", variant);
+      const g = await loaded("first");
+      const [a, b] = [...g.nodes()]
+        .filter(
+          (n) =>
+            n.label === FOUNDRY_NODES.Review &&
+            ["unresolved", "low_confidence"].includes(String(n.props.reason)),
+        )
+        .slice(0, 2);
+      const settle = (n: typeof a) =>
+        n!.props.reason === "unresolved"
+          ? { resolve: { notInData: true } }
+          : {
+              reject: {
+                statementHash: createHash("sha256")
+                  .update(`signed_with\u001f${String(n!.props.statement)}`)
+                  .digest("hex"),
+              },
+            };
+      const da = (
+        await call("POST", `${O}/reviews/${a!.props.review_key}:settle`, {
+          decision: settle(a),
+        })
+      ).body.decision;
+      await call("POST", `${O}/reviews/${b!.props.review_key}:settle`, {
+        decision: settle(b),
+      });
+      const byId = (q: string) => call("GET", `${O}/review-decisions?${q}`);
+      expect(
+        (await byId(`ids=${da.id}&ids=decision_gone`)).body.decisions.map(
+          (d: { id: string }) => d.id,
+        ),
+      ).toEqual([da.id]);
+      expect(
+        refusal(
+          await byId(
+            Array.from({ length: 101 }, (_, i) => `ids=d${i}`).join("&"),
+          ),
+        ),
+      ).toEqual([400, "ids names at most 100 decisions"]);
+      expect(refusal(await byId(`ids=${da.id}&pageToken=x`))).toEqual([
+        400,
+        "ids and page_token can't be used together",
+      ]);
+    });
+  });
 });
 
 describe("a mock decision's value, as the backend keeps it", () => {

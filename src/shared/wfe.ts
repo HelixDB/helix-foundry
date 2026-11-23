@@ -4679,6 +4679,142 @@ export type ListReviewLabelsResponse = {
   nextPageToken?: string;
 };
 
+// ---------------------------------------------------------------- Ontology: review cards
+// The review walk's cards, kept by the graph worker's index of each live
+// load (backend/reviewcards): one card a decision, its reviews read from the
+// load by key. A card is open while no decision decides it and no spot
+// check drew it.
+
+/** GET .../foundry/review-summary: each current load's open cards to decide. */
+export type FoundryReviewSummary = {
+  ontologyId: string;
+  loadId: string;
+  // Open cards to decide, at most 10,000; `more` says there are more.
+  open?: number;
+  more?: boolean;
+  // The index is still being built: `open` may be too low.
+  indexing?: boolean;
+};
+// A restricted member gets none.
+export type GetFoundryReviewSummaryResponse = {
+  ontologies?: FoundryReviewSummary[];
+};
+export type FoundryReviewLane =
+  | "FOUNDRY_REVIEW_LANE_UNSPECIFIED"
+  | "FOUNDRY_REVIEW_LANE_DECIDE"
+  | "FOUNDRY_REVIEW_LANE_FYI";
+export type FoundryReviewCardKind =
+  | "FOUNDRY_REVIEW_CARD_KIND_NAME"
+  | "FOUNDRY_REVIEW_CARD_KIND_CLAIM"
+  | "FOUNDRY_REVIEW_CARD_KIND_VALUE";
+/** A held claim, approved or rejected on its own. */
+export type FoundryReviewClaimCard = {
+  reviewKey: string;
+  // 0.9, 0.8, 0.7, 0.6, low or none.
+  band: string;
+  // The saved decisions at its place, none of which decides it.
+  decisions?: FoundryReviewDecision[];
+};
+/** A name of a document: every review of it shares one resolve decision. */
+export type FoundryReviewNameCard = {
+  // The review its choice settles.
+  reviewKey: string;
+  // The settling review first, then up to 199 more in document order.
+  reviewKeys?: string[];
+  // Every review of the name in the document.
+  reviewCount?: number;
+  // Accepted claims it blocks.
+  blocked?: number;
+  // Open held claims that wait on it.
+  held?: FoundryReviewClaimCard[];
+  type: string;
+  normName: string;
+};
+export type FoundryReviewValueCard = { reviewKey: string };
+export type FoundryReviewCard = {
+  // The SHA-256 of its decision's identity, in hexadecimal.
+  cardId: string;
+  lane?: FoundryReviewLane;
+  docId: string;
+  // The facts its decisions write.
+  facts?: number;
+} & (
+  | { name: FoundryReviewNameCard; claim?: never; value?: never }
+  | { claim: FoundryReviewClaimCard; name?: never; value?: never }
+  | { value: FoundryReviewValueCard; name?: never; claim?: never }
+);
+/** The resolve decisions of one name across the ontology's documents. */
+export type FoundryReviewNameDecisions = {
+  type: string;
+  normName: string;
+  total?: number;
+  // How many different choices (an entity each, or not in the data).
+  choices?: number;
+  // The newest, at most 20, with what became of each in the current load.
+  newest?: FoundryReviewDecision[];
+};
+export type FoundryReviewPrecision = {
+  bands?: { band: string; right?: number; total?: number }[];
+  rechecksAgreed?: number;
+  rechecksTotal?: number;
+};
+// GET .../ontologies/{ontologyId}/review-cards: 50 open cards a page in the
+// walk's order; FAILED_PRECONDITION without a current load, or for a token
+// of another load.
+export type ListFoundryReviewCardsResponse = {
+  loadId: string;
+  // More cards may come, and the walk isn't done when it runs out.
+  indexing?: boolean;
+  cards?: FoundryReviewCard[];
+  names?: FoundryReviewNameDecisions[];
+  // The first page only.
+  precision?: FoundryReviewPrecision;
+  nextPageToken?: string;
+};
+/** A place in a document: int64s, as strings. */
+export type FoundryReviewSpan = {
+  section?: string;
+  start?: string;
+  end?: string;
+};
+/** A spot check of a load, at its place: a held claim or a fact's quote. */
+export type FoundryReviewDraw = {
+  seq: string;
+  band: string;
+  docId: string;
+  span?: FoundryReviewSpan;
+  link?: string;
+  confidence?: number;
+  // Someone labelled its place at random, in any load.
+  done?: boolean;
+} & (
+  | {
+      held: {
+        claimKey: string;
+        statementHash: string;
+        // Empty once its card is gone (its approval written).
+        reviewKey?: string;
+      };
+      quote?: never;
+    }
+  | { quote: { factKey: string }; held?: never }
+);
+export type FoundryReviewRecheck =
+  | { decision: FoundryReviewDecision; label?: never }
+  | { label: FoundryReviewLabel; decision?: never };
+// GET .../review-spot-checks (read only) and POST .../review-spot-checks:draw
+// ({loadId}, the current load's; tops the draws up to five undone).
+export type FoundryReviewSpotChecksResponse = {
+  loadId: string;
+  draws?: FoundryReviewDraw[];
+  // Someone else's decisions and labels the caller may re-check.
+  rechecks?: FoundryReviewRecheck[];
+  // The decisions and labels at the drawn places, any load's labels.
+  decisions?: FoundryReviewDecision[];
+  labels?: FoundryReviewLabel[];
+};
+export type DrawFoundryReviewSpotChecksRequest = { loadId: string };
+
 // ---------------------------------------------------------------- Ontology: suggestions
 // GET .../ontologies/{ontologyId}/heal-findings and POST
 // .../heal-findings/{fingerprint}:dismiss: what audits of the ontology's

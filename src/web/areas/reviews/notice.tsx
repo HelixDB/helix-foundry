@@ -1,28 +1,17 @@
 // The overview's review notice (../ontology/home.tsx): tells an owner or
-// admin that the current load's documents left reviews for a person, in a
-// title and one short line, with Start reviewing (the Review page's
-// walkthrough) and Later, which hides it for that load in this browser, so a
-// new load shows it again. Once the Review page has read the load, it says
-// the page's count, the cards still to decide (none: no notice), and how
-// many Founder has a suggestion for; until then, the reviews the load's
-// documents left, settled since or not (the load says nothing of what is
-// still open, and one card may settle several reviews), and what they are.
-import { useQuery } from "@tanstack/react-query";
+// admin that the current load left cards for a person to decide, in a title
+// and one short line, with Start reviewing (the Review page's walkthrough)
+// and Later, which hides it for that load in this browser, so a new load
+// shows it again. The count is the review cards index's (the summary), less
+// the walk's own choices; while the index is still sorting the load's
+// reviews it says it is counting.
 import { ListChecks } from "lucide-react";
-import {
-  Button,
-  ButtonLink,
-  formatNumber,
-  plural,
-  useStoredState,
-} from "../../kit";
+import { Button, ButtonLink, formatNumber, useStoredState } from "../../kit";
 import { paths } from "../../paths";
-import { reviewQueries } from "./api";
 import { canManage, useWorkspace } from "../../ui";
-import { loadDocumentTotals } from "../ontology/model";
 import { Callout } from "../ontology/parts";
-import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
+import { useReviewSummary } from "./cards-api";
 
 /** Mounted with `key` set to the ontology's id, so Later reads per ontology. */
 export function ReviewNotice() {
@@ -34,30 +23,27 @@ export function ReviewNotice() {
     `foundry.review.notice.later.v1:${id}:${o}`,
     "",
   );
-  const shown = canManage(role) && !!loadId && later !== loadId;
-  const load = useQuery({
-    ...ontologyQueries.load(id, o, loadId),
-    enabled: shown,
-  }).data?.load;
-  const facts = useQuery(reviewQueries.openFacts(id, o)).data;
-  const counted = facts?.loadId === loadId ? facts : undefined;
-  const toDecide = counted?.open;
-  const reviews = (load && loadDocumentTotals(load)?.reviews) || 0;
-  if (!shown || !(toDecide ?? reviews)) return null;
+  const summary = useReviewSummary().get(o);
+  const counted = summary?.loadId === loadId ? summary : undefined;
+  const open = counted?.open ?? 0;
+  if (
+    !canManage(role) ||
+    !loadId ||
+    later === loadId ||
+    !counted ||
+    (!open && !counted.indexing)
+  )
+    return null;
   return (
     <Callout
       icon={ListChecks}
       tone="muted"
       title={
-        toDecide === undefined
-          ? `${plural(reviews, "review")} waiting`
-          : `${plural(toDecide, "card")} to decide`
+        open
+          ? `${formatNumber(open)}${counted.more ? "+" : ""} ${open === 1 && !counted.more ? "card" : "cards"} to decide`
+          : "Counting the cards to decide…"
       }
-      text={
-        counted?.suggested
-          ? `Founder has a suggestion for ${formatNumber(counted.suggested)}.`
-          : "Names, held claims and values the load couldn’t settle."
-      }
+      text="Names, held claims and values the load couldn’t settle."
       action={
         <span className="on-card-actions">
           <ButtonLink size="sm" variant="primary" to={paths.review(o)}>

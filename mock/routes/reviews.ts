@@ -64,6 +64,7 @@ import { isRecord } from "../../src/shared/json";
 // a claim the current load already wrote on an approval is not rejected.
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
+
 const PAGE = 100;
 /** A score inside each band the review queue reads (src/web/areas/reviews/queue.ts BANDS). */
 const BAND_SCORE = {
@@ -97,6 +98,37 @@ onReset(() => {
   delete knobs.seedReviewLabels;
   delete knobs.settleRefusals;
 });
+
+/**
+ * The ontology's labels as `user` reads them: those saved, after the
+ * `seedReviewLabels` knob's (the caller's own, while it has a current
+ * load).
+ */
+export function ontologyLabels(
+  ontology: string,
+  user: string,
+): FoundryReviewLabel[] {
+  const load = currentLoadId(ontology),
+    seed = knobs.seedReviewLabels;
+  const seeded: FoundryReviewLabel[] =
+    load && seed
+      ? Array.from({ length: seed.right + seed.wrong }, (_, i) => ({
+          id: `label_seed${String(i).padStart(4, "0")}`,
+          drawn: "random",
+          docId: "doc_seed_labels",
+          claimSection: 0,
+          claimStart: i * 16,
+          claimEnd: i * 16 + 8,
+          link: "signed_with",
+          confidence: BAND_SCORE[seed.band],
+          verdict: i < seed.right ? "right" : "wrong",
+          loadId: load,
+          decidedByUserId: user,
+          decidedAt: "2026-10-01T09:00:00.000Z",
+        }))
+      : [];
+  return [...seeded, ...(labels.get(ontology) || [])];
+}
 
 /**
  * A FoundryPropValue in the JSON form the WFE writes one: exactly one arm,
@@ -509,29 +541,42 @@ export const reviewRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req, false);
       if (!isScope(s)) return s;
-      const token = req.query.get("pageToken") || "";
+      const token = req.query.get("pageToken") || "",
+        ids = req.query.getAll("ids");
       if (token.length > 26)
         return fail("INVALID_ARGUMENT", "invalid page_token");
+      if (ids.length > 100)
+        return fail("INVALID_ARGUMENT", "ids names at most 100 decisions");
+      if (ids.length && token)
+        return fail(
+          "INVALID_ARGUMENT",
+          "ids and page_token can't be used together",
+        );
+      if (ids.some((i) => !i || i.length > 26))
+        return fail("INVALID_ARGUMENT", "an id is 1 to 26 characters");
       // Approvals whose job's step has passed are applied by now.
       advanceLoads(s.o.id);
       // Keyset paging: every decision after the token's id, and, for a
       // client that asks, the current load's withdraws, approvals taken back
-      // from it (a client before them gets none, as the backend's does).
-      const after = [
+      // from it (a client before them gets none, as the backend's does). By
+      // id, only those named, in one page: one missing was removed, or
+      // replaced by a new decision under a new id.
+      const listed = [
         ...(decisions.get(s.o.id) || []),
         ...(req.query.get("includeWithdraws") === "true"
           ? currentWithdraws(s.o.id)
           : []),
-      ]
+      ].filter((d) => !ids.length || ids.includes(d.id));
+      const after = listed
         .filter((d) => d.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      const page = after.slice(0, PAGE);
+      const page = ids.length ? after : after.slice(0, PAGE);
       return ok({
         decisions: page.map((d) => {
           const applied = appliedOf(s.o.id, d);
           return applied ? { ...d, applied } : d;
         }),
-        nextPageToken: after.length > PAGE ? page.at(-1)!.id : "",
+        nextPageToken: page.length < after.length ? page.at(-1)!.id : "",
       } satisfies ListReviewDecisionsResponse);
     },
   },
@@ -783,26 +828,7 @@ export const reviewRoutes: MockRoute[] = [
       const token = req.query.get("pageToken") || "";
       if (token.length > 26)
         return fail("INVALID_ARGUMENT", "invalid page_token");
-      const load = currentLoadId(s.o.id),
-        seed = knobs.seedReviewLabels;
-      const seeded: FoundryReviewLabel[] =
-        load && seed
-          ? Array.from({ length: seed.right + seed.wrong }, (_, i) => ({
-              id: `label_seed${String(i).padStart(4, "0")}`,
-              drawn: "random",
-              docId: "doc_seed_labels",
-              claimSection: 0,
-              claimStart: i * 16,
-              claimEnd: i * 16 + 8,
-              link: "signed_with",
-              confidence: BAND_SCORE[seed.band],
-              verdict: i < seed.right ? "right" : "wrong",
-              loadId: load,
-              decidedByUserId: req.principal.user.id,
-              decidedAt: "2026-10-01T09:00:00.000Z",
-            }))
-          : [];
-      const after = [...seeded, ...(labels.get(s.o.id) || [])]
+      const after = ontologyLabels(s.o.id, req.principal.user.id)
         .filter((l) => l.id > token)
         .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const page = after.slice(0, PAGE);

@@ -2,25 +2,24 @@ import type {
   DecisionApplied,
   FoundryReviewChoice,
   FoundryReviewDecision,
+  FoundryReviewDraw,
 } from "../../../shared/wfe";
 import {
   advise,
   asks,
-  claimBatchKey,
   coveredBy,
   laneOf,
   settleOf,
   type Advice,
   type AdviceContext,
-  type Decidable,
 } from "./advice";
 import { formatNumber } from "../../kit/util";
-import { BAND_TEXT, type Queue, type QueueCard } from "./queue";
+import { BAND_TEXT, type QueueCard } from "./queue";
 
-// The review walkthrough's state: one card at a time over the queue's
-// decide lane, in its ranked order, and what became of each card. Pure: the
-// page holds it in a reducer, sends what a decision saves, and tells the
-// walk what the backend answered.
+// The review walkthrough's state: one card at a time over the decide lane,
+// in the index's order, a page at a time, and what became of each card.
+// Pure: the page holds it in a reducer, sends what a decision saves, and
+// tells the walk what the backend answered.
 
 /** How a person decided a card: Founder's suggestion, another choice, or a batch. */
 export type How = "accepted" | "chosen" | "batch";
@@ -94,8 +93,11 @@ export type WalkAction =
   // The decisions read say the jobs of these keys' saved name choices
   // failed before saying what became of them (unconfirmedNames).
   | { type: "unconfirmed"; keys: ReadonlySet<string> }
-  // The queue read again: a new order (another load's, or a filter's), and
-  // the keys no longer in the queue at all (decided, here or elsewhere).
+  // The next page of cards read: its keys go after the order, the card shown
+  // stays.
+  | { type: "extend"; loadId: string; keys: readonly string[] }
+  // The cards read again: a new order (another load's, or a filter's), and
+  // the keys the index no longer lists (decided, here or elsewhere).
   | {
       type: "rebase";
       loadId: string;
@@ -103,46 +105,40 @@ export type WalkAction =
       gone: ReadonlySet<string>;
     };
 
-/** Which cards a walk takes: kinds, whether Founder suggests, a type, a document. */
-export type WalkFilter = {
-  kinds: ReadonlySet<"name" | "claim" | "value">;
-  advice: "any" | "suggested" | "none";
-  type?: string;
-  documentId?: string;
-};
+/**
+ * Whether a walk takes cards Founder has a suggestion for, those it has
+ * none for, or any. The index filters kinds, types and documents itself.
+ */
+export type AdviceFilter = "any" | "suggested" | "none";
 
 /**
- * A queue as the walkthrough reads it: the keys of each lane in the queue's
- * order (cards to decide, those for information, names an earlier decision
- * covers, and the random draws, spot checks at the end), every card by key,
- * Founder's advice for each card of the first three lanes, and for a name
- * the load asks about, the other documents' cards of the same name a link
- * covers (`siblings`).
+ * The walk's cards by lane, in the index's order (cards to decide, those
+ * for information, and names an earlier decision covers), every card by
+ * key, Founder's advice for each, and for a name the load asks about, the
+ * other documents' cards of the same name a link covers (`siblings`).
  */
 export type WalkOrder = {
   decide: string[];
   fyi: string[];
   covered: string[];
-  spot: string[];
   cards: ReadonlyMap<string, QueueCard>;
   advice: ReadonlyMap<string, Advice>;
   siblings: ReadonlyMap<string, readonly string[]>;
 };
 
 /**
- * The walk of a queue under a filter. Each ranked card goes to its lane, a
- * name's held claims right after it to decide; random draws go to `spot`
- * whatever the filter, keeping how they were drawn, and get no advice, so
- * nothing leans a measurement. The filter takes the kinds, advice, type
- * (either end's, for a claim) and document of the other lanes' cards.
+ * The walk of the index's `cards` (decide and FYI) under an advice filter.
+ * Each card goes to its lane, a name's held claims right after it to
+ * decide; a name an earlier link covers goes to Covered. The filter takes
+ * the cards to decide that Founder has a suggestion for, or none for.
  *
  * @example
- * walkOrder(queue, ctx, { kinds: new Set(["name", "claim", "value"]), advice: "any" }).decide;
+ * walkOrder(cards, ctx, "any").decide;
  */
 export function walkOrder(
-  q: Queue,
+  list: readonly QueueCard[],
   ctx: AdviceContext,
-  f: WalkFilter,
+  f: AdviceFilter,
 ): WalkOrder {
   const cards = new Map<string, QueueCard>(),
     advice = new Map<string, Advice>();
@@ -150,27 +146,13 @@ export function walkOrder(
     decide: [] as string[],
     fyi: [] as string[],
     covered: [] as string[],
-    spot: [] as string[],
   };
-  const types = (c: Decidable) => {
-    if (c.kind !== "claim") return [settleOf(c).type];
-    const { subject, object } = settleOf(c).statement;
-    return [subject.type, object.type];
-  };
-  const taken = (c: Decidable, a: Advice) =>
-    f.kinds.has(c.kind) &&
-    (f.advice === "any" ||
-      (f.advice === "suggested") === (a.kind === "suggest")) &&
-    (!f.type || types(c).includes(f.type)) &&
-    (!f.documentId || c.review.documentId === f.documentId);
+  const taken = (a: Advice) =>
+    f === "any" || (f === "suggested") === (a.kind === "suggest");
   // Names the load asks about and no decision covers, by type and name.
   const asking = new Map<string, string[]>();
-  for (const c of q.cards) {
-    cards.set(c.key, c);
-    if (c.drawn === "random") {
-      lanes.spot.push(c.key);
-      continue;
-    }
+  for (const c of list) {
+    if (cards.has(c.key)) continue;
     const lane =
       c.kind === "name" && coveredBy(c, ctx)
         ? "covered"
@@ -186,7 +168,8 @@ export function walkOrder(
       const a = advise(d, ctx);
       cards.set(d.key, d);
       advice.set(d.key, a);
-      if (taken(d, a)) lanes[d === c ? lane : "decide"].push(d.key);
+      const into = d === c ? lane : "decide";
+      if (into !== "decide" || taken(a)) lanes[into].push(d.key);
     }
   }
   const siblings = new Map(
@@ -224,29 +207,24 @@ export function undecided(
   }).length;
 }
 
-/** How many of the queue's random draws the finish offers as spot checks. */
-export const SPOT_CHECKS = 5;
-
 /**
- * How many held claims among the spot checks the finish offers (the first
- * SPOT_CHECKS of `spot`) a batch of `batchKey` would take but leaves out:
- * drawn at random to measure their score band, so a person decides each on
- * its own, at the finish. Those decided or labelled on this page (`done`)
- * are no longer to decide, so they don't count.
+ * How many held claims among the load's undone spot checks (`draws`) a
+ * batch of `batchKey` would take but leaves out: drawn at random to measure
+ * their score band, so a person decides each on its own, at the finish.
  *
  * @example
- * drawnLike(order.spot, order.cards, 'claim:["signed_with","0.7"]', new Set()); // 1
+ * drawnLike(spot.draws, 'claim:["signed_with","0.7"]'); // 1
  */
 export function drawnLike(
-  spot: readonly string[],
-  cards: ReadonlyMap<string, QueueCard>,
+  draws: readonly FoundryReviewDraw[],
   batchKey: string,
-  done: ReadonlySet<string>,
 ): number {
-  return spot.slice(0, SPOT_CHECKS).filter((k) => {
-    const c = cards.get(k);
-    return !done.has(k) && c?.kind === "claim" && claimBatchKey(c) === batchKey;
-  }).length;
+  return draws.filter(
+    (d) =>
+      !d.done &&
+      !!d.held &&
+      `claim:${JSON.stringify([d.link ?? "", d.band])}` === batchKey,
+  ).length;
 }
 
 /**
@@ -289,6 +267,8 @@ const nextOpen = (
  *   for those `kept`, marks them and what they covered taken back, drops
  *   them from the undo stack and shows the first of them again;
  * - `uncover` opens again the cards that the keys' choices covered;
+ * - `extend` adds a page's keys after the order (those not in it), the
+ *   card shown staying; past the end, the first of them is shown;
  * - `rebase` takes a new order: on the same load every outcome stays (a
  *   filter, or a refresh), and each card of the old order gone from the
  *   queue (`gone`) keeps its place, after the card before it that the new
@@ -454,6 +434,12 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
         ),
       );
       return outcomes.size === w.outcomes.size ? w : { ...w, outcomes };
+    }
+    case "extend": {
+      if (a.loadId !== w.loadId) return w;
+      const has = new Set(w.order);
+      const more = a.keys.filter((k) => !has.has(k));
+      return more.length ? { ...w, order: [...w.order, ...more] } : w;
     }
     case "rebase": {
       const same = a.loadId === w.loadId,
