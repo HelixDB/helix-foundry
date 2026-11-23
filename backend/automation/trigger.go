@@ -27,6 +27,7 @@ const (
 	TriggerLoadReady          TriggerKind = "load_ready"
 	TriggerDocumentArrived    TriggerKind = "document_arrived"
 	TriggerGenerationFinished TriggerKind = "generation_finished"
+	TriggerReviewsWaiting     TriggerKind = "reviews_waiting"
 	TriggerManual             TriggerKind = "manual"
 )
 
@@ -84,6 +85,23 @@ type GenerationFinished struct {
 	Outcome    Outcome
 }
 
+// ReviewsWaiting fires on state, not on ended work: when the ontology's
+// current load has at least AtLeast review cards open, once its review index
+// is whole and its count fresh. It fires once per arming: for the load that
+// is current when it is turned on or resumed (when enough wait already), for
+// each new current load, and for the same load again only after its count fell
+// below AtLeast and rose past it. Its event and output carry ids and numbers
+// only, never a document's or a review's text, so a Founder step after it
+// reads nothing untrusted from it.
+type ReviewsWaiting struct {
+	OntologyID string
+	AtLeast    int
+}
+
+// MaxReviewsWaiting is the most a ReviewsWaiting trigger waits for: the
+// review index counts open cards up to it.
+const MaxReviewsWaiting = 10000
+
 // Manual never fires: its owner runs it.
 type Manual struct{}
 
@@ -92,6 +110,7 @@ func (SyncFinished) triggerKind() TriggerKind       { return TriggerSyncFinished
 func (LoadReady) triggerKind() TriggerKind          { return TriggerLoadReady }
 func (DocumentArrived) triggerKind() TriggerKind    { return TriggerDocumentArrived }
 func (GenerationFinished) triggerKind() TriggerKind { return TriggerGenerationFinished }
+func (ReviewsWaiting) triggerKind() TriggerKind     { return TriggerReviewsWaiting }
 func (Manual) triggerKind() TriggerKind             { return TriggerManual }
 
 // KindOf is t's kind.
@@ -107,6 +126,8 @@ func Target(t Trigger) string {
 	case DocumentArrived:
 		return t.SetID
 	case GenerationFinished:
+		return t.OntologyID
+	case ReviewsWaiting:
 		return t.OntologyID
 	}
 	return ""
@@ -131,6 +152,7 @@ type wireTrigger struct {
 	OntologyID  string      `json:"ontology_id,omitempty"`
 	SetID       string      `json:"set_id,omitempty"`
 	Outcome     Outcome     `json:"outcome,omitempty"`
+	AtLeast     *int        `json:"at_least,omitempty"`
 }
 
 // fields lists what a trigger of each kind holds, for its errors.
@@ -140,6 +162,7 @@ var triggerFields = map[TriggerKind]string{
 	TriggerLoadReady:          `{kind: "load_ready", ontology_id}`,
 	TriggerDocumentArrived:    `{kind: "document_arrived", set_id}`,
 	TriggerGenerationFinished: `{kind: "generation_finished", ontology_id, outcome: "succeeded" | "failed" | "any"}`,
+	TriggerReviewsWaiting:     `{kind: "reviews_waiting", ontology_id, at_least: 1 to 10000}`,
 	TriggerManual:             `{kind: "manual"}`,
 }
 
@@ -150,7 +173,7 @@ func parseTrigger(raw json.RawMessage) (Trigger, error) {
 	}
 	shape, known := triggerFields[TriggerKind(kind)]
 	if !known {
-		return nil, fmt.Errorf("a trigger's kind is %q; it is schedule, sync_finished, load_ready, document_arrived, generation_finished or manual", kind)
+		return nil, fmt.Errorf("a trigger's kind is %q; it is schedule, sync_finished, load_ready, document_arrived, generation_finished, reviews_waiting or manual", kind)
 	}
 	var w wireTrigger
 	if err := decodeStrict(raw, &w); err != nil {
@@ -183,6 +206,11 @@ func parseTrigger(raw json.RawMessage) (Trigger, error) {
 			return nil, wrong
 		}
 		return GenerationFinished{OntologyID: w.OntologyID, Outcome: w.Outcome}, nil
+	case TriggerReviewsWaiting:
+		if got != (wireTrigger{OntologyID: w.OntologyID, AtLeast: w.AtLeast}) || !idPattern.MatchString(w.OntologyID) || w.AtLeast == nil || *w.AtLeast < 1 || *w.AtLeast > MaxReviewsWaiting {
+			return nil, wrong
+		}
+		return ReviewsWaiting{OntologyID: w.OntologyID, AtLeast: *w.AtLeast}, nil
 	default:
 		if got != (wireTrigger{}) {
 			return nil, wrong
@@ -196,7 +224,7 @@ func validOutcome(o Outcome) bool {
 }
 
 func parseSchedule(w wireTrigger, wrong error) (Schedule, error) {
-	if w.ConnectorID != "" || w.OntologyID != "" || w.SetID != "" || w.Outcome != "" {
+	if w.ConnectorID != "" || w.OntologyID != "" || w.SetID != "" || w.Outcome != "" || w.AtLeast != nil {
 		return Schedule{}, wrong
 	}
 	zone, err := Zone(w.TimeZone)
@@ -300,6 +328,9 @@ func wireTriggerOf(t Trigger) wireTrigger {
 		return wireTrigger{Kind: TriggerDocumentArrived, SetID: t.SetID}
 	case GenerationFinished:
 		return wireTrigger{Kind: TriggerGenerationFinished, OntologyID: t.OntologyID, Outcome: t.Outcome}
+	case ReviewsWaiting:
+		atLeast := t.AtLeast
+		return wireTrigger{Kind: TriggerReviewsWaiting, OntologyID: t.OntologyID, AtLeast: &atLeast}
 	}
 	return wireTrigger{Kind: TriggerManual}
 }

@@ -24,8 +24,8 @@ type Check interface {
 type AnswerIs struct{ Yes bool }
 
 // CountIs is true when the count of the step before it compares to Value as
-// Op says: the documents that arrived, the rows a sync wrote, or the count an
-// Assistant step reported.
+// Op says: the documents that arrived, the rows a sync wrote, the cards to
+// review, or the count an Assistant step reported.
 type CountIs struct {
 	Op    CountOp
 	Value int64
@@ -72,7 +72,7 @@ func (CountIs) checks(config Config) bool {
 		return true
 	case TriggerNode:
 		switch c.Trigger.(type) {
-		case DocumentArrived, SyncFinished:
+		case DocumentArrived, SyncFinished, ReviewsWaiting:
 			return true
 		}
 	}
@@ -81,7 +81,7 @@ func (CountIs) checks(config Config) bool {
 
 func (AnswerIs) needs() string { return "an answer is a Founder step's" }
 func (CountIs) needs() string {
-	return "a count is a Founder step's, or a document_arrived or sync_finished trigger's"
+	return "a count is a Founder step's, or a document_arrived, sync_finished or reviews_waiting trigger's"
 }
 
 type wireCheck struct {
@@ -129,8 +129,8 @@ type Output struct {
 	Summary string `json:"summary,omitempty"`
 	// Answer is an Assistant step's yes or no, when it gave one.
 	Answer *bool `json:"answer,omitempty"`
-	// Count is the documents that arrived, the rows a sync wrote, or the count
-	// an Assistant step reported.
+	// Count is the documents that arrived, the rows a sync wrote, the cards to
+	// review, or the count an Assistant step reported.
 	Count *int64 `json:"count,omitempty"`
 	// Branch is the branch a condition took.
 	Branch *bool `json:"branch,omitempty"`

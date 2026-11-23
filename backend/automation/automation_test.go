@@ -70,6 +70,7 @@ func TestParseSpecRoundTripsEveryKind(t *testing.T) {
 		`{"kind":"load_ready","ontology_id":"01O"}`,
 		`{"kind":"document_arrived","set_id":"01S"}`,
 		`{"kind":"generation_finished","ontology_id":"01O","outcome":"failed"}`,
+		`{"kind":"reviews_waiting","ontology_id":"01O","at_least":50}`,
 		`{"kind":"manual"}`,
 	}
 	for _, trigger := range triggers {
@@ -162,6 +163,9 @@ func TestParseSpecRefuses(t *testing.T) {
 		{"load on its own load", spec([]string{node("start", "trigger", `{"kind":"load_ready","ontology_id":"O"}`),
 			node("ai", "assistant", `{"instruction":"x","allow":[{"operation":"create_load","ontology_id":"O"}]}`)}, `[{"from":"start","to":"ai"}]`),
 			"ai loads the ontology its trigger waits on"},
+		{"load on its own reviews", spec([]string{node("start", "trigger", `{"kind":"reviews_waiting","ontology_id":"O","at_least":5}`),
+			node("load", "action", `{"operation":"create_load","ontology_id":"O"}`)}, `[{"from":"start","to":"load"}]`),
+			"load loads the ontology its trigger waits on"},
 	} {
 		_, err := automation.ParseSpec([]byte(c.raw))
 		require.ErrorContains(t, err, c.want, c.name)
@@ -191,6 +195,15 @@ func TestParseTriggerRefuses(t *testing.T) {
 		{`{"kind":"load_ready","ontology_id":"O","outcome":"any"}`, "ontology_id"},
 		{`{"kind":"document_arrived","set_id":""}`, "set_id"},
 		{`{"kind":"generation_finished","ontology_id":"O"}`, "outcome"},
+		{`{"kind":"reviews_waiting","ontology_id":"O"}`, "at_least: 1 to 10000"},
+		{`{"kind":"reviews_waiting","ontology_id":"O","at_least":0}`, "at_least: 1 to 10000"},
+		{`{"kind":"reviews_waiting","ontology_id":"O","at_least":10001}`, "at_least: 1 to 10000"},
+		{`{"kind":"reviews_waiting","ontology_id":"O","at_least":2.5}`, "at_least: 1 to 10000"},
+		{`{"kind":"reviews_waiting","ontology_id":"O","at_least":5,"outcome":"any"}`, "at_least: 1 to 10000"},
+		{`{"kind":"reviews_waiting","at_least":5}`, "at_least: 1 to 10000"},
+		{`{"kind":"load_ready","ontology_id":"O","at_least":5}`, `{kind: "load_ready", ontology_id}`},
+		{`{"kind":"schedule","every":"day","at":"09:00","time_zone":"UTC","at_least":5}`, `"HH:MM"`},
+		{`{"kind":"reviews_piling"}`, "reviews_waiting or manual"},
 		{`{"kind":"manual","time_zone":"UTC"}`, `{kind: "manual"}`},
 		{`{"kind":"manual","other":1}`, `{kind: "manual"}`},
 		{`{"kind":3}`, "names its kind"},
@@ -395,10 +408,12 @@ func TestTargetAndKind(t *testing.T) {
 		automation.LoadReady{OntologyID: "O"}:          "O",
 		automation.DocumentArrived{SetID: "S"}:         "S",
 		automation.GenerationFinished{OntologyID: "G"}: "G",
+		automation.ReviewsWaiting{OntologyID: "R"}:     "R",
 		automation.Manual{}:                            "",
 	} {
 		require.Equal(t, want, automation.Target(trigger))
 	}
+	require.Equal(t, automation.TriggerReviewsWaiting, automation.KindOf(automation.ReviewsWaiting{}))
 	require.Equal(t, automation.TriggerDocumentArrived, automation.KindOf(automation.DocumentArrived{}))
 	require.Equal(t, "connector:W/C", automation.SyncConnector{ConnectorID: "C"}.Target("W"))
 	require.Equal(t, "dashboard:W/D", automation.PublishDashboard{DashboardID: "D"}.Target("W"))
@@ -417,4 +432,25 @@ func TestSameSteps(t *testing.T) {
 	rewired, err := automation.ParseSpec([]byte(strings.Replace(overdue, `"branch":"true"`, `"branch":"false"`, 1)))
 	require.NoError(t, err)
 	require.False(t, automation.SameSteps(before, rewired))
+}
+
+// A reviews_waiting trigger reads back as its ontology and threshold, listens
+// to its ontology, lets a step load another ontology (only its own would
+// loop), and gives a count a condition may check.
+func TestReviewsWaiting(t *testing.T) {
+	raw := spec([]string{
+		node("start", "trigger", `{"kind":"reviews_waiting","ontology_id":"01ONT","at_least":10000}`),
+		node("many", "condition", `{"check":"count","op":"at_least","value":1000}`),
+		node("load", "action", `{"operation":"create_load","ontology_id":"01OTHER"}`),
+		node("mail", "notify", `{"message":"Reviews are waiting"}`),
+	}, `[{"from":"start","to":"many"},{"from":"many","to":"mail","branch":"true"},{"from":"start","to":"load"}]`)
+	s, err := automation.ParseSpec([]byte(raw))
+	require.NoError(t, err)
+	require.Equal(t, automation.ReviewsWaiting{OntologyID: "01ONT", AtLeast: automation.MaxReviewsWaiting}, s.Trigger())
+	require.Equal(t, "01ONT", automation.Target(s.Trigger()))
+	require.Equal(t, automation.Targets{Ontologies: []string{"01ONT", "01OTHER"}}, s.Targets())
+	require.Equal(t, automation.Targets{Ontologies: []string{"01OTHER"}}, s.StepTargets(), "its steps act on the other ontology only")
+	out, err := json.Marshal(s)
+	require.NoError(t, err)
+	require.Contains(t, string(out), `{"kind":"reviews_waiting","ontology_id":"01ONT","at_least":10000}`)
 }
