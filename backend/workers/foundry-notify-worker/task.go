@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"go.uber.org/dig"
@@ -515,5 +516,44 @@ func (t *Task) automationNotice(ctx context.Context, n *model.FoundryNotificatio
 			}
 		}
 	}
-	return automationRunEmail(name, note, said, pending, t.site.automationRun(a.WorkspaceID, a.ID, notice.Run.ID)), "", nil
+	m := automationRunEmail(name, note, said, pending, t.site.automationRun(a.WorkspaceID, a.ID, notice.Run.ID))
+	reviews, err := t.reviewsWaiting(ctx, a.WorkspaceID, spec, notice.Earlier)
+	if err != nil {
+		return message{}, "", err
+	}
+	if reviews != nil {
+		m.paragraphs = append([]paragraph{*reviews}, m.paragraphs...)
+	}
+	return m, "", nil
+}
+
+// reviewsWaiting is the paragraph a reviews_waiting run's email opens with:
+// how many cards wait in the ontology, and a link to start reviewing them.
+// nil for any other trigger, a run by hand (its trigger gave no count), and
+// an ontology since deleted.
+func (t *Task) reviewsWaiting(ctx context.Context, workspaceID string, spec automation.Spec, earlier []*model.FoundryAutomationRunNode) (*paragraph, error) {
+	trigger, ok := spec.Trigger().(automation.ReviewsWaiting)
+	if !ok {
+		return nil, nil
+	}
+	i := slices.IndexFunc(earlier, func(n *model.FoundryAutomationRunNode) bool {
+		return n.NodeID == spec.TriggerID() && n.Status == model.FoundryAutomationNodeSucceeded
+	})
+	if i < 0 {
+		return nil, nil
+	}
+	var out automation.Output
+	if json.Unmarshal(earlier[i].Output, &out) != nil || out.Count == nil {
+		return nil, nil
+	}
+	o, err := t.box.GetFoundryOntology(ctx, workspaceID, trigger.OntologyID)
+	switch {
+	case errors.Is(err, store.ErrNotFound) || err == nil && o.DeletedAt != nil:
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("read the ontology: %w", err)
+	}
+	name, _ := ontologyName(o.Name)
+	return &paragraph{Text: automation.CardsToReview(*out.Count) + " to review in “" + name + "”. Start reviewing:",
+		Link: t.site.review(workspaceID, o.ID)}, nil
 }

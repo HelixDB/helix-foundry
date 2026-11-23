@@ -32,15 +32,18 @@ const automationSpecDoc = `A spec is a graph: {"v": 1, "nodes": [...], "edges": 
 	`trigger {"kind": "schedule", "every": "hour", "minute": 0-59, "time_zone"} | {"kind": "schedule", "every": "day", "at": "HH:MM", "time_zone"} | ` +
 	`{"kind": "schedule", "every": "week", "weekday": "monday" … "sunday", "at": "HH:MM", "time_zone"} (an IANA zone, such as Europe/London: the person's) | ` +
 	`{"kind": "sync_finished", "connector_id", "outcome": "succeeded" | "failed" | "any"} | {"kind": "load_ready", "ontology_id"} | ` +
-	`{"kind": "document_arrived", "set_id"} | {"kind": "generation_finished", "ontology_id", "outcome"} | {"kind": "manual"}; ` +
+	`{"kind": "document_arrived", "set_id"} | {"kind": "generation_finished", "ontology_id", "outcome"} | ` +
+	`{"kind": "reviews_waiting", "ontology_id", "at_least": 1 to 10000} | {"kind": "manual"}; ` +
 	`assistant {"instruction": 1 to 2000 characters, run as a Founder turn as the owner, "allow": up to 10 actions it may run unasked (anything else it prepares waits for the owner)}; ` +
 	`action {"operation": "sync_connector", "connector_id"} | {"operation": "create_load", "ontology_id"} (its current version) | ` +
 	`{"operation": "publish_dashboard", "dashboard_id"} (refresh its public snapshot); ` +
 	`condition {"check": "answer", "equals": "yes" | "no"} (of the Founder step before it, which ends by reporting a yes or no) | ` +
-	`{"check": "count", "op": "at_least" | "at_most" | "equals", "value"} (of the documents that arrived, the rows a sync wrote, or a Founder step's reported count), ` +
+	`{"check": "count", "op": "at_least" | "at_most" | "equals", "value"} (of the documents that arrived, the rows a sync wrote, the cards to review, or a Founder step's reported count), ` +
 	`with exactly one edge in and its out edges each "branch": "true" or "false"; notify {"message": at most 500 characters}: emails the owner, with what the Founder steps before it said. ` +
+	`A reviews_waiting trigger fires when the ontology's current load has at least that many review cards open, once its reviews are sorted, ` +
+	`and again only for a new current load or after the count fell below it and rose past it. ` +
 	`A step runs once every step before it ended and one of its edges in was taken; a failure stops the steps after it. ` +
-	`A step may not sync or load what its trigger waits on (a sync_finished trigger's connector, a load_ready trigger's ontology, or the connector whose syncs write a document_arrived trigger's set): each run would start another. ` +
+	`A step may not sync or load what its trigger waits on (a sync_finished trigger's connector, a load_ready or reviews_waiting trigger's ontology, or the connector whose syncs write a document_arrived trigger's set): each run would start another. ` +
 	`A trigger skips work its own workflow started (a sync, a load, or documents a sync it started wrote), directly or through other workflows, and work past a chain of 3 workflows, recording the run skipped and why.`
 
 type FoundryAutomationInput struct {

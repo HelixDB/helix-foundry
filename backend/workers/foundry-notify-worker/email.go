@@ -45,6 +45,12 @@ func (s site) overview(workspaceID, ontologyID string) string {
 	return string(s) + "/ontology/" + url.PathEscape(ontologyID) + "?workspace=" + url.QueryEscape(workspaceID)
 }
 
+// review is the walkthrough of what the ontology's current load asks a
+// person to decide.
+func (s site) review(workspaceID, ontologyID string) string {
+	return string(s) + "/ontology/" + url.PathEscape(ontologyID) + "/review?workspace=" + url.QueryEscape(workspaceID)
+}
+
 // home is the site's front page, marked as reached from a reminder
 // (?via=email), which the page welcomes back.
 func (s site) home() string {
