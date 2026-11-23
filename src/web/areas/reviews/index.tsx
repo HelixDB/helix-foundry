@@ -290,6 +290,7 @@ export function useReviewQueue() {
     single,
     ctx,
     all,
+    kept: keep,
     keepCards,
     settled,
     labelledOn,

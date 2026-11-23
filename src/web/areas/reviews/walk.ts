@@ -203,22 +203,28 @@ export function undecided(
   }).length;
 }
 
+/** How many of the queue's random draws the finish offers as spot checks. */
+export const SPOT_CHECKS = 5;
+
 /**
- * How many held claims among the spot checks (`spot`) a batch of
- * `batchKey` would take but leaves out: drawn at random to measure their
- * score band, so a person decides each on its own, at the finish.
+ * How many held claims among the spot checks the finish offers (the first
+ * SPOT_CHECKS of `spot`) a batch of `batchKey` would take but leaves out:
+ * drawn at random to measure their score band, so a person decides each on
+ * its own, at the finish. Those decided or labelled on this page (`done`)
+ * are no longer to decide, so they don't count.
  *
  * @example
- * drawnLike(order.spot, order.cards, 'claim:["signed_with","0.7"]'); // 1
+ * drawnLike(order.spot, order.cards, 'claim:["signed_with","0.7"]', new Set()); // 1
  */
 export function drawnLike(
   spot: readonly string[],
   cards: ReadonlyMap<string, QueueCard>,
   batchKey: string,
+  done: ReadonlySet<string>,
 ): number {
-  return spot.filter((k) => {
+  return spot.slice(0, SPOT_CHECKS).filter((k) => {
     const c = cards.get(k);
-    return c?.kind === "claim" && claimBatchKey(c) === batchKey;
+    return !done.has(k) && c?.kind === "claim" && claimBatchKey(c) === batchKey;
   }).length;
 }
 

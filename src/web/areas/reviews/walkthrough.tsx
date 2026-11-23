@@ -925,7 +925,12 @@ export function ReviewWalkthrough({
           items={dialog.batch.items}
           cards={order.cards}
           advice={dialog.advice}
-          drawn={drawnLike(order.spot, order.cards, dialog.batch.batchKey)}
+          drawn={drawnLike(
+            order.spot,
+            order.cards,
+            dialog.batch.batchKey,
+            q.kept,
+          )}
           run={async (keys, signal, onProgress) => {
             const chosen = new Set(keys);
             const items = dialog.batch.items.flatMap((it) => {

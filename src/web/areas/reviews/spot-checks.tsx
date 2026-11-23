@@ -50,9 +50,8 @@ import {
   statementLine,
 } from "./review-card";
 import { SettleReview } from "./settle";
+import { SPOT_CHECKS } from "./walk";
 
-/** How many spot checks the finish offers. */
-export const SPOT_CHECKS = 5;
 /** How many re-checks the page offers at once, of how many it reads. */
 const RECHECKS_SHOWN = 5;
 const RECHECKS_READ = 20;

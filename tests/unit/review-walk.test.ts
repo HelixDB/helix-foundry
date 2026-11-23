@@ -12,6 +12,7 @@ import {
   batchTakes,
   current,
   drawnLike,
+  SPOT_CHECKS,
   progress,
   undecided,
   walkOrder,
@@ -597,9 +598,28 @@ describe("drawnLike", () => {
     ];
     const cards = new Map<string, QueueCard>(spot.map((c) => [c.key, c]));
     const keys = [...cards.keys(), "quote-0.7-0"];
-    expect(drawnLike(keys, cards, 'claim:["partner_of","0.7"]')).toBe(1);
-    expect(drawnLike(keys, cards, 'claim:["partner_of","0.9"]')).toBe(1);
-    expect(drawnLike(keys, cards, 'claim:["signed_with","0.7"]')).toBe(0);
+    const none = new Set<string>();
+    expect(drawnLike(keys, cards, 'claim:["partner_of","0.7"]', none)).toBe(1);
+    expect(drawnLike(keys, cards, 'claim:["partner_of","0.9"]', none)).toBe(1);
+    expect(drawnLike(keys, cards, 'claim:["signed_with","0.7"]', none)).toBe(0);
+  });
+
+  it("counts only the draws the finish offers, and none decided here", () => {
+    const spot = Array.from({ length: SPOT_CHECKS + 3 }, (_, i) => ({
+      ...heldCard(i + 1, { confidence: 0.72 }),
+      drawn: "random" as const,
+    }));
+    const cards = new Map<string, QueueCard>(spot.map((c) => [c.key, c]));
+    const keys = [...cards.keys()];
+    const batch = 'claim:["partner_of","0.7"]';
+    expect(drawnLike(keys, cards, batch, new Set())).toBe(SPOT_CHECKS);
+    expect(drawnLike(keys, cards, batch, new Set([keys[0]!, keys[1]!]))).toBe(
+      SPOT_CHECKS - 2,
+    );
+    // A draw past the finish's offer is no spot check, decided or not.
+    expect(drawnLike(keys, cards, batch, new Set([keys.at(-1)!]))).toBe(
+      SPOT_CHECKS,
+    );
   });
 });
 
