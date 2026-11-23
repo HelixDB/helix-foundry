@@ -37,6 +37,7 @@ import { automationPaths } from "../automations/paths";
 import { dashboardPaths } from "../dashboards/paths";
 import { dataPaths } from "../data/paths";
 import { reviewCopy } from "../documents/model";
+import { aType, notInDataText } from "../reviews/choices";
 import { entityId } from "../explore/model";
 import { LOAD_LIMITS } from "../ontology/model";
 import { ontologyPaths } from "../ontology/paths";
@@ -1672,9 +1673,9 @@ const VIEWS: {
         run: "Link",
       },
       not_in_data: {
-        title: `Mark “${name}” as not in the data`,
-        does: "The name is no one in the data: later loads leave it unlinked.",
-        run: "Mark not in data",
+        title: `Mark “${name}” as not ${aType(r.type ?? "record")} we have`,
+        does: `${notInDataText(name, r.type ?? "record")} This applies to the current load at once, and to later loads.`,
+        run: `Mark not ${aType(r.type ?? "record")}`,
       },
       set_value: {
         title: `Set ${what} to ${d.decision.kind === "set_value" ? valueText(d.decision.value) : ""}`,

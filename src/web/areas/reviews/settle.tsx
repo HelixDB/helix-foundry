@@ -17,7 +17,7 @@ import { useOntology } from "../ontology/scope";
 import { spanAnchor } from "../documents/model";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
-import { choicesOf } from "./choices";
+import { aType, choicesOf, notInDataText } from "./choices";
 import type { Naming } from "../explore/naming";
 import {
   approvalOf,
@@ -562,9 +562,9 @@ export function SettleReview({
                   "This load keeps its link; a choice here, or Undo link, applies from the next load. A record chosen links this name in other documents too, where nothing else links it."
                 : picked?.kind === "link"
                   ? `Links this name to ${picked.label} here and in other documents where nothing else links that name: in this load at once, and in later loads.`
-                  : picked?.kind === "not_in_data"
-                    ? "Not in data is for this document only: in this load at once, and in later loads."
-                    : "A record chosen links this name here and in other documents where nothing else links it; Not in data is for this document only. Either applies to this load at once, and to later loads."}
+                  : picked?.kind === "not_in_data" && s.kind === "resolve"
+                    ? `${notInDataText(s.normName, s.type)} This applies to this load at once, and to later loads.`
+                    : `A record chosen links this name here and in other documents where nothing else links it; ${s.kind === "resolve" ? `“Not ${aType(s.type)} we have”` : "saying it is none"} is for this document only. Either applies to this load at once, and to later loads.`}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">
@@ -633,7 +633,7 @@ const chosenLine = (
 const linkedLine = (
   d: Extract<ReviewDecision, { kind: "resolve" }> & FoundryReviewDecision,
 ) => {
-  const line = `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`;
+  const line = `${d.type} · ${d.normName} → ${d.entityKey ?? `not ${aType(d.type)} we have`}`;
   switch (d.applied?.status) {
     case "pending":
       return `${line} · being linked in this load`;

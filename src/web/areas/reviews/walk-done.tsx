@@ -1,6 +1,7 @@
 // The walkthrough's finish (./walkthrough.tsx): what the walk's choices do,
 // split by when (the current load now, or the next load, which Load again
-// starts), the cards skipped or still to decide, then the spot checks
+// starts), the cards skipped or still to decide (for a member, who decides
+// none, those waiting for an owner or admin), then the spot checks
 // (./spot-checks.tsx), which may be skipped.
 import { useState, type ReactNode, type Ref } from "react";
 import { ArrowLeft } from "lucide-react";
@@ -14,6 +15,7 @@ export function WalkDone({
   walk,
   made,
   notInPlace,
+  member,
   empty,
   onClearFilters,
   headingRef,
@@ -28,6 +30,8 @@ export function WalkDone({
   // The cards whose saved choice the current load refused to take in place:
   // the next load applies it, whatever was foreseen when it was sent.
   notInPlace: ReadonlySet<string>;
+  // A member, who reads the cards and decides none.
+  member: boolean;
   // The walk took no card: nothing to decide under its filters.
   empty: boolean;
   // Clears the walk's filters; unset while none is set.
@@ -50,7 +54,7 @@ export function WalkDone({
   const skipped = of(["skipped"]);
   const left = walk.order.filter((k) => {
     const x = walk.outcomes.get(k);
-    return !x || x.kind === "refused";
+    return !x || x.kind === "refused" || x.kind === "unconfirmed";
   });
   const covered = of(["covered"]).length;
   return (
@@ -58,7 +62,9 @@ export function WalkDone({
       <div className="rv-done-head">
         <h2 id="rv-done-title" ref={headingRef} tabIndex={-1}>
           {left.length
-            ? `${plural(left.length, "card")} still to decide`
+            ? member
+              ? `${plural(left.length, "card")} ${left.length > 1 ? "wait" : "waits"} for an owner or admin`
+              : `${plural(left.length, "card")} still to decide`
             : empty
               ? "Nothing to decide"
               : skipped.length
@@ -104,7 +110,9 @@ export function WalkDone({
         <div className="hf-form-actions rv-done-actions">
           {left[0] !== undefined && (
             <Button onClick={() => onJump(left[0]!)}>
-              Go to the first still to decide
+              {member
+                ? "Go back to the first"
+                : "Go to the first still to decide"}
             </Button>
           )}
           {skipped.length > 0 && (

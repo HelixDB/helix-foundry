@@ -9,7 +9,8 @@ import type { FoundryReviewChoice } from "../../../shared/wfe";
 import { Button, DataGrid, Dialog, formatNumber, plural } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
-import type { Advice } from "./advice";
+import { settleOf, type Advice } from "./advice";
+import { aType } from "./choices";
 import type { QueueCard } from "./queue";
 import { cardLine } from "./review-card";
 import { batchReason } from "./walk";
@@ -25,15 +26,18 @@ type Stage =
   | { kind: "done"; results: readonly BatchResult[]; meanwhile: number }
   | { kind: "undone" };
 
-/** What a batch's confirm says, by the choice its cards share. */
-const verbOf = (c: FoundryReviewChoice | undefined) =>
-  c?.release
-    ? "Approve"
-    : c?.resolve?.notInData
-      ? "Mark not in data"
-      : c?.resolve
-        ? "Link"
-        : "Accept";
+/**
+ * What a batch's confirm says for `n` cards, by the choice they share (and
+ * the type of the names, which a batch's names share).
+ */
+const confirmText = (
+  c: FoundryReviewChoice | undefined,
+  type: string | undefined,
+  n: string,
+) =>
+  c?.resolve?.notInData && type
+    ? `Mark ${n} as not ${aType(type)}`
+    : `${c?.release ? "Approve" : c?.resolve ? "Link" : "Accept"} ${n}`;
 
 export function BatchDialog({
   items,
@@ -67,7 +71,7 @@ export function BatchDialog({
   const [stage, setStage] = useState<Stage>({ kind: "choose", off: new Set() });
   const [undoing, setUndoing] = useState(false);
   const stop = useRef<AbortController>(undefined);
-  const verb = verbOf(items[0]?.choice);
+  const first = items[0] && cards.get(items[0].key);
   const rows = items.flatMap((it) => {
     const c = cards.get(it.key);
     return c && (c.kind === "name" || c.kind === "claim" || c.kind === "value")
@@ -120,7 +124,11 @@ export function BatchDialog({
                 )
               }
             >
-              {verb} {formatNumber(rows.length - stage.off.size)}
+              {confirmText(
+                items[0]?.choice,
+                first?.kind === "name" ? settleOf(first).type : undefined,
+                formatNumber(rows.length - stage.off.size),
+              )}
             </Button>
           </>
         ) : stage.kind === "sending" ? (

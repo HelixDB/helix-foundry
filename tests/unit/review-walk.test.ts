@@ -21,6 +21,7 @@ import {
   notLinked,
   SPOT_CHECKS,
   progress,
+  unconfirmedNames,
   undecided,
   walkOrder,
   walkReducer,
@@ -785,11 +786,11 @@ describe("batchReason", () => {
     expect(
       batchReason(
         suggest({ kind: "repeat", decisions: 1, by: "you" }),
-        "Not in data",
+        "Not a Customer we have",
         2,
       ),
     ).toBe(
-      "Founder suggests Not in data for all 2: you chose it for this name once before.",
+      "Founder suggests Not a Customer we have for all 2: you chose it for this name once before.",
     );
     expect(
       batchReason(
@@ -870,5 +871,56 @@ describe("linkedNow and notLinked", () => {
     });
     expect(opened.outcomes.has("x")).toBe(false);
     expect(undecided(opened.order, opened.outcomes)).toBe(2);
+  });
+  it("opens a name's saved choice again once its job is read as unconfirmed", () => {
+    const outcomes = new Map<string, Outcome>([
+      ["a", saved(link)],
+      ["b", saved(notInData)],
+      ["c", saved(resolveDecision("d-3", { entityKey: "scus_2" }))],
+      ["d", saved(decision("r"))],
+      ["e", { kind: "sending", choice: approve, how: "chosen" }],
+    ]);
+    const read = [
+      { ...link, applied: { status: "unconfirmed" as const } },
+      { ...notInData, applied: { status: "unconfirmed" as const } },
+      resolveDecision("d-3", { entityKey: "scus_2", applied: "written" }),
+      { ...decision("r"), applied: { status: "unconfirmed" as const } },
+    ];
+    // Names only, a link or none, whose read is of that very save.
+    expect([...unconfirmedNames(outcomes, read)]).toEqual(["a", "b"]);
+    // Chosen again, the save is a new one: a read from before is no word on it.
+    const again = new Map(outcomes).set(
+      "a",
+      saved({ ...link, decidedAt: "2026-11-02T00:00:00Z" }),
+    );
+    expect([...unconfirmedNames(again, read)]).toEqual(["b"]);
+    expect(unconfirmedNames(outcomes, []).size).toBe(0);
+
+    const w = walkOf(["a", "b", "x"], { at: 3 }, [
+      ["a", saved(link)],
+      ["b", saved(notInData)],
+      ["x", { kind: "skipped" }],
+    ]);
+    expect(progress(w).left).toBe(0);
+    const reopened = run(w, { type: "unconfirmed", keys: new Set(["a", "x"]) });
+    expect(reopened.outcomes.get("a")).toEqual({
+      kind: "unconfirmed",
+      decision: link,
+      how: "accepted",
+    });
+    // Only a saved choice turns: x stays skipped, b stays saved.
+    expect(reopened.outcomes.get("x")).toEqual({ kind: "skipped" });
+    expect(reopened.outcomes.get("b")?.kind).toBe("saved");
+    // Still to decide: counted so, and the batch and the walk take it.
+    expect(progress(reopened)).toMatchObject({ accepted: 1, left: 1 });
+    expect(undecided(reopened.order, reopened.outcomes)).toBe(2);
+    expect(batchTakes(reopened, "a")).toBe(true);
+    // Choosing again sends it, and moves on past it.
+    const chosen = run(
+      { ...reopened, at: 0 },
+      { type: "decide", key: "a", choice: approve, how: "chosen" },
+    );
+    expect(chosen.outcomes.get("a")?.kind).toBe("sending");
+    expect(chosen.at).toBe(3);
   });
 });

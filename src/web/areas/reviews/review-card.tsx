@@ -31,7 +31,7 @@ import {
   type Decidable,
   type Effect,
 } from "./advice";
-import type { Choice, ChoiceLayout } from "./choices";
+import { notInDataText, type Choice, type ChoiceLayout } from "./choices";
 import type { KeyCommand } from "./keys";
 import {
   holdingEnds,
@@ -208,9 +208,10 @@ function OutcomeLine({
     case undefined:
       return null;
     case "sending":
-    case "saved": {
+    case "saved":
+    case "unconfirmed": {
       // The choice made: sent as it is, or saved as the backend keeps it.
-      const label = choices.find((c) => {
+      const chosen = choices.find((c) => {
         if (outcome.kind === "sending")
           return JSON.stringify(c.decision) === JSON.stringify(outcome.choice);
         const d = outcome.decision;
@@ -228,7 +229,16 @@ function OutcomeLine({
           default:
             return c.kind === "approve";
         }
-      })?.label;
+      });
+      const label =
+        chosen?.kind === "not_in_data" ? chosen.done : chosen?.label;
+      if (outcome.kind === "unconfirmed")
+        return (
+          <p role="status" className="rv-outcome">
+            Saved{label ? `: ${label}` : ""}, but the job that applies it failed
+            before it said whether it did. Choose it again to finish.
+          </p>
+        );
       const inLoad =
         outcome.kind === "saved" &&
         outcome.decision.kind === "resolve" &&
@@ -335,7 +345,21 @@ export function ReviewCard({
     { id: o } = useOntology();
   const docName = useDocumentNames(ws, "A document");
   const open =
-    !outcome || outcome.kind === "refused" || outcome.kind === "skipped";
+    !outcome ||
+    outcome.kind === "refused" ||
+    outcome.kind === "skipped" ||
+    outcome.kind === "unconfirmed";
+  // What marking the name as none of its type's records does, said under
+  // the choices and by the button that offers it.
+  const noneId = useId();
+  const none =
+    card.kind === "name" && choices.some((c) => c.kind === "not_in_data")
+      ? notInDataText(cardName(card), settleOf(card).type)
+      : undefined;
+  const describe = (c: Choice | undefined) =>
+    none && c?.kind === "not_in_data"
+      ? { title: none, "aria-describedby": noneId }
+      : {};
   // A card's key may hold spaces and quotes (a name's is JSON), no IDREF.
   const headingId = useId();
   return (
@@ -402,6 +426,7 @@ export function ReviewCard({
               <Button
                 variant="primary"
                 aria-keyshortcuts="Enter"
+                {...describe(layout.primary)}
                 onClick={() => onCommand({ kind: "accept" })}
               >
                 {layout.primary.kind === "link"
@@ -417,12 +442,21 @@ export function ReviewCard({
           )}
           {layout.rest.map(({ choice, key }) => (
             <li key={choice.id}>
-              <Button aria-keyshortcuts={key} onClick={() => onChoose(choice)}>
+              <Button
+                aria-keyshortcuts={key}
+                {...describe(choice)}
+                onClick={() => onChoose(choice)}
+              >
                 {key && <Kbd>{key}</Kbd>} {choice.label}
               </Button>
             </li>
           ))}
         </ul>
+      )}
+      {!readOnly && open && none && (
+        <p id={noneId} className="on-muted rv-none">
+          {none}
+        </p>
       )}
       {/* What a held claim's approval writes, its score and how it's
           stated, after its choices: the suggestion says why already, and a

@@ -293,7 +293,7 @@
   border-color: var(--hf-warning);
   background: var(--hf-warning);
 }
-.rv-dot[data-state="refused"] {
+.rv-dot:is([data-state="refused"], [data-state="unconfirmed"]) {
   border-color: var(--hf-danger);
   background: var(--hf-danger);
 }
@@ -384,6 +384,11 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+/* What marking a name as none of its type's records does, under the choices. */
+.rv-none {
+  margin: 0;
+  font-size: var(--hf-text-sm);
 }
 /* Back, Skip and Undo on the left; Accept all like this, Ask Founder and
    the shortcuts on the right. */

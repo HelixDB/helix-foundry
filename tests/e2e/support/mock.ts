@@ -63,6 +63,7 @@ export const mock = {
     nameInPlace?:
       | "written"
       | "not_replayed"
+      | "unconfirmed"
       | "bound"
       | "collides"
       | "not_asked";

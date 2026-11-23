@@ -69,6 +69,7 @@ import {
   linkedNow,
   notLinked,
   progress,
+  unconfirmedNames,
   undecided,
   walkOrder,
   walkReducer,
@@ -121,15 +122,6 @@ const UNDONE: Record<FoundryReviewDecision["kind"], string> = {
   resolve: "Choice removed: it stops applying from the next load.",
   prop: "Value taken back from this load.",
   withdraw: "Choice removed.",
-};
-
-/** What a toast says of a choice, by its kind. */
-const CHOSEN: Record<Choice["kind"], string> = {
-  link: "Linked",
-  not_in_data: "Marked not in data",
-  value: "Value chosen",
-  approve: "Approved",
-  reject: "Rejected",
 };
 
 const same = (a: FoundryReviewChoice, b: FoundryReviewChoice) =>
@@ -294,7 +286,7 @@ export function useWalk() {
           keys.map(async (key) => {
             const out = now.current.outcomes.get(key);
             const answer =
-              out?.kind === "saved"
+              out?.kind === "saved" || out?.kind === "unconfirmed"
                 ? ({ kind: "saved", decision: out.decision } as const)
                 : await sends.current.get(key);
             if (answer?.kind !== "saved") return { key, ok: true } as const;
@@ -516,7 +508,10 @@ export function ReviewWalkthrough({
   const outcome = key ? w.outcomes.get(key) : undefined;
   const manage = canManage(role) && !!load.current;
   const open =
-    !outcome || outcome.kind === "refused" || outcome.kind === "skipped";
+    !outcome ||
+    outcome.kind === "refused" ||
+    outcome.kind === "skipped" ||
+    outcome.kind === "unconfirmed";
   const siblings = (card && order.siblings.get(card.key)) ?? [];
   const effectFor = (c: Decidable, choice: FoundryReviewChoice) =>
     effectOf(c, choice, (order.siblings.get(c.key) ?? []).length, single);
@@ -581,6 +576,16 @@ export function ReviewWalkthrough({
   useEffect(() => {
     if (uncover.size) api.dispatch({ type: "uncover", by: uncover });
   }, [uncover]);
+  // A name's choice whose job failed before saying what became of it is to
+  // choose again: the card offers its choices, and counts as still to decide.
+  const unconfirmed = useMemo(
+    () => unconfirmedNames(w.outcomes, q.decisions.data ?? []),
+    [w.outcomes, q.decisions.data],
+  );
+  useEffect(() => {
+    if (unconfirmed.size)
+      api.dispatch({ type: "unconfirmed", keys: unconfirmed });
+  }, [unconfirmed]);
 
   const [dialog, setDialog] = useState<
     | { kind: "help" }
@@ -636,9 +641,8 @@ export function ReviewWalkthrough({
       rule: advice?.kind === "suggest" ? advice.rule : "none",
     });
     moved.current = true;
-    const kind = choices.find((c) => same(c.decision, choice))?.kind;
     say(
-      `${kind ? CHOSEN[kind] : "Saved"}${covers.length ? `, with ${plural(covers.length, "other document")} asking about this name` : ""}.`,
+      `${choices.find((c) => same(c.decision, choice))?.done ?? "Saved"}${covers.length ? `, with ${plural(covers.length, "other document")} asking about this name` : ""}.`,
       true,
     );
   };
@@ -924,6 +928,7 @@ export function ReviewWalkthrough({
                 walk={w}
                 made={api.made}
                 notInPlace={notInPlace}
+                member={!canManage(role)}
                 empty={!w.order.length}
                 onClearFilters={filters ? clearFilters : undefined}
                 headingRef={heading}
@@ -1044,7 +1049,7 @@ const ASK_FOUNDER = "Ask Founder";
 const SHORTCUTS: readonly (readonly [ReactNode, string, boolean])[] = [
   [<kbd>⏎</kbd>, "Accept Founder’s suggestion", true],
   [<kbd>1–9</kbd>, "Choose that option, saved at once", true],
-  [<kbd>N</kbd>, "Not in data", true],
+  [<kbd>N</kbd>, "Not a record of that type we have", true],
   [<kbd>X</kbd>, "Reject", true],
   [
     <>

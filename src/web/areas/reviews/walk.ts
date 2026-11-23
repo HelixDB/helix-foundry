@@ -29,6 +29,9 @@ export type How = "accepted" | "chosen" | "batch";
 export type Outcome =
   | { kind: "sending"; choice: FoundryReviewChoice; how: How }
   | { kind: "saved"; decision: FoundryReviewDecision; how: How }
+  // A name's choice saved whose job failed before it said what the current
+  // load made of it: still to decide, choosing again finishes it.
+  | { kind: "unconfirmed"; decision: FoundryReviewDecision; how: How }
   | {
       kind: "refused";
       choice: FoundryReviewChoice;
@@ -88,6 +91,9 @@ export type WalkAction =
   // The current load refused these keys' links in place (they apply from
   // the next load): the cards each covered are to decide again.
   | { type: "uncover"; by: ReadonlySet<string> }
+  // The decisions read say the jobs of these keys' saved name choices
+  // failed before saying what became of them (unconfirmedNames).
+  | { type: "unconfirmed"; keys: ReadonlySet<string> }
   // The queue read again: a new order (another load's, or a filter's), and
   // the keys no longer in the queue at all (decided, here or elsewhere).
   | {
@@ -191,8 +197,12 @@ export function walkOrder(
   return { ...lanes, cards, advice, siblings };
 }
 
-/** Whether a card is still to decide: no outcome, or its choice refused. */
-const open = (o: Outcome | undefined) => !o || o.kind === "refused";
+/**
+ * Whether a card is still to decide: no outcome, its choice refused, or a
+ * name's choice whose job failed before saying what became of it.
+ */
+const open = (o: Outcome | undefined) =>
+  !o || o.kind === "refused" || o.kind === "unconfirmed";
 
 /**
  * How many of `keys` are still undecided by the walk's `outcomes`: no
@@ -424,6 +434,19 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
           .filter((e) => e.length),
       };
     }
+    case "unconfirmed": {
+      const outcomes = new Map(w.outcomes);
+      for (const k of a.keys) {
+        const o = outcomes.get(k);
+        if (o?.kind === "saved")
+          outcomes.set(k, {
+            kind: "unconfirmed",
+            decision: o.decision,
+            how: o.how,
+          });
+      }
+      return { ...w, outcomes };
+    }
     case "uncover": {
       const outcomes = new Map(
         [...w.outcomes].filter(
@@ -528,6 +551,33 @@ export function notLinked(
         ? [k]
         : [],
     ),
+  );
+}
+
+/**
+ * The cards whose saved name choice the decisions read (`decisions`) say is
+ * unconfirmed: its job failed before it said what the current load made of
+ * it, so the card is to choose again. Only the read of that very save
+ * counts (the same `decidedAt`): choosing again saves the decision anew,
+ * and a read from before then is no word on it.
+ *
+ * @example
+ * unconfirmedNames(walk.outcomes, [{ ...decision, applied: { status: "unconfirmed" } }]); // Set { "a" }
+ */
+export function unconfirmedNames(
+  outcomes: ReadonlyMap<string, Outcome>,
+  decisions: readonly FoundryReviewDecision[],
+): Set<string> {
+  const read = new Map(decisions.map((d) => [d.id, d]));
+  return new Set(
+    [...outcomes].flatMap(([k, o]) => {
+      if (o.kind !== "saved" || o.decision.kind !== "resolve") return [];
+      const d = read.get(o.decision.id);
+      return d?.applied?.status === "unconfirmed" &&
+        d.decidedAt === o.decision.decidedAt
+        ? [k]
+        : [];
+    }),
   );
 }
 

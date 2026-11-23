@@ -193,7 +193,7 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
   // made, as a repeat of it.
   await expect(heading(page)).toContainText("names “Umbrella Holdings");
   await expect(card(page)).toContainText(
-    "Founder suggests Not in dataRuleYour earlier choice ×1",
+    "Founder suggests Not a Customer we haveRuleYour earlier choice ×1",
   );
   sent = page.waitForRequest(isSettle);
   await page.keyboard.press("Enter");
@@ -241,7 +241,10 @@ test("walks from the dock's Review N: Enter accepts, Z takes it back, S skips, a
 });
 
 /** Three documents name Umbrella Holdings; the walk opens on the first. */
-async function naming(page: Page, nameInPlace: "written" | "not_replayed") {
+async function naming(
+  page: Page,
+  nameInPlace: "written" | "not_replayed" | "unconfirmed",
+) {
   await mock.configure({ loadStepMs: 200, nameInPlace });
   await signIn(page);
   await uploadNaming(page, "Umbrella Holdings", 3);
@@ -258,8 +261,15 @@ async function naming(page: Page, nameInPlace: "written" | "not_replayed") {
   // The only record the load found is the suggestion: the primary choice.
   await expect(choiceButtons(page)).toHaveText([
     /^Link to .+\S\s*$/,
-    /^N\s*Not in data$/,
+    /^N\s*Not a Customer we have$/,
   ]);
+  // What that choice does, under the choices and as its button's description.
+  const none =
+    "“Umbrella Holdings” isn’t a Customer in your data: it stays unlinked in this document and no Customer is made. Facts and held claims that name it here are dropped.";
+  await expect(card(page)).toContainText(none);
+  await expect(
+    card(page).getByRole("button", { name: "Not a Customer we have" }),
+  ).toHaveAccessibleDescription(none);
   await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/);
   const sent = page.waitForRequest(isSettle);
   await page.keyboard.press("Enter");
@@ -314,6 +324,35 @@ test("a link to a name settles every document asking about it, which go to Cover
       page.getByRole("heading", { level: 2, name: "Nothing to decide" }),
     ).toBeVisible({ timeout: 3000 });
   }).toPass({ timeout: 20_000 });
+});
+
+test("a link whose job failed before saying offers its choices again, and is still to decide", async ({
+  page,
+}) => {
+  await naming(page, "unconfirmed");
+  // Its job failed: the link and the two it covered are all to decide.
+  await expect(lane(page, "Covered")).toHaveText(/^Covered\s*0$/, {
+    timeout: 15_000,
+  });
+  await expect(lane(page, "Decide")).toHaveText(/^Decide\s*3$/);
+  await expect(progress(page)).toHaveText(
+    "0 of 3 · 0 accepted · 0 changed · 0 skipped",
+  );
+  const done = page.getByRole("region", { name: "3 cards still to decide" });
+  await expect(done).not.toContainText("Applied now");
+  await done
+    .getByRole("button", { name: "Go to the first still to decide" })
+    .click();
+  await expect(card(page).locator(".rv-outcome")).toHaveText(
+    /^Saved: .+, but the job that applies it failed before it said whether it did\. Choose it again to finish\.$/,
+  );
+  await expect(choiceButtons(page)).toHaveCount(2);
+  const sent = page.waitForRequest(isSettle);
+  await page.keyboard.press("Enter");
+  expect(body(await sent)).toEqual({
+    decision: { resolve: { entityKey: expect.any(String) } },
+    drawn: "ranked",
+  });
 });
 
 test("undoing a link the load applied in place shows it taken back, not to decide again", async ({
@@ -531,6 +570,13 @@ test("members read the cards, with Next and the reading keys, but no choices", a
   await expect(progress(page)).toHaveText(
     "0 of 4 · 0 accepted · 0 changed · 0 skipped",
   );
+  // The finish words the cards as waiting for someone who can decide them.
+  const done = page.getByRole("region", {
+    name: "4 cards wait for an owner or admin",
+  });
+  await expect(done).not.toContainText("still to decide");
+  await done.getByRole("button", { name: "Go back to the first" }).click();
+  await expect(heading(page)).toContainText(first);
 });
 
 test("FYI holds a name the model linked, with Undo link", async ({ page }) => {

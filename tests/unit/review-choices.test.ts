@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { choicesOf, layoutChoices } from "@/web/areas/reviews/choices";
+import {
+  aType,
+  choicesOf,
+  layoutChoices,
+  notInDataText,
+} from "@/web/areas/reviews/choices";
 import type { Candidate } from "@/web/areas/reviews/model";
 import {
   entity,
@@ -14,7 +19,7 @@ import {
 const nameOf = (c: Candidate) => c.entity?.name ?? c.key;
 
 describe("choicesOf", () => {
-  it("offers a name's candidates, then Not in data", () => {
+  it("offers a name's candidates, then that it is none of its type's records", () => {
     const card = nameCard("umbrella", {
       candidates: [
         { key: "scus_1", entity: entity("scus_1", "Umbrella") },
@@ -26,18 +31,21 @@ describe("choicesOf", () => {
       {
         id: "key:scus_1",
         label: "Umbrella",
+        done: "Linked",
         decision: { resolve: { entityKey: "scus_1" } },
         kind: "link",
       },
       {
         id: "key:scus_2",
         label: "scus_2",
+        done: "Linked",
         decision: { resolve: { entityKey: "scus_2" } },
         kind: "link",
       },
       {
         id: "not_in_data",
-        label: "Not in data",
+        label: "Not a Customer we have",
+        done: "Marked not a Customer",
         decision: { resolve: { notInData: true } },
         kind: "not_in_data",
       },
@@ -55,7 +63,7 @@ describe("choicesOf", () => {
       "Umbrella (scus_1)",
       "Umbrella (scus_2)",
       "Globex",
-      "Not in data",
+      "Not a Customer we have",
     ]);
   });
   it("offers each stated value once", () => {
@@ -68,12 +76,14 @@ describe("choicesOf", () => {
       {
         id: 'value:{"text":"GBP"}',
         label: "GBP",
+        done: "Value chosen",
         decision: { prop: { text: "GBP" } },
         kind: "value",
       },
       {
         id: 'value:{"integer":"36"}',
         label: "36",
+        done: "Value chosen",
         decision: { prop: { integer: "36" } },
         kind: "value",
       },
@@ -87,12 +97,14 @@ describe("choicesOf", () => {
       {
         id: "approve",
         label: "Approve",
+        done: "Approved",
         decision: { release: { statementHash: hash } },
         kind: "approve",
       },
       {
         id: "reject",
         label: "Reject",
+        done: "Rejected",
         decision: { reject: { statementHash: hash } },
         kind: "reject",
       },
@@ -103,6 +115,44 @@ describe("choicesOf", () => {
       choicesOf({ candidates: [], settle: { kind: "stale" } }, nameOf),
     ).toEqual([]);
     expect(choicesOf({ candidates: [] }, nameOf)).toEqual([]);
+  });
+});
+
+describe("aType and notInDataText", () => {
+  it("puts a type's name after its article, as it is said", () => {
+    expect(
+      [
+        "Customer",
+        "Account",
+        "Order",
+        "Event",
+        "Invoice",
+        "User",
+        "Unit",
+        "Umbrella",
+        "Update",
+        "person",
+      ].map(aType),
+    ).toEqual([
+      "a Customer",
+      "an Account",
+      "an Order",
+      "an Event",
+      "an Invoice",
+      "a User",
+      "a Unit",
+      "an Umbrella",
+      "an Update",
+      "a person",
+    ]);
+  });
+  it("says what marking a name as none of its type's records does", () => {
+    expect(notInDataText("Umbrella Holdings", "Customer")).toBe(
+      "“Umbrella Holdings” isn’t a Customer in your data: it stays unlinked in this document and no Customer is made. Facts and held claims that name it here are dropped.",
+    );
+    expect(notInDataText("Ivy", "Employee")).toContain(
+      "isn’t an Employee in your data",
+    );
   });
 });
 
@@ -127,19 +177,19 @@ describe("layoutChoices", () => {
     expect(keys(l)).toEqual([
       ["1", "Company 1"],
       ["2", "Company 3"],
-      ["N", "Not in data"],
+      ["N", "Not a Customer we have"],
     ]);
     // Digit n takes the choice shown with n.
     expect(l.numbered.map((c) => c.label)).toEqual(["Company 1", "Company 3"]);
   });
-  it("has no primary without a suggestion, numbering every choice but Not in data and Reject", () => {
+  it("has no primary without a suggestion, numbering every choice but Not a … we have and Reject", () => {
     const choices = name(2);
     const l = layoutChoices(choices);
     expect(l.primary).toBeUndefined();
     expect(keys(l)).toEqual([
       ["1", "Company 1"],
       ["2", "Company 2"],
-      ["N", "Not in data"],
+      ["N", "Not a Customer we have"],
     ]);
     const held = choicesOf(heldCard(1).review, nameOf);
     const plain = layoutChoices(held);
@@ -156,7 +206,7 @@ describe("layoutChoices", () => {
     expect(keys(l)).toEqual([["X", "Reject"]]);
     expect(l.numbered).toEqual([]);
   });
-  it("makes Not in data the primary when it is suggested, keeping the candidates' digits", () => {
+  it("makes Not a … we have the primary when it is suggested, keeping the candidates' digits", () => {
     const choices = name(1);
     const l = layoutChoices(choices, choices[1]);
     expect(l.primary?.kind).toBe("not_in_data");
@@ -177,7 +227,7 @@ describe("layoutChoices", () => {
       ["9", "Company 9"],
       [undefined, "Company 10"],
       [undefined, "Company 11"],
-      ["N", "Not in data"],
+      ["N", "Not a Customer we have"],
     ]);
   });
   it("ignores a suggestion that isn't one of the choices", () => {
