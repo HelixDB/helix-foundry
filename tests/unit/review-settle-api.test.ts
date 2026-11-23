@@ -70,6 +70,65 @@ describe("review API boundary", () => {
   });
 });
 
+describe("batch settle", () => {
+  const item = {
+    reviewId: "r /",
+    decision: { release: { statementHash: "h" } },
+  };
+  it("posts the batch and answers its results in order", async () => {
+    call.mockResolvedValueOnce({
+      results: [
+        { reviewId: "r /", decision: { id: "d1" } },
+        {
+          reviewId: "s",
+          refused: {
+            reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
+            message: "m",
+          },
+        },
+      ],
+    });
+    const body = {
+      loadId: "L",
+      items: [item, { ...item, reviewId: "s" }],
+      expectOpen: true,
+    };
+    const out = await reviews.settleReviews("ws /", "o", body);
+    expect(call).toHaveBeenCalledWith(
+      "/v1/workspaces/ws%20%2F/foundry/ontologies/o/reviews:batchSettle",
+      body,
+    );
+    expect(out.map((r) => r.reviewId)).toEqual(["r /", "s"]);
+  });
+  it("refuses an answer of another length", async () => {
+    call.mockResolvedValueOnce({});
+    await expect(
+      reviews.settleReviews("ws", "o", { loadId: "L", items: [item] }),
+    ).rejects.toThrow("other reviews");
+  });
+  it("reads a refusal by its reason alone", () => {
+    for (const r of [
+      "STALE",
+      "DECIDED",
+      "FULL",
+      "NOT_FOUND",
+      "INVALID",
+    ] as const)
+      expect(
+        reviews.refusalReason({
+          reason: `FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_${r}`,
+          message: "x",
+        }),
+      ).toBe(r);
+    expect(
+      reviews.refusalReason({
+        reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_UNSPECIFIED",
+      }),
+    ).toBe("INVALID");
+    expect(reviews.refusalReason(undefined)).toBe("INVALID");
+  });
+});
+
 describe("an approval waiting for its job", () => {
   const key = ["ws", "ontology", "o", "review-decisions"];
   const pending = { id: "a", applied: { status: "pending" } },

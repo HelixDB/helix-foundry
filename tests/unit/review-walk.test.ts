@@ -297,6 +297,65 @@ describe("walkReducer", () => {
     ).toBe(sent);
     expect(run(w, { type: "sent", key: "b", decision: decision("b") })).toBe(w);
   });
+  it("keeps another person's decision when theirs came first, uncovering what the choice covered", () => {
+    const w = run(walkOf(["a", "b", "c"]), {
+      type: "decide",
+      key: "a",
+      choice: approve,
+      how: "chosen",
+      covers: ["b"],
+    });
+    const theirs = { ...decision("t"), decidedByUserId: "alan" };
+    const decided = run(w, {
+      type: "decided_elsewhere",
+      key: "a",
+      decision: theirs,
+    });
+    expect(decided.outcomes.get("a")).toEqual({
+      kind: "elsewhere",
+      decision: theirs,
+    });
+    expect(decided.outcomes.has("b")).toBe(false);
+    expect(decided.undo).toEqual([]);
+    expect(progress(decided).left).toBe(2);
+    // Only a choice still sending.
+    expect(run(decided, { type: "decided_elsewhere", key: "a" })).toBe(decided);
+  });
+  it("adopts the person's decision saved elsewhere on an open card, as one undo", () => {
+    const mine = { ...decision("m"), decidedByUserId: "ada" };
+    const w = run(walkOf(["a", "b", "c"]), {
+      type: "adopt",
+      key: "a",
+      decision: mine,
+    });
+    expect(w.outcomes.get("a")).toEqual({
+      kind: "saved",
+      decision: mine,
+      how: "chosen",
+    });
+    expect(current(w)).toBe("b");
+    expect(w.undo).toEqual([["a"]]);
+    // Not the card shown: the walk stays where it is.
+    const other = run(walkOf(["a", "b", "c"]), {
+      type: "adopt",
+      key: "c",
+      decision: mine,
+    });
+    expect(current(other)).toBe("a");
+    // A skipped card is still open; a decided one, or one not in the walk, isn't.
+    const skipped = run(
+      walkOf(["a", "b"]),
+      { type: "skip" },
+      { type: "adopt", key: "a", decision: mine },
+    );
+    expect(skipped.outcomes.get("a")?.kind).toBe("saved");
+    expect(run(w, { type: "adopt", key: "a", decision: mine })).toBe(w);
+    expect(run(w, { type: "adopt", key: "z", decision: mine })).toBe(w);
+    // Undo takes it back like any choice.
+    const undone = run(w, { type: "undone", keys: ["a"] });
+    expect(undone.outcomes.has("a")).toBe(false);
+    expect(current(undone)).toBe("a");
+  });
   it("keeps a refusal not to retry in place, uncovering what it covered", () => {
     const w = run(
       walkOf(["a", "b", "c"]),

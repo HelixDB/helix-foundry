@@ -43,8 +43,9 @@ export type Outcome =
   // document asking about it at once.
   | { kind: "covered"; by: string }
   // Decided by someone else meanwhile, or this walk's choice on it removed
-  // or replaced elsewhere.
-  | { kind: "elsewhere" }
+  // or replaced elsewhere; with `decision`, the other person's decision the
+  // backend refused this walk's choice for (expect open).
+  | { kind: "elsewhere"; decision?: FoundryReviewDecision }
   // A link this walk took back that the current load keeps (a name's link
   // applies in place, and removing it only stops it from the next load): on
   // the card linked, and on the cards it covered.
@@ -79,6 +80,12 @@ export type WalkAction =
     }
   | { type: "sent"; key: string; decision: FoundryReviewDecision }
   | { type: "refused"; key: string; message: string; retry: boolean }
+  // The backend refused a choice still sending as another person decided
+  // its card first (DECIDED): their decision stands.
+  | { type: "decided_elsewhere"; key: string; decision?: FoundryReviewDecision }
+  // The person's own decision of an open card, saved outside the walk
+  // (Founder's settle_review from the dock): the walk takes it as its own.
+  | { type: "adopt"; key: string; decision: FoundryReviewDecision }
   | { type: "skip" }
   | { type: "back" }
   | { type: "jump"; key: string }
@@ -265,6 +272,11 @@ const nextOpen = (
  *   to retry puts the card right after the current one (or makes it current
  *   when it is, or the walk is past the end), and a refusal uncovers what
  *   the choice covered;
+ * - `decided_elsewhere` marks a card still sending decided by another
+ *   person (their decision kept), uncovers what its choice covered and drops
+ *   it from the undo stack;
+ * - `adopt` takes the person's decision saved elsewhere on an open card as
+ *   chosen here: one undo, and the walk moves on when it is the card shown;
  * - `skip` marks the current card skipped (unless decided) and goes to the
  *   next to decide; `next`, `back` and `jump` move without changing
  *   anything;
@@ -377,6 +389,37 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
           current === undefined || current === a.key
             ? place
             : order.indexOf(current),
+      };
+    }
+    case "decided_elsewhere": {
+      if (w.outcomes.get(a.key)?.kind !== "sending") return w;
+      const outcomes = new Map(
+        [...w.outcomes].filter(
+          ([, c]) => !(c.kind === "covered" && c.by === a.key),
+        ),
+      ).set(a.key, { kind: "elsewhere", decision: a.decision });
+      return {
+        ...w,
+        outcomes,
+        undo: w.undo
+          .map((e) => e.filter((k) => k !== a.key))
+          .filter((e) => e.length),
+      };
+    }
+    case "adopt": {
+      const i = w.order.indexOf(a.key),
+        o = w.outcomes.get(a.key);
+      if (i < 0 || !(open(o) || o?.kind === "skipped")) return w;
+      const outcomes = new Map(w.outcomes).set(a.key, {
+        kind: "saved",
+        decision: a.decision,
+        how: "chosen",
+      });
+      return {
+        ...w,
+        outcomes,
+        at: w.at === i ? nextOpen(w.order, outcomes, i + 1) : w.at,
+        undo: [...w.undo, [a.key]],
       };
     }
     case "skip": {

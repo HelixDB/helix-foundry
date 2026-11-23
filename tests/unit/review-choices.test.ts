@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aType,
   choicesOf,
+  founderAsk,
   layoutChoices,
   notInDataText,
 } from "@/web/areas/reviews/choices";
@@ -236,5 +237,36 @@ describe("layoutChoices", () => {
     const l = layoutChoices(choices, { ...other! });
     expect(l.primary).toBeUndefined();
     expect(l.rest).toHaveLength(2);
+  });
+});
+
+describe("founderAsk", () => {
+  it("says the rule's suggestion in words, then asks", () => {
+    const [link, none] = choicesOf(
+      nameCard("acme", {
+        candidates: [{ key: "c1", entity: entity("c1", "Acme Ltd") }],
+      }).review,
+      nameOf,
+    );
+    expect(founderAsk(link)).toBe(
+      "The rule suggests linking Acme Ltd. Help me decide this review.",
+    );
+    expect(founderAsk(none)).toBe(
+      "The rule suggests marking it “Not a Customer we have”. Help me decide this review.",
+    );
+    const [approve, reject] = choicesOf(heldCard(1).review, nameOf);
+    expect(founderAsk(approve)).toBe(
+      "The rule suggests approving it. Help me decide this review.",
+    );
+    expect(founderAsk(reject)).toBe(
+      "The rule suggests rejecting it. Help me decide this review.",
+    );
+    const [gbp] = choicesOf(valueCard([{ text: "GBP" }]).review, nameOf);
+    expect(founderAsk(gbp)).toBe(
+      "The rule suggests the value GBP. Help me decide this review.",
+    );
+  });
+  it("only asks without a suggestion", () => {
+    expect(founderAsk(undefined)).toBe("Help me decide this review.");
   });
 });

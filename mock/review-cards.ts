@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { normalizeName } from "../src/web/areas/explore/naming";
 import { cardId } from "../src/web/areas/reviews/cards";
+import type { ReviewDecision } from "../src/shared/wfe";
 
 // The review cards index's rules, as the backend's reviewcards package has
 // them (backend/reviewcards: build.go Build, draw.go Next, QuoteTarget,
@@ -76,6 +77,52 @@ export type Card = {
   perDecision: number;
   shuffle: number;
 };
+
+/**
+ * Whether decision `d` decides card `c` (foundryDecidesCard), the one
+ * definition the open cards and a settle that expects its card open read:
+ * a held claim by a rejection at its place under its key or of the
+ * statement it reads, or an approval of the statement it reads now; a name
+ * or a value by a decision of its identity. Another document's link of a
+ * name (an alias) decides no card.
+ */
+export function decidesCard(
+  d: ReviewDecision,
+  c: Pick<
+    Card,
+    | "kind"
+    | "docId"
+    | "type"
+    | "normName"
+    | "entityKey"
+    | "prop"
+    | "claimKey"
+    | "claimSection"
+    | "claimStart"
+    | "claimEnd"
+    | "statementHash"
+  >,
+): boolean {
+  if (c.kind === "release")
+    return (
+      (d.kind === "release" || d.kind === "reject") &&
+      d.docId === c.docId &&
+      d.claimSection === c.claimSection &&
+      d.claimStart === c.claimStart &&
+      d.claimEnd === c.claimEnd &&
+      (d.statementHash === c.statementHash ||
+        (d.kind === "reject" && d.claimKey === c.claimKey))
+    );
+  return c.kind === "resolve"
+    ? d.kind === "resolve" &&
+        d.type === c.type &&
+        d.docId === c.docId &&
+        d.normName === c.normName
+    : d.kind === "prop" &&
+        d.type === c.type &&
+        d.entityKey === c.entityKey &&
+        d.prop === c.prop;
+}
 
 export const MAX_REVIEW_KEYS = 200;
 /** How many undone spot checks a load keeps drawn. */

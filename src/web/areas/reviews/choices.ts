@@ -162,3 +162,26 @@ export function layoutChoices(
     numbered,
   };
 }
+
+/**
+ * What F puts in Founder's composer on a card: the rule's suggestion in
+ * words, when it makes one (`suggested`, the card's suggested choice), then
+ * the ask. The page context tells Founder the card; nothing is sent until
+ * the person sends it.
+ *
+ * @example
+ * founderAsk({ kind: "link", label: "Acme Ltd", … }); // "The rule suggests linking Acme Ltd. Help me decide this review."
+ * founderAsk(undefined); // "Help me decide this review."
+ */
+export function founderAsk(suggested: Choice | undefined): string {
+  const ask = "Help me decide this review.";
+  if (!suggested) return ask;
+  const words = {
+    link: `linking ${suggested.label}`,
+    not_in_data: `marking it “${suggested.label}”`,
+    value: `the value ${suggested.label}`,
+    approve: "approving it",
+    reject: "rejecting it",
+  }[suggested.kind];
+  return `The rule suggests ${words}. ${ask}`;
+}

@@ -2989,6 +2989,9 @@ export type AgentPageContext = {
   // The IANA time zone the person's browser names (America/New_York): the
   // Assistant's default for a schedule. One the WFE can't read is dropped.
   timeZone?: string;
+  // The review card open in the review walk (64 lowercase hex), of
+  // ontologyId's current load: Founder reads its review.
+  reviewCardId?: string;
 };
 
 /**
@@ -4620,6 +4623,50 @@ export type SettleReviewRequest = {
   drawn?: ReviewDrawn;
 };
 export type ReviewDecisionResponse = { decision: FoundryReviewDecision };
+// POST .../ontologies/{ontologyId}/reviews:batchSettle: up to 100 reviews of
+// the current load (`loadId`) settled in one transaction, each as :settle
+// settles one, ranked. Invalid fields, two items deciding one thing, another
+// current load or a graph that can't be read refuse the whole batch; any
+// other refusal is its item's. With `expectOpen`, an item whose card another
+// person decided is refused (DECIDED), never replacing their decision.
+export type FoundryReviewSettleItem = {
+  reviewId: string;
+  decision: FoundryReviewChoice;
+};
+export type BatchSettleReviewsRequest = {
+  loadId: string;
+  items: FoundryReviewSettleItem[];
+  expectOpen?: boolean;
+};
+/**
+ * Why an item was refused: the load or the review reads differently now
+ * (STALE: read the cards again), another person decided it (DECIDED), the
+ * ontology holds the most value decisions a load takes (FULL), the choice
+ * can't settle the review (INVALID), or the load holds no such review
+ * (NOT_FOUND: read the cards again).
+ */
+export type ReviewSettleRefusalReason =
+  | "STALE"
+  | "DECIDED"
+  | "FULL"
+  | "INVALID"
+  | "NOT_FOUND";
+export type FoundryReviewSettleRefusal = {
+  reason?: `FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_${ReviewSettleRefusalReason | "UNSPECIFIED"}`;
+  // A sentence for people; never parsed.
+  message?: string;
+  // DECIDED only: the decision that decided it.
+  decided?: FoundryReviewDecision;
+};
+// One an item, in the items' order: the decision saved, or why not.
+export type FoundryReviewSettleResult = {
+  reviewId: string;
+  decision?: FoundryReviewDecision;
+  refused?: FoundryReviewSettleRefusal;
+};
+export type BatchSettleReviewsResponse = {
+  results?: FoundryReviewSettleResult[];
+};
 // Making a version current drops the decisions it doesn't take, but keeps a
 // resolve of a type it keeps whose entityKey its key no longer reads: the
 // next load reviews that name again, and settling it replaces the decision.

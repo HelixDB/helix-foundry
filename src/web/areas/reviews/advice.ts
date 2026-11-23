@@ -7,7 +7,6 @@ import type {
 import {
   approvable,
   holdingEnds,
-  propValueText,
   type Settle,
   type StatedValue,
 } from "./model";
@@ -150,8 +149,6 @@ export const BATCH_LOWER = 0.95;
 export const BATCH_LABELS = 30;
 /** A value's majority needs at least this many quotes. */
 export const MIN_QUOTES = 3;
-/** Founder's seed quotes at most this many characters of a review's quote. */
-export const SEED_QUOTE = 200;
 
 const nameAt = (type: string, normName: string) =>
   JSON.stringify([type, normName]);
@@ -528,44 +525,4 @@ export function effectOf(
     kind: "applies_now",
     documents: choice.resolve?.entityKey ? 1 + siblings : 1,
   };
-}
-
-/**
- * What Ask Founder puts in the assistant's composer for a card: the review
- * by its key and document, the question, at most SEED_QUOTE characters of
- * its quote, and a request to recommend one choice without settling it.
- * Nothing is sent until the person sends it.
- *
- * @example
- * founderSeed(card, "Contract-17.md"); // "Help me decide review r-1 in “Contract-17.md”. …"
- */
-export function founderSeed(card: Decidable, documentName: string): string {
-  const { quote } = card.review;
-  const clipped =
-    quote.length > SEED_QUOTE ? `${quote.slice(0, SEED_QUOTE - 1)}…` : quote;
-  const question = (() => {
-    switch (card.kind) {
-      case "name": {
-        const s = settleOf(card);
-        const names = card.review.candidates.map(
-          (c) => `${c.entity?.name ?? c.key} (${c.key})`,
-        );
-        return `Which ${s.type} is “${s.normName}”? ${
-          names.length ? `Candidates: ${names.join(", ")}.` : "No candidates."
-        }`;
-      }
-      case "claim": {
-        const { statement: st, link } = settleOf(card);
-        return `Is this claim right: ${st.subject.name} (${st.subject.type}) → ${link} → ${st.object.name} (${st.object.type})?`;
-      }
-      case "value": {
-        const s = settleOf(card);
-        const values = [
-          ...new Set(s.values.map((v) => propValueText(v.value))),
-        ];
-        return `Which ${s.prop} of ${s.type} ${s.entityKey} is right: ${values.join(" or ")}?`;
-      }
-    }
-  })();
-  return `Help me decide review ${settleOf(card).reviewId} in “${documentName}”. ${question} The document says: “${clipped}”. Recommend one choice and say why; don’t settle it.`;
 }

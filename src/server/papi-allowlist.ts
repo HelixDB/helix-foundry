@@ -687,6 +687,11 @@ export const papiRoutes = [
   },
   {
     area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/reviews:batchSettle",
+  },
+  {
+    area: "ontology",
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-decisions",
   },

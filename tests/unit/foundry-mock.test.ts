@@ -2800,6 +2800,98 @@ describe("review decisions", () => {
     ).toBe(404);
   });
 
+  it("settles a batch: per item refusals by reason, another person's decision kept, whole-batch refusals", async () => {
+    await uploaded("variant.md", variant);
+    const g = await loaded("batch");
+    const rv = reviews(g)[0]!;
+    g.addNode(FOUNDRY_NODES.Review, {
+      ...rv.props,
+      review_key: "billed",
+      reason: "prop_conflict",
+      type: "Customer",
+      entity_key: "cus_GLOBEX01",
+      prop: "currency",
+    } as never);
+    const load = (await call("GET", `${O}/loads`)).body.loads[0].id;
+    const batch = (items: unknown[], user = "usr_ada", expectOpen = true) =>
+      call(
+        "POST",
+        `${O}/reviews:batchSettle`,
+        { loadId: load, items, expectOpen },
+        user,
+      );
+    const link = {
+      reviewId: rv.props.review_key,
+      decision: { resolve: { entityKey: "cus_GLOBEX01" } },
+    };
+    const gbp = { reviewId: "billed", decision: { prop: { text: "GBP" } } };
+    // Whole-batch refusals, nothing saved.
+    expect((await batch([])).status).toBe(400);
+    expect(
+      (
+        await batch([
+          link,
+          { ...link, decision: { resolve: { notInData: true } } },
+        ])
+      ).status,
+    ).toBe(400);
+    expect(
+      refusal(
+        await call("POST", `${O}/reviews:batchSettle`, {
+          loadId: "load_old",
+          items: [link],
+        }),
+      ),
+    ).toEqual([400, "another load became current: read the cards again"]);
+    expect(decisions.get("ont_acme_contracts") ?? []).toHaveLength(0);
+    // FULL and STALE per item, beside one saved.
+    Object.assign(config, { valueDecisionsFull: true, settleRefusals: 1 });
+    const first = await batch([
+      link,
+      gbp,
+      { reviewId: "missing", decision: link.decision },
+    ]);
+    expect(
+      first.body.results.map((r: any) => r.refused?.reason ?? "saved"),
+    ).toEqual([
+      "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_STALE",
+      "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_FULL",
+      "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_NOT_FOUND",
+    ]);
+    Object.assign(config, { valueDecisionsFull: false });
+    const saved = (await batch([link, gbp])).body.results;
+    expect(saved.map((r: any) => r.decision?.decidedByUserId)).toEqual([
+      "usr_ada",
+      "usr_ada",
+    ]);
+    // Ada's own choice again is settled again; Alan (an admin) is told Ada
+    // decided it, and her decision stands.
+    expect((await batch([link])).body.results[0].decision.id).toBe(
+      saved[0].decision.id,
+    );
+    Object.assign(config, { alanRole: "WORKSPACE_ROLE_ADMIN" });
+    const alan = await batch(
+      [{ ...link, decision: { resolve: { notInData: true } } }],
+      "usr_alan",
+    );
+    expect(alan.body.results[0].refused).toMatchObject({
+      reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED",
+      decided: { id: saved[0].decision.id, decidedByUserId: "usr_ada" },
+    });
+    expect(
+      decisions
+        .get("ont_acme_contracts")!
+        .find((d) => d.id === saved[0].decision.id),
+    ).toMatchObject({ entityKey: "cus_GLOBEX01" });
+    // Without expect open, the last word wins, as a single settle does.
+    const replaced = await batch(
+      [{ ...link, decision: { resolve: { notInData: true } } }],
+      "usr_alan",
+      false,
+    );
+    expect(replaced.body.results[0].decision.decidedByUserId).toBe("usr_alan");
+  });
+
   it("settles the current review after an unchanged reload retains the same review key", async () => {
     await uploaded("variant.md", variant);
     const old = await loaded("first");

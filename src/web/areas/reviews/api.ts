@@ -1,5 +1,11 @@
 import type {
+  BatchSettleReviewsRequest,
+  BatchSettleReviewsResponse,
   DeleteReviewDecisionResponse,
+  FoundryReviewChoice,
+  FoundryReviewSettleRefusal,
+  FoundryReviewSettleResult,
+  ReviewSettleRefusalReason,
   FoundryReviewDecision,
   ListReviewDecisionsResponse,
   ReviewDecisionResponse,
@@ -84,6 +90,55 @@ export const settleLabel = async (
 ) => {
   return api<ReviewLabelResponse>(`${base(ws, o)}/review-labels`, body);
 };
+const kindOf = (d: FoundryReviewChoice) =>
+  d.prop ? "prop" : d.release ? "release" : d.reject ? "reject" : "resolve";
+/**
+ * Settles up to 100 reviews of the current load `loadId` in one call, each
+ * as settleReview settles one; with `expectOpen`, one another person decided
+ * is refused (DECIDED). The results, one an item in the items' order: the
+ * decision saved, or why it was refused (refusalReason). A batch the API
+ * refuses whole (another current load, bad fields) throws.
+ */
+export const settleReviews = async (
+  ws: string,
+  o: string,
+  body: BatchSettleReviewsRequest,
+): Promise<FoundryReviewSettleResult[]> => {
+  const r = await api<BatchSettleReviewsResponse>(
+    `${base(ws, o)}/reviews:batchSettle`,
+    body,
+  );
+  const results = r.results ?? [];
+  if (results.length !== body.items.length)
+    throw new Error("The settle answered for other reviews than it was sent.");
+  results.forEach((x, i) => {
+    if (x.decision)
+      trackEvent("review_settled", { kind: kindOf(body.items[i]!.decision) });
+  });
+  return results;
+};
+/**
+ * Why an item of a batch settle was refused, by its reason alone (never its
+ * message); one this build doesn't know reads as INVALID, which shows the
+ * message on its card.
+ *
+ * @example
+ * refusalReason({ reason: "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_DECIDED" }); // "DECIDED"
+ */
+export function refusalReason(
+  r: FoundryReviewSettleRefusal | undefined,
+): ReviewSettleRefusalReason {
+  const name = (r?.reason ?? "").replace(
+    "FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_",
+    "",
+  );
+  return name === "STALE" ||
+    name === "DECIDED" ||
+    name === "FULL" ||
+    name === "NOT_FOUND"
+    ? name
+    : "INVALID";
+}
 export const settleReview = async (
   ws: string,
   o: string,
@@ -94,15 +149,7 @@ export const settleReview = async (
     `${base(ws, o)}/reviews/${enc(reviewId)}:settle`,
     body,
   );
-  trackEvent("review_settled", {
-    kind: body.decision.prop
-      ? "prop"
-      : body.decision.release
-        ? "release"
-        : body.decision.reject
-          ? "reject"
-          : "resolve",
-  });
+  trackEvent("review_settled", { kind: kindOf(body.decision) });
   return r;
 };
 export const deleteReviewDecision = async (

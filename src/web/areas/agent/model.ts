@@ -121,6 +121,7 @@ export const isLiveTurn = (t?: { status?: FoundryAgentTurnStatus } | null) =>
  * pageContext("/workflows/new", "?thread=thr_1"); // { newAutomation: true }
  * pageContext("/workflows/new", "", "ont_1"); // { newAutomation: true, ontologyId: "ont_1" }
  * pageContext("/ask/ont_1", "", "ont_2"); // { ontologyId: "ont_1" }
+ * pageContext("/ontology/ont_1/review", "?card=9f…"); // { ontologyId: "ont_1", reviewCardId: "9f…" }
  * pageContext("/ontology/new", ""); // null
  * pageContext("/data", ""); // null
  */
@@ -134,6 +135,9 @@ export function pageContext(
     ? { ...page, ontologyId: about }
     : page;
 }
+
+/** A review card's id: 64 lowercase hex digits. */
+const CARD_ID = /^[0-9a-f]{64}$/;
 
 function urlContext(pathname: string, search: string): AgentPageContext | null {
   const [, section, ontologyId = "", sub, loadId = ""] = pathname.split("/");
@@ -152,6 +156,12 @@ function urlContext(pathname: string, search: string): AgentPageContext | null {
       (ontologyId === "new" || ontologyId === "sample"))
   )
     return null;
+  // The review walk's card shown, which Founder is told of.
+  const card =
+    section === "ontology" && sub === "review" && !loadId
+      ? new URLSearchParams(search).get("card") || ""
+      : "";
+  if (CARD_ID.test(card)) return { ontologyId, reviewCardId: card };
   const load =
     section === "ontology"
       ? sub === "loads"

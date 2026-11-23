@@ -1,9 +1,10 @@
 // The review walkthrough, the Facts tab's body (./index.tsx): the current
 // load's cards one at a time, in the index's order, each with Founder's
 // suggestion (./advice.ts) and the choices a person settles it with, every
-// one also a key (./keys.ts). A choice saves at once, through the same
-// settle call a document's Needs review sends, a few at a time, and the walk
-// moves on; Z takes the last choice (or batch) back. The walk (./walk.ts) is
+// one also a key (./keys.ts). A choice saves at once, through the outbox
+// (./outbox.ts: one reviews:batchSettle in flight, carrying the choices made
+// meanwhile), expecting its card open, and the walk moves on; Z takes the
+// last choice (or batch) back. The walk (./walk.ts) is
 // held by the page (useWalk), so it keeps its place across a switch of tabs
 // and a read of the cards, and says so when a new load becomes current.
 // Names the model linked and values a table keeps are for information (FYI),
@@ -18,7 +19,7 @@ import {
   type ReactNode,
 } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FoundryLoad,
   FoundryReviewChoice,
@@ -42,25 +43,26 @@ import { canManage, useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
+import { membersQuery } from "../workspace/members";
 import {
   cardName,
   effectOf,
-  founderSeed,
   settleOf,
   type Advice,
   type Decidable,
   type Effect,
 } from "./advice";
-import { deleteReviewDecision, settleReview } from "./api";
+import { deleteReviewDecision, refusalReason, settleReviews } from "./api";
 import { BatchDialog } from "./batch-dialog";
 import { ADVICE_PAGES, adjustSummary } from "./cards-api";
-import { choicesOf, layoutChoices, type Choice } from "./choices";
+import { choicesOf, founderAsk, layoutChoices, type Choice } from "./choices";
 import { CoveredCards, FyiCards } from "./fyi";
 import type { ReviewCards } from "./index";
 import { useWalkKeys, type KeyCommand } from "./keys";
 import type { QueueCard } from "./queue";
 import { KIND_TEXT, ReviewCard, cardLine } from "./review-card";
-import { settleAll } from "./settle-pool";
+import { Cancelled, createOutbox, type Outbox } from "./outbox";
+import { onSettled } from "./settled";
 import { SpotChecks } from "./spot-checks";
 import {
   batchOf,
@@ -80,9 +82,9 @@ import {
 } from "./walk";
 import { WalkDone } from "./walk-done";
 
-/** How many choices are sent at once; the backend writes those that land together in one job. */
-const AT_ONCE = 4;
-/** gRPC's FAILED_PRECONDITION: the claim reads differently now, or the load changed. */
+/** The most choices one request carries; the backend writes those that land together in one job. */
+const PER_REQUEST = 25;
+/** gRPC's FAILED_PRECONDITION: the load changed since the cards were read. */
 const FAILED_PRECONDITION = 9;
 /** How long a toast shows. */
 const TOAST_MS = 6000;
@@ -110,10 +112,17 @@ type Sending = {
   effect: Effect;
 };
 
-/** What the backend answered a choice. */
+/** What the backend answered a choice, or that Stop or Undo took it back unsent. */
 type Answer =
   | { kind: "saved"; decision: FoundryReviewDecision }
-  | { kind: "refused"; message: string };
+  | { kind: "refused"; message: string }
+  | { kind: "cancelled" };
+
+/** A choice in the outbox: its card, and the review it settles. */
+type Item = { key: string; reviewId: string; choice: FoundryReviewChoice };
+
+/** What became of one item of a batch, in the items' order. */
+export type BatchResult = { item: Sending; answer: Answer };
 
 /** What taking a choice back says, by the decision it removed. */
 const UNDONE: Record<FoundryReviewDecision["kind"], string> = {
@@ -124,26 +133,45 @@ const UNDONE: Record<FoundryReviewDecision["kind"], string> = {
   withdraw: "Choice removed.",
 };
 
+/** The choice a saved decision made. */
+const choiceOf = (d: FoundryReviewDecision): FoundryReviewChoice =>
+  d.kind === "release"
+    ? { release: { statementHash: d.statementHash } }
+    : d.kind === "reject" || d.kind === "withdraw"
+      ? { reject: { statementHash: d.statementHash } }
+      : d.kind === "prop"
+        ? { prop: d.value }
+        : d.entityKey
+          ? { resolve: { entityKey: d.entityKey } }
+          : { resolve: { notInData: true } };
+
 const same = (a: FoundryReviewChoice, b: FoundryReviewChoice) =>
   JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * The walk of the Review page, held by the page so it outlives the tab: its
- * state and the actions that send and take back choices. Sends go a few at a
- * time (AT_ONCE), whoever started them; the decisions are read again once
- * none is in flight. Undo waits for a choice still sending, then removes
- * what it saved. While a choice is sending, leaving the page asks first.
+ * state and the actions that send and take back choices. Choices go through
+ * one outbox a load (PER_REQUEST a request, one in flight), expecting their
+ * cards open: one another person decided first reads as theirs
+ * (decided_elsewhere), never replaced. The decisions are read again once
+ * none is waiting. Undo takes back a choice still queued unsent, waits for
+ * one in flight, and removes only what the person saved: anyone else's
+ * decision is forgotten here and left saved. Once the ontology holds the
+ * most value decisions a load takes (FULL), the walk stops deciding and
+ * says why. While a choice is sending, leaving the page asks first.
  */
 export function useWalk() {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, user } = useWorkspace(),
     { id: o } = useOntology();
   const qc = useQueryClient();
   const [state, dispatch] = useReducer(walkReducer, START);
   // The walk as last rendered, for actions that finish after a render.
   const now = useRef(state);
   now.current = state;
-  const gate = useRef({ flying: 0, waiting: [] as (() => void)[] });
+  const outboxes = useRef(new Map<string, Outbox<Item, Answer>>());
   const sends = useRef(new Map<string, Promise<Answer>>());
+  // Why the walk stopped deciding (FULL), until the page is read again.
+  const [stopped, setStopped] = useState("");
   // Each card decided in this walk, and what its choice does.
   const made = useRef(new Map<string, { card: Decidable; effect: Effect }>());
   // Every card of the load's queue read in this walk, so one that leaves the
@@ -221,25 +249,74 @@ export function useWalk() {
           ].map((queryKey) => qc.invalidateQueries({ queryKey, exact: true }))
         : []),
     ]);
+  // The outbox of the load the walk decides: its answers say what became of
+  // each choice, as the walk shows it.
+  const outboxOf = (loadId: string) => {
+    let box = outboxes.current.get(loadId);
+    if (box) return box;
+    box = createOutbox<Item, Answer>(
+      async (items) => {
+        const results = await settleReviews(ws, o, {
+          loadId,
+          items: items.map((it) => ({
+            reviewId: it.reviewId,
+            decision: it.choice,
+          })),
+          expectOpen: true,
+        });
+        return results.map((r, i): Answer => {
+          const key = items[i]!.key;
+          if (r.decision) {
+            dispatch({ type: "sent", key, decision: r.decision });
+            return { kind: "saved", decision: r.decision };
+          }
+          const reason = refusalReason(r.refused),
+            message = r.refused?.message || "The choice was refused.";
+          if (reason === "DECIDED")
+            dispatch({
+              type: "decided_elsewhere",
+              key,
+              decision: r.refused?.decided,
+            });
+          else {
+            if (reason === "FULL") setStopped(message);
+            // The load or the review reads otherwise now: the cards are read
+            // again, and a stale card is to choose again.
+            if (reason === "STALE" || reason === "NOT_FOUND")
+              void qc.invalidateQueries({
+                queryKey: [ws, "ontology", o, "review-cards"],
+              });
+            dispatch({
+              type: "refused",
+              key,
+              message,
+              retry: reason === "STALE",
+            });
+          }
+          return { kind: "refused", message };
+        });
+      },
+      { max: PER_REQUEST },
+    );
+    outboxes.current.set(loadId, box);
+    return box;
+  };
   const send = (s: Sending): Promise<Answer> => {
     const key = s.card.key,
-      g = gate.current;
+      box = outboxOf(now.current.loadId);
     made.current.set(key, { card: s.card, effect: s.effect });
     const answer = (async (): Promise<Answer> => {
-      // A slot freed is handed to the next waiting, so `flying` stays.
-      if (g.flying < AT_ONCE) g.flying += 1;
-      else await new Promise<void>((go) => g.waiting.push(go));
       try {
-        const { decision } = await settleReview(
-          ws,
-          o,
-          settleOf(s.card).reviewId,
-          { decision: s.choice, drawn: "ranked" },
-        );
-        dispatch({ type: "sent", key, decision });
-        return { kind: "saved", decision };
+        return await box.push({
+          key,
+          reviewId: settleOf(s.card).reviewId,
+          choice: s.choice,
+        });
       } catch (e) {
+        if (e instanceof Cancelled) return { kind: "cancelled" };
         const message = (e as Error).message;
+        // A request that failed: each of its choices is to retry, unless the
+        // API refused it for what it is.
         dispatch({
           type: "refused",
           key,
@@ -249,12 +326,13 @@ export function useWalk() {
             e.status >= 500 ||
             e.code === FAILED_PRECONDITION,
         });
+        if (e instanceof ApiError && e.code === FAILED_PRECONDITION)
+          void qc.invalidateQueries({
+            queryKey: [ws, "ontology", o, "review-cards"],
+          });
         return { kind: "refused", message };
       } finally {
-        const next = g.waiting.shift();
-        if (next) next();
-        else g.flying -= 1;
-        if (!g.flying) void refresh(false);
+        if (!box.pending()) void refresh(false);
       }
     })();
     sends.current.set(key, answer);
@@ -267,6 +345,7 @@ export function useWalk() {
     seen: seen.current,
     changed,
     dismissChanged: () => setChanged(null),
+    stopped,
     /** Says whether the index lists more cards than the walk has. */
     setMore,
     /** Sends a choice on a card the walk shows, covering `covers`. */
@@ -290,26 +369,53 @@ export function useWalk() {
       items: readonly Sending[],
       signal: AbortSignal,
       onProgress: (done: number) => void,
-    ) => {
+    ): Promise<BatchResult[]> => {
       const taken = items.filter((s) => batchTakes(now.current, s.card.key));
       dispatch({
         type: "batch",
         items: taken.map((s) => ({ key: s.card.key, choice: s.choice })),
       });
-      const results = await settleAll(taken, send, {
-        atOnce: AT_ONCE,
-        signal,
-        onProgress,
-      });
-      const stopped = results.flatMap((r) =>
-        r.kind === "stopped" ? [r.item.card.key] : [],
-      );
-      if (stopped.length) dispatch({ type: "undone", keys: stopped });
-      return results;
+      const keys = new Set(taken.map((s) => s.card.key));
+      const box = outboxOf(now.current.loadId);
+      // Stop takes back what is still queued; what is in flight finishes.
+      const stop = () => box.cancel((it) => keys.has(it.key));
+      signal.addEventListener("abort", stop);
+      let done = 0;
+      try {
+        const results = await Promise.all(
+          taken.map(async (item) => {
+            const answer = await send(item);
+            onProgress((done += 1));
+            return { item, answer };
+          }),
+        );
+        const unsent = results.flatMap((r) =>
+          r.answer.kind === "cancelled" ? [r.item.card.key] : [],
+        );
+        if (unsent.length) dispatch({ type: "undone", keys: unsent });
+        return results;
+      } finally {
+        signal.removeEventListener("abort", stop);
+      }
     },
     /**
-     * Takes the last choice or batch back: removes what each saved (a
-     * choice still sending first finishes) and forgets it, but a name's link
+     * Takes the person's own decision of an open card, saved outside the
+     * walk (Founder's settle_review), as chosen here: it moves on, and Undo
+     * takes it back.
+     */
+    adopt: (
+      card: Decidable,
+      decision: FoundryReviewDecision,
+      effect: Effect,
+    ) => {
+      made.current.set(card.key, { card, effect });
+      dispatch({ type: "adopt", key: card.key, decision });
+    },
+    /**
+     * Takes the last choice or batch back: one still queued is taken from
+     * the outbox unsent; one in flight first finishes; what each saved is
+     * removed when the person saved it (anyone else's is forgotten here and
+     * left saved) and forgotten, but a name's link
      * the current load holds (linkedNow, by the decisions as last read)
      * stays in that load, so its cards and those it covered show it taken
      * back rather than to decide. What it says, or null with nothing to take
@@ -322,12 +428,16 @@ export function useWalk() {
       try {
         const removed = await Promise.all(
           keys.map(async (key) => {
+            outboxOf(now.current.loadId).cancel((it) => it.key === key);
             const out = now.current.outcomes.get(key);
             const answer =
               out?.kind === "saved" || out?.kind === "unconfirmed"
                 ? ({ kind: "saved", decision: out.decision } as const)
                 : await sends.current.get(key);
             if (answer?.kind !== "saved") return { key, ok: true } as const;
+            // Another person's decision is theirs to take back.
+            if (answer.decision.decidedByUserId !== user.id)
+              return { key, ok: true } as const;
             try {
               await deleteReviewDecision(ws, o, answer.decision.id);
               return { key, ok: true, decision: answer.decision } as const;
@@ -487,7 +597,7 @@ export function ReviewWalkthrough({
   queue: ReviewCards;
   load: FoundryLoad;
 }) {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws, role, user } = useWorkspace(),
     { id: o } = useOntology();
   const shell = useShell();
   const docName = useDocumentNames(ws, "A document");
@@ -556,7 +666,7 @@ export function ReviewWalkthrough({
     [card],
   );
   const outcome = key ? w.outcomes.get(key) : undefined;
-  const manage = canManage(role) && !!load.current;
+  const manage = canManage(role) && !!load.current && !api.stopped;
   const open =
     !outcome ||
     outcome.kind === "refused" ||
@@ -756,9 +866,12 @@ export function ReviewWalkthrough({
           );
         return;
       case "founder":
+        // The page context (?card=) tells Founder the card; the composer
+        // says the rule's suggestion in words, sent only when the person
+        // sends it.
         if (card && shell.assistant.available)
           shell.assistant.compose(
-            founderSeed(card, docName(card.review.documentId)),
+            founderAsk(advice?.kind === "suggest" ? layout.primary : undefined),
             "review",
           );
         return;
@@ -767,6 +880,60 @@ export function ReviewWalkthrough({
         return;
     }
   };
+  // The card shown is in the URL (?card=, replaced as the walk moves), for
+  // Founder's page context and a reload. Arriving with one jumps to it when
+  // the cards read hold it; else the walk starts at its first open card,
+  // where everyone resumes, as all walk one order.
+  const arrival = useRef(params.get("card"));
+  useEffect(() => {
+    if (!synced) return;
+    const wanted = arrival.current;
+    if (wanted !== null) {
+      arrival.current = null;
+      if (wanted && wanted !== key && w.order.includes(wanted)) {
+        api.dispatch({ type: "jump", key: wanted });
+        return;
+      }
+    }
+    if ((params.get("card") ?? "") !== (key ?? "")) setParam("card", key ?? "");
+  }, [synced, key]);
+  // A settle_review Founder ran from the dock on a card of this walk, the
+  // person's own: taken as their choice (it moves on, Undo takes it back).
+  useEffect(
+    () =>
+      onSettled((x) => {
+        if (x.workspaceId !== ws || x.ontologyId !== o) return;
+        if (x.decision.decidedByUserId !== user.id) return;
+        const k = w.order.find((k) => {
+          const c = cardOf(k);
+          return c && settleOf(c).reviewId === x.reviewId;
+        });
+        const c = k ? cardOf(k) : undefined;
+        if (!c) return;
+        api.adopt(c, x.decision, effectFor(c, choiceOf(x.decision)));
+        moved.current = true;
+        say("Founder’s choice saved.", true);
+      }),
+    [ws, o, user.id, w.order, order],
+  );
+  // Who decided a card first, by the members' names.
+  const members = useInfiniteQuery({
+    ...membersQuery(ws),
+    enabled: [...w.outcomes.values()].some(
+      (x) => x.kind === "elsewhere" && !!x.decision,
+    ),
+  });
+  const decidedBy = (() => {
+    const by =
+      outcome?.kind === "elsewhere"
+        ? outcome.decision?.decidedByUserId
+        : undefined;
+    if (!by) return undefined;
+    const m = members.data?.pages
+      .flatMap((p) => p.members || [])
+      .find((m) => m.user?.id === by)?.user;
+    return m?.displayName || m?.email || "a teammate";
+  })();
   // Members move, open and ask with keys too; deciding needs `manage`.
   useWalkKeys(on, synced && lane === "decide", layout.numbered.length);
 
@@ -857,6 +1024,11 @@ export function ReviewWalkthrough({
 
   return (
     <div className="rv-walk">
+      {api.stopped && (
+        <div role="alert" className="rv-banner">
+          <p>Deciding stopped: {api.stopped}</p>
+        </div>
+      )}
       {api.changed && (
         <LoadChanged
           keys={api.changed}
@@ -1035,6 +1207,7 @@ export function ReviewWalkthrough({
                     : undefined
                 }
                 coveredBy={coveredBy(card.key)}
+                decidedBy={decidedBy}
                 readOnly={!manage}
                 batch={batch?.items.length ?? 0}
                 founder={shell.assistant.available}
@@ -1111,15 +1284,13 @@ export function ReviewWalkthrough({
                 rule: dialog.advice.rule,
               });
             const results = await api.batch(items, signal, onProgress);
-            return results.map((r) => ({
-              key: r.item.card.key,
-              ...(r.kind === "stopped"
+            return results.map(({ item, answer }) => ({
+              key: item.card.key,
+              ...(answer.kind === "cancelled"
                 ? { stopped: true }
-                : r.kind === "failed"
-                  ? { failed: r.error.message }
-                  : r.value.kind === "refused"
-                    ? { failed: r.value.message }
-                    : {}),
+                : answer.kind === "refused"
+                  ? { failed: answer.message }
+                  : {}),
             }));
           }}
           undo={async () => {

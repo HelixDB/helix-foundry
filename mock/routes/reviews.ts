@@ -9,6 +9,11 @@ import type {
   ReviewDrawn,
   ReviewLabelResponse,
   ListReviewDecisionsResponse,
+  BatchSettleReviewsRequest,
+  BatchSettleReviewsResponse,
+  FoundryReviewSettleItem,
+  FoundryReviewSettleResult,
+  ReviewSettleRefusalReason,
 } from "../../src/shared/wfe";
 import {
   FOUNDRY_EDGES as E,
@@ -16,7 +21,8 @@ import {
   FOUNDRY_NODES as N,
 } from "../../src/shared/foundry-labels";
 import { createHash } from "node:crypto";
-import { fail, id, now, ok, type MockRoute } from "../http";
+import { fail, id, now, ok, type GrpcCode, type MockRoute } from "../http";
+import { decidesCard, type Card } from "../review-cards";
 import {
   decisionFits,
   decisionTypes,
@@ -43,7 +49,7 @@ import {
   owePendingResolve,
   owePendingValue,
 } from "./loads";
-import { isScope, ontologyOf } from "./ontologies";
+import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 import { ontologyVersion } from "./ontology";
 import { isRecord } from "../../src/shared/json";
 
@@ -83,8 +89,11 @@ const READS_DIFFERENTLY =
 //   that band, each at a place of its own and the caller's own (so none is
 //   drawn for their re-check), as a team's spot checks would have measured
 //   it: enough, right, to let the walkthrough batch the band's claims.
-// - `settleRefusals` n: the next n settles are refused as a claim that reads
-//   differently now is (FAILED_PRECONDITION), saving nothing.
+// - `settleRefusals` n: the next n settles (items of a batch each) are
+//   refused as a claim that reads differently now is (FAILED_PRECONDITION,
+//   STALE), saving nothing.
+// - `valueDecisionsFull`: a value of a property not decided yet is refused
+//   as the backend refuses one past its cap (FULL).
 type Knobs = {
   seedReviewLabels?: {
     band: keyof typeof BAND_SCORE;
@@ -92,11 +101,13 @@ type Knobs = {
     wrong: number;
   };
   settleRefusals?: number;
+  valueDecisionsFull?: boolean;
 };
 const knobs = config as typeof config & Knobs;
 onReset(() => {
   delete knobs.seedReviewLabels;
   delete knobs.settleRefusals;
+  delete knobs.valueDecisionsFull;
 });
 
 /**
@@ -239,6 +250,400 @@ function save(
   return { decision: saved };
 }
 
+/** Why one item of a settle was refused, as the backend names it. */
+type SettleRefusal = {
+  reason: ReviewSettleRefusalReason;
+  code: GrpcCode;
+  message: string;
+  decided?: FoundryReviewDecision;
+};
+type Settled = { decision: FoundryReviewDecision } | { refused: SettleRefusal };
+
+const refuse = (
+  reason: ReviewSettleRefusalReason,
+  code: GrpcCode,
+  message: string,
+): Settled => ({ refused: { reason, code, message } });
+
+/** The current load's review `reviewId`, its props; undefined when it holds none, or more than one. */
+function reviewOf(tenantId: string, load: string, reviewId: string) {
+  const found = [...tenantGraph(tenantId).nodes.values()].filter(
+    (n) =>
+      n.label === N.Review &&
+      n.props.review_key === reviewId &&
+      n.props[FOUNDRY_LOAD] === load,
+  );
+  return found.length === 1 ? found[0]!.props : undefined;
+}
+
+/**
+ * Another person's decision of the card `decision` decides (decidesCard,
+ * as the open cards read it), refused as DECIDED with it, as a settle that
+ * expects its card open is; undefined when none is, or it is `user`'s own.
+ */
+function decidedElsewhere(
+  ontology: string,
+  user: string,
+  decision: ReviewDecision,
+): Settled | undefined {
+  const card = {
+    kind: (decision.kind === "reject" || decision.kind === "withdraw"
+      ? "release"
+      : decision.kind) as Card["kind"],
+    docId: "docId" in decision ? (decision.docId ?? "") : "",
+    type: decision.type,
+    normName: "normName" in decision ? decision.normName : undefined,
+    entityKey: "entityKey" in decision ? decision.entityKey : undefined,
+    prop: "prop" in decision ? decision.prop : undefined,
+    claimKey: "claimKey" in decision ? decision.claimKey : undefined,
+    claimSection:
+      "claimSection" in decision ? decision.claimSection : undefined,
+    claimStart: "claimStart" in decision ? decision.claimStart : undefined,
+    claimEnd: "claimEnd" in decision ? decision.claimEnd : undefined,
+    statementHash:
+      "statementHash" in decision ? decision.statementHash : undefined,
+  };
+  const decided = (decisions.get(ontology) || [])
+    .filter((d) => decidesCard(d, card) && d.decidedByUserId !== user)
+    .sort((a, b) => (a.decidedAt ?? "").localeCompare(b.decidedAt ?? ""))[0];
+  return decided
+    ? {
+        refused: {
+          reason: "DECIDED",
+          code: "FAILED_PRECONDITION",
+          message: "another person decided this review; read it again",
+          decided: { ...decided, applied: appliedOf(ontology, decided) },
+        },
+      }
+    : undefined;
+}
+
+/**
+ * What a review decides, so two items of a batch never decide one thing
+ * (the backend's settleKey): a name in a document, a value of an entity's
+ * property, or a held claim at its place; undefined for a review the load
+ * doesn't hold, refused on its own.
+ */
+function settleKey(r: Record<string, unknown> | undefined): string | undefined {
+  if (!r) return undefined;
+  const reason = text(r.reason);
+  if (["low_confidence", "unverified", "conflict"].includes(reason))
+    return JSON.stringify([
+      "claim",
+      r.doc_id,
+      r.section,
+      r.start,
+      r.end,
+      r.claim_key,
+    ]);
+  if (reason === "prop_conflict")
+    return JSON.stringify(["value", r.type, r.entity_key, r.prop]);
+  return JSON.stringify(["name", r.type, r.doc_id, r.norm_name]);
+}
+
+/**
+ * Settles one review of load `load` with `choice`, as `user` (the
+ * backend's settleReviews and SettleFoundryReviews, one item): the decision
+ * saved, or why it was refused. With `expectOpen`, another person's
+ * decision of its card refuses it (DECIDED).
+ */
+function settleOne(
+  s: { o: StoredOntology },
+  load: string,
+  reviewId: string,
+  choice: FoundryReviewChoice,
+  user: string,
+  draw: ReviewDrawn | undefined,
+  expectOpen: boolean,
+): Settled {
+  if (knobs.settleRefusals) {
+    knobs.settleRefusals -= 1;
+    return refuse("STALE", "FAILED_PRECONDITION", READS_DIFFERENTLY);
+  }
+  const graph = tenantGraph(s.o.tenantId);
+  const r = reviewOf(s.o.tenantId, load, reviewId);
+  if (!r)
+    return refuse(
+      "NOT_FOUND",
+      "NOT_FOUND",
+      "review not found in the current load",
+    );
+  // A held claim names no type: the engine reads what it states from its
+  // document. One held as conflicting with what its link holds is
+  // settled so only on a link that holds one value (contract 4.14.0).
+  if (
+    text(r.reason) === "conflict" &&
+    !holdsOne(
+      ontologyVersion(s.o.id, currentLoadVersionId(s.o.id) || "")?.definition,
+      text(r.suggested_link),
+    )
+  )
+    return refuse(
+      "INVALID",
+      "FAILED_PRECONDITION",
+      "this claim conflicts with a property of a fact the graph holds; only a conflict on a link that holds one value can be approved",
+    );
+  if (["low_confidence", "unverified", "conflict"].includes(text(r.reason))) {
+    const read = (choice.release ?? choice.reject)?.statementHash;
+    if (read === undefined)
+      return refuse(
+        "INVALID",
+        "INVALID_ARGUMENT",
+        "this review requires a release or a reject decision",
+      );
+    const docId = text(r.doc_id),
+      claimKey = text(r.claim_key),
+      link = text(r.suggested_link),
+      stored = text(r.statement);
+    if (!docId || !/^[0-9a-f]{64}$/.test(claimKey) || !link || !stored)
+      return refuse(
+        "INVALID",
+        "FAILED_PRECONDITION",
+        "this review is missing its identity; start a new load before settling it",
+      );
+    const statementHash = createHash("sha256")
+      .update(`${link}\u001f${stored}`)
+      .digest("hex");
+    if (read !== statementHash)
+      return refuse("STALE", "FAILED_PRECONDITION", READS_DIFFERENTLY);
+    // The claim's decisions: at its place, under its key or of what was
+    // read there under another (a rebuild moves keys), as the engine
+    // binds a release from contract 4.14.0 and the backend keeps them.
+    // One of its kind of what was read here stands, the first decided,
+    // and takes the claim's key; every other gives way, and an approval
+    // the load has not written leaves its list too.
+    const claim = {
+      docId,
+      claimKey,
+      claimSection: Number(r.section),
+      claimStart: Number(r.start),
+      claimEnd: Number(r.end),
+    };
+    const kind = choice.reject ? "reject" : "release";
+    const elsewhere = expectOpen
+      ? decidedElsewhere(s.o.id, user, {
+          kind: "release",
+          type: "",
+          ...claim,
+          statementHash,
+        })
+      : undefined;
+    if (elsewhere) return elsewhere;
+    const own = decisions.get(s.o.id) || [];
+    const mine = own.filter(
+      (
+        d,
+      ): d is Extract<FoundryReviewDecision, { kind: "release" | "reject" }> =>
+        (d.kind === "release" || d.kind === "reject") &&
+        d.docId === claim.docId &&
+        d.claimSection === claim.claimSection &&
+        d.claimStart === claim.claimStart &&
+        d.claimEnd === claim.claimEnd &&
+        (d.claimKey === claim.claimKey || d.statementHash === statementHash),
+    );
+    const same = mine.filter((d) => d.kind === kind);
+    const stands =
+      same
+        .filter((d) => d.statementHash === statementHash)
+        .sort(
+          (a, b) =>
+            (a.decidedAt ?? "").localeCompare(b.decidedAt ?? "") ||
+            a.id.localeCompare(b.id),
+        )[0] ?? same.find((d) => d.claimKey === claim.claimKey);
+    for (const d of mine)
+      if (d !== stands && d.kind === "release") forgetRelease(s.o.id, d.id);
+    decisions.set(s.o.id, [
+      ...own.filter((d) => !mine.some((m) => m.id === d.id)),
+      ...(stands ? [{ ...stands, claimKey: claim.claimKey }] : []),
+    ]);
+    const { decision: saved } = save(
+      s.o.id,
+      { kind, type: "", ...claim, statementHash },
+      user,
+      draw,
+    );
+    if (saved.kind === "release") owePendingRelease(s.o.id, saved);
+    // A decision of the random slice is a label of the claim too, with
+    // the score its review was read at, unless this person re-checked
+    // the claim: that word stands.
+    const rechecked = (labels.get(s.o.id) || []).some(
+      (l) =>
+        l.drawn === "recheck" &&
+        l.decidedByUserId === user &&
+        l.docId === claim.docId &&
+        l.claimSection === claim.claimSection &&
+        l.claimStart === claim.claimStart &&
+        l.claimEnd === claim.claimEnd &&
+        l.claimKey === claim.claimKey,
+    );
+    if (draw === "random" && !rechecked)
+      saveLabel(s.o.id, {
+        id: id("label"),
+        drawn: "random",
+        ...claim,
+        statementHash,
+        link,
+        ...(typeof r.confidence === "number"
+          ? { confidence: r.confidence }
+          : {}),
+        verdict: kind === "release" ? "right" : "wrong",
+        decisionId: saved.id,
+        loadId: load,
+        decidedByUserId: user,
+        decidedAt: now(),
+      });
+    return { decision: { ...saved, applied: appliedOf(s.o.id, saved) } };
+  }
+  const type = text(r.type);
+  if (!type)
+    return refuse(
+      "INVALID",
+      "FAILED_PRECONDITION",
+      "this review is missing its identity; start a new load before settling it",
+    );
+  const types = decisionTypes(
+    ontologyVersion(s.o.id, currentLoadVersionId(s.o.id) || "")?.definition,
+  );
+  const t = types[type];
+  if (!t)
+    return refuse(
+      "STALE",
+      "FAILED_PRECONDITION",
+      "the review type is not in the loaded version",
+    );
+  let decision: ReviewDecision;
+  switch (text(r.reason)) {
+    case "unresolved":
+    case "ambiguous":
+    case "collision":
+    case "identifier_conflict":
+    case "adjudicated":
+    case "legal_form":
+    case "part_name":
+    case "own_name":
+      if (!choice.resolve)
+        return refuse(
+          "INVALID",
+          "INVALID_ARGUMENT",
+          "this review requires a resolve decision",
+        );
+      decision = {
+        kind: "resolve",
+        type,
+        docId: text(r.doc_id),
+        normName: text(r.norm_name),
+        ...(choice.resolve.entityKey === undefined
+          ? {}
+          : { entityKey: choice.resolve.entityKey }),
+      };
+      break;
+    case "prop_conflict": {
+      if (choice.prop === undefined)
+        return refuse(
+          "INVALID",
+          "INVALID_ARGUMENT",
+          "this review requires a prop decision",
+        );
+      const prop = text(r.prop);
+      if (!(prop in t.props))
+        return refuse(
+          "STALE",
+          "FAILED_PRECONDITION",
+          "the property is not in the loaded version",
+        );
+      const value = decisionValue(t.props[prop]!, choice.prop);
+      if (value === undefined)
+        return refuse(
+          "INVALID",
+          "INVALID_ARGUMENT",
+          "the chosen value does not match the property's type",
+        );
+      decision = {
+        kind: "prop",
+        type,
+        entityKey: text(r.entity_key),
+        prop,
+        value,
+      };
+      break;
+    }
+    default:
+      return refuse(
+        "INVALID",
+        "INVALID_ARGUMENT",
+        "this review kind cannot be settled",
+      );
+  }
+  if (
+    decision.kind === "resolve"
+      ? !decision.docId || !decision.normName
+      : !decision.entityKey || !decision.prop
+  )
+    return refuse(
+      "INVALID",
+      "FAILED_PRECONDITION",
+      "the review is missing its decision identity",
+    );
+  // The chosen entity, or a property's entity, must be in this load.
+  const key = decision.entityKey;
+  const identity = t.key.length ? "entity_key" : "norm_name";
+  if (
+    key !== undefined &&
+    [...graph.nodes.values()].filter(
+      (n) =>
+        n.label === type &&
+        n.props[identity] === key &&
+        n.props[FOUNDRY_LOAD] === load,
+    ).length !== 1
+  )
+    return refuse(
+      "INVALID",
+      "INVALID_ARGUMENT",
+      "the chosen entity is not in this load",
+    );
+  if (expectOpen) {
+    const elsewhere = decidedElsewhere(s.o.id, user, decision);
+    if (elsewhere) return elsewhere;
+  }
+  if (
+    knobs.valueDecisionsFull &&
+    decision.kind === "prop" &&
+    !(decisions.get(s.o.id) || []).some(
+      (d) =>
+        d.kind === "prop" &&
+        d.type === decision.type &&
+        d.entityKey === decision.entityKey &&
+        d.prop === decision.prop,
+    )
+  )
+    return refuse(
+      "FULL",
+      "FAILED_PRECONDITION",
+      "this ontology holds 10000 value decisions, the most a load can be sent; remove one before deciding another",
+    );
+  // The backend checks again under the ontology's lock: a load of another
+  // version may have become current since the review was read.
+  if (!decisionFits({ ...decision, id: "" }, types))
+    return refuse(
+      "STALE",
+      "FAILED_PRECONDITION",
+      "the current load's version no longer has this review's type or property; reload the review and try again",
+    );
+  const { decision: stored } = save(s.o.id, decision, user, draw);
+  if (stored.kind === "prop") owePendingValue(s.o.id, stored);
+  // A name the load links to no one is settled in place; one it links
+  // already waits for the next load, as the engine would say bound.
+  if (
+    stored.kind === "resolve" &&
+    ["unresolved", "ambiguous", "collision", "identifier_conflict"].includes(
+      text(r.reason),
+    )
+  )
+    owePendingResolve(s.o.id, stored);
+  const applied = appliedOf(s.o.id, stored);
+  return { decision: applied ? { ...stored, applied } : stored };
+}
+
 export const reviewRoutes: MockRoute[] = [
   {
     method: "POST",
@@ -263,276 +668,96 @@ export const reviewRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           `drawn must be ranked or random, not "${String(drawn)}"`,
         );
-      const draw = drawn || undefined;
-      if (knobs.settleRefusals) {
-        knobs.settleRefusals -= 1;
-        return fail("FAILED_PRECONDITION", READS_DIFFERENTLY);
-      }
       const load = currentLoadId(s.o.id);
       if (!load)
         return fail(
           "FAILED_PRECONDITION",
           "load the ontology before settling a review",
         );
-      const graph = tenantGraph(s.o.tenantId);
-      // Only the current load can be settled; old loads remain read-only.
-      const found = [...graph.nodes.values()].filter(
-        (n) =>
-          n.label === N.Review &&
-          n.props.review_key === req.params.reviewId &&
-          n.props[FOUNDRY_LOAD] === load,
+      const out = settleOne(
+        s,
+        load,
+        req.params.reviewId!,
+        choice,
+        req.principal.user.id,
+        drawn || undefined,
+        false,
       );
-      if (found.length !== 1)
-        return fail("NOT_FOUND", "review not found in the current load");
-      const r = found[0]!.props;
-      // A held claim names no type: the engine reads what it states from its
-      // document. One held as conflicting with what its link holds is
-      // settled so only on a link that holds one value (contract 4.14.0).
+      return "refused" in out
+        ? fail(out.refused.code, out.refused.message)
+        : ok(out satisfies ReviewDecisionResponse);
+    },
+  },
+  {
+    method: "POST",
+    path: `${BASE}/reviews:batchSettle`,
+    handle: (req) => {
+      const s = ontologyOf(req, true);
+      if (!isScope(s)) return s;
+      const body = (req.body || {}) as Partial<BatchSettleReviewsRequest>;
+      const items: unknown = body.items;
+      if (!Array.isArray(items) || !items.length || items.length > 100)
+        return fail("INVALID_ARGUMENT", "items holds 1 to 100 reviews");
       if (
-        text(r.reason) === "conflict" &&
-        !holdsOne(
-          ontologyVersion(s.o.id, currentLoadVersionId(s.o.id) || "")
-            ?.definition,
-          text(r.suggested_link),
+        items.some(
+          (it) =>
+            !isRecord(it) ||
+            typeof it.reviewId !== "string" ||
+            !it.reviewId ||
+            it.reviewId.length > 256 ||
+            !valid(it.decision),
         )
       )
         return fail(
-          "FAILED_PRECONDITION",
-          "this claim conflicts with a property of a fact the graph holds; only a conflict on a link that holds one value can be approved",
+          "INVALID_ARGUMENT",
+          "each item has a review_id of 1 to 256 characters and a decision",
         );
-      if (
-        ["low_confidence", "unverified", "conflict"].includes(text(r.reason))
-      ) {
-        const read = (choice.release ?? choice.reject)?.statementHash;
-        if (read === undefined)
-          return fail(
-            "INVALID_ARGUMENT",
-            "this review requires a release or a reject decision",
-          );
-        const docId = text(r.doc_id),
-          claimKey = text(r.claim_key),
-          link = text(r.suggested_link),
-          stored = text(r.statement);
-        if (!docId || !/^[0-9a-f]{64}$/.test(claimKey) || !link || !stored)
-          return fail(
-            "FAILED_PRECONDITION",
-            "this review is missing its identity; start a new load before settling it",
-          );
-        const statementHash = createHash("sha256")
-          .update(`${link}\u001f${stored}`)
-          .digest("hex");
-        if (read !== statementHash)
-          return fail("FAILED_PRECONDITION", READS_DIFFERENTLY);
-        // The claim's decisions: at its place, under its key or of what was
-        // read there under another (a rebuild moves keys), as the engine
-        // binds a release from contract 4.14.0 and the backend keeps them.
-        // One of its kind of what was read here stands, the first decided,
-        // and takes the claim's key; every other gives way, and an approval
-        // the load has not written leaves its list too.
-        const claim = {
-          docId,
-          claimKey,
-          claimSection: Number(r.section),
-          claimStart: Number(r.start),
-          claimEnd: Number(r.end),
-        };
-        const kind = choice.reject ? "reject" : "release";
-        const own = decisions.get(s.o.id) || [];
-        const mine = own.filter(
-          (
-            d,
-          ): d is Extract<
-            FoundryReviewDecision,
-            { kind: "release" | "reject" }
-          > =>
-            (d.kind === "release" || d.kind === "reject") &&
-            d.docId === claim.docId &&
-            d.claimSection === claim.claimSection &&
-            d.claimStart === claim.claimStart &&
-            d.claimEnd === claim.claimEnd &&
-            (d.claimKey === claim.claimKey ||
-              d.statementHash === statementHash),
-        );
-        const same = mine.filter((d) => d.kind === kind);
-        const stands =
-          same
-            .filter((d) => d.statementHash === statementHash)
-            .sort(
-              (a, b) =>
-                (a.decidedAt ?? "").localeCompare(b.decidedAt ?? "") ||
-                a.id.localeCompare(b.id),
-            )[0] ?? same.find((d) => d.claimKey === claim.claimKey);
-        for (const d of mine)
-          if (d !== stands && d.kind === "release") forgetRelease(s.o.id, d.id);
-        decisions.set(s.o.id, [
-          ...own.filter((d) => !mine.some((m) => m.id === d.id)),
-          ...(stands ? [{ ...stands, claimKey: claim.claimKey }] : []),
-        ]);
-        const { decision: saved } = save(
-          s.o.id,
-          { kind, type: "", ...claim, statementHash },
-          req.principal.user.id,
-          draw,
-        );
-        if (saved.kind === "release") owePendingRelease(s.o.id, saved);
-        // A decision of the random slice is a label of the claim too, with
-        // the score its review was read at, unless this person re-checked
-        // the claim: that word stands.
-        const rechecked = (labels.get(s.o.id) || []).some(
-          (l) =>
-            l.drawn === "recheck" &&
-            l.decidedByUserId === req.principal.user.id &&
-            l.docId === claim.docId &&
-            l.claimSection === claim.claimSection &&
-            l.claimStart === claim.claimStart &&
-            l.claimEnd === claim.claimEnd &&
-            l.claimKey === claim.claimKey,
-        );
-        if (draw === "random" && !rechecked)
-          saveLabel(s.o.id, {
-            id: id("label"),
-            drawn: "random",
-            ...claim,
-            statementHash,
-            link,
-            ...(typeof r.confidence === "number"
-              ? { confidence: r.confidence }
-              : {}),
-            verdict: kind === "release" ? "right" : "wrong",
-            decisionId: saved.id,
-            loadId: load,
-            decidedByUserId: req.principal.user.id,
-            decidedAt: now(),
-          });
-        return ok({
-          decision: { ...saved, applied: appliedOf(s.o.id, saved) },
-        } satisfies ReviewDecisionResponse);
-      }
-      const type = text(r.type);
-      if (!type)
+      if (typeof body.loadId !== "string" || !body.loadId)
+        return fail("INVALID_ARGUMENT", "load_id is required");
+      const load = currentLoadId(s.o.id);
+      if (!load)
         return fail(
           "FAILED_PRECONDITION",
-          "this review is missing its identity; start a new load before settling it",
+          "load the ontology before settling a review",
         );
-      const types = decisionTypes(
-        ontologyVersion(s.o.id, currentLoadVersionId(s.o.id) || "")?.definition,
-      );
-      const t = types[type];
-      if (!t)
+      if (load !== body.loadId)
         return fail(
           "FAILED_PRECONDITION",
-          "the review type is not in the loaded version",
+          "another load became current: read the cards again",
         );
-      let decision: ReviewDecision;
-      switch (text(r.reason)) {
-        case "unresolved":
-        case "ambiguous":
-        case "collision":
-        case "identifier_conflict":
-        case "adjudicated":
-        case "legal_form":
-        case "part_name":
-        case "own_name":
-          if (!choice.resolve)
-            return fail(
-              "INVALID_ARGUMENT",
-              "this review requires a resolve decision",
-            );
-          decision = {
-            kind: "resolve",
-            type,
-            docId: text(r.doc_id),
-            normName: text(r.norm_name),
-            ...(choice.resolve.entityKey === undefined
-              ? {}
-              : { entityKey: choice.resolve.entityKey }),
-          };
-          break;
-        case "prop_conflict": {
-          if (choice.prop === undefined)
-            return fail(
-              "INVALID_ARGUMENT",
-              "this review requires a prop decision",
-            );
-          const prop = text(r.prop);
-          if (!(prop in t.props))
-            return fail(
-              "FAILED_PRECONDITION",
-              "the property is not in the loaded version",
-            );
-          const value = decisionValue(t.props[prop]!, choice.prop);
-          if (value === undefined)
-            return fail(
-              "INVALID_ARGUMENT",
-              "the chosen value does not match the property's type",
-            );
-          decision = {
-            kind: "prop",
-            type,
-            entityKey: text(r.entity_key),
-            prop,
-            value,
-          };
-          break;
-        }
-        default:
-          return fail("INVALID_ARGUMENT", "this review kind cannot be settled");
-      }
-      if (
-        decision.kind === "resolve"
-          ? !decision.docId || !decision.normName
-          : !decision.entityKey || !decision.prop
-      )
-        return fail(
-          "FAILED_PRECONDITION",
-          "the review is missing its decision identity",
-        );
-      // The chosen entity, or a property's entity, must be in this load.
-      const key = decision.entityKey;
-      const identity = t.key.length ? "entity_key" : "norm_name";
-      if (
-        key !== undefined &&
-        [...graph.nodes.values()].filter(
-          (n) =>
-            n.label === type &&
-            n.props[identity] === key &&
-            n.props[FOUNDRY_LOAD] === load,
-        ).length !== 1
-      )
+      const list = items as FoundryReviewSettleItem[];
+      // Two items deciding one thing refuse the batch: the last would win.
+      const keys = list.flatMap((it) => {
+        const k = settleKey(reviewOf(s.o.tenantId, load, it.reviewId));
+        return k ? [k] : [];
+      });
+      if (new Set(keys).size !== keys.length)
         return fail(
           "INVALID_ARGUMENT",
-          "the chosen entity is not in this load",
+          "two items decide the same review; send one",
         );
-      // The backend checks again under the ontology's lock: a load of another
-      // version may have become current since the review was read.
-      if (!decisionFits({ ...decision, id: "" }, types))
-        return fail(
-          "FAILED_PRECONDITION",
-          "the current load's version no longer has this review's type or property; reload the review and try again",
+      const results = list.map((it): FoundryReviewSettleResult => {
+        const out = settleOne(
+          s,
+          load,
+          it.reviewId,
+          it.decision,
+          req.principal.user.id,
+          "ranked",
+          !!body.expectOpen,
         );
-      const { decision: stored } = save(
-        s.o.id,
-        decision,
-        req.principal.user.id,
-        draw,
-      );
-      if (stored.kind === "prop") owePendingValue(s.o.id, stored);
-      // A name the load links to no one is settled in place; one it links
-      // already waits for the next load, as the engine would say bound.
-      if (
-        stored.kind === "resolve" &&
-        [
-          "unresolved",
-          "ambiguous",
-          "collision",
-          "identifier_conflict",
-        ].includes(text(r.reason))
-      )
-        owePendingResolve(s.o.id, stored);
-      const applied = appliedOf(s.o.id, stored);
-      return ok({
-        decision: applied ? { ...stored, applied } : stored,
-      } satisfies ReviewDecisionResponse);
+        return "refused" in out
+          ? {
+              reviewId: it.reviewId,
+              refused: {
+                reason: `FOUNDRY_REVIEW_SETTLE_REFUSAL_REASON_${out.refused.reason}`,
+                message: out.refused.message,
+                ...(out.refused.decided && { decided: out.refused.decided }),
+              },
+            }
+          : { reviewId: it.reviewId, decision: out.decision };
+      });
+      return ok({ results } satisfies BatchSettleReviewsResponse);
     },
   },
   {

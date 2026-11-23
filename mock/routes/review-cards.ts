@@ -25,6 +25,7 @@ import {
   SPOT_CHECKS,
   bandOf,
   buildCards,
+  decidesCard,
   kindOrder,
   nextDraw,
   quoteOrder,
@@ -225,19 +226,11 @@ function isOpen(
   saved: readonly FoundryReviewDecision[],
   load: string,
 ) {
-  if (c.kind === "release")
-    return (
-      !saved.some(
-        (d) =>
-          (d.kind === "release" || d.kind === "reject") &&
-          d.docId === c.docId &&
-          d.claimSection === c.claimSection &&
-          d.claimStart === c.claimStart &&
-          d.claimEnd === c.claimEnd &&
-          (d.statementHash === c.statementHash ||
-            (d.kind === "reject" && d.claimKey === c.claimKey)),
-      ) &&
-      !(draws.get(load) ?? []).some(
+  return (
+    !saved.some((d) => decidesCard(d, c)) &&
+    !(
+      c.kind === "release" &&
+      (draws.get(load) ?? []).some(
         (w) =>
           w.kind === "held" &&
           w.docId === c.docId &&
@@ -246,18 +239,22 @@ function isOpen(
           w.end === c.claimEnd &&
           w.claimKey === c.claimKey,
       )
-    );
-  return !saved.some((d) =>
-    c.kind === "resolve"
-      ? d.kind === "resolve" &&
-        d.type === c.type &&
-        d.docId === c.docId &&
-        d.normName === c.normName
-      : d.kind === "prop" &&
-        d.type === c.type &&
-        d.entityKey === c.entityKey &&
-        d.prop === c.prop,
+    )
   );
+}
+
+/**
+ * The card `cardId` of the ontology's servable current load, and whether it
+ * is open (GetFoundryReviewCard); undefined when that load has none.
+ */
+export function reviewCardOf(
+  o: StoredOntology,
+  cardId: string,
+): { card: Card; open: boolean } | undefined {
+  const load = servableLoad(o.id)?.loadId;
+  if (!load) return undefined;
+  const card = indexOf(o, load).cards.find((c) => c.id === cardId);
+  return card && { card, open: isOpen(card, decisions.get(o.id) || [], load) };
 }
 
 /** The walk's order: per decision and facts, descending; kind, shuffle and id. */

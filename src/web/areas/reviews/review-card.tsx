@@ -198,11 +198,13 @@ function OutcomeLine({
   applied,
   choices,
   coveredBy,
+  decidedBy,
 }: {
   outcome?: Outcome;
   applied?: DecisionApplied | null;
   choices: readonly Choice[];
   coveredBy?: string;
+  decidedBy?: string;
 }) {
   switch (outcome?.kind) {
     case undefined:
@@ -276,7 +278,9 @@ function OutcomeLine({
     case "elsewhere":
       return (
         <p role="status" className="rv-outcome">
-          Decided by someone else meanwhile.
+          {decidedBy
+            ? `Decided by ${decidedBy}. Their choice stands; yours wasn’t saved.`
+            : "Decided by someone else meanwhile."}
         </p>
       );
     case "taken_back":
@@ -316,6 +320,7 @@ export function ReviewCard({
   outcome,
   applied,
   coveredBy,
+  decidedBy,
   readOnly,
   batch,
   founder,
@@ -333,6 +338,9 @@ export function ReviewCard({
   // What the current load made of the saved decision, as last read.
   applied?: DecisionApplied | null;
   coveredBy?: string;
+  // Who decided the card first, when the backend refused this walk's choice
+  // for it.
+  decidedBy?: string;
   readOnly: boolean;
   batch: number;
   founder: boolean;
@@ -418,6 +426,7 @@ export function ReviewCard({
         applied={applied}
         choices={choices}
         coveredBy={coveredBy}
+        decidedBy={decidedBy}
       />
       {!readOnly && open && (
         <ul className="rv-choices" aria-label="Choices">

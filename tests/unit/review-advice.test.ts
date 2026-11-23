@@ -1,20 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   BATCH_LABELS,
-  SEED_QUOTE,
   advise,
   asks,
   cardName,
   claimBatchKey,
   coveredBy,
   effectOf,
-  founderSeed,
   laneOf,
   settleOf,
   statesScore,
   wilsonLower,
   type Advice,
-  type Decidable,
 } from "@/web/areas/reviews/advice";
 import { choicesOf } from "@/web/areas/reviews/choices";
 import type { Candidate, Settleable } from "@/web/areas/reviews/model";
@@ -593,42 +590,6 @@ describe("claimBatchKey", () => {
     );
     expect(claimBatchKey(heldCard(1, { link: "signed_with" }))).not.toBe(
       claimBatchKey(heldCard(1)),
-    );
-  });
-});
-
-describe("founderSeed", () => {
-  it("names the review and clips its quote", () => {
-    const long = "x".repeat(500);
-    const seed = founderSeed(heldCard(1, { quote: long }), "Contract-17.md");
-    expect(seed).toContain("review held-1");
-    expect(seed).toContain("“Contract-17.md”");
-    expect(seed).toContain(
-      "Acme 1 (Account) → partner_of → Globex 1 (Account)",
-    );
-    expect(seed).not.toContain("x".repeat(SEED_QUOTE));
-    expect(seed).toContain(`${"x".repeat(SEED_QUOTE - 1)}…`);
-    expect(seed).toContain("don’t settle it");
-  });
-  it("asks each kind's question", () => {
-    const umbrella = { key: "scus_1", entity: entity("scus_1", "Umbrella") };
-    const cards: [Decidable, string][] = [
-      [
-        nameCard("umbrella holdings", {
-          candidates: [umbrella, { key: "scus_2" }],
-        }),
-        "Which Customer is “umbrella holdings”? Candidates: Umbrella (scus_1), scus_2 (scus_2).",
-      ],
-      [nameCard("nobody"), "No candidates."],
-      [
-        valueCard([{ text: "GBP" }, { text: "USD" }, { text: "GBP" }]),
-        "Which currency of Customer c1 is right: GBP or USD?",
-      ],
-    ];
-    for (const [card, text] of cards)
-      expect(founderSeed(card, "doc.md")).toContain(text);
-    expect(founderSeed(valueCard([{ text: "GBP" }]), "d")).toContain(
-      "“billed in GBP”",
     );
   });
 });

@@ -20,6 +20,7 @@ import { useWorkspace } from "../../ui";
 import { automationPaths } from "../automations/paths";
 import { parseSpec } from "../automations/model";
 import { StepsPreview } from "../automations/parts";
+import { announceSettled, settledDecision } from "../reviews/settled";
 import { useNames } from "../automations/queries";
 import { dashboardPaths } from "../dashboards/paths";
 import { dashboardQueries } from "../dashboards/queries";
@@ -150,6 +151,25 @@ function PreparedCard({
       navigate(automationPaths.automations(), { replace: true });
     void qc.invalidateQueries({ queryKey: [ws, "automations"] });
   };
+  // A review was settled: the review walk, if open, takes the person's own
+  // decision as its choice (reviews/settled.ts), and its cards and
+  // decisions are read again.
+  const ranOnReview = (ran: FoundryAgentAction) => {
+    const display = card && "review" in card.display ? card.display : undefined;
+    const decision = settledDecision(ran.resultJson);
+    if (!display || !("ontology" in display) || ran.status !== "succeeded")
+      return;
+    const o = display.ontology.id;
+    if (decision)
+      announceSettled({
+        workspaceId: ws,
+        ontologyId: o,
+        reviewId: display.review.review_key,
+        decision,
+      });
+    for (const key of ["review-cards", "review-decided", "review-decisions"])
+      void qc.invalidateQueries({ queryKey: [ws, "ontology", o, key] });
+  };
   const act = async (which: "run" | "refresh" | "dismiss") => {
     setPending(which);
     setError("");
@@ -160,6 +180,7 @@ function PreparedCard({
           ranOnDashboards(ran.action);
         if (action.operation?.endsWith("_workflow"))
           ranOnAutomations(ran.action);
+        if (action.operation === "settle_review") ranOnReview(ran.action);
         // Where Founder runs, as the dock and the settings show it.
         if (
           action.operation === "set_assistant_runtime" ||
