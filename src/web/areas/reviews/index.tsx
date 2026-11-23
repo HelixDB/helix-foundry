@@ -4,14 +4,14 @@
 // the most facts first, a page at a time, filtered by kind, type and
 // document), walked one card at a time (./walkthrough.tsx), each card with
 // Founder's suggestion from fixed rules (./advice.ts) and settled as a
-// document's Needs review settles it. Each page's reviews are read from the
-// load by key (./cards.ts). At the finish, a few spot checks drawn at
+// document's Needs review settles it. The cards' reviews are read from the
+// load by key, ten cards at a time (./cards.ts). At the finish, a few spot checks drawn at
 // random from every score band measure how often claims at each score are
 // right (./spot-checks.tsx). The page holds the walk (./walkthrough.tsx
 // useWalk), so the tab's count and the walk keep their place across a
 // switch of tabs.
 import "./reviews.css";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   useInfiniteQuery,
@@ -20,10 +20,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
-import type {
-  FoundryReviewDecision,
-  ListFoundryReviewCardsResponse,
-} from "../../../shared/wfe";
+import type { FoundryReviewDecision } from "../../../shared/wfe";
 import { Button, EmptyState, SkeletonText } from "../../kit";
 import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
@@ -35,11 +32,11 @@ import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import { adviceContext } from "./advice";
 import {
-  cardsOf,
   reviewReads,
+  windowCards,
   withOwnDecisions,
-  type NameLink,
   type ReviewRead,
+  type ReviewsRead,
 } from "./cards";
 import {
   ADVICE_PAGES,
@@ -48,59 +45,29 @@ import {
   type CardFilter,
   type CardKind,
 } from "./cards-api";
-import { asBand, type QueueCard, type QueueReview } from "./queue";
-import { walkOrder, type AdviceFilter } from "./walk";
+import { asBand } from "./queue";
+import { walkOrder, type AdviceFilter, type WalkOrder } from "./walk";
 import { ReviewWalkthrough, useWalk } from "./walkthrough";
 
 const KINDS: readonly CardKind[] = ["name", "claim", "value"];
 
-type Read = UseQueryResult<{ reviews: QueueReview[]; links: NameLink[] }>;
+/** How many windows of cards the walk reads before it starts. */
+const FIRST_WINDOWS = 2;
 
-/**
- * Each page's cards, once all its reviews are read, in order, and how many
- * pages that is: the pages read so far from the first, so the walk never
- * shows a later card before an earlier one, nor a walk before its first
- * page.
- */
-function pageCards(
-  pages: readonly ListFoundryReviewCardsResponse[],
-  plan: readonly ReviewRead[],
-  read: readonly Read[],
-): { cards: QueueCard[]; pages: number } {
-  const out: QueueCard[] = [];
-  for (const [i, p] of pages.entries()) {
-    const mine = plan.flatMap((r, j) => (r.page === i ? [read[j]] : []));
-    if (mine.some((r) => !r?.data)) return { cards: out, pages: i };
-    const reviews = new Map(
-      mine.flatMap((r) =>
-        r!.data!.reviews.map(
-          (v) =>
-            [
-              v.settle && v.settle.kind !== "stale" ? v.settle.reviewId : "",
-              v,
-            ] as const,
-        ),
-      ),
-    );
-    out.push(
-      ...cardsOf(
-        p.cards ?? [],
-        reviews,
-        mine.flatMap((r) => r!.data!.links),
-      ),
-    );
-  }
-  return { cards: out, pages: pages.length };
-}
+type Read = UseQueryResult<ReviewsRead>;
 
 /**
  * The Facts tab's reads of the current load: its cards from the index (the
- * Decide lane under the URL's filters, and the FYI lane), their reviews,
+ * Decide lane under the URL's filters, and the FYI lane), their reviews a
+ * window of cards at a time (as the walk nears the last window read, the
+ * next; with an advice filter, every window of the pages it reads),
  * Founder's advice over them, the summary's count and the walk. The Review
  * page holds them, so the tab's count shows on either tab and what was
  * decided here keeps its place across a switch. `open` is the summary's
- * count of cards to decide, less the cards the walk closed since;
- * unset until the summary is read.
+ * count of cards to decide, less the cards the walk closed since; unset
+ * until the summary is read. While cards it showed are read again under
+ * other keys (a page read again holds other cards), the walk keeps what it
+ * showed until they land.
  */
 export function useReviewCards() {
   const { id: ws, user } = useWorkspace(),
@@ -132,6 +99,7 @@ export function useReviewCards() {
     }),
     [kind, type, doc],
   );
+  const view = JSON.stringify([loadId, filter]);
   const decide = useInfiniteQuery({
     ...cardQueries.pages(ws, o, loadId, filter),
     enabled: reads,
@@ -149,8 +117,17 @@ export function useReviewCards() {
     }),
     [decidePages, fyiPages],
   );
+  // How many of the Decide lane's windows to read: a few to start, every
+  // one under an advice filter (it reads whole pages); FYI's, every one.
+  const [reach, setReach] = useState({ view: "", windows: FIRST_WINDOWS });
+  const decideReach =
+    advice !== "any"
+      ? Infinity
+      : reach.view === view
+        ? reach.windows
+        : FIRST_WINDOWS;
   // Each waits its turn at the database's limiter.
-  const reviewQuery = (r: ReviewRead) => ({
+  const reviewQuery = (r: ReviewRead, upTo: number) => ({
     ...readQueries.reviewsByKey(
       ws,
       o,
@@ -160,21 +137,35 @@ export function useReviewCards() {
       r.docs,
       naming,
     ),
-    enabled: reads && ready,
+    enabled: reads && ready && r.window < upTo,
   });
   const decideReads = useQueries({
-    queries: plan.decide.map(reviewQuery),
+    queries: plan.decide.map((r) => reviewQuery(r, decideReach)),
   }) as Read[];
-  const fyiReads = useQueries({ queries: plan.fyi.map(reviewQuery) }) as Read[];
+  const fyiReads = useQueries({
+    queries: plan.fyi.map((r) => reviewQuery(r, Infinity)),
+  }) as Read[];
   const settled = (rs: readonly Read[]) =>
     rs.map((r) => r.dataUpdatedAt).join();
   const decideCards = useMemo(
-    () => pageCards(decidePages ?? [], plan.decide, decideReads),
+    () =>
+      windowCards(
+        decidePages ?? [],
+        plan.decide,
+        decideReads.map((r) => r.data),
+        decideReach,
+      ),
     // The reads' data, by when each was read.
-    [decidePages, plan.decide, settled(decideReads)],
+    [decidePages, plan.decide, settled(decideReads), decideReach],
   );
   const fyiCards = useMemo(
-    () => pageCards(fyiPages ?? [], plan.fyi, fyiReads),
+    () =>
+      windowCards(
+        fyiPages ?? [],
+        plan.fyi,
+        fyiReads.map((r) => r.data),
+        Infinity,
+      ),
     [fyiPages, plan.fyi, settled(fyiReads)],
   );
   const single = useMemo(
@@ -182,19 +173,27 @@ export function useReviewCards() {
     [naming],
   );
   const walk = useWalk();
+  // Decisions the walk's FYI and spot checks saved, read by id with its own.
+  const [elsewhere, setElsewhere] = useState({
+    loadId: "",
+    ids: [] as readonly string[],
+  });
   // The walk's own decisions, read by id for what became of each.
   const ids = useMemo(
     () =>
       walk.state.loadId === loadId
-        ? [...walk.state.outcomes.values()]
-            .flatMap((x) =>
-              x.kind === "saved" || x.kind === "unconfirmed"
-                ? [x.decision.id]
-                : [],
-            )
-            .sort()
+        ? [
+            ...new Set([
+              ...[...walk.state.outcomes.values()].flatMap((x) =>
+                x.kind === "saved" || x.kind === "unconfirmed"
+                  ? [x.decision.id]
+                  : [],
+              ),
+              ...(elsewhere.loadId === loadId ? elsewhere.ids : []),
+            ]),
+          ].sort()
         : [],
-    [walk.state.outcomes, walk.state.loadId, loadId],
+    [walk.state.outcomes, walk.state.loadId, loadId, elsewhere],
   );
   const decided = useQuery(cardQueries.decided(ws, o, ids));
   const own = useMemo(() => decided.data ?? [], [decided.data]);
@@ -234,15 +233,31 @@ export function useReviewCards() {
       }),
     [decidePages, first, single, user.id, own],
   );
-  // The walk starts once each lane's first page is read; a later page joins
-  // it once its reviews are.
-  const all = useMemo(
+  // The walk starts once each lane's first page is read and its first
+  // window too (or it has none); a later window joins it once its reviews
+  // are read.
+  const fresh = useMemo(
     () =>
-      decideCards.pages && fyiCards.pages
+      decidePages?.length &&
+      fyiPages?.length &&
+      (decideCards.shown || !decideCards.windows) &&
+      (fyiCards.shown || !fyiCards.windows)
         ? walkOrder([...decideCards.cards, ...fyiCards.cards], ctx, advice)
         : undefined,
-    [decideCards, fyiCards, ctx, advice],
+    [decidePages, fyiPages, decideCards, fyiCards, ctx, advice],
   );
+  // A window asked for whose reads haven't landed: the last walk shown
+  // stands until they do.
+  const rereading =
+    decideCards.shown < Math.min(decideReach, decideCards.windows) ||
+    fyiCards.shown < fyiCards.windows;
+  const shown = useRef<{ view: string; all: WalkOrder }>(undefined);
+  const viewed = JSON.stringify([view, advice]);
+  const all =
+    rereading && shown.current?.view === viewed ? shown.current.all : fresh;
+  useEffect(() => {
+    if (fresh && !rereading) shown.current = { view: viewed, all: fresh };
+  }, [fresh, rereading, viewed]);
   // The advice filters read a few pages, then say where they stopped.
   const pageCount = decidePages?.length ?? 0;
   useEffect(() => {
@@ -254,18 +269,39 @@ export function useReviewCards() {
     )
       void decide.fetchNextPage();
   }, [advice, decide.hasNextPage, decide.isFetchingNextPage, pageCount]);
-  // Within ten cards of the last read, the next page is read.
+  // Within ten cards of the last shown, once the windows asked for are
+  // shown, the next window is read, and on the last window of the pages
+  // read, the next page too.
   const toGo = walk.state.order.length - walk.state.at;
+  const asked = Math.min(decideReach, decideCards.windows);
   useEffect(() => {
     if (
-      walk.state.loadId === loadId &&
-      advice === "any" &&
-      toGo <= 10 &&
+      walk.state.loadId !== loadId ||
+      advice !== "any" ||
+      toGo > 10 ||
+      decideCards.shown < asked
+    )
+      return;
+    if (decideReach < decideCards.windows)
+      setReach({ view, windows: decideReach + 1 });
+    if (
+      decideReach + 1 >= decideCards.windows &&
       decide.hasNextPage &&
       !decide.isFetchingNextPage
     )
       void decide.fetchNextPage();
-  }, [toGo, advice, decide.hasNextPage, decide.isFetchingNextPage, loadId]);
+  }, [
+    toGo,
+    advice,
+    asked,
+    decideCards.shown,
+    decideCards.windows,
+    decideReach,
+    decide.hasNextPage,
+    decide.isFetchingNextPage,
+    loadId,
+    view,
+  ]);
   const spot = useQuery({
     ...cardQueries.spot(ws, o, loadId),
     enabled: reads,
@@ -298,10 +334,17 @@ export function useReviewCards() {
     // The advice filters stopped at ADVICE_PAGES with more to read.
     adviceCapped:
       advice !== "any" && !!decide.hasNextPage && pageCount >= ADVICE_PAGES,
-    // More cards than the walk has: pages not read yet, or not rendered.
-    hasMore:
-      !!decide.hasNextPage || decideCards.pages < (decidePages?.length ?? 0),
+    // More cards than the walk has: pages not read yet, or windows not
+    // shown.
+    hasMore: !!decide.hasNextPage || decideCards.shown < decideCards.windows,
     decided: decided as UseQueryResult<FoundryReviewDecision[]>,
+    // Reads a decision the walk's FYI lane or spot checks saved by id, with
+    // the walk's own, for what became of it.
+    addDecided: (id: string) =>
+      setElsewhere((e) => ({
+        loadId,
+        ids: e.loadId === loadId ? [...e.ids, id] : [id],
+      })),
     spot,
     indexing,
     open: counted?.open,

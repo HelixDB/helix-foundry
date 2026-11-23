@@ -153,32 +153,111 @@ export const claimDocs = (items: readonly FoundryReviewCard[]): string[] =>
     ),
   ].sort();
 
-/** One read of a page's reviews: at most REVIEWS_BY_KEY keys. */
-export type ReviewRead = { page: number; keys: string[]; docs: string[] };
+/** How many cards a window holds at most: what one read of reviews covers. */
+export const READ_WINDOW = 10;
 
 /**
- * The reads of each page's reviews: its keys REVIEWS_BY_KEY at a time, the
- * first with the documents of its held claims, whose name links say what
- * holds them.
+ * One read of the reviews of a window of a page's cards (`from` to `to`, at
+ * most READ_WINDOW): at most REVIEWS_BY_KEY keys, the first of its window
+ * with the documents of its held claims. Windows are numbered across pages,
+ * in the walk's order. A card whose keys alone pass REVIEWS_BY_KEY (a name
+ * with many mentions and held claims) is a window read in several.
+ */
+export type ReviewRead = {
+  window: number;
+  page: number;
+  from: number;
+  to: number;
+  keys: string[];
+  docs: string[];
+};
+
+/**
+ * The reads of the pages' cards' reviews, a window at a time, so the walk
+ * shows a window's cards once its own reads land, and reads further only as
+ * it goes.
  *
  * @example
- * reviewReads([page]); // [{ page: 0, keys: ["r1", …], docs: ["doc_1"] }]
+ * reviewReads([page]); // [{ window: 0, page: 0, from: 0, to: 10, keys: ["r1", …], docs: ["doc_1"] }, …]
  */
 export function reviewReads(
   pages: readonly ListFoundryReviewCardsResponse[],
 ): ReviewRead[] {
-  return pages.flatMap((p, page) => {
-    const keys = cardKeys(p.cards ?? []),
-      docs = claimDocs(p.cards ?? []);
-    return Array.from(
-      { length: Math.max(1, Math.ceil(keys.length / REVIEWS_BY_KEY)) },
-      (_, i) => ({
-        page,
-        keys: keys.slice(i * REVIEWS_BY_KEY, (i + 1) * REVIEWS_BY_KEY),
-        docs: i === 0 ? docs : [],
-      }),
+  const out: ReviewRead[] = [];
+  let window = 0;
+  for (const [page, p] of pages.entries()) {
+    const cards = p.cards ?? [];
+    for (let from = 0; from < cards.length; window++) {
+      let to = from + 1,
+        keys = cardKeys(cards.slice(from, to));
+      for (; to < cards.length && to - from < READ_WINDOW; to++) {
+        const more = cardKeys(cards.slice(from, to + 1));
+        if (more.length > REVIEWS_BY_KEY) break;
+        keys = more;
+      }
+      const docs = claimDocs(cards.slice(from, to));
+      for (let i = 0; i * REVIEWS_BY_KEY < Math.max(1, keys.length); i++)
+        out.push({
+          window,
+          page,
+          from,
+          to,
+          keys: keys.slice(i * REVIEWS_BY_KEY, (i + 1) * REVIEWS_BY_KEY),
+          docs: i === 0 ? docs : [],
+        });
+      from = to;
+    }
+  }
+  return out;
+}
+
+/** What one read of reviews by key found: the reviews, and the name links. */
+export type ReviewsRead = { reviews: QueueReview[]; links: NameLink[] };
+
+/**
+ * The walk's cards of `pages`, a window at a time in order, from the reads
+ * of `plan` (`read`, each one's data in the plan's order, undefined until it
+ * lands), of the first `upTo` windows, stopping at the first whose reads
+ * haven't all landed, so a later card never shows before an earlier one.
+ * `shown` is how many windows that is; `windows`, how many the pages hold.
+ *
+ * @example
+ * windowCards(pages, plan, reads.map((r) => r.data), 2); // { cards: [...], shown: 2, windows: 5 }
+ */
+export function windowCards(
+  pages: readonly ListFoundryReviewCardsResponse[],
+  plan: readonly ReviewRead[],
+  read: readonly (ReviewsRead | undefined)[],
+  upTo: number,
+): { cards: QueueCard[]; shown: number; windows: number } {
+  const windows = (plan.at(-1)?.window ?? -1) + 1;
+  const cards: QueueCard[] = [];
+  let shown = 0;
+  for (; shown < Math.min(upTo, windows); shown++) {
+    const mine = plan.flatMap((r, j) => (r.window === shown ? [j] : []));
+    const data = mine.map((j) => read[j]);
+    if (data.some((d) => !d)) break;
+    const { page, from, to } = plan[mine[0]!]!;
+    const reviews = new Map(
+      data.flatMap((d) =>
+        d!.reviews.map(
+          (v) =>
+            [
+              v.settle && v.settle.kind !== "stale" ? v.settle.reviewId : "",
+              v,
+            ] as const,
+        ),
+      ),
     );
-  });
+    cards.push(
+      ...cardsOf(
+        (pages[page]?.cards ?? []).slice(from, to),
+        reviews,
+        data.flatMap((d) => d!.links),
+      ),
+    );
+  }
+  return { cards, shown, windows };
 }
 
 /**

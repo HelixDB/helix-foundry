@@ -66,14 +66,17 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       enabled: !!open && !grantee,
     }),
     facts = useReviewSummary().get(open);
-  const factsOpen =
-      facts && own?.currentLoad?.id === facts.loadId
-        ? (facts.open ?? 0)
-        : undefined,
+  const counted = facts && own?.currentLoad?.id === facts.loadId,
+    factsOpen = counted ? (facts.open ?? 0) : undefined,
+    // The index counts at most 10,000: more says so.
+    more = !!(counted && facts.more),
     suggestionsOpen = heal.data?.enabled ? heal.data.findings?.length || 0 : 0;
   const reviewOpen = factsOpen === undefined ? 0 : factsOpen + suggestionsOpen;
   const reviewParts = [
-    factsOpen && `${plural(factsOpen, "card")} to decide`,
+    factsOpen &&
+      (more
+        ? `${formatNumber(factsOpen)}+ cards to decide`
+        : `${plural(factsOpen, "card")} to decide`),
     suggestionsOpen && plural(suggestionsOpen, "ontology suggestion"),
   ]
     .filter(Boolean)
@@ -244,6 +247,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           {reviewOpen > 0 && (
                             <span className="hf-nav-badge" aria-hidden>
                               {formatNumber(reviewOpen)}
+                              {more && "+"}
                             </span>
                           )}
                         </Link>

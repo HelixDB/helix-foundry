@@ -42,7 +42,8 @@ export type Outcome =
   // Settled by the choice on card `by`: a name the backend links in every
   // document asking about it at once.
   | { kind: "covered"; by: string }
-  // Decided by someone else meanwhile.
+  // Decided by someone else meanwhile, or this walk's choice on it removed
+  // or replaced elsewhere.
   | { kind: "elsewhere" }
   // A link this walk took back that the current load keeps (a name's link
   // applies in place, and removing it only stops it from the next load): on
@@ -93,6 +94,10 @@ export type WalkAction =
   // The decisions read say the jobs of these keys' saved name choices
   // failed before saying what became of them (unconfirmedNames).
   | { type: "unconfirmed"; keys: ReadonlySet<string> }
+  // These keys' saved choices are gone from the decisions read by id:
+  // removed or replaced elsewhere (changedElsewhere). Each is decided
+  // elsewhere, and the cards its link covered are to decide again.
+  | { type: "changed"; keys: ReadonlySet<string> }
   // The next page of cards read: its keys go after the order, the card shown
   // stays.
   | { type: "extend"; loadId: string; keys: readonly string[] }
@@ -427,6 +432,26 @@ export function walkReducer(w: Walk, a: WalkAction): Walk {
       }
       return { ...w, outcomes };
     }
+    case "changed": {
+      const outcomes = new Map(
+        [...w.outcomes].flatMap(([k, o]): [string, Outcome][] =>
+          a.keys.has(k)
+            ? o.kind === "saved" || o.kind === "unconfirmed"
+              ? [[k, { kind: "elsewhere" }]]
+              : [[k, o]]
+            : o.kind === "covered" && a.keys.has(o.by)
+              ? []
+              : [[k, o]],
+        ),
+      );
+      return {
+        ...w,
+        outcomes,
+        undo: w.undo
+          .map((e) => e.filter((k) => !a.keys.has(k)))
+          .filter((e) => e.length),
+      };
+    }
     case "uncover": {
       const outcomes = new Map(
         [...w.outcomes].filter(
@@ -564,6 +589,30 @@ export function unconfirmedNames(
         ? [k]
         : [];
     }),
+  );
+}
+
+/**
+ * The cards whose saved choice the decisions read by id (`read`, a read of
+ * every id the walk saved) no longer hold: missing (removed, or replaced by
+ * another choice, a new id) or read back as another kind (a withdraw: an
+ * approval removed whose withdraw the load still shows).
+ *
+ * @example
+ * changedElsewhere(walk.outcomes, []); // Set { "a" }: its decision is gone
+ */
+export function changedElsewhere(
+  outcomes: ReadonlyMap<string, Outcome>,
+  read: readonly FoundryReviewDecision[],
+): Set<string> {
+  const byId = new Map(read.map((d) => [d.id, d]));
+  return new Set(
+    [...outcomes].flatMap(([k, o]) =>
+      (o.kind === "saved" || o.kind === "unconfirmed") &&
+      byId.get(o.decision.id)?.kind !== o.decision.kind
+        ? [k]
+        : [],
+    ),
   );
 }
 

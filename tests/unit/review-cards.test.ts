@@ -9,7 +9,9 @@ import {
   claimDocs,
   heldCardId,
   reviewReads,
+  windowCards,
   withOwnDecisions,
+  type ReviewRead,
 } from "@/web/areas/reviews/cards";
 import { cardsQuery } from "@/web/areas/reviews/cards-api";
 import type { QueueReview } from "@/web/areas/reviews/queue";
@@ -294,18 +296,77 @@ describe("cardsOf", () => {
     expect(claimDocs(items)).toEqual(["doc-1"]);
     expect(claimDocs([items[2]!])).toEqual([]);
   });
-  it("reads a page's reviews 200 keys at a time, the documents once", () => {
-    const many: FoundryReviewCard[] = Array.from({ length: 250 }, (_, i) => ({
-      cardId: `c${i}`,
-      docId: `doc-${i % 2}`,
-      claim: { reviewKey: `k${i}`, band: "0.9" },
-    }));
-    const plan = reviewReads([{ loadId: "L", cards: many }, { loadId: "L" }]);
-    expect(plan.map((r) => [r.page, r.keys.length, r.docs])).toEqual([
-      [0, 200, ["doc-0", "doc-1"]],
-      [0, 50, []],
-      [1, 0, []],
+  it("reads ten cards at a time, at most 200 keys a read, the documents once a window", () => {
+    const claims = (n: number, from = 0): FoundryReviewCard[] =>
+      Array.from({ length: n }, (_, i) => ({
+        cardId: `c${from + i}`,
+        docId: `doc-${(from + i) % 2}`,
+        claim: { reviewKey: `k${from + i}`, band: "0.9" },
+      }));
+    const plan = reviewReads([
+      { loadId: "L", cards: claims(25) },
+      { loadId: "L" },
+      { loadId: "L", cards: claims(3, 25) },
     ]);
+    expect(
+      plan.map((r) => [r.window, r.page, r.from, r.to, r.keys.length, r.docs]),
+    ).toEqual([
+      [0, 0, 0, 10, 10, ["doc-0", "doc-1"]],
+      [1, 0, 10, 20, 10, ["doc-0", "doc-1"]],
+      [2, 0, 20, 25, 5, ["doc-0", "doc-1"]],
+      // An empty page has no window.
+      [3, 2, 0, 3, 3, ["doc-0", "doc-1"]],
+    ]);
+    // A name whose keys alone pass 200 is a window of its own, read in
+    // several; the cards beside it fill windows of their own.
+    const big: FoundryReviewCard = {
+      cardId: "n",
+      docId: "doc-9",
+      name: {
+        reviewKey: "r0",
+        reviewKeys: Array.from({ length: 200 }, (_, i) => `r${i}`),
+        held: [{ reviewKey: "h", band: "0.9" }],
+        type: "Customer",
+        normName: "globex",
+      },
+    };
+    const split = reviewReads([
+      { loadId: "L", cards: [...claims(2), big, ...claims(1, 2)] },
+    ]);
+    expect(
+      split.map((r) => [r.window, r.from, r.to, r.keys.length, r.docs]),
+    ).toEqual([
+      [0, 0, 2, 2, ["doc-0", "doc-1"]],
+      [1, 2, 3, 200, ["doc-9"]],
+      [1, 2, 3, 1, []],
+      [2, 3, 4, 1, ["doc-0"]],
+    ]);
+  });
+  it("shows the windows read, in order, stopping at the first not read", () => {
+    const page = { loadId: "L", cards: items.slice(0, 3) };
+    const plan: ReviewRead[] = [
+      { window: 0, page: 0, from: 0, to: 2, keys: [], docs: [] },
+      { window: 0, page: 0, from: 0, to: 2, keys: [], docs: [] },
+      { window: 1, page: 0, from: 2, to: 3, keys: [], docs: [] },
+    ];
+    const all = { reviews: [...byKey.values()], links: [] };
+    // The first window's second read hasn't landed: nothing shows.
+    expect(windowCards([page], plan, [all, undefined, all], 9)).toMatchObject({
+      cards: [],
+      shown: 0,
+      windows: 2,
+    });
+    const both = windowCards([page], plan, [all, all, all], 9);
+    expect(both.cards.map((c) => c.kind)).toEqual(["name", "claim", "value"]);
+    expect(both.shown).toBe(2);
+    // Only the windows asked for.
+    const one = windowCards([page], plan, [all, all, all], 1);
+    expect([one.cards.length, one.shown, one.windows]).toEqual([2, 1, 2]);
+    expect(windowCards([], [], [], 2)).toEqual({
+      cards: [],
+      shown: 0,
+      windows: 0,
+    });
   });
 });
 

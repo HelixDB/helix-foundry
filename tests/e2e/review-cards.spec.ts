@@ -173,6 +173,12 @@ test("while the index is still counting, the walk says so and is never done", as
   page,
 }) => {
   await loaded(page, { reviewIndexing: true });
+  // No spot check is drawn from an index still being built.
+  const draws: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().endsWith("/review-spot-checks:draw"))
+      draws.push(r.url());
+  });
   await page.goto(`${O}/review`);
   await expect(
     page.getByRole("note").filter({ hasText: "Counting…" }),
@@ -184,4 +190,8 @@ test("while the index is still counting, the walk says so and is never done", as
   await expect(
     page.getByRole("heading", { level: 2, name: "Nothing to decide" }),
   ).toHaveCount(0);
+  await expect(
+    page.getByText("Spot checks are drawn once the load’s cards are counted."),
+  ).toBeVisible();
+  expect(draws).toEqual([]);
 });

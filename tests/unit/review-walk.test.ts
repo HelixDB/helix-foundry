@@ -10,6 +10,7 @@ import {
   batchOf,
   batchReason,
   batchTakes,
+  changedElsewhere,
   current,
   drawnLike,
   linkedNow,
@@ -875,5 +876,39 @@ describe("linkedNow and notLinked", () => {
     );
     expect(chosen.outcomes.get("a")?.kind).toBe("sending");
     expect(chosen.at).toBe(3);
+  });
+  it("takes a choice removed or replaced elsewhere as decided there, and opens what its link covered", () => {
+    const other = resolveDecision("d-3", { entityKey: "scus_2" });
+    const outcomes = new Map<string, Outcome>([
+      ["a", saved(link)],
+      ["b", saved(other)],
+      ["c", { kind: "unconfirmed", decision: notInData, how: "chosen" }],
+      ["d", { kind: "sending", choice: approve, how: "chosen" }],
+      ["x", { kind: "covered", by: "a" }],
+    ]);
+    // a's decision is gone (removed, or replaced: a new id), c's read back
+    // as a withdraw; b's is there.
+    const read = [
+      other,
+      { ...notInData, kind: "withdraw" } as unknown as FoundryReviewDecision,
+    ];
+    const changed = changedElsewhere(outcomes, read);
+    expect([...changed]).toEqual(["a", "c"]);
+    expect(changedElsewhere(outcomes, [link, other, notInData]).size).toBe(0);
+
+    const w = walkOf(
+      ["a", "x", "b", "c", "d"],
+      { at: 4, undo: [["a"], ["b", "c"]] },
+      [...outcomes],
+    );
+    const after = run(w, { type: "changed", keys: changed });
+    expect(after.outcomes.get("a")).toEqual({ kind: "elsewhere" });
+    expect(after.outcomes.get("c")).toEqual({ kind: "elsewhere" });
+    expect(after.outcomes.get("b")?.kind).toBe("saved");
+    // What a's link covered is to decide again.
+    expect(after.outcomes.has("x")).toBe(false);
+    // Nothing to undo of a choice no longer this walk's.
+    expect(after.undo).toEqual([["b"]]);
+    expect(after.at).toBe(4);
   });
 });

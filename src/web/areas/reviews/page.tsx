@@ -10,6 +10,7 @@
 // dock read too), less this walk's choices.
 import { useQuery } from "@tanstack/react-query";
 import {
+  formatNumber,
   Page,
   PageHeader,
   TabPanel,
@@ -56,7 +57,20 @@ export function ReviewPage() {
             label="Review"
             idPrefix="review"
             items={[
-              { id: "facts", label: "Facts", count: queue.open },
+              // The index counts at most 10,000: more says so.
+              queue.more && queue.open !== undefined
+                ? {
+                    id: "facts",
+                    label: (
+                      <>
+                        Facts
+                        <span className="hf-tab-count">
+                          {formatNumber(queue.open)}+
+                        </span>
+                      </>
+                    ),
+                  }
+                : { id: "facts", label: "Facts", count: queue.open },
               ...(audits
                 ? [
                     {

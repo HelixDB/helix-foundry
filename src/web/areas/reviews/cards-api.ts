@@ -69,14 +69,20 @@ const summaryKey = (ws: string) => [ws, "review-summary"];
 export const ADVICE_PAGES = 3;
 
 export const cardQueries = {
-  // What each current load asks a person to decide, counted by the index.
-  // Polled by the badge, the nudge and the job dock, so read for a minute;
-  // a job's end reads it again (../ontology/scope.tsx, the job dock), and
-  // the walk takes off the cards it closes as it closes them (adjustSummary),
-  // so a settle doesn't read it.
+  // What each current load asks a person to decide, counted by the index:
+  // read by the panel's badge, the nudge, the notice and the job dock, and
+  // read again every minute (every 10 s while a load's index is first being
+  // built) and at a job's end (../ontology/scope.tsx, the job dock). The
+  // walk takes off the cards it closes as it closes them (adjustSummary),
+  // so a settle doesn't read it; the next read is the index's count, which
+  // has the walk's saved choices but not, until their resends are indexed,
+  // the names a link covered.
   summary: (ws: string) => ({
     queryKey: summaryKey(ws),
     staleTime: 60_000,
+    refetchInterval: (q: {
+      state: { data?: GetFoundryReviewSummaryResponse };
+    }) => (q.state.data?.ontologies?.some((s) => s.indexing) ? 10_000 : 60_000),
     queryFn: () =>
       api<GetFoundryReviewSummaryResponse>(
         `/v1/workspaces/${enc(ws)}/foundry/review-summary`,

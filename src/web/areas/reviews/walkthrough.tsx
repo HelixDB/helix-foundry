@@ -71,6 +71,7 @@ import {
   notLinked,
   progress,
   unconfirmedNames,
+  changedElsewhere,
   undecided,
   walkReducer,
   type How,
@@ -160,9 +161,16 @@ export function useWalk() {
   const sending = [...state.outcomes.values()].some(
     (x) => x.kind === "sending",
   );
-  // The walk's end, once per load: past its last card, having taken some.
+  // Whether the index lists more cards than the walk has (pages or windows
+  // not read yet): the walk isn't at its end.
+  const [more, setMore] = useState(false);
+  // The walk's end, once per load: past its last card, having taken some,
+  // with no more to read.
   const finished =
-    state.loadId !== "" && state.order.length > 0 && current(state) === null;
+    state.loadId !== "" &&
+    state.order.length > 0 &&
+    current(state) === null &&
+    !more;
   const reported = useRef("");
   useEffect(() => {
     if (!finished || reported.current === state.loadId) return;
@@ -259,6 +267,8 @@ export function useWalk() {
     seen: seen.current,
     changed,
     dismissChanged: () => setChanged(null),
+    /** Says whether the index lists more cards than the walk has. */
+    setMore,
     /** Sends a choice on a card the walk shows, covering `covers`. */
     decide: (s: Sending & { how: How; covers: readonly string[] }) => {
       dispatch({
@@ -504,6 +514,7 @@ export function ReviewWalkthrough({
   useEffect(() => {
     api.rebase(load.id, order, q.hasMore, filterKey);
   }, [load.id, order]);
+  useEffect(() => api.setMore(q.hasMore), [q.hasMore]);
   // The types and documents the filters offer: every one this visit's reads
   // of the load had a card of, so the row stays as it was while cards are
   // decided and leave the index, to the finish.
@@ -625,6 +636,19 @@ export function ReviewWalkthrough({
     if (unconfirmed.size)
       api.dispatch({ type: "unconfirmed", keys: unconfirmed });
   }, [unconfirmed]);
+  // A choice removed or replaced elsewhere (the read by id, of every id the
+  // walk saved, lacks it) is decided elsewhere, and what its link covered
+  // is to decide again.
+  const changedHere = useMemo(
+    () =>
+      q.decided.data && !q.decided.isPlaceholderData
+        ? changedElsewhere(w.outcomes, q.decided.data)
+        : new Set<string>(),
+    [w.outcomes, q.decided.data, q.decided.isPlaceholderData],
+  );
+  useEffect(() => {
+    if (changedHere.size) api.dispatch({ type: "changed", keys: changedHere });
+  }, [changedHere]);
 
   const [dialog, setDialog] = useState<
     | { kind: "help" }
@@ -810,15 +834,23 @@ export function ReviewWalkthrough({
     );
   // Decide counts what the index counts open, less this walk's choices,
   // while no filter narrows it; else the cards read still to decide.
-  const lanes: { value: Lane; label: string; count: number }[] = [
-    {
-      value: "decide",
-      label: "Decide",
-      count:
-        !filters && q.open !== undefined
-          ? q.open
-          : undecided(w.order, w.outcomes),
-    },
+  const counted = !filters && q.open !== undefined;
+  const lanes: { value: Lane; label: ReactNode; count?: number }[] = [
+    // The index counts at most 10,000: more says so.
+    counted && q.more
+      ? {
+          value: "decide",
+          label: (
+            <>
+              Decide<span>{formatNumber(q.open!)}+</span>
+            </>
+          ),
+        }
+      : {
+          value: "decide",
+          label: "Decide",
+          count: counted ? q.open! : undecided(w.order, w.outcomes),
+        },
     { value: "fyi", label: "FYI", count: fyiKeys.length },
     { value: "covered", label: "Covered", count: covered.length },
   ];
@@ -927,6 +959,10 @@ export function ReviewWalkthrough({
             cards={fyiCards}
             load={load}
             naming={naming}
+            decisions={{
+              list: q.decided.data ?? [],
+              onSaved: (d) => q.addDecided(d.id),
+            }}
             settled={(k) => setFyiHere((now) => new Set(now).add(k))}
           />
           {q.fyi.hasNextPage && (
@@ -1015,6 +1051,7 @@ export function ReviewWalkthrough({
                 member={!canManage(role)}
                 empty={!w.order.length}
                 indexing={q.indexing}
+                more={q.hasMore}
                 onClearFilters={filters ? clearFilters : undefined}
                 headingRef={heading}
                 onBack={() => on({ kind: "back" })}

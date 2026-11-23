@@ -216,8 +216,9 @@ type SettleOf<C extends Decidable> = Extract<
 >;
 
 /**
- * A card's settle: buildQueue makes a name's a resolve, a held claim's a
- * release and a value's a prop, and keeps stale reviews off every card.
+ * A card's settle: cardsOf (./cards.ts) makes a name's a resolve, a held
+ * claim's a release and a value's a prop, and keeps stale reviews off every
+ * card.
  */
 export function settleOf<C extends Decidable>(card: C): SettleOf<C> {
   const s = card.review.settle;

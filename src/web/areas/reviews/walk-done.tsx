@@ -2,7 +2,8 @@
 // split by when (the current load now, or the next load, which Load again
 // starts), the cards skipped or still to decide (for a member, who decides
 // none, those waiting for an owner or admin), then the spot checks
-// (./spot-checks.tsx), which may be skipped.
+// (./spot-checks.tsx), which may be skipped. While the index lists cards
+// the walk hasn't read yet, it says it is reading them instead.
 import { useState, type ReactNode, type Ref } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button, ButtonLink, formatNumber, plural } from "../../kit";
@@ -18,6 +19,7 @@ export function WalkDone({
   member,
   empty,
   indexing,
+  more,
   onClearFilters,
   headingRef,
   onBack,
@@ -38,6 +40,9 @@ export function WalkDone({
   // The index is still sorting the load's reviews into cards: more may
   // come, so the walk is never done.
   indexing: boolean;
+  // The index lists more cards than the walk has read yet (the next page,
+  // or its reviews): the walk isn't at its end, and no spot check is drawn.
+  more: boolean;
   // Clears the walk's filters; unset while none is set.
   onClearFilters?: () => void;
   headingRef: Ref<HTMLHeadingElement>;
@@ -69,13 +74,15 @@ export function WalkDone({
             ? member
               ? `${plural(left.length, "card")} ${left.length > 1 ? "wait" : "waits"} for an owner or admin`
               : `${plural(left.length, "card")} still to decide`
-            : indexing
-              ? "More cards may come"
-              : empty
-                ? "Nothing to decide"
-                : skipped.length
-                  ? `Through to the end, ${formatNumber(skipped.length)} skipped`
-                  : "All caught up"}
+            : more
+              ? "Reading the next cards…"
+              : indexing
+                ? "More cards may come"
+                : empty
+                  ? "Nothing to decide"
+                  : skipped.length
+                    ? `Through to the end, ${formatNumber(skipped.length)} skipped`
+                    : "All caught up"}
         </h2>
         {walk.order.length > 0 && (
           <Button size="sm" variant="ghost" onClick={onBack}>
@@ -89,7 +96,8 @@ export function WalkDone({
           back in a few minutes for the rest.
         </p>
       ) : (
-        empty && (
+        empty &&
+        !more && (
           <p className="on-muted">
             No card of the current load
             {onClearFilters ? " that these filters take" : ""} is left to
@@ -144,24 +152,26 @@ export function WalkDone({
           )}
         </div>
       )}
-      <section className="rv-spot" aria-labelledby="rv-spot-title">
-        <div className="rv-spot-head">
-          <h3 id="rv-spot-title">Spot checks</h3>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setSpotShown(!spotShown)}
-          >
-            {spotShown ? "Skip" : "Show"}
-          </Button>
-        </div>
-        <p className="on-muted rv-spot-intro">
-          A few claims drawn at random, to measure how often claims at each
-          score are right. That measure is what lets Founder suggest approving a
-          score’s claims, all at once once it’s high enough.
-        </p>
-        {spotShown && spot}
-      </section>
+      {!more && (
+        <section className="rv-spot" aria-labelledby="rv-spot-title">
+          <div className="rv-spot-head">
+            <h3 id="rv-spot-title">Spot checks</h3>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSpotShown(!spotShown)}
+            >
+              {spotShown ? "Skip" : "Show"}
+            </Button>
+          </div>
+          <p className="on-muted rv-spot-intro">
+            A few claims drawn at random, to measure how often claims at each
+            score are right. That measure is what lets Founder suggest approving
+            a score’s claims, all at once once it’s high enough.
+          </p>
+          {spotShown && spot}
+        </section>
+      )}
     </section>
   );
 }

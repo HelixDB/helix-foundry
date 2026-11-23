@@ -66,7 +66,7 @@ import { ontologyLabels } from "./reviews";
 // Test knobs, through POST /__mock/config:
 // - `reviewCardsPage` n: a page lists n cards, not 50;
 // - `reviewIndexing`: the summary and the cards say the index is still
-//   being built.
+//   first being built, and the draw draws nothing.
 type Knobs = { reviewCardsPage?: number; reviewIndexing?: boolean };
 const knobs = config as typeof config & Knobs;
 const PAGE = 50;
@@ -822,6 +822,9 @@ export const reviewCardRoutes: MockRoute[] = [
           "load_id is not the current load: read the spot checks again",
         );
       const index = indexOf(s.o, load);
+      // Nothing is drawn while the index is first built, as the backend.
+      if (knobs.reviewIndexing)
+        return ok(spotChecks(s.o, index, req.principal.user.id));
       // The bands this request found none of, whatever the counts say.
       const noHeld = new Set<number>(),
         noQuotes = new Set<number>();

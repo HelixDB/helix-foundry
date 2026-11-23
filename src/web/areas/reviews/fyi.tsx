@@ -13,7 +13,7 @@ import type { Naming } from "../explore/naming";
 import { coveredBy, type AdviceContext } from "./advice";
 import type { QueueCard } from "./queue";
 import { CardHead, Evidence, cardLine } from "./review-card";
-import { SettleReview } from "./settle";
+import { SettleReview, type HeldDecisions } from "./settle";
 
 /** The FYI lane's cards, each settled as a document's Needs review settles it. */
 export function FyiCards({
@@ -21,12 +21,16 @@ export function FyiCards({
   cards,
   load,
   naming,
+  decisions,
   settled,
 }: {
   keys: readonly string[];
   cards: ReadonlyMap<string, QueueCard>;
   load: FoundryLoad;
   naming: Naming;
+  // The decisions the walk reads by id: an FYI card is open, so the only
+  // decisions of it are those settled here.
+  decisions: HeldDecisions;
   settled: (key: string) => void;
 }) {
   const shown = keys.flatMap((k) => {
@@ -58,6 +62,7 @@ export function FyiCards({
             load={load}
             link={(path) => path}
             naming={naming}
+            decisions={decisions}
             drawn="ranked"
             onSettled={() => settled(c.key)}
           />

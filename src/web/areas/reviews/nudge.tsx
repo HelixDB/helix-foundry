@@ -38,16 +38,22 @@ export function ReviewNudge() {
   );
   const reported = useRef("");
   const open = shown?.open ?? 0;
+  // The walk shows the count already.
+  const visible =
+    canManage(role) &&
+    !grantee &&
+    !!shown &&
+    pathname !== paths.review(shown.ontologyId);
+  // Reported once a load, when it first shows.
   useEffect(() => {
-    const at = shown ? `${shown.ontologyId}\u001f${shown.loadId}` : "";
+    const at =
+      visible && shown ? `${shown.ontologyId}\u001f${shown.loadId}` : "";
     if (!at || reported.current === at) return;
     reported.current = at;
     trackEvent("review_nudge_shown", { size_bucket: sizeBucket(open) });
-  }, [shown?.ontologyId, shown?.loadId]);
-  if (!canManage(role) || grantee || !shown) return null;
+  }, [visible, shown?.ontologyId, shown?.loadId]);
+  if (!visible || !shown) return null;
   const o = shown.ontologyId;
-  // The walk shows the count already.
-  if (pathname === paths.review(o)) return null;
   const ontology = list.data?.ontologies?.find((x) => x.id === o);
   const later = () => {
     const next = nudgeLater(state, shown);

@@ -185,6 +185,15 @@ export function ClaimWritten({
 }
 
 /**
+ * Decisions a page holds already, for SettleReview to read in place of
+ * every decision of the ontology, and how it hears of each it saves.
+ */
+export type HeldDecisions = {
+  list: readonly FoundryReviewDecision[];
+  onSaved: (d: FoundryReviewDecision) => void;
+};
+
+/**
  * Settles a review of the load the page shows (`load`); only the current one
  * settles. A name is saved as an override for the next load: linked to a
  * record, the next load links that name in its other documents too, where
@@ -211,6 +220,7 @@ export function SettleReview({
   load,
   link,
   naming,
+  decisions,
   drawn,
   compact,
   onSettled,
@@ -220,6 +230,10 @@ export function SettleReview({
   link: (path: string) => string;
   // The rules of the page's version: which links hold one value.
   naming: Naming;
+  // The decisions of this review the page holds already (the review walk's,
+  // read by id and at its places), read in place of every decision of the
+  // ontology; unset, the card reads them all.
+  decisions?: HeldDecisions;
   drawn?: ReviewDrawn;
   // A spot check's: Reject and Approve alike in one row, as Wrong and
   // Right are, without the notes on what each does.
@@ -229,7 +243,23 @@ export function SettleReview({
   const { id: ws, role } = useWorkspace();
   const { id: o, ontology } = useOntology();
   const qc = useQueryClient();
-  const query = useQuery(reviewQueries.list(ws, o));
+  const listed = useQuery({
+    ...reviewQueries.list(ws, o),
+    enabled: !decisions,
+  });
+  // The decision saved here, until the page's decisions hold it.
+  const [savedHere, setSavedHere] = useState<FoundryReviewDecision>();
+  const query = {
+    data: decisions
+      ? [
+          ...(savedHere && !decisions.list.some((d) => d.id === savedHere.id)
+            ? [savedHere]
+            : []),
+          ...decisions.list,
+        ]
+      : listed.data,
+    error: decisions ? null : listed.error,
+  };
   const [choice, setChoice] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -364,14 +394,18 @@ export function SettleReview({
     setPending(true);
     setError("");
     try {
-      await settleReview(ws, o, s.reviewId, {
+      const saved = await settleReview(ws, o, s.reviewId, {
         decision: choice,
         ...(drawn ? { drawn } : {}),
       });
       onSettled?.();
-      await qc.invalidateQueries({
-        queryKey: reviewQueries.list(ws, o).queryKey,
-      });
+      if (decisions) {
+        setSavedHere(saved.decision);
+        decisions.onSaved(saved.decision);
+      } else
+        await qc.invalidateQueries({
+          queryKey: reviewQueries.list(ws, o).queryKey,
+        });
     } catch (e) {
       setError((e as Error).message);
     } finally {

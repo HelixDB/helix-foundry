@@ -120,17 +120,18 @@ export function SpotChecks({
   const scope = { id: load.id };
   const spotKey = cardQueries.spot(ws, o, load.id).queryKey;
   // Drawn once a load, as the finish opens: the index tops the load's
-  // undone draws up to five.
+  // undone draws up to five. Not while the index is first built: draws are
+  // for good, and would be of the documents indexed first.
   const asked = useRef("");
   const [drawError, setDrawError] = useState("");
   useEffect(() => {
-    if (asked.current === load.id || !load.current) return;
+    if (asked.current === load.id || !load.current || q.indexing) return;
     asked.current = load.id;
     drawSpotChecks(ws, o, load.id).then(
       (r) => qc.setQueryData(spotKey, r),
       (e: Error) => setDrawError(e.message),
     );
-  }, [load.id]);
+  }, [load.id, q.indexing]);
   const spot = q.spot.data?.loadId === load.id ? q.spot.data : undefined;
   // A draw labelled on this page keeps its place.
   const [here, setHere] = useState<ReadonlySet<string>>(new Set());
@@ -274,6 +275,11 @@ export function SpotChecks({
           Couldn’t draw the spot checks: {drawError}
         </p>
       )}
+      {q.indexing && !draws.length && (
+        <p className="on-muted">
+          Spot checks are drawn once the load’s cards are counted.
+        </p>
+      )}
       {!spot ? (
         q.spot.error ? (
           <p className="on-muted">
@@ -317,6 +323,13 @@ export function SpotChecks({
                       load={load}
                       link={(path) => path}
                       naming={q.naming}
+                      decisions={{
+                        list: [
+                          ...(spot.decisions ?? []),
+                          ...(q.decided.data ?? []),
+                        ],
+                        onSaved: (d) => q.addDecided(d.id),
+                      }}
                       drawn="random"
                       compact
                       onSettled={() => labelled(d)}
