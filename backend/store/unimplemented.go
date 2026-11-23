@@ -2402,9 +2402,10 @@ func (u Unimplemented) FinishFoundryReviewAdvice(context.Context, string, model.
 	u.unimplemented("FinishFoundryReviewAdvice")
 	return false, nil
 }
-func (u Unimplemented) BackOffFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim) (bool, error) {
+func (u Unimplemented) BackOffFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim,
+	model.FoundryReviewAdviceFailure) (bool, bool, error) {
 	u.unimplemented("BackOffFoundryReviewAdvice")
-	return false, nil
+	return false, false, nil
 }
 func (u Unimplemented) StoreFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim, []model.FoundryReviewAdviceRow) (bool, error) {
 	u.unimplemented("StoreFoundryReviewAdvice")

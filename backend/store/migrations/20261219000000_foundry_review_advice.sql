@@ -9,8 +9,10 @@
 -- foundry_review_advice_loads is one row per load owed advice: owed again in
 -- place (owed_at) whenever it becomes current or its index stores cards, due
 -- at due_at (NULL: nothing to do until it is owed again), claimed by a worker
--- (claimed_by) for a lease that due_at ends, its failed attempts in a row,
--- and why its last claim stopped (stopped).
+-- (claimed_by) for a lease that due_at ends, its back-offs since its last
+-- store (attempts, which set the next wait), the claims in a row its
+-- model's provider failed (failures: the third stops it, failed), and why
+-- its last claim stopped (stopped).
 --
 -- foundry_review_advice is one row per card of a load: what came of it
 -- (outcome: advised, none, rules or skipped), the choices the model was
@@ -27,6 +29,7 @@ CREATE TABLE foundry_review_advice_loads (
   due_at DATETIME(6) NULL,
   claimed_by VARCHAR(64) NULL,
   attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  failures SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   stopped VARCHAR(12) CHARACTER SET ascii COLLATE ascii_bin NULL,
   INDEX foundry_review_advice_loads_due_idx (due_at),
   CONSTRAINT foundry_review_advice_loads_chk CHECK (stopped IN ('done', 'limit', 'budget', 'plan', 'no_model', 'failed'))

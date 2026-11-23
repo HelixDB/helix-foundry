@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -37,13 +38,19 @@ type adviceMem struct {
 	rows     map[reviewcards.ID]model.FoundryReviewAdviceRow
 	finished []model.FoundryReviewAdviceStop
 	recheck  []time.Duration
-	backoffs int
+	backoffs []model.FoundryReviewAdviceFailure
+	// failures counts the provider's failures in a row as the store does:
+	// the third stops the load, failed; rows it answered forget them.
+	failures int
 	renewed  []time.Duration
 	charged  int64
 	spent    int64
-	// leaseLost makes every store find its lease lost; storeErr fails it.
+	// leaseLost makes every store find its lease lost; storeErr fails it;
+	// renewals is how many renewals hold before the lease is lost (0:
+	// every one).
 	leaseLost bool
 	storeErr  error
+	renewals  int
 }
 
 func (m *adviceMem) ClaimFoundryReviewAdvice(context.Context, string, time.Duration) (*model.FoundryReviewAdviceClaim, error) {
@@ -58,7 +65,7 @@ func (m *adviceMem) RenewFoundryReviewAdvice(_ context.Context, _ string, _ mode
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.renewed = append(m.renewed, lease)
-	return true, nil
+	return m.renewals == 0 || len(m.renewed) <= m.renewals, nil
 }
 
 func (m *adviceMem) FinishFoundryReviewAdvice(_ context.Context, _ string, _ model.FoundryReviewAdviceClaim, why model.FoundryReviewAdviceStop,
@@ -70,11 +77,15 @@ func (m *adviceMem) FinishFoundryReviewAdvice(_ context.Context, _ string, _ mod
 	return true, nil
 }
 
-func (m *adviceMem) BackOffFoundryReviewAdvice(context.Context, string, model.FoundryReviewAdviceClaim) (bool, error) {
+func (m *adviceMem) BackOffFoundryReviewAdvice(_ context.Context, _ string, _ model.FoundryReviewAdviceClaim,
+	failure model.FoundryReviewAdviceFailure) (bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.backoffs++
-	return true, nil
+	m.backoffs = append(m.backoffs, failure)
+	if failure == model.FoundryReviewAdviceProviderFailed {
+		m.failures++
+	}
+	return true, m.failures >= 3, nil
 }
 
 func (m *adviceMem) StoreFoundryReviewAdvice(_ context.Context, _ string, _ model.FoundryReviewAdviceClaim, rows []model.FoundryReviewAdviceRow) (bool, error) {
@@ -86,6 +97,9 @@ func (m *adviceMem) StoreFoundryReviewAdvice(_ context.Context, _ string, _ mode
 	for _, r := range rows {
 		if _, ok := m.rows[r.CardID]; !ok {
 			m.rows[r.CardID] = r
+		}
+		if r.Outcome == model.FoundryReviewAdvised || r.Outcome == model.FoundryReviewAdviceNone {
+			m.failures = 0
 		}
 	}
 	return true, nil
@@ -207,7 +221,7 @@ type adviceScript struct {
 func picks(cards []string) ([]llm.Chunk, error) {
 	var advice []map[string]any
 	for _, c := range cards {
-		advice = append(advice, map[string]any{"card": c, "choice": "o1", "rationale": "Quote e1 names it.", "cites": []string{"e1"}})
+		advice = append(advice, map[string]any{"card": c, "choice": "o1", "rationale": "The quote names it.", "cites": []string{"e1"}})
 	}
 	input, _ := json.Marshal(map[string]any{"advice": advice})
 	return []llm.Chunk{llm.ToolUse{ID: "t1", Name: reviewadvice.ToolName, Input: input}, llm.Usage{In: 1000, Out: 500}}, nil
@@ -377,14 +391,15 @@ func TestAdvisorAdvisesWhereTheRulesAbstain(t *testing.T) {
 		assert.Equal(t, reviewadvice.MaxOutputTokens, at.model.requests[i].MaxOutput)
 	}
 	assert.EqualValues(t, 4000, at.mem.charged, "each call charged")
-	assert.Equal(t, []time.Duration{adviceTimeout + adviceLeaseMargin, adviceTimeout + adviceLeaseMargin}, at.mem.renewed,
-		"the lease renewed before each call")
+	call := adviceTimeout + adviceLeaseMargin
+	assert.Equal(t, []time.Duration{adviceLease, call, adviceLease, call, adviceLease}, at.mem.renewed,
+		"the lease renewed as each batch is listed, and past each call before it")
 	row := at.mem.rows[at.mem.cards[0].ID]
 	assert.Equal(t, "claude-sonnet-5-5", row.Model)
 	assert.Equal(t, reviewadvice.PromptVersion, row.PromptVersion)
 	assert.Len(t, row.Offered, 3, "two candidates and not in data")
 	assert.Equal(t, row.Offered[0], *row.Choice)
-	assert.Equal(t, "Quote e1 names it.", row.Rationale)
+	assert.Equal(t, "The quote names it.", row.Rationale)
 	assert.Equal(t, []reviewadvice.Cite{{DocID: "doc-a", Section: 0, Start: 1, End: 6}}, row.Cites)
 	value := at.mem.rows[at.mem.cards[2].ID]
 	assert.Equal(t, "12", *value.Choice.Prop.Text)
@@ -468,7 +483,7 @@ func TestAdvisorGate(t *testing.T) {
 			assert.Empty(t, at.model.requests, "no call")
 			assert.Empty(t, at.mem.rows)
 			if c.backed {
-				assert.Equal(t, 1, at.mem.backoffs)
+				assert.Equal(t, []model.FoundryReviewAdviceFailure{model.FoundryReviewAdviceReadFailed}, at.mem.backoffs)
 				assert.Empty(t, at.mem.finished)
 				return
 			}
@@ -521,30 +536,68 @@ func TestAdvisorRetriesAndStoresNone(t *testing.T) {
 }
 
 func TestAdvisorBacksOffThenFails(t *testing.T) {
+	stops := func(why string) float64 { return testutil.ToFloat64(reviewAdviceStops.WithLabelValues(why)) }
 	at := newAdvisor(t, tied("n1", 2))
 	at.model.answers = []func([]string) ([]llm.Chunk, error){refusing(llm.ErrAuth)}
 	at.a.tick(context.Background())
 	assert.Len(t, at.model.requests, 1, "a refusal no retry passes")
-	assert.Equal(t, 1, at.mem.backoffs)
-	assert.Empty(t, at.mem.finished)
+	assert.Equal(t, []model.FoundryReviewAdviceFailure{model.FoundryReviewAdviceProviderFailed}, at.mem.backoffs)
+	assert.Empty(t, at.mem.finished, "the store decides whether it stops")
 	assert.Empty(t, at.mem.rows)
 	assert.EqualValues(t, 1000, at.mem.charged, "what the refused call used is charged")
 
-	// The third claim in a row the provider fails stops the load.
-	at.mem.claim = &model.FoundryReviewAdviceClaim{LoadID: "load-1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: adviceAttempts - 1}
+	// The third claim in a row the provider fails stops the load, as the
+	// store counts it.
+	failed := stops("failed")
+	at.mem.failures = 2
+	at.mem.claim = &model.FoundryReviewAdviceClaim{LoadID: "load-1", WorkspaceID: "ws-1", OntologyID: "ont-1"}
 	at.a.tick(context.Background())
-	assert.Equal(t, 1, at.mem.backoffs)
-	assert.Equal(t, []model.FoundryReviewAdviceStop{model.FoundryReviewAdviceFailed}, at.mem.finished)
+	assert.Len(t, at.mem.backoffs, 2)
+	assert.Equal(t, failed+1, stops("failed"))
+
+	// A batch the model answered forgets the provider's earlier failures,
+	// so one failure after it backs off and doesn't stop the load.
+	at = newAdvisor(t, tied("n1", 2), tied("n2", 2), tied("n3", 2), tied("n4", 2))
+	at.mem.failures = 2
+	at.model.answers = []func([]string) ([]llm.Chunk, error){picks, refusing(llm.ErrAuth)}
+	failed = stops("failed")
+	at.a.tick(context.Background())
+	assert.Equal(t, map[string]string{"n1": "advised", "n2": "advised"}, at.mem.outcomes())
+	assert.Equal(t, []model.FoundryReviewAdviceFailure{model.FoundryReviewAdviceProviderFailed}, at.mem.backoffs)
+	assert.Equal(t, failed, stops("failed"), "one failure since the answer")
 
 	// A read the database turns away backs off, and is no provider's
 	// failure.
 	at = newAdvisor(t, tied("n1", 2))
 	at.graph.status = http.StatusServiceUnavailable
-	at.mem.claim.Attempts = adviceAttempts - 1
+	at.mem.failures = 2
 	at.a.tick(context.Background())
-	assert.Equal(t, 1, at.mem.backoffs)
+	assert.Equal(t, []model.FoundryReviewAdviceFailure{model.FoundryReviewAdviceReadFailed}, at.mem.backoffs)
+	assert.Equal(t, 2, at.mem.failures)
 	assert.Empty(t, at.mem.finished)
 	assert.Empty(t, at.model.requests)
+}
+
+// The lease is renewed as each batch is listed, so a long run of cards the
+// rules cover keeps the claim; a lease lost there ends it, storing nothing
+// more.
+func TestAdvisorRenewsTheLeaseEveryBatch(t *testing.T) {
+	var cards []testCard
+	for i := range 12 {
+		cards = append(cards, tied(fmt.Sprintf("r%d", i), 1))
+	}
+	at := newAdvisor(t, cards...)
+	at.a.tick(context.Background())
+	assert.Equal(t, slices.Repeat([]time.Duration{adviceLease}, 4), at.mem.renewed, "three batches of four, then none left")
+	assert.Len(t, at.mem.rows, 12)
+	assert.Equal(t, []model.FoundryReviewAdviceStop{model.FoundryReviewAdviceDone}, at.mem.finished)
+
+	at = newAdvisor(t, cards...)
+	at.mem.renewals = 1
+	at.a.tick(context.Background())
+	assert.Len(t, at.mem.rows, 4, "the first batch only")
+	assert.Empty(t, at.mem.finished, "a lost lease ends nothing")
+	assert.Empty(t, at.mem.backoffs)
 }
 
 // What a call spent is charged whatever comes of its batch: a lost lease, a
@@ -571,7 +624,7 @@ func TestAdvisorChargesWhatItSpent(t *testing.T) {
 	assert.EqualValues(t, 2000, at.mem.charged)
 	assert.Empty(t, at.mem.rows, "the batch is asked again by the next claim")
 	assert.Empty(t, at.mem.finished)
-	assert.Zero(t, at.mem.backoffs)
+	assert.Empty(t, at.mem.backoffs)
 }
 
 // On an OpenAI-compatible server with a long call timeout, the lease is
@@ -582,7 +635,7 @@ func TestAdvisorRenewsTheLeaseForALongCall(t *testing.T) {
 	at.a.ai = adviceResolver{resolved: ai.Resolved{Source: ai.SourceWorkspace, CallTimeout: 5 * time.Minute, Settings: ai.Settings{
 		Provider: ai.Compatible{BaseURL: "http://host.docker.internal:8000/v1", API: ai.CompatChatCompletions, MaxCallsInFlight: 4}}}}
 	at.a.tick(context.Background())
-	assert.Equal(t, []time.Duration{5*time.Minute + adviceLeaseMargin}, at.mem.renewed)
+	assert.Equal(t, []time.Duration{adviceLease, 5*time.Minute + adviceLeaseMargin, adviceLease}, at.mem.renewed)
 	assert.Equal(t, map[string]string{"n1": "advised"}, at.mem.outcomes())
 }
 

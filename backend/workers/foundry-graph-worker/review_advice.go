@@ -45,8 +45,9 @@ import (
 // way to settle or decide anything (adviceStore): only a person does.
 
 const (
-	// adviceLease is a claim's lease, renewed to a call's timeout plus
-	// adviceLeaseMargin before each call.
+	// adviceLease is a claim's lease, renewed to it as each batch of cards
+	// is listed, and to a call's timeout plus adviceLeaseMargin before each
+	// call.
 	adviceLease       = 2 * time.Minute
 	adviceLeaseMargin = 30 * time.Second
 	// adviceCalls is the most calls one batch makes: one, and two more for
@@ -61,9 +62,6 @@ const (
 	// adviceRecheck is when a load stopped for its plan or its model is
 	// looked at again.
 	adviceRecheck = time.Hour
-	// adviceAttempts is how many claims in a row the provider may fail
-	// before the load stops, failed, until it is owed again.
-	adviceAttempts = 3
 	// adviceScan is how many cards a claim looks at at most, as a multiple
 	// of max_per_load: most may be covered by rules.
 	adviceScan = 10
@@ -97,7 +95,8 @@ type adviceStore interface {
 	RenewFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, lease time.Duration) (bool, error)
 	FinishFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, why model.FoundryReviewAdviceStop,
 		recheck time.Duration) (bool, error)
-	BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim) (bool, error)
+	BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim,
+		failure model.FoundryReviewAdviceFailure) (held, failed bool, err error)
 	StoreFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, rows []model.FoundryReviewAdviceRow) (bool, error)
 	ChargeFoundryReviewAdvice(ctx context.Context, workspaceID string, usdMicros int64) error
 	SumFoundryReviewAdviceSpend(ctx context.Context, workspaceID string, month time.Time) (int64, error)
@@ -174,12 +173,17 @@ func (a *advisor) advise(ctx context.Context, c model.FoundryReviewAdviceClaim) 
 			a.finish(ctx, c, model.FoundryReviewAdviceLimit, 0)
 			return
 		}
+		// Renewed every batch, so a long run of cards the rules cover keeps
+		// the claim, and with it what this claim has sent and looked at.
+		if !a.renew(ctx, c, adviceLease) {
+			return
+		}
 		cards, err := a.db.ListFoundryReviewCards(ctx, c.OntologyID, c.LoadID, model.FoundryReviewCardFilter{
 			Lane: reviewcards.LaneDecide, Kinds: []reviewcards.Kind{reviewcards.KindName, reviewcards.KindValue}, Unadvised: true,
 		}, after, 2*a.cfg.CardsPerCall)
 		if err != nil {
 			log.From(ctx).Warn("review advice: list the load's cards failed", "err", err)
-			a.backOff(ctx, c, false)
+			a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 			return
 		}
 		if len(cards) == 0 {
@@ -220,7 +224,7 @@ func (a *advisor) gate(ctx context.Context, c model.FoundryReviewAdviceClaim) (g
 		switch {
 		case err != nil:
 			logger.Info("review advice: the workspace's plan can't be read now; backing off", "err", err)
-			a.backOff(ctx, c, false)
+			a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 			return graphproxy.Binding{}, adviceModel{}, false
 		case !sold:
 			a.finish(ctx, c, model.FoundryReviewAdvicePlan, adviceRecheck)
@@ -259,7 +263,7 @@ func (a *advisor) gate(ctx context.Context, c model.FoundryReviewAdviceClaim) (g
 		return graphproxy.Binding{}, adviceModel{}, false
 	default:
 		logger.Info("review advice: the load's database can't be read now; backing off", "err", err)
-		a.backOff(ctx, c, false)
+		a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 		return graphproxy.Binding{}, adviceModel{}, false
 	}
 	return binding, b, true
@@ -312,7 +316,7 @@ func (a *advisor) sort(ctx context.Context, c model.FoundryReviewAdviceClaim, bi
 	decided, err := a.db.ListFoundryReviewNameDecisions(ctx, c.OntologyID, names)
 	if err != nil {
 		log.From(ctx).Warn("review advice: read the names' decisions failed; backing off", "err", err)
-		a.backOff(ctx, c, false)
+		a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 		return nil, nil, false
 	}
 	byName := map[[2]string]*reviewadvice.Names{}
@@ -399,7 +403,7 @@ func (a *advisor) readReviews(ctx context.Context, c model.FoundryReviewAdviceCl
 	if err != nil {
 		if ctx.Err() == nil {
 			log.From(ctx).Info("review advice: the cards' reviews can't be read now; backing off", "err", err)
-			a.backOff(ctx, c, false)
+			a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 		}
 		return nil, false
 	}
@@ -417,14 +421,14 @@ func (a *advisor) ask(ctx context.Context, c model.FoundryReviewAdviceClaim, b a
 	system, user, err := reviewadvice.Prompt(cards)
 	if err != nil {
 		logger.Error("review advice: write the prompt failed", "err", err)
-		a.backOff(ctx, c, false)
+		a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 		return false
 	}
 	now := a.now().UTC()
 	spent, err := a.db.SumFoundryReviewAdviceSpend(ctx, c.WorkspaceID, now)
 	if err != nil {
 		logger.Warn("review advice: read the month's spend failed; backing off", "err", err)
-		a.backOff(ctx, c, false)
+		a.backOff(ctx, c, model.FoundryReviewAdviceReadFailed)
 		return false
 	}
 	prompt := int64((len(system)+len(user)+len(reviewadvice.ToolSchema))/adviceCharsPerToken + 1)
@@ -435,8 +439,7 @@ func (a *advisor) ask(ctx context.Context, c model.FoundryReviewAdviceClaim, b a
 		return false
 	}
 	timeout := b.timeout
-	if held, err := a.db.RenewFoundryReviewAdvice(ctx, a.workerID, c, timeout+adviceLeaseMargin); err != nil || !held {
-		logger.Info("review advice: the claim's lease was lost before a call", "err", err)
+	if !a.renew(ctx, c, timeout+adviceLeaseMargin) {
 		return false
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -457,7 +460,7 @@ func (a *advisor) ask(ctx context.Context, c model.FoundryReviewAdviceClaim, b a
 		return false
 	default:
 		logger.Info("review advice: the model's provider failed", "failure", failure)
-		a.backOff(ctx, c, true)
+		a.backOff(ctx, c, model.FoundryReviewAdviceProviderFailed)
 		return false
 	}
 	rows := make([]model.FoundryReviewAdviceRow, len(batch))
@@ -472,6 +475,17 @@ func (a *advisor) ask(ctx context.Context, c model.FoundryReviewAdviceClaim, b a
 		}
 	}
 	return a.store(ctx, c, rows)
+}
+
+// renew extends the claim's lease to lease from now, and reports whether it
+// still holds; a lost lease ends the claim.
+func (a *advisor) renew(ctx context.Context, c model.FoundryReviewAdviceClaim, lease time.Duration) bool {
+	held, err := a.db.RenewFoundryReviewAdvice(ctx, a.workerID, c, lease)
+	if err != nil || !held {
+		log.From(ctx).Info("review advice: the claim's lease was lost", "err", err)
+		return false
+	}
+	return true
 }
 
 // store stores rows while the claim holds; a lost lease or a failed store
@@ -519,18 +533,19 @@ func (a *advisor) finish(ctx context.Context, c model.FoundryReviewAdviceClaim, 
 	reviewAdviceStops.WithLabelValues(string(why)).Inc()
 }
 
-// backOff puts the claim off after a failure; the model's provider failing
-// adviceAttempts claims in a row stops it, failed.
-func (a *advisor) backOff(ctx context.Context, c model.FoundryReviewAdviceClaim, provider bool) {
-	if provider && c.Attempts+1 >= adviceAttempts {
-		a.finish(ctx, c, model.FoundryReviewAdviceFailed, 0)
-		return
-	}
+// backOff puts the claim off after failure; the store counts it, and stops
+// the load, failed, once the model's provider failed three claims in a row.
+func (a *advisor) backOff(ctx context.Context, c model.FoundryReviewAdviceClaim, failure model.FoundryReviewAdviceFailure) {
 	backCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
-	if _, err := a.db.BackOffFoundryReviewAdvice(backCtx, a.workerID, c); err != nil {
+	held, failed, err := a.db.BackOffFoundryReviewAdvice(backCtx, a.workerID, c, failure)
+	switch {
+	case err != nil:
 		log.From(ctx).Warn("review advice: back off failed; the lease lapses", "err", err)
-		return
+	case !held:
+	case failed:
+		reviewAdviceStops.WithLabelValues(string(model.FoundryReviewAdviceFailed)).Inc()
+	default:
+		reviewAdviceStops.WithLabelValues("backoff").Inc()
 	}
-	reviewAdviceStops.WithLabelValues("backoff").Inc()
 }

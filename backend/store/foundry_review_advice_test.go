@@ -137,7 +137,7 @@ func TestFoundryReviewAdviceLease(t *testing.T) {
 	c := f.adviceClaim(t, "w1")
 	require.NotNil(t, c)
 	cards := f.list(t, model.FoundryReviewCardFilter{})
-	require.NotEmpty(t, cards)
+	require.GreaterOrEqual(t, len(cards), 3)
 	row := func(card *model.FoundryReviewListedCard, outcome model.FoundryReviewAdviceOutcome) model.FoundryReviewAdviceRow {
 		return model.FoundryReviewAdviceRow{CardID: card.ID, Outcome: outcome}
 	}
@@ -186,43 +186,98 @@ func TestFoundryReviewAdviceLease(t *testing.T) {
 	assert.False(t, stored)
 	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_advice WHERE load_id=?`, f.load))
 
-	// BackOff: one more attempt, due 30 s × 2ⁿ on.
+	// BackOff: one more back-off, due 30 s × 2ⁿ on, n the row's own count.
 	c = f.adviceClaim(t, "w1")
 	require.NotNil(t, c)
 	_, err = testDB.Exec(`UPDATE foundry_review_advice_loads SET attempts=1 WHERE load_id=?`, f.load)
 	require.NoError(t, err)
-	c.Attempts = 1
-	backed, err := f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c)
+	backed, failed, err := f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c, model.FoundryReviewAdviceReadFailed)
 	require.NoError(t, err)
 	require.True(t, backed)
+	assert.False(t, failed)
 	assert.InDelta(t, 60, *f.adviceSeconds(t), 5)
 	assert.Equal(t, 2, f.count(t, `SELECT attempts FROM foundry_review_advice_loads WHERE load_id=?`, f.load))
+	assert.Equal(t, 0, f.count(t, `SELECT failures FROM foundry_review_advice_loads WHERE load_id=?`, f.load), "no provider failed")
+
+	// Only the provider's failures stop the load, the third in a row,
+	// counted by the row however many back-offs came between; reads that
+	// fail never do.
+	backOff := func(failure model.FoundryReviewAdviceFailure) bool {
+		t.Helper()
+		f.adviceDue(t)
+		c := f.adviceClaim(t, "w1")
+		require.NotNil(t, c)
+		held, failed, err := f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c, failure)
+		require.NoError(t, err)
+		require.True(t, held)
+		return failed
+	}
+	for range 5 {
+		assert.False(t, backOff(model.FoundryReviewAdviceReadFailed))
+	}
+	assert.False(t, backOff(model.FoundryReviewAdviceProviderFailed))
+	assert.False(t, backOff(model.FoundryReviewAdviceProviderFailed))
+	assert.InDelta(t, 3600, *f.adviceSeconds(t), 5, "a back-off is at most an hour")
+	// A store of rows the model answered forgets its failures; one of rows
+	// no call wrote (rules, skipped) only the back-offs.
+	f.adviceDue(t)
+	c = f.adviceClaim(t, "w1")
+	require.NotNil(t, c)
+	stored, err = f.db.StoreFoundryReviewAdvice(ctx, "w1", *c, []model.FoundryReviewAdviceRow{row(cards[1], model.FoundryReviewAdviceSkipped)})
+	require.NoError(t, err)
+	require.True(t, stored)
+	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_advice_loads WHERE load_id=? AND attempts=0 AND failures=2`, f.load))
+	held, failed, err = f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c, model.FoundryReviewAdviceProviderFailed)
+	require.NoError(t, err)
+	require.True(t, held)
+	assert.True(t, failed, "the third failure in a row")
+	assert.Nil(t, f.adviceSeconds(t), "due no more until it is owed again")
+	assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_advice_loads WHERE load_id=? AND stopped='failed' AND claimed_by IS NULL
+ AND failures=3`, f.load))
+	f.adviceDue(t)
+	_, err = testDB.Exec(`UPDATE foundry_review_advice_loads SET failures=2 WHERE load_id=?`, f.load)
+	require.NoError(t, err)
+	c = f.adviceClaim(t, "w1")
+	require.NotNil(t, c)
+	stored, err = f.db.StoreFoundryReviewAdvice(ctx, "w1", *c, []model.FoundryReviewAdviceRow{{CardID: cards[2].ID,
+		Outcome: model.FoundryReviewAdviceNone, Offered: []reviewadvice.Choice{}, Model: "claude", PromptVersion: reviewadvice.PromptVersion}})
+	require.NoError(t, err)
+	require.True(t, stored)
+	assert.Equal(t, 0, f.count(t, `SELECT failures FROM foundry_review_advice_loads WHERE load_id=?`, f.load), "an answer forgets them")
+	ended, err = f.db.FinishFoundryReviewAdvice(ctx, "w1", *c, model.FoundryReviewAdviceDone, 0)
+	require.NoError(t, err)
+	require.True(t, ended)
+	held, _, err = f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c, model.FoundryReviewAdviceProviderFailed)
+	require.NoError(t, err)
+	assert.False(t, held, "a claim ended is held no more")
 
 	// Owed again during a claim (a store of the index): the lease is
-	// extended past the owe, its attempts forgotten, and its Finish and
+	// extended past the owe, its back-offs and failures forgotten, and its Finish and
 	// BackOff leave it due 30 s after that owe, with no stop, so a load
 	// stopped failed is advised again.
 	for _, end := range []string{"finish", "backoff"} {
 		f.adviceDue(t)
 		c = f.adviceClaim(t, "w1")
 		require.NotNil(t, c, end)
-		_, err = testDB.Exec(`UPDATE foundry_review_advice_loads SET due_at=NOW(6) + INTERVAL 1 SECOND WHERE load_id=?`, f.load)
+		_, err = testDB.Exec(`UPDATE foundry_review_advice_loads SET due_at=NOW(6) + INTERVAL 1 SECOND, attempts=2, failures=2 WHERE load_id=?`,
+			f.load)
 		require.NoError(t, err)
 		time.Sleep(10 * time.Millisecond)
 		_, err = testDB.Exec(`INSERT INTO foundry_review_owed (load_id, doc_id) VALUES (?, ?)`, f.load, f.a)
 		require.NoError(t, err)
 		f.index(t, "indexer", nil)
 		assert.InDelta(t, 30, *f.adviceSeconds(t), 5, "%s: the lease is extended past the owe", end)
-		assert.Equal(t, 0, f.count(t, `SELECT attempts FROM foundry_review_advice_loads WHERE load_id=?`, f.load), end)
+		assert.Equal(t, 0, f.count(t, `SELECT attempts + failures FROM foundry_review_advice_loads WHERE load_id=?`, f.load),
+			"%s: the owe forgets its back-offs and failures", end)
 		if end == "finish" {
 			ended, err = f.db.FinishFoundryReviewAdvice(ctx, "w1", *c, model.FoundryReviewAdviceFailed, 0)
 		} else {
-			ended, err = f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c)
+			ended, _, err = f.db.BackOffFoundryReviewAdvice(ctx, "w1", *c, model.FoundryReviewAdviceProviderFailed)
 		}
 		require.NoError(t, err)
 		require.True(t, ended, end)
 		assert.Equal(t, 1, f.count(t, `SELECT COUNT(*) FROM foundry_review_advice_loads WHERE load_id=? AND stopped IS NULL AND claimed_by IS NULL
- AND attempts=0`, f.load), end)
+ AND attempts=0 AND failures=0`, f.load), end)
 		assert.InDelta(t, 30, *f.adviceSeconds(t), 5, end)
 	}
 }

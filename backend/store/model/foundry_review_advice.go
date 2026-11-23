@@ -33,14 +33,26 @@ const (
 
 // FoundryReviewAdviceClaim is a worker's claim of a load owed advice, held
 // for a lease: OwedAt is when it was last owed, which a re-owe during the
-// claim moves on, and Attempts the failed attempts in a row before it.
+// claim moves on. Its back-offs and failures are the row's, counted by the
+// store as they happen.
 type FoundryReviewAdviceClaim struct {
 	LoadID      string
 	WorkspaceID string
 	OntologyID  string
 	OwedAt      time.Time
-	Attempts    int
 }
+
+// FoundryReviewAdviceFailure is what failed when a claim backs off.
+type FoundryReviewAdviceFailure int
+
+const (
+	// FoundryReviewAdviceReadFailed: a read of Foundry's store, the
+	// database or the plan; it is retried and never stops the load.
+	FoundryReviewAdviceReadFailed FoundryReviewAdviceFailure = iota
+	// FoundryReviewAdviceProviderFailed: the model's provider; three claims
+	// in a row stop the load, failed.
+	FoundryReviewAdviceProviderFailed
+)
 
 // FoundryReviewAdviceOutcome is what came of one card: a closed set,
 // foundry_review_advice.outcome.

@@ -454,7 +454,8 @@ type Store interface {
 	RenewFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, lease time.Duration) (bool, error)
 	FinishFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, why model.FoundryReviewAdviceStop,
 		recheck time.Duration) (bool, error)
-	BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim) (bool, error)
+	BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim,
+		failure model.FoundryReviewAdviceFailure) (held, failed bool, err error)
 	StoreFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim, rows []model.FoundryReviewAdviceRow) (bool, error)
 	ChargeFoundryReviewAdvice(ctx context.Context, workspaceID string, usdMicros int64) error
 	DrawFoundryHeldClaim(ctx context.Context, loadID string, seq, band int) (bool, error)

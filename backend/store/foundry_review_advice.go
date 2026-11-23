@@ -38,16 +38,20 @@ const (
 	foundryReviewAdviceClaimRows = 10
 	// foundryReviewAdviceMaxBackoff caps a back-off.
 	foundryReviewAdviceMaxBackoff = time.Hour
+	// foundryReviewAdviceFailures is how many claims in a row the model's
+	// provider may fail before the load stops, failed, until it is owed
+	// again.
+	foundryReviewAdviceFailures = 3
 )
 
 // oweFoundryReviewAdvice owes load loadID advice, in the caller's
-// transaction: due 30 s on (a held lease or a later recheck stays), its stop
-// and failed attempts forgotten.
+// transaction: due 30 s on (a held lease or a later recheck stays), its stop,
+// back-offs and provider failures forgotten.
 func (s *mysqlDB) oweFoundryReviewAdvice(ctx context.Context, workspaceID, ontologyID, loadID string) error {
 	owe := foundryReviewAdviceOwe.Microseconds()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_advice_loads (load_id, workspace_id, ontology_id, due_at)
 VALUES (?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND)
-ON DUPLICATE KEY UPDATE owed_at=NOW(6), due_at=GREATEST(COALESCE(due_at, NOW(6)), NOW(6) + INTERVAL ? MICROSECOND), stopped=NULL, attempts=0`,
+ON DUPLICATE KEY UPDATE owed_at=NOW(6), due_at=GREATEST(COALESCE(due_at, NOW(6)), NOW(6) + INTERVAL ? MICROSECOND), stopped=NULL, attempts=0, failures=0`,
 		loadID, workspaceID, ontologyID, owe, owe)
 	return err
 }
@@ -62,14 +66,14 @@ func (s *mysqlDB) ClaimFoundryReviewAdvice(ctx context.Context, workerID string,
 	var claim *model.FoundryReviewAdviceClaim
 	err := s.WithTx(ctx, func(db Store) error {
 		tx := db.(*mysqlDB)
-		rows, err := tx.db.QueryContext(ctx, `SELECT load_id, workspace_id, ontology_id, owed_at, attempts FROM foundry_review_advice_loads
+		rows, err := tx.db.QueryContext(ctx, `SELECT load_id, workspace_id, ontology_id, owed_at FROM foundry_review_advice_loads
 WHERE due_at <= NOW(6) ORDER BY due_at LIMIT ? FOR UPDATE SKIP LOCKED`, foundryReviewAdviceClaimRows)
 		if err != nil {
 			return err
 		}
 		due, err := scanAll(rows, func(r rowScanner) (model.FoundryReviewAdviceClaim, error) {
 			var c model.FoundryReviewAdviceClaim
-			return c, r.Scan(&c.LoadID, &c.WorkspaceID, &c.OntologyID, &c.OwedAt, &c.Attempts)
+			return c, r.Scan(&c.LoadID, &c.WorkspaceID, &c.OntologyID, &c.OwedAt)
 		})
 		if err != nil {
 			return err
@@ -167,29 +171,42 @@ func (s *mysqlDB) FinishFoundryReviewAdvice(ctx context.Context, workerID string
 	})
 }
 
-// BackOffFoundryReviewAdvice ends workerID's claim after a failure: one
-// more failed attempt, due 30 s × 2ⁿ on (n the attempts now), at most an
-// hour. A load owed again during the claim is due 30 s after that owe
-// instead. False when the lease was lost.
-func (s *mysqlDB) BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim) (bool, error) {
-	return s.withHeldFoundryReviewAdvice(ctx, workerID, claim, func(tx *mysqlDB, owed bool) error {
+// BackOffFoundryReviewAdvice ends workerID's claim after failure, from the
+// row's own counts: one more back-off, due 30 s × 2ⁿ on (n its back-offs
+// before this one), at most an hour; and, for the model's provider, one more
+// provider failure, the foundryReviewAdviceFailures-th in a row stopping the
+// load, failed, until it is owed again. A load owed again during the claim
+// is due 30 s after that owe instead. held is false when the lease was lost;
+// failed says the load stopped.
+func (s *mysqlDB) BackOffFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim,
+	failure model.FoundryReviewAdviceFailure) (held, failed bool, err error) {
+	held, err = s.withHeldFoundryReviewAdvice(ctx, workerID, claim, func(tx *mysqlDB, owed bool) error {
 		if owed {
 			_, err := tx.db.ExecContext(ctx, releaseOwed, foundryReviewAdviceOwe.Microseconds(), claim.LoadID)
 			return err
 		}
-		wait := foundryReviewAdviceOwe
-		for range min(claim.Attempts, 7) {
-			wait *= 2
+		var attempts, failures int
+		if err := tx.db.QueryRowContext(ctx, `SELECT attempts, failures FROM foundry_review_advice_loads WHERE load_id=?`,
+			claim.LoadID).Scan(&attempts, &failures); err != nil {
+			return err
 		}
+		if failure == model.FoundryReviewAdviceProviderFailed {
+			failures++
+		}
+		failed = failures >= foundryReviewAdviceFailures
+		wait := min(foundryReviewAdviceOwe<<min(attempts, 7), foundryReviewAdviceMaxBackoff)
 		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_advice_loads SET claimed_by=NULL, attempts=LEAST(attempts + 1, 60000),
-  due_at=NOW(6) + INTERVAL ? MICROSECOND WHERE load_id=?`, min(wait, foundryReviewAdviceMaxBackoff).Microseconds(), claim.LoadID)
+  failures=LEAST(?, 60000), stopped=IF(?, 'failed', stopped), due_at=IF(?, NULL, NOW(6) + INTERVAL ? MICROSECOND) WHERE load_id=?`,
+			failures, failed, failed, wait.Microseconds(), claim.LoadID)
 		return err
 	})
+	return held, held && failed, err
 }
 
 // StoreFoundryReviewAdvice stores rows of cards of claim's load while
 // workerID holds it, a card's earlier row kept, and forgets the load's
-// failed attempts. False, and nothing written, when the lease was lost.
+// back-offs; rows the model answered (advised or none) also forget its
+// provider's failures. False, and nothing written, when the lease was lost.
 func (s *mysqlDB) StoreFoundryReviewAdvice(ctx context.Context, workerID string, claim model.FoundryReviewAdviceClaim,
 	rows []model.FoundryReviewAdviceRow) (bool, error) {
 	return s.withHeldFoundryReviewAdvice(ctx, workerID, claim, func(tx *mysqlDB, _ bool) error {
@@ -212,7 +229,11 @@ func (s *mysqlDB) StoreFoundryReviewAdvice(ctx context.Context, workerID string,
 				return err
 			}
 		}
-		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_advice_loads SET attempts=0 WHERE load_id=?`, claim.LoadID)
+		answered := slices.ContainsFunc(rows, func(r model.FoundryReviewAdviceRow) bool {
+			return r.Outcome == model.FoundryReviewAdvised || r.Outcome == model.FoundryReviewAdviceNone
+		})
+		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_review_advice_loads SET attempts=0, failures=IF(?, 0, failures) WHERE load_id=?`,
+			answered, claim.LoadID)
 		return err
 	})
 }
