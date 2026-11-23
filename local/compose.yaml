@@ -29,10 +29,10 @@ name: helix-foundry
 # set, since site and foundry have `build:` and a build tag cannot contain a
 # digest.
 x-images:
-  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.5@sha256:2c882da505c9e662bb90b8f8c102b730f3243ebaacde3a5d65a9d047a9707260}
-  foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.4@sha256:db8ec848bf796320adeb9070f6cd3a9e01e7f3aab88be313f6a2c33510d52658}
-  agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.3@sha256:d178354b42e838120532de70eea436ecb7bac1085928aef89c035604e26359f6}
-  helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.16@sha256:c35a6aa4e0ae0e6e1df7d49a88698fb6ea6dc94ed441f83249297928810d4072}
+  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.6@sha256:b9f7554be5074976193cc8413ebb8ecb4e0416edf5d9b2855a3ea986dbd0a6b3}
+  foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.5@sha256:d3cd111cbdb78092503b9de2d317d866db633099afaaecd3d07156ae3afbe0be}
+  agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.4@sha256:9ca5906bc02d0a14ac7caa8c5297bb236bc7f15638df703a4b40c3049e208b63}
+  helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.18@sha256:cf22560c123d7090c19aea9e710f7b05733a80edbab324e2e75abc07fb0a7137}
   ollama: &ollama-image ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
 
 # Every service starts once init-secrets has.
