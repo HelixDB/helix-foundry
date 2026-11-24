@@ -1576,6 +1576,11 @@ func (r *runner) recordFill(ctx context.Context, job *model.FoundryGraphJob, eve
 		d.Reason = model.FoundryReleaseDocumentFailed
 	}
 	fillOutcomes.WithLabelValues(d.Outcome, d.Reason).Inc()
+	p := event.Usage.Phases
+	log.From(ctx).Info("graph job: a document filled", "job", job.ID, "document", event.DocID, "outcome", d.Outcome, "reason", d.Reason,
+		"facts", d.Facts, "held", d.Held, "reviews_taken", d.ReviewsTaken, "usd_micros", d.USDMicros,
+		"entity_calls", p.Entity.Calls, "link_calls", p.Link.Calls, "verify_calls", p.Verify.Calls,
+		"replayed", p.Entity.Replayed+p.Link.Replayed+p.Verify.Replayed+p.Adjudicate.Replayed)
 	err := r.db.RecordFoundryFillDocument(ctx, job.ID, r.workerID, d)
 	if errors.Is(err, foundrystore.ErrNotFound) {
 		return retry("the job's lease was lost", err)

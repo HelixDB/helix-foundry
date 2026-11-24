@@ -664,6 +664,20 @@ type DocumentUsage struct {
 	InputTokens  uint64 `json:"input_tokens"`
 	OutputTokens uint64 `json:"output_tokens"`
 	Replayed     bool   `json:"replayed"`
+	// Phases are its calls by phase: asked of a model, and replayed from
+	// its saved work at no cost.
+	Phases struct {
+		Entity     PhaseUsage `json:"entity"`
+		Link       PhaseUsage `json:"link"`
+		Verify     PhaseUsage `json:"verify"`
+		Adjudicate PhaseUsage `json:"adjudicate"`
+	} `json:"phases"`
+}
+
+// PhaseUsage is a document's calls of one phase.
+type PhaseUsage struct {
+	Calls    uint64 `json:"calls"`
+	Replayed uint64 `json:"replayed"`
 }
 
 // Artifact is a document's model output, sent before its commit.
