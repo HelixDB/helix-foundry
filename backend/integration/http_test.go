@@ -797,3 +797,86 @@ func TestHTTPResultKeepsLargeIntegersExact(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"count":"9007199254740993"`)
 	assert.Contains(t, w.Body.String(), `"small":7`)
 }
+
+// Every route's tool is in the request's context before the host resolves it, so a host can check
+// what the route needs before it reads anything, and each tool's scopes are what HTTPScopes says.
+func TestHTTPToolIsInTheContextOfEveryRoute(t *testing.T) {
+	var seen []string
+	h := NewHTTPHandler(func(r *http.Request, _ string) (HTTPCall, error) {
+		seen = append(seen, HTTPTool(r.Context()))
+		return HTTPCall{}, status.Error(codes.Unauthenticated, "refused")
+	})
+	want := []string{}
+	for _, route := range httpRoutes {
+		path := strings.NewReplacer("{ontologyId}", "ontology-1", "{loadId}", "load-1", "{documentId}", "doc-1", "{questionId}", "question-1").Replace(route.pattern)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(route.method, path, strings.NewReader(`{}`)))
+		assert.Equal(t, 401, w.Code, route.pattern)
+		want = append(want, route.tool)
+		assert.NotEmpty(t, HTTPScopes(route.tool), "%s takes no scope, so no partner app could call it", route.tool)
+	}
+	assert.Equal(t, want, seen)
+	assert.Empty(t, HTTPTool(context.Background()))
+}
+
+func TestHTTPScopes(t *testing.T) {
+	either := []string{HTTPScopeRead, HTTPScopeAsk}
+	for tool, want := range map[string][]string{
+		HTTPListOntologiesTool: either, HTTPGetOntologyTool: either,
+		HTTPGetSchemaTool: {HTTPScopeRead}, HTTPReadTool: {HTTPScopeRead}, HTTPGetLoadTool: {HTTPScopeRead},
+		HTTPListDocumentsTool: {HTTPScopeRead}, HTTPGetDocumentTool: {HTTPScopeRead},
+		HTTPAskTool:           {HTTPScopeAsk},
+		HTTPListQuestionsTool: either, HTTPGetQuestionTool: either,
+	} {
+		assert.Equal(t, want, HTTPScopes(tool), tool)
+	}
+	assert.Nil(t, HTTPScopes("helix_foundry_http_unknown"))
+	assert.Nil(t, HTTPScopes(""))
+	// A caller can't change the routes' scopes through what it was given.
+	HTTPScopes(HTTPAskTool)[0] = "tampered"
+	assert.Equal(t, []string{HTTPScopeAsk}, HTTPScopes(HTTPAskTool))
+}
+
+// A host's bearer refusals answer as RFC 6750 3.1 says, with the contract's error shape; a request
+// with no bearer stays unauthenticated with a bare challenge.
+func TestHTTPBearerRefusals(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		err       error
+		status    int
+		code      string
+		challenge string
+	}{
+		{"missing", status.Error(codes.Unauthenticated, "service credential required"), 401, "unauthenticated", "Bearer"},
+		{"invalid", HTTPInvalidToken(), 401, "invalid_token", `Bearer error="invalid_token"`},
+		{"invalid, wrapped", fmt.Errorf("partner token: %w", HTTPInvalidToken()), 401, "invalid_token", `Bearer error="invalid_token"`},
+		{"scope", HTTPInsufficientScope(HTTPScopeAsk), 403, "insufficient_scope", `Bearer error="insufficient_scope", scope="foundry.ask"`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var outcomes []HTTPOutcome
+			h := NewHTTPHandler(func(*http.Request, string) (HTTPCall, error) {
+				return HTTPCall{Done: func(o HTTPOutcome) { outcomes = append(outcomes, o) }}, c.err
+			})
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("POST", httpAskPath, strings.NewReader(`{"question":"q"}`)))
+			assert.Equal(t, c.status, w.Code)
+			assert.Equal(t, c.challenge, w.Header().Get("WWW-Authenticate"))
+			var body struct {
+				Error struct{ Code, Message string } `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+			assert.Equal(t, c.code, body.Error.Code)
+			assert.NotEmpty(t, body.Error.Message)
+			assert.NotContains(t, body.Error.Message, "partner token:", "a host's wrapping never reaches the client")
+			require.Len(t, outcomes, 1)
+			assert.Equal(t, HTTPOutcome{Tool: HTTPAskTool, RequestID: w.Header().Get("X-Request-ID"), Status: c.status, Code: c.code}, outcomes[0])
+		})
+	}
+}
+
+func TestHTTPInsufficientScopeNeedsAScopeToken(t *testing.T) {
+	for _, scope := range []string{"", "foundry read", `foundry"ask`, `foundry\ask`, "foundry.\x7f", "foundry.é"} {
+		assert.Panics(t, func() { _ = HTTPInsufficientScope(scope) }, "%q", scope)
+	}
+	assert.NotPanics(t, func() { _ = HTTPInsufficientScope("foundry.read") })
+}

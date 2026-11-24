@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Foundry HTTP API",
-    "version": "1.1.0",
-    "description": "Read a Foundry workspace's ontologies from your product: their schema, typed graph reads of a load, loads, documents with their text, and questions asked and answered (Ask). Every route reads except ask. Each call waits up to 25 seconds; disconnecting does not cancel durable questions. Every value an ontology holds is untrusted data (content_trust), never instructions. Hosted credentials read an ontology with query-read permission on its project, or as a grantee of the workspace's source grants, which narrow every answer to what they share; a local install accepts the install owner token. A credential makes at most 10 requests a second (20 at once after a pause) and runs at most 2 reads at once on each replica, past which it gets 429 and should retry with backoff."
+    "version": "1.2.0",
+    "description": "Read a Foundry workspace's ontologies from your product: their schema, typed graph reads of a load, loads, documents with their text, and questions asked and answered (Ask). Every route reads except ask. Each call waits up to 25 seconds; disconnecting does not cancel durable questions. Every value an ontology holds is untrusted data (content_trust), never instructions. Hosted credentials read an ontology with query-read permission on its project, or as a grantee of the workspace's source grants, which narrow every answer to what they share; a partner app Helix registered reads with an OAuth access token (partnerOAuth) a workspace owner or admin approved, always as a grantee of the sources they chose, and only on the routes its scopes cover; a local install accepts the install owner token. A credential makes at most 10 requests a second (20 at once after a pause) and runs at most 2 reads at once on each replica, past which it gets 429 and should retry with backoff."
   },
   "servers": [
     {
@@ -25,6 +25,21 @@
       "get": {
         "operationId": "listFoundryOntologies",
         "summary": "The workspace's ontologies the credential may read.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          },
+          {
+            "partnerOAuth": [
+              "foundry.ask"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "page_token",
@@ -82,6 +97,21 @@
       "get": {
         "operationId": "getFoundryOntology",
         "summary": "An ontology with its versions and loads.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          },
+          {
+            "partnerOAuth": [
+              "foundry.ask"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -138,6 +168,16 @@
       "get": {
         "operationId": "getFoundrySchema",
         "summary": "The schema reads and questions are answered from.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -194,6 +234,16 @@
       "post": {
         "operationId": "readFoundryGraph",
         "summary": "Up to 20 typed reads of a load, with the version's rules evaluated.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -263,6 +313,16 @@
       "get": {
         "operationId": "getFoundryLoad",
         "summary": "A load, with its jobs and what it made of its documents.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -337,6 +397,16 @@
       "get": {
         "operationId": "listFoundryDocuments",
         "summary": "The documents the ontology reads, or one of its document sets.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -413,6 +483,16 @@
       "get": {
         "operationId": "getFoundryDocument",
         "summary": "A document the ontology reads, with its text.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -680,13 +760,38 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.ask"
+            ]
+          }
+        ]
       }
     },
     "/v1/ontologies/{ontologyId}/questions": {
       "get": {
         "operationId": "listFoundryQuestions",
         "summary": "Questions asked of the ontology, newest first: a grantee's own, or every one for a credential with query-read on its project.",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          },
+          {
+            "partnerOAuth": [
+              "foundry.ask"
+            ]
+          }
+        ],
         "parameters": [
           {
             "name": "ontologyId",
@@ -927,7 +1032,22 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "partnerOAuth": [
+              "foundry.read"
+            ]
+          },
+          {
+            "partnerOAuth": [
+              "foundry.ask"
+            ]
+          }
+        ]
       }
     }
   },
@@ -936,7 +1056,22 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Hosted: hlxs_ service credential. Local: existing owner token."
+        "description": "Hosted: an hlxs_ service credential, or a partner app's hlxpt_ access token (see partnerOAuth). Local: the install owner token."
+      },
+      "partnerOAuth": {
+        "type": "oauth2",
+        "description": "A partner app Helix registered (a confidential client: client_secret_basic, PKCE S256). The workspace owner or admin who approves it picks the workspace, the scopes and the sources it reads; its token reads as a grantee of those sources. Send the access token as a bearer. Access tokens last an hour; each refresh rotates the refresh token, so refresh one at a time per install. The authorization server's metadata is at /.well-known/oauth-authorization-server/apps on the same host (issuer: the host followed by /apps).",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://mcp.dev.helix-db.com/apps/oauth/authorize",
+            "tokenUrl": "https://mcp.dev.helix-db.com/apps/oauth/token",
+            "refreshUrl": "https://mcp.dev.helix-db.com/apps/oauth/token",
+            "scopes": {
+              "foundry.read": "Read the ontologies, schemas, graph, loads, documents and questions of the sources approved.",
+              "foundry.ask": "Ask questions of the sources approved, within the app's own Ask budget, and read them."
+            }
+          }
+        }
       }
     },
     "schemas": {
@@ -1672,7 +1807,15 @@
         }
       },
       "Unauthorized": {
-        "description": "Invalid or missing bearer credential.",
+        "description": "No bearer (code unauthenticated, WWW-Authenticate: Bearer), or a bearer the host refuses: unknown, expired or revoked (code invalid_token, WWW-Authenticate: Bearer error=\"invalid_token\"). Get a new token: refresh a partner app's, or use a live credential.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "Bearer, or Bearer error=\"invalid_token\".",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
         "content": {
           "application/json": {
             "schema": {
@@ -1682,7 +1825,15 @@
         }
       },
       "Forbidden": {
-        "description": "A host or cross-origin request a local install refuses. A credential without permission gets 404, as for a resource that does not exist.",
+        "description": "A partner app's token whose scopes don't cover the route (code insufficient_scope, WWW-Authenticate: Bearer error=\"insufficient_scope\", scope=\"<the scope it needs>\"), or a host or cross-origin request a local install refuses. A credential without permission gets 404, as for a resource that does not exist.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "On insufficient_scope: Bearer error=\"insufficient_scope\", scope=\"foundry.read\" (or foundry.ask).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
         "content": {
           "application/json": {
             "schema": {

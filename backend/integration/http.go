@@ -38,6 +38,16 @@ const (
 	HTTPGetQuestionTool    = "helix_foundry_http_get_question"
 )
 
+// The scopes a hosted partner app's OAuth token may hold (partnerOAuth in the contract). A host
+// that takes such tokens refuses a route the token's scopes don't cover with
+// HTTPInsufficientScope; a host's own credentials hold no scopes and are not checked.
+const (
+	// HTTPScopeRead reads ontologies, schemas, graphs, loads, documents and questions.
+	HTTPScopeRead = "foundry.read"
+	// HTTPScopeAsk asks questions and reads them, and finds the ontologies to ask.
+	HTTPScopeAsk = "foundry.ask"
+)
+
 const (
 	// HTTPClientDisconnected is an outcome's code when the client's hang-up is what ended the
 	// request, rather than a refusal it would have had anyway.
@@ -101,7 +111,10 @@ type HTTPOutcome struct {
 // be able to take one.
 type ResolveHTTP func(*http.Request, string) (HTTPCall, error)
 
-type httpRequestIDKey struct{}
+type (
+	httpRequestIDKey struct{}
+	httpToolKey      struct{}
+)
 
 // HTTPRequestID is the response's request ID, also used by downstream audit logs.
 func HTTPRequestID(ctx context.Context) string {
@@ -109,37 +122,89 @@ func HTTPRequestID(ctx context.Context) string {
 	return value
 }
 
+// HTTPTool is the tool of the route serving the request (HTTPReadTool, say), set before the host
+// resolves it, so a host can check what the route needs (HTTPScopes) before it reads anything.
+// Empty outside a route.
+func HTTPTool(ctx context.Context) string {
+	value, _ := ctx.Value(httpToolKey{}).(string)
+	return value
+}
+
+// HTTPScopes is what a partner app's token needs to call the route of tool: any one of them. It
+// is nil for a tool no route has, which a host refuses.
+//
+// Every route that reads an ontology's contents takes HTTPScopeRead; asking takes HTTPScopeAsk;
+// finding an ontology and reading its questions take either, so an app that only asks can find
+// what to ask and read the answer its 202 points to.
+func HTTPScopes(tool string) []string {
+	i := slices.IndexFunc(httpRoutes, func(route httpRoute) bool { return route.tool == tool })
+	if i < 0 {
+		return nil
+	}
+	return slices.Clone(httpRoutes[i].scopes)
+}
+
+// httpBearerError refuses a bearer token as RFC 6750 3.1 words it: its status, its code (the
+// contract's error code too) and the WWW-Authenticate challenge that says why.
+type httpBearerError struct {
+	status                   int
+	code, message, challenge string
+}
+
+func (e *httpBearerError) Error() string { return e.code + ": " + e.message }
+
+// HTTPInvalidToken refuses a bearer token the host doesn't know, or that expired or was revoked:
+// 401 invalid_token, with WWW-Authenticate: Bearer error="invalid_token". A request with no bearer
+// at all is unauthenticated instead, with a bare Bearer challenge.
+func HTTPInvalidToken() error {
+	return &httpBearerError{status: http.StatusUnauthorized, code: "invalid_token",
+		message: "the bearer token is invalid, expired or revoked", challenge: `Bearer error="invalid_token"`}
+}
+
+// HTTPInsufficientScope refuses a valid token whose scopes don't cover the route: 403
+// insufficient_scope, with WWW-Authenticate: Bearer error="insufficient_scope", scope="<scope>",
+// scope being what the route needs. It must be a scope token (RFC 6749 3.3: printable ASCII
+// without space, quote or backslash); a host passes one of HTTPScopes', so any other is a bug.
+func HTTPInsufficientScope(scope string) error {
+	if scope == "" || strings.ContainsFunc(scope, func(r rune) bool { return r <= ' ' || r > '~' || r == '"' || r == '\\' }) {
+		panic("integration: HTTPInsufficientScope needs a scope token, got " + strconv.Quote(scope))
+	}
+	return &httpBearerError{status: http.StatusForbidden, code: "insufficient_scope",
+		message:   "the token's scopes don't cover this route; it needs " + scope,
+		challenge: `Bearer error="insufficient_scope", scope="` + scope + `"`}
+}
+
 // httpRoute is one route of the API: its name in audit and metrics, the query parameters it
 // takes (any other is refused, so a misspelt one is never silently ignored), and how it answers
 // a resolved request. serve returns the body and, for a question still being answered, where to
-// read it again (a 202).
+// read it again (a 202). scopes are what a partner app's token needs of it (HTTPScopes).
 type httpRoute struct {
 	method, pattern, tool string
-	query                 []string
+	query, scopes         []string
 	serve                 func(httpRequest) (body any, pending string, err error)
 }
 
 // httpRoutes is the API: every route reads, except ask, which asks. Each calls the Service
 // method its MCP tool calls, with the same authorization, and answers with the same JSON.
 var httpRoutes = []httpRoute{
-	{method: http.MethodGet, pattern: "/v1/ontologies", tool: HTTPListOntologiesTool, query: []string{"page_token"},
+	{method: http.MethodGet, pattern: "/v1/ontologies", tool: HTTPListOntologiesTool, query: []string{"page_token"}, scopes: []string{HTTPScopeRead, HTTPScopeAsk},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.ListFoundryOntologies(q.Context, q.Identity, q.call, ListFoundryOntologiesInput{
 				WorkspaceID: q.WorkspaceID, PageToken: q.r.URL.Query().Get("page_token"),
 			})
 			return out, "", err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}", tool: HTTPGetOntologyTool,
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}", tool: HTTPGetOntologyTool, scopes: []string{HTTPScopeRead, HTTPScopeAsk},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.GetFoundryOntology(q.Context, q.Identity, q.call, q.ontology())
 			return out, "", err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/schema", tool: HTTPGetSchemaTool,
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/schema", tool: HTTPGetSchemaTool, scopes: []string{HTTPScopeRead},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.GetFoundryContext(q.Context, q.Identity, q.call, q.ontology())
 			return out, "", err
 		}},
-	{method: http.MethodPost, pattern: "/v1/ontologies/{ontologyId}/reads", tool: HTTPReadTool,
+	{method: http.MethodPost, pattern: "/v1/ontologies/{ontologyId}/reads", tool: HTTPReadTool, scopes: []string{HTTPScopeRead},
 		serve: func(q httpRequest) (any, string, error) {
 			var body httpReads
 			if err := q.body(&body, "expected a JSON object containing reads"); err != nil {
@@ -153,7 +218,7 @@ var httpRoutes = []httpRoute{
 			})
 			return out, "", err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/loads/{loadId}", tool: HTTPGetLoadTool, query: []string{"wait"},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/loads/{loadId}", tool: HTTPGetLoadTool, query: []string{"wait"}, scopes: []string{HTTPScopeRead},
 		serve: func(q httpRequest) (any, string, error) {
 			wait, err := q.bool("wait")
 			if err != nil {
@@ -164,21 +229,21 @@ var httpRoutes = []httpRoute{
 			})
 			return out, "", err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/documents", tool: HTTPListDocumentsTool, query: []string{"set_id", "page_token"},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/documents", tool: HTTPListDocumentsTool, query: []string{"set_id", "page_token"}, scopes: []string{HTTPScopeRead},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.ListFoundryDocuments(q.Context, q.Identity, q.call, ListFoundryDocumentsInput{
 				OntologyInput: q.ontology(), SetID: q.r.URL.Query().Get("set_id"), PageToken: q.r.URL.Query().Get("page_token"),
 			})
 			return out, "", err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/documents/{documentId}", tool: HTTPGetDocumentTool,
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/documents/{documentId}", tool: HTTPGetDocumentTool, scopes: []string{HTTPScopeRead},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.GetFoundryDocumentText(q.Context, q.Identity, q.call, GetFoundryDocumentTextInput{
 				OntologyInput: q.ontology(), DocumentID: q.r.PathValue("documentId"),
 			})
 			return out, "", err
 		}},
-	{method: http.MethodPost, pattern: "/v1/ontologies/{ontologyId}/ask", tool: HTTPAskTool,
+	{method: http.MethodPost, pattern: "/v1/ontologies/{ontologyId}/ask", tool: HTTPAskTool, scopes: []string{HTTPScopeAsk},
 		serve: func(q httpRequest) (any, string, error) {
 			var body httpQuestion
 			if err := q.body(&body, "expected a JSON object containing question"); err != nil {
@@ -194,14 +259,14 @@ var httpRoutes = []httpRoute{
 			})
 			return out, q.pending(out), err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/questions", tool: HTTPListQuestionsTool, query: []string{"thread_id", "page_token"},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/questions", tool: HTTPListQuestionsTool, query: []string{"thread_id", "page_token"}, scopes: []string{HTTPScopeRead, HTTPScopeAsk},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.ListFoundryQuestions(q.Context, q.Identity, q.call, ListFoundryQuestionsInput{
 				OntologyInput: q.ontology(), ThreadID: q.r.URL.Query().Get("thread_id"), PageToken: q.r.URL.Query().Get("page_token"),
 			})
 			return out, "", err
 		}},
-	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/questions/{questionId}", tool: HTTPGetQuestionTool,
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/questions/{questionId}", tool: HTTPGetQuestionTool, scopes: []string{HTTPScopeRead, HTTPScopeAsk},
 		serve: func(q httpRequest) (any, string, error) {
 			out, _, err := q.Service.GetFoundryQuestion(q.Context, q.Identity, q.call, GetFoundryQuestionInput{
 				OntologyInput: q.ontology(), QuestionID: q.r.PathValue("questionId"),
@@ -299,7 +364,7 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, route httpRoute, resolve 
 	requestID := id.New()
 	ctx, cancel := context.WithTimeout(client, httpRequestTimeout)
 	defer cancel()
-	r = r.WithContext(context.WithValue(ctx, httpRequestIDKey{}, requestID))
+	r = r.WithContext(context.WithValue(context.WithValue(ctx, httpRequestIDKey{}, requestID), httpToolKey{}, route.tool))
 	w.Header().Set("X-Request-ID", requestID)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -518,6 +583,11 @@ func WriteHTTPError(w http.ResponseWriter, err error, requestID string) {
 
 // writeHTTPErrorCode is WriteHTTPError, returning the status sent and the stable code.
 func writeHTTPErrorCode(w http.ResponseWriter, err error, requestID string) (int, string) {
+	if bearer, ok := errors.AsType[*httpBearerError](err); ok {
+		w.Header().Set("WWW-Authenticate", bearer.challenge)
+		WriteHTTPRefusal(w, bearer.status, bearer.code, bearer.message, requestID)
+		return bearer.status, bearer.code
+	}
 	code, message, stable := ToolErrorDetails(err)
 	statusCode := http.StatusInternalServerError
 	if !stable {

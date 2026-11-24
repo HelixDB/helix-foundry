@@ -2,6 +2,7 @@ package integration
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -91,4 +92,55 @@ func TestHTTPAnswersMatchTheContract(t *testing.T) {
 			assert.NoError(t, contractSchema(t, c.schema).Validate(answer), w.Body.String())
 		})
 	}
+}
+
+// Each operation takes a host's bearer, or a partner app's token holding any one of the scopes
+// the route needs (HTTPScopes), which the partnerOAuth scheme lists; its 401 and 403 name the
+// codes a bearer refusal answers with.
+func TestHTTPSecurityMatchesTheContract(t *testing.T) {
+	raw, err := os.ReadFile("../../contract/foundry-integration.openapi.json")
+	require.NoError(t, err)
+	var contract struct {
+		Paths map[string]map[string]struct {
+			Security []map[string][]string `json:"security"`
+		} `json:"paths"`
+		Components struct {
+			SecuritySchemes struct {
+				PartnerOAuth struct {
+					Type  string `json:"type"`
+					Flows struct {
+						AuthorizationCode struct {
+							AuthorizationURL string            `json:"authorizationUrl"`
+							TokenURL         string            `json:"tokenUrl"`
+							RefreshURL       string            `json:"refreshUrl"`
+							Scopes           map[string]string `json:"scopes"`
+						} `json:"authorizationCode"`
+					} `json:"flows"`
+				} `json:"partnerOAuth"`
+			} `json:"securitySchemes"`
+			Responses map[string]struct {
+				Description string `json:"description"`
+			} `json:"responses"`
+		} `json:"components"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &contract))
+	for _, route := range httpRoutes {
+		operation, ok := contract.Paths[route.pattern][strings.ToLower(route.method)]
+		require.True(t, ok, route.pattern)
+		want := []map[string][]string{{"bearerAuth": {}}}
+		for _, scope := range HTTPScopes(route.tool) {
+			want = append(want, map[string][]string{"partnerOAuth": {scope}})
+		}
+		assert.Equal(t, want, operation.Security, "%s %s", route.method, route.pattern)
+	}
+	oauth := contract.Components.SecuritySchemes.PartnerOAuth
+	assert.Equal(t, "oauth2", oauth.Type)
+	flow := oauth.Flows.AuthorizationCode
+	assert.True(t, strings.HasSuffix(flow.AuthorizationURL, "/apps/oauth/authorize"), flow.AuthorizationURL)
+	assert.True(t, strings.HasSuffix(flow.TokenURL, "/apps/oauth/token"), flow.TokenURL)
+	assert.Equal(t, flow.TokenURL, flow.RefreshURL)
+	assert.ElementsMatch(t, []string{HTTPScopeRead, HTTPScopeAsk}, slices.Collect(maps.Keys(flow.Scopes)))
+	assert.Contains(t, contract.Components.Responses["Unauthorized"].Description, "invalid_token")
+	assert.Contains(t, contract.Components.Responses["Unauthorized"].Description, "unauthenticated")
+	assert.Contains(t, contract.Components.Responses["Forbidden"].Description, "insufficient_scope")
 }
