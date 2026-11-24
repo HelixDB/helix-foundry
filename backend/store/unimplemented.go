@@ -2513,3 +2513,18 @@ func (u Unimplemented) InsertFoundryReviewQuoteDraw(context.Context, model.Found
 	u.unimplemented("InsertFoundryReviewQuoteDraw")
 	return nil
 }
+
+func (u Unimplemented) StartFoundryCompanyResearch(context.Context, *model.FoundryCompanyResearch, model.FoundryCompanyResearchLimits) error {
+	u.unimplemented("StartFoundryCompanyResearch")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundryCompanyResearch(context.Context, string, string, json.RawMessage, int64) error {
+	u.unimplemented("FinishFoundryCompanyResearch")
+	return nil
+}
+
+func (u Unimplemented) GetFoundryCompanyResearch(context.Context, string, string) (*model.FoundryCompanyResearch, error) {
+	u.unimplemented("GetFoundryCompanyResearch")
+	return nil, nil
+}

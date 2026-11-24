@@ -85,6 +85,8 @@ var methods = map[string]check{
 	foundry("GetOntologyGeneration"):                 checkWorkspace,
 	foundry("AnswerOntologyGeneration"):              checkWorkspace,
 	foundry("CancelOntologyGeneration"):              checkWorkspace,
+	foundry("ResearchFoundryCompany"):                checkWorkspace,
+	foundry("DraftFoundryGoal"):                      checkWorkspace,
 
 	foundry("ListFoundryDocuments"):          checkWorkspace,
 	foundry("CreateFoundryDocument"):         checkWorkspace,

@@ -353,6 +353,9 @@ type ReadStore interface {
 	// Suggestions for a new automation (foundry_automation_suggestions.go)
 	GetFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID string) (*model.FoundryAutomationSuggestions, error)
 	SumFoundryAssistantSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+
+	// Company research (foundry_company_research.go)
+	GetFoundryCompanyResearch(ctx context.Context, workspaceID, id string) (*model.FoundryCompanyResearch, error)
 }
 
 // Store is ReadStore plus every write.
@@ -771,6 +774,11 @@ type Store interface {
 	RenewFoundryAutomationSuggestionsLease(ctx context.Context, ontologyID, versionID, workerID string, lease time.Duration) error
 	FinishFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID, workerID string, end model.FoundryAutomationSuggestionsEnd) error
 	ChargeFoundryAutomationSuggestions(ctx context.Context, workspaceID string, usdMicros int64) error
+
+	// Company research for a new ontology's goal (foundry_company_research.go):
+	// each model call started under its limits, then finished with its spend.
+	StartFoundryCompanyResearch(ctx context.Context, r *model.FoundryCompanyResearch, limits model.FoundryCompanyResearchLimits) error
+	FinishFoundryCompanyResearch(ctx context.Context, workspaceID, id string, result json.RawMessage, usdMicros int64) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

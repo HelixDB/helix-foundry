@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -12,8 +13,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	foundryagent "github.com/helixdb/helix-foundry/backend/agent"
+	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/ai/detect"
+	"github.com/helixdb/helix-foundry/backend/companyresearch"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/integration"
@@ -105,6 +108,13 @@ type runtimeDeps struct {
 	// Relay is nil hosted, where a standalone install's relay methods are
 	// refused.
 	Relay RelayLinker
+	// Sites reads a company's website for its research
+	// (companyresearch.Fetcher); ResearchModels binds its model calls, nil
+	// llm.NewFor. Tests replace both.
+	Sites interface {
+		Fetch(ctx context.Context, domain string) companyresearch.Site
+	}
+	ResearchModels func(r ai.Resolved, catalog *ai.Catalog, role ai.Role) (llm.Binding, error)
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
@@ -157,6 +167,7 @@ func New(d Deps) (*Service, error) {
 		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
 		LocalAI: d.LocalAI, AgentSessions: d.AgentSessions, AgentHosts: d.AgentHosts, AgentHostURL: d.AgentHostURL,
 		Slack: slackClient, SlackURL: slackURL, Emails: d.Emails, BotCredentials: d.BotCredentials, Relay: d.Relay,
+		Sites: companyresearch.NewFetcher(),
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

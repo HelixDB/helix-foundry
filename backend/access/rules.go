@@ -83,6 +83,11 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_DeleteFoundryLoad_FullMethodName:         Deny,
 	foundryv1.FoundryService_StopFoundryLoadEnrichment_FullMethodName: Deny,
 
+	// Company research for a new ontology's goal: owners and admins set
+	// up ontologies.
+	foundryv1.FoundryService_ResearchFoundryCompany_FullMethodName: Deny,
+	foundryv1.FoundryService_DraftFoundryGoal_FullMethodName:       Deny,
+
 	// Self-healing findings: drawn from the whole load, never narrowed to
 	// what a grantee holds, and dismissing one changes them.
 	foundryv1.FoundryService_ListFoundryHealFindings_FullMethodName:   Deny,
