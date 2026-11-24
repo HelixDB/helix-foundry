@@ -1242,6 +1242,11 @@
           "const": "link_read_by_mapping"
         },
         {
+          "description": "A link added, or routed for the first time, is named by a rule, a constraint, a\nrelation or another link's derivation: its facts would feed what the load already holds.",
+          "type": "string",
+          "const": "link_referenced"
+        },
+        {
           "description": "Anything else.",
           "type": "string",
           "const": "other"
