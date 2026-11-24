@@ -1088,6 +1088,21 @@ VALUES (?, ?, ?, ?, ?, NOW(6) + INTERVAL ? MICROSECOND) ON DUPLICATE KEY UPDATE 
 	return s.GetFoundrySlackReply(ctx, r.TurnID)
 }
 
+// MoveFoundrySlackHold moves the turn's held reply, its first message not
+// posted, to channelID's thread threadTS, while the intake claim (intakeID,
+// owned by intakeOwner) that holds it holds its lease: where a shortcut's
+// answer goes once Slack refused the bot's post where it was held.
+// ErrNotFound when the claim lost its lease, or the reply isn't held
+// unposted.
+func (s *mysqlDB) MoveFoundrySlackHold(ctx context.Context, turnID, channelID, threadTS, intakeID, intakeOwner string) error {
+	if !model.ValidSlackID(channelID) || !model.ValidSlackTS(threadTS) {
+		return fmt.Errorf("a Slack reply is held in a channel's thread")
+	}
+	return execOrNotFound(ctx, s.db, `UPDATE foundry_slack_replies SET channel_id=?, thread_ts=?
+WHERE turn_id=? AND status='following' AND message_ts IS NULL AND lease_owner IS NULL
+  AND EXISTS (SELECT 1 FROM foundry_slack_intake WHERE id=? AND status='running' AND lease_owner=?)`, channelID, threadTS, turnID, intakeID, intakeOwner)
+}
+
 // ReleaseFoundrySlackHold makes the turn's held reply due for a follower
 // now, while its first message isn't posted and no follower holds it: an
 // intake claim that held it gave up before posting, and the follower posts

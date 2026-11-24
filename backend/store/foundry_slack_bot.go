@@ -167,9 +167,9 @@ func (s *mysqlDB) IsFoundrySlackThreadPerson(ctx context.Context, threadID, slac
 	return n > 0, err
 }
 
-// CountFoundrySlackUserMessages counts the events intake recorded from
-// slackUserID in installID within window before the row intakeID came, that
-// row not counted: what one Slack user sent a bot-mode install's bot in the
+// CountFoundrySlackUserMessages counts the events and shortcuts intake
+// recorded from slackUserID in installID within window before the row
+// intakeID came, that row not counted: what one Slack user sent a bot-mode install's bot in the
 // hour its per-user cap reads (foundry_slack_intake_user_idx). Read from
 // the row's own time, a retry of it counts the same; with no such row it is
 // 0.
@@ -179,8 +179,8 @@ func (s *mysqlDB) CountFoundrySlackUserMessages(ctx context.Context, installID, 
 	}
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_slack_intake me
-JOIN foundry_slack_intake i ON i.install_id=me.install_id AND i.slack_user_id=? AND i.kind=? AND i.id<>me.id
+JOIN foundry_slack_intake i ON i.install_id=me.install_id AND i.slack_user_id=? AND i.kind IN (?, ?) AND i.id<>me.id
   AND i.created_at <= me.created_at AND i.created_at > me.created_at - INTERVAL ? MICROSECOND
-WHERE me.id=? AND me.install_id=?`, slackUserID, string(model.SlackIntakeEvent), window.Microseconds(), intakeID, installID).Scan(&n)
+WHERE me.id=? AND me.install_id=?`, slackUserID, string(model.SlackIntakeEvent), string(model.SlackIntakeShortcut), window.Microseconds(), intakeID, installID).Scan(&n)
 	return n, err
 }
