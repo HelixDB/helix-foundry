@@ -62,13 +62,15 @@ describe("on a build with Founder", () => {
     vi.resetModules();
   });
 
-  it("names Ask Founder, a grantee's too, and its sidebar's threads Threads", async () => {
+  it("names Ask Founder, a grantee's too, with the agent's icon, and its sidebar's threads Threads", async () => {
     vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_ASSISTANT", "1");
     const nav = await import("@/web/shell/nav");
+    const { Bot } = await import("lucide-react");
     expect(nav.primaryNav[0]).toMatchObject({
       id: "ask",
       label: "Founder",
+      icon: Bot,
       to: "/ask",
       match: ["/ask"],
     });

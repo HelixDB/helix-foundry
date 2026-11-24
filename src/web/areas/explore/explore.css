@@ -249,6 +249,14 @@
   gap: 8px;
   min-width: 0;
 }
+.ex-top-back {
+  max-width: 220px;
+}
+.ex-top-back > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ex-top .ex-load-picker > span {
   white-space: nowrap;
 }
