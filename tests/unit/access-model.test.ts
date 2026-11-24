@@ -27,6 +27,7 @@ import {
   restrictable,
   restrictedHoldingNothing,
   setOwners,
+  MAX_HELD_ITEMS,
   sourcePermissions,
   sourceState,
   sourceTree,
@@ -791,8 +792,8 @@ describe("source permissions", () => {
       follows: "Follows Slack channel membership",
       line: "Read at 2026-11-20T10:00:00Z · 1 public channel, 2 private · 2 of 4 restricted people matched",
       notes: [
-        "Not in Slack by their email: bob@elsewhere.example, Unknown user. Restricted, they read none of its channels.",
-        "A guest in Slack: Grace Hopper. Restricted, they read only the private channels that list them.",
+        "Not in Slack by their email: bob@elsewhere.example, Unknown user. Restricted, they read none of its channels, and none of its users.",
+        "A guest in Slack: Grace Hopper. Restricted, they read only the private channels that list them, and none of its users.",
       ],
     });
     expect(
@@ -802,7 +803,7 @@ describe("source permissions", () => {
         relative,
       ).notes,
     ).toEqual([
-      "Guests in Slack: Grace Hopper, Ada Lovelace. Restricted, they read only the private channels that list them.",
+      "Guests in Slack: Grace Hopper, Ada Lovelace. Restricted, they read only the private channels that list them, and none of its users.",
     ]);
     expect(
       sourcePermissions({ ...slack, grantees: 1 }, name, relative).line,
@@ -824,8 +825,18 @@ describe("source permissions", () => {
         relative,
       ).notes[0],
     ).toBe(
-      "Not in Slack by their email: u0, u1, u2, u3, u4 and 9,995 more. Restricted, they read none of its channels.",
+      "Not in Slack by their email: u0, u1, u2, u3, u4 and 9,995 more. Restricted, they read none of its channels, and none of its users.",
     );
+  });
+
+  it("says a connection with more channels than a restricted person may read the tables of", () => {
+    const over = { ...slack, everyoneItems: MAX_HELD_ITEMS, membersItems: 1 };
+    expect(sourcePermissions(over, name, relative).notes).toEqual([
+      "Over 10,000 channels: someone restricted who is in more than 10,000 reads its documents, but none of its tables.",
+    ]);
+    expect(
+      sourcePermissions({ ...over, membersItems: 0 }, name, relative).notes,
+    ).toEqual([]);
   });
 
   it("reads counts the WFE leaves out as none", () => {
@@ -865,7 +876,7 @@ describe("source permissions", () => {
       "Not read yet: only owners, admins and members who aren’t restricted read it until a sync reads them again · 0 of 1 restricted person matched",
     );
     expect(never.notes).toEqual([
-      "Not in Slack by their email: Ada Lovelace. Restricted, they read none of its channels.",
+      "Not in Slack by their email: Ada Lovelace. Restricted, they read none of its channels, and none of its users.",
       "The last read of who it shares what with failed: add the users:read.email scope to the app and reinstall it.",
     ]);
     expect(SLACK_GRANT_NOTE).toBe(
