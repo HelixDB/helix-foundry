@@ -11706,6 +11706,11 @@
         "stopReason": {
           "type": "string",
           "description": "stopped's reason: cap_reached, model_unavailable, dismissed or\nload_replaced."
+        },
+        "docsRefused": {
+          "type": "string",
+          "format": "int64",
+          "description": "Of docs_done, those refused (no saved work, names that differ, too\nlarge, gone or failed), which kept their reviews."
         }
       },
       "description": "FoundryHealFill is a fill of the documents behind a finding's reviews\nwith the link the load gained by its move in place."
@@ -11797,7 +11802,7 @@
         },
         "fixed": {
           "$ref": "#/definitions/v1FoundryHealFill",
-          "description": "The fill is done: reviews_resolved reviews went, facts_added facts\nwere added, in the current load."
+          "description": "The fill is done and took reviews: reviews_resolved reviews went,\nfacts_added facts were added, in the current load. A fill that took\nnone reads as needs_load (why not_filled)."
         },
         "stopped": {
           "$ref": "#/definitions/v1FoundryHealFill",
@@ -11822,6 +11827,10 @@
             "type": "string"
           },
           "description": "The links the load gained."
+        },
+        "fillPending": {
+          "type": "boolean",
+          "description": "Whether self-healing fills the documents behind the finding's reviews\nnext: true for a move pressed for the finding, false where the load's\nown version states the link (a rebuild of a moved load)."
         }
       }
     },
@@ -11841,7 +11850,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryFoldWhy"
           },
-          "description": "What needs a new load: the engine's kind and item (contract 4.32.0's\nfold why, such as type_added and types.Deal), or Foundry's own:\ndocument_sets, sources (tables or table_files), not_a_draft, or\nmarker_elsewhere with the version the load holds."
+          "description": "What needs a new load: the engine's kind and item (contract 4.32.0's\nfold why, such as type_added and types.Deal), or Foundry's own:\ndocument_sets, sources (tables or table_files), not_a_draft,\nmarker_elsewhere with the version the load holds, move_failed,\nload_moved, collect_failed (the documents behind the finding couldn't\nbe listed), or not_filled (a fill took no review; item the documents\nrefused)."
         }
       }
     },

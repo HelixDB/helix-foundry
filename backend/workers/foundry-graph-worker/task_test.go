@@ -323,6 +323,8 @@ type memStore struct {
 	fill      *model.FoundryHealFill
 	links     []*model.FoundryLoadResend
 	fillEnded []model.FoundryFillDocument
+	// fillSpent is what documents whose fill ended in no word spent.
+	fillSpent []model.FoundryFillDocument
 	fillStop  string
 	fillPause *time.Time
 	fillSpend int64
@@ -699,6 +701,14 @@ func (s *memStore) RecordFoundryFillDocument(_ context.Context, _, _ string, d m
 		}
 		return nil
 	}
+	return nil
+}
+
+func (s *memStore) SpendFoundryFillDocument(_ context.Context, _, _ string, d model.FoundryFillDocument) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fillSpent = append(s.fillSpent, d)
+	s.fill.SpentUSD += float64(d.USDMicros) / 1e6
 	return nil
 }
 
@@ -1113,6 +1123,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Foundry.Sync.DataBucket = "foundry-data"
+	cfg.Foundry.Heal.Enabled, cfg.Foundry.Heal.AddInPlace = true, true
 	cfg.Foundry.Graph.Agent.WorkDir = t.TempDir()
 	cfg.Foundry.AI.Default = config.AIDefault{Provider: "anthropic", APIKey: houseKey, Models: config.AIModels{
 		Draft: "claude-opus-5-5", Ask: "claude-sonnet-5-5", Extract: "claude-haiku-5-5", Verify: "claude-sonnet-5-5",

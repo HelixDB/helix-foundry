@@ -206,6 +206,8 @@ func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.Foundry
 			states[f.Fingerprint] = foundrymodel.FoundryFindingMoved{
 				Version:    foundrymodel.FoundryVersionRef{ID: own.ID, Version: own.Version},
 				LinksAdded: []string{canonical},
+				// A fill row of it moved says so above; this one fills nothing.
+				FillPending: fills[f.Fingerprint] != nil && fills[f.Fingerprint].State == foundrymodel.FoundryFillMoved,
 			}
 			continue
 		}
@@ -219,6 +221,13 @@ func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.Foundry
 			break
 		}
 		states[f.Fingerprint] = foundrymodel.FoundryFindingStateOf(fills[f.Fingerprint], covered)
+	}
+	// Only an open finding's documents are filled (DueFoundryHealFills).
+	for _, f := range findings {
+		if moved, ok := states[f.Fingerprint].(foundrymodel.FoundryFindingMoved); ok && f.Status != foundrymodel.FoundryHealOpen {
+			moved.FillPending = false
+			states[f.Fingerprint] = moved
+		}
 	}
 	return states, findings, nil
 }
@@ -246,7 +255,7 @@ func foundryHealFillProto(v foundrymodel.FoundryVersionRef, f foundrymodel.Found
 		VersionId: v.ID, Version: int64(v.Version), LinksAdded: f.LinksAdded,
 		DocsOwed: f.Counts.Owed, DocsDone: f.Counts.Done(), DocsLeft: f.Counts.Left,
 		ReviewsResolved: f.Counts.ReviewsTaken, FactsAdded: f.Counts.FactsAdded,
-		SpentUsd: f.SpentUSD, CapUsd: f.CapUSD, StopReason: f.StopReason,
+		SpentUsd: f.SpentUSD, CapUsd: f.CapUSD, StopReason: f.StopReason, DocsRefused: f.Counts.Refused,
 	}
 	if f.PausedUntil != nil {
 		out.PausedUntil = timestamppb.New(*f.PausedUntil)
@@ -268,7 +277,7 @@ func foundryHealStateProto(st foundrymodel.FoundryFindingState) *foundryv1.Found
 		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Moving{Moving: version(st.Version)}}
 	case foundrymodel.FoundryFindingMoved:
 		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Moved{Moved: &foundryv1.FoundryHealMoved{
-			VersionId: st.Version.ID, Version: int64(st.Version.Version), LinksAdded: st.LinksAdded,
+			VersionId: st.Version.ID, Version: int64(st.Version.Version), LinksAdded: st.LinksAdded, FillPending: st.FillPending,
 		}}}
 	case foundrymodel.FoundryFindingApplying:
 		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Applying{Applying: foundryHealFillProto(st.Version, st.Fill)}}

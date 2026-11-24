@@ -75,5 +75,8 @@ export function withState(
       state: fill.shown === 3 ? { applying: filling } : { fixed: filling },
     };
   }
-  return { ...f, state: { moved: { ...version, linksAdded } } };
+  return {
+    ...f,
+    state: { moved: { ...version, linksAdded, fillPending: true } },
+  };
 }

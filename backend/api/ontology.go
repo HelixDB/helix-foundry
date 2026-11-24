@@ -251,23 +251,37 @@ func (s *Service) SetCurrentOntologyVersion(ctx context.Context, req *foundryv1.
 // setCurrentFilling is SetCurrentOntologyVersion for a finding's "Add this
 // link": the version is made current, and the current load owes a move in
 // place to it, which a resend job sends (SetCurrentOntologyVersionFilling).
-// The finding must be the ontology's.
+// The finding must be the ontology's, open, of a relationship no link
+// covers, and the version must declare and route its link for its set
+// (ontologyagent.StatesLink): a press attaches no other version to it. A
+// finding dismissed after this check never fills (DueFoundryHealFills).
 func (s *Service) setCurrentFilling(ctx context.Context, o *foundrymodel.FoundryOntology, v *foundrymodel.OntologyVersion, expected *string,
 	fingerprint string, scope []string) (*foundryv1.OntologyVersionResponse, error) {
 	if heal := s.deps.Cfg.Foundry.Heal; !heal.Enabled || !heal.AddInPlace {
 		return nil, status.Error(codes.FailedPrecondition, "adding a link in place is off in this deployment")
 	}
-	switch _, err := s.deps.DB.GetFoundryHealFinding(ctx, o.ID, fingerprint); {
+	f, err := s.deps.DB.GetFoundryHealFinding(ctx, o.ID, fingerprint)
+	switch {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "finding not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get heal finding: %v", err)
+	case f.Status != foundrymodel.FoundryHealOpen:
+		return nil, status.Errorf(codes.FailedPrecondition, "the finding is %s, not open", f.Status)
+	}
+	canonical, set, ok := unmatchedLink(f)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "the finding names no relationship to add a link for")
+	}
+	var def ontologyagent.Definition
+	if json.Unmarshal(v.Definition, &def) != nil || !ontologyagent.StatesLink(def.OntologyTOML, def.MappingsTOML, canonical, set) {
+		return nil, status.Errorf(codes.FailedPrecondition, "version %d doesn't declare and route %s for the finding's documents", v.Version, canonical)
 	}
 	resend := &foundrymodel.FoundryGraphJob{ID: id.New()}
 	if userID := actor(ctx).UserID; userID != "" {
 		resend.RequestedByUserID = &userID
 	}
-	_, err := s.deps.DB.SetCurrentOntologyVersionFilling(ctx, o.WorkspaceID, o.ID, v.ID, expected, fingerprint, resend)
+	_, err = s.deps.DB.SetCurrentOntologyVersionFilling(ctx, o.WorkspaceID, o.ID, v.ID, expected, fingerprint, resend)
 	var refused *foundrystore.FillRefusal
 	if errors.As(err, &refused) {
 		return nil, status.Error(codes.FailedPrecondition, refused.Why)

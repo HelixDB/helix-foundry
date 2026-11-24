@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -333,6 +334,26 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
 	require.NoError(t, err)
 	require.NotNil(t, owed)
+	// It backs off, then the heal worker sends it again: never stuck moving.
+	got := f.fill(t, "MOVEF")
+	require.NotNil(t, got.PausedUntil)
+	assert.WithinDuration(t, time.Now().Add(model.FoundryFillBackoff[0]), *got.PausedUntil, time.Minute)
+	f.finding(t, "MOVEF")
+	_, listed := f.dueLoads(t)[f.load]
+	assert.False(t, listed, "backing off")
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET paused_until=NOW(6) - INTERVAL 1 SECOND WHERE load_id=?`, f.load)
+	require.NoError(t, err)
+	resume, listed := f.dueLoads(t)[f.load]
+	require.True(t, listed)
+	require.True(t, resume)
+	due, err := f.db.DueFoundryHealFills(ctx, 10)
+	require.NoError(t, err)
+	queued, err := f.db.ResumeFoundryFill(ctx, due[0].Fill, f.ontology.WorkspaceID, &model.FoundryGraphJob{ID: id26("RS-MOVEF2")})
+	require.NoError(t, err)
+	require.True(t, queued)
+	retry := f.claim(t)
+	f.end(t, retry, "failed-again", model.FoundryGraphJobFailed)
+	assert.Equal(t, 2, f.fill(t, "MOVEF").Failures, "each attempt counts toward the give-up")
 	// The marker may be ahead now: no press rewrites the versions, of this
 	// finding or another.
 	for _, fp := range []string{fingerprint("MOVEF"), fingerprint("OTHER")} {

@@ -4944,6 +4944,8 @@ export type FoundryHealFill = FoundryHealVersion & {
   // stopped's reason: cap_reached, model_unavailable, dismissed or
   // load_replaced.
   stopReason?: string;
+  // Of docsDone, those refused, which kept their reviews.
+  docsRefused?: string;
 };
 /**
  * v1FoundryHealFindingState: one of open (nothing done), covered (a version
@@ -4955,7 +4957,8 @@ export type FoundryHealFindingState = {
   open?: Record<string, never>;
   covered?: FoundryHealVersion;
   moving?: FoundryHealVersion;
-  moved?: FoundryHealVersion & { linksAdded?: string[] };
+  // fillPending: self-healing fills the reviewed documents next.
+  moved?: FoundryHealVersion & { linksAdded?: string[]; fillPending?: boolean };
   needsLoad?: FoundryHealVersion & { why?: FoundryFoldWhy[] };
   applying?: FoundryHealFill;
   fixed?: FoundryHealFill;

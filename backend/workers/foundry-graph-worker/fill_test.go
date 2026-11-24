@@ -10,8 +10,9 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// filling makes load-0's fill apply, owing each of docs a fill of mentors,
-// as the harness's documents; one not among them is owed as gone.
+// filling makes load-0's fill apply, owing each of docs a fill of mentors
+// (its finding's link, beside another link its move added), as the
+// harness's documents; one not among them is owed as gone.
 func filling(h *harness, docs ...string) {
 	byID := map[string]*model.FoundryDocument{}
 	for _, d := range h.store.pending {
@@ -19,7 +20,8 @@ func filling(h *harness, docs ...string) {
 	}
 	h.store.pending = nil
 	h.store.fill = &model.FoundryHealFill{ID: "fill-1", OntologyID: "ont-1", LoadID: "load-0", State: model.FoundryFillApplying,
-		LinksAdded: []string{"mentors"}, CapUSD: model.FoundryFillCapUSD, ToVersionID: "ver-3", ToVersion: 3}
+		LinksAdded: []string{"advises", "mentors"}, CapUSD: model.FoundryFillCapUSD, ToVersionID: "ver-3", ToVersion: 3,
+		Link: "mentors", Spellings: []string{"mentors", "mentor_of"}}
 	for _, id := range docs {
 		r := &model.FoundryLoadResend{LoadID: "load-0", DocumentID: id, Reason: model.FoundryResendLink, Requests: 1, Document: byID[id]}
 		if r.Document == nil {
@@ -65,9 +67,12 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 		if len(req.Documents) != 2 {
 			t.Fatalf("sent %d documents", len(req.Documents))
 		}
+		// The finding's link alone, of the two the move added, with its
+		// spellings.
 		for _, d := range req.Documents {
-			if !slices.Equal(d.Fill, []string{"mentors"}) || d.Artifacts == nil {
-				t.Fatalf("document %s sent fill %v artifacts %v", d.DocID, d.Fill, d.Artifacts)
+			if !slices.Equal(d.Fill, []string{"mentors"}) || !slices.Equal(d.FillSpellings, []string{"mentors", "mentor_of"}) ||
+				d.Artifacts == nil {
+				t.Fatalf("document %s sent fill %v spellings %v artifacts %v", d.DocID, d.Fill, d.FillSpellings, d.Artifacts)
 			}
 		}
 		if req.Limits.MaxUSD <= 0 || req.Limits.MaxUSD > model.FoundryFillCapUSD {
@@ -197,6 +202,53 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 		}
 		if len(h.store.fillEnded) != 0 || len(h.store.links) != 1 {
 			t.Fatalf("ended %+v, owed %+v", h.store.fillEnded, h.store.links)
+		}
+	})
+	// A model that fails a document after spending: what it spent is the
+	// fill's and the job's, though the document stays owed.
+	t.Run("a model failure's spend is recorded", func(t *testing.T) {
+		h := newHarness(t)
+		filling(h, "doc-a")
+		h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{
+				documentEvent("doc-a", `{"kind":"failed","code":"model","model_failure":"overloaded","retryable":true}`, usage),
+				`{"event":"extract_finished"}`}, `{"status":"done","totals":`+totals+`}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.fillSpent) != 1 || h.store.fillSpent[0].USDMicros != 1500 || h.store.fill.SpentUSD == 0 {
+			t.Fatalf("spent %+v, fill %v", h.store.fillSpent, h.store.fill.SpentUSD)
+		}
+		if len(h.store.fillEnded) != 0 || len(h.store.links) != 1 {
+			t.Fatalf("ended %+v, owed %+v", h.store.fillEnded, h.store.links)
+		}
+	})
+	// A finding that no longer names the link stops the fill, asking nothing.
+	t.Run("a finding gone", func(t *testing.T) {
+		h := newHarness(t)
+		filling(h, "doc-a")
+		h.store.fill.Link, h.store.fill.Spellings = "", nil
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 || h.store.fillStop != model.FoundryFillFindingGone {
+			t.Fatalf("%d extracts, stopped %q", len(calls), h.store.fillStop)
+		}
+	})
+	// Off, the binary is the rollback floor: it sends no fill.
+	t.Run("add in place off", func(t *testing.T) {
+		h := newHarness(t)
+		filling(h, "doc-a")
+		h.task.runner.cfg.Foundry.Heal.AddInPlace = false
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 || len(h.store.links) != 1 {
+			t.Fatalf("%d extracts, owed %v", len(calls), h.store.links)
 		}
 	})
 	// No fill applies: nothing is sent for one.

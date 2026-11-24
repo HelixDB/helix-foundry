@@ -130,7 +130,17 @@ describe("cardState", () => {
     });
     expect(
       cardState({ moved: { version: "8", linksAdded: ["ceo_of"] } }),
-    ).toEqual({ kind: "moved", version: 8, links: ["ceo_of"] });
+    ).toEqual({
+      kind: "moved",
+      version: 8,
+      links: ["ceo_of"],
+      fillPending: false,
+    });
+    expect(
+      cardState({
+        moved: { version: "8", linksAdded: ["ceo_of"], fillPending: true },
+      }),
+    ).toMatchObject({ kind: "moved", fillPending: true });
     expect(
       cardState({
         needsLoad: {
@@ -144,6 +154,23 @@ describe("cardState", () => {
       version: 9,
       versionId: "v9",
       why: ["it adds types.Deal"],
+      changes: true,
+    });
+    // A fill that took no review: the load needs a new load, not the version.
+    expect(
+      cardState({
+        needsLoad: {
+          versionId: "v9",
+          version: "9",
+          why: [{ kind: "not_filled", item: "3" }],
+        },
+      }),
+    ).toEqual({
+      kind: "needs_load",
+      version: 9,
+      versionId: "v9",
+      why: ["filling took no review (3 documents refused)"],
+      changes: false,
     });
     // A version that isn't a number reads as none.
     expect(cardState({ moving: { version: "x" } })).toEqual({
@@ -160,18 +187,41 @@ describe("cardState", () => {
     expect(stateText({ kind: "moving", version: 0 })).toBe(
       "Updating the current load to the new version…",
     );
-    expect(stateText({ kind: "moved", version: 8, links: [] })).toMatch(
-      /^The current load is on version 8 now: documents read from now on state this link\./,
+    expect(
+      stateText({ kind: "moved", version: 8, links: [], fillPending: false }),
+    ).toBe(
+      "The current load is on version 8 now: documents read from now on state this link. The reviews here stay until their documents are read again.",
     );
     expect(
-      stateText({ kind: "needs_load", version: 9, versionId: "v9", why: [] }),
+      stateText({ kind: "moved", version: 8, links: [], fillPending: true }),
+    ).toBe(
+      "The current load is on version 8 now: documents read from now on state this link, and the documents behind these reviews are being asked it next.",
+    );
+    expect(
+      stateText({
+        kind: "needs_load",
+        version: 9,
+        versionId: "v9",
+        why: [],
+        changes: true,
+      }),
     ).toBe("Needs a new load: version 9 changes more than a link.");
+    expect(
+      stateText({
+        kind: "needs_load",
+        version: 9,
+        versionId: "v9",
+        why: ["filling took no review"],
+        changes: false,
+      }),
+    ).toBe("Needs a new load of version 9: filling took no review.");
     expect(
       stateText({
         kind: "needs_load",
         version: 3,
         versionId: "v3",
         why: ["it adds types.Deal", "it changes extractions.notes.types.Deal"],
+        changes: true,
       }),
     ).toBe(
       "Needs a new load: version 3 changes more than a link: it adds types.Deal; it changes extractions.notes.types.Deal.",
@@ -187,6 +237,12 @@ describe("cardState", () => {
     );
     expect(whyText({ kind: "move_failed", item: "agent down" })).toBe(
       "moving the load failed",
+    );
+    expect(whyText({ kind: "collect_failed", item: "agent down" })).toBe(
+      "the documents behind these reviews couldn't be listed",
+    );
+    expect(whyText({ kind: "not_filled", item: "0" })).toBe(
+      "filling took no review",
     );
     expect(whyText({ kind: "link_referenced", item: "links.ceo_of" })).toBe(
       "rules or other links read links.ceo_of",
@@ -216,6 +272,7 @@ describe("a fill of the documents behind a finding", () => {
     done: 1,
     left: 0,
     resolved: 3,
+    refused: 0,
     facts: 2,
     spent: 0.0125,
     cap: 5,
@@ -285,6 +342,11 @@ describe("a fill of the documents behind a finding", () => {
         facts: 1,
       }),
     ).toBe("1 review resolved, 1 fact added in the current load (version 8).");
+    expect(
+      stateText({ kind: "fixed", version: 8, ...counted, refused: 1 }),
+    ).toBe(
+      "3 reviews resolved, 2 facts added in the current load (version 8). Reviews stay in 1 document that couldn't be filled.",
+    );
     expect(stateText({ kind: "fixed", version: 8, ...counted, left: 3 })).toBe(
       "3 reviews resolved, 2 facts added in the current load (version 8). 3 more documents state it: a new load asks them.",
     );

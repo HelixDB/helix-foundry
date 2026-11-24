@@ -53,11 +53,13 @@ func (s *mysqlDB) moveFoundryLoadVersion(ctx context.Context, loadID, from, to s
 const foundryMoveFailures = 3
 
 // failFoundryLoadMove counts a failed resend job against the move its load
-// owes, if any: the move stays owed, for the next job that ends to send
-// (the fold is idempotent at its version), until foundryMoveFailures jobs
-// have failed with it, when its fill row reads needs_load (why
-// move_failed, the job's error) and the request ends. The caller holds the
-// ontology's lock.
+// owes, if any: the move stays owed and backs off (paused_until, by
+// model.FoundryFillBackoff), after which the heal worker queues a resend for
+// it (DueFoundryHealFills, ResumeFoundryFill), as a job's end queues none for
+// a move alone; the fold is idempotent at its version. Once
+// foundryMoveFailures jobs have failed with it, its fill row reads needs_load
+// (why move_failed, the job's error) and the request ends. The caller holds
+// the ontology's lock.
 func (s *mysqlDB) failFoundryLoadMove(ctx context.Context, job *model.FoundryGraphJob) error {
 	var owed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends
@@ -76,8 +78,11 @@ WHERE load_id=? AND document_id='' AND reason=? AND status='owed')`, job.LoadID,
 			why = why[:len(why)-1]
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET failures=failures+1, last_error=NULLIF(?, '')
-WHERE load_id=? AND state='moving'`, why, job.LoadID); err != nil {
+	// MySQL assigns left to right: the backoff reads the count just raised.
+	b := model.FoundryFillBackoff
+	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET failures=failures+1, last_error=NULLIF(?, ''),
+  paused_until=NOW(6) + INTERVAL (CASE failures WHEN 1 THEN ? WHEN 2 THEN ? ELSE ? END) MICROSECOND
+WHERE load_id=? AND state='moving'`, why, b[0].Microseconds(), b[1].Microseconds(), b[2].Microseconds(), job.LoadID); err != nil {
 		return err
 	}
 	given, err := json.Marshal([]model.FoundryFoldWhy{{Kind: "move_failed", Item: why}})
@@ -147,8 +152,8 @@ ORDER BY f.created_at DESC, f.id DESC LIMIT 1`, loadID, storedVersion).Scan(&id,
 		if state == string(model.FoundryFillMoving) || state == string(model.FoundryFillMoved) {
 			return nil
 		}
-		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='moving', why=NULL, failures=0, stop_reason=NULL, active_key=NULL
-WHERE id=?`, id); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='moving', why=NULL, failures=0, stop_reason=NULL, active_key=NULL,
+  paused_until=NULL WHERE id=?`, id); err != nil {
 			return err
 		}
 		return tx.oweFoundryResends(ctx, loadID, model.FoundryResendMove, []string{""})

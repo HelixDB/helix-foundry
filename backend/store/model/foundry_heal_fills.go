@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // FoundryHealFillState is where a suggestion's "Add this link" stands in a
 // load (foundry_heal_fills.state): the move of the load to the version that
@@ -33,12 +36,15 @@ const (
 	// FoundryFillCapReached: the fill spent its cap (FoundryFillCapUSD).
 	FoundryFillCapReached = "cap_reached"
 	// FoundryFillModelUnavailable: its resend jobs failed
-	// FoundryFillFailuresMax times in a row, backing off between.
+	// len(FoundryFillBackoff)+1 times in a row, backing off between.
 	FoundryFillModelUnavailable = "model_unavailable"
 	// FoundryFillDismissed: a person dismissed the suggestion.
 	FoundryFillDismissed = "dismissed"
 	// FoundryFillLoadReplaced: another load became current.
 	FoundryFillLoadReplaced = "load_replaced"
+	// FoundryFillFindingGone: its finding no longer names the link the load
+	// gained, so there is nothing of it to ask.
+	FoundryFillFindingGone = "finding_gone"
 )
 
 // The fill's bounds. A fill spends at most FoundryFillCapUSD, an ontology's
@@ -62,6 +68,16 @@ const (
 // FoundryFillBackoff is how long a fill pauses after each failed resend job
 // in a row; one more failure stops it (FoundryFillModelUnavailable).
 var FoundryFillBackoff = []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour}
+
+// Foundry's own kinds of why a fill row needs a load, beside the engine's
+// (FoundryFoldWhy): its documents couldn't be listed, after
+// len(FoundryFillBackoff)+1 tries (FoundryWhyCollectFailed, item the last
+// error), or its fill ended taking no review (FoundryWhyNotFilled, derived,
+// never stored).
+const (
+	FoundryWhyCollectFailed = "collect_failed"
+	FoundryWhyNotFilled     = "not_filled"
+)
 
 // FoundryFoldWhy is one thing a version changes that needs a new load, as
 // the engine says it (contract 4.32.0's not_additive why): its kind and the
@@ -95,6 +111,11 @@ type FoundryHealFill struct {
 	// PausedUntil is when a paused fill resumes; nil when it isn't paused.
 	PausedUntil *time.Time
 	Failures    int
+	// Link and Spellings are the suggestion's link (its finding's canonical)
+	// and its suggestions' spellings, whose reviews a fill takes: read from
+	// the finding by FoundryFillApplying alone, never stored here.
+	Link      string
+	Spellings []string
 }
 
 // FoundryFillCounts are a fill's documents: owed by its collect, left past
@@ -163,10 +184,12 @@ type FoundryFindingCovered struct{ Version FoundryVersionRef }
 type FoundryFindingMoving struct{ Version FoundryVersionRef }
 
 // FoundryFindingMoved is the current load moved to Version, gaining
-// LinksAdded.
+// LinksAdded. FillPending is a move pressed for the finding, whose fill the
+// heal worker starts next; not one of a load whose own version states it.
 type FoundryFindingMoved struct {
-	Version    FoundryVersionRef
-	LinksAdded []string
+	Version     FoundryVersionRef
+	LinksAdded  []string
+	FillPending bool
 }
 
 // FoundryFindingNeedsLoad is a move refused: a new load of Version is
@@ -209,7 +232,9 @@ func (FoundryFindingStopped) foundryFindingState()   {}
 // row for it (nil for none) and a version that declares and routes its link
 // but isn't the load's (nil for none). A fill row says more than a version
 // does: once pressed, the row decides. A fill's later states read as
-// applying, fixed and stopped, with the fill.
+// applying, fixed and stopped, with the fill; a fill that ended taking no
+// review reads as needing a load (why not_filled, item its documents
+// refused), as nothing it did fixed the finding.
 func FoundryFindingStateOf(fill *FoundryHealFill, covered *FoundryVersionRef) FoundryFindingState {
 	if fill == nil {
 		if covered != nil {
@@ -226,10 +251,13 @@ func FoundryFindingStateOf(fill *FoundryHealFill, covered *FoundryVersionRef) Fo
 	case FoundryFillApplying:
 		return FoundryFindingApplying{Version: to, Fill: *fill}
 	case FoundryFillFilled:
+		if fill.Counts.ReviewsTaken == 0 {
+			return FoundryFindingNeedsLoad{Version: to, Why: []FoundryFoldWhy{{Kind: FoundryWhyNotFilled, Item: strconv.FormatInt(fill.Counts.Refused, 10)}}}
+		}
 		return FoundryFindingFixed{Version: to, Fill: *fill}
 	case FoundryFillStopped:
 		return FoundryFindingStopped{Version: to, Fill: *fill}
 	default:
-		return FoundryFindingMoved{Version: to, LinksAdded: fill.LinksAdded}
+		return FoundryFindingMoved{Version: to, LinksAdded: fill.LinksAdded, FillPending: true}
 	}
 }

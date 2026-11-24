@@ -139,5 +139,32 @@ func TestHealFillCollectRefused(t *testing.T) {
 		if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=?`, l); n != 0 {
 			t.Fatalf("load %s owes %d", l, n)
 		}
+		// Counted and backed off: not tried again at the next tick.
+		if n := count(t, `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id=? AND failures=1 AND paused_until > NOW(6)`, l); n != 1 {
+			t.Fatalf("load %s's failed collect wasn't counted", l)
+		}
+	}
+}
+
+// A move that didn't add the suggestion's link owes nothing: its fill ends
+// at once, taking no review, which reads as needing a load. A collect ends
+// what one that stopped partway left owed.
+func TestHealFillOfALinkTheMoveDidntAdd(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(2)
+	w.movedFor(load, "fl")
+	exec(t, `UPDATE foundry_heal_fills SET links_added='["advises"]' WHERE load_id=?`, load)
+	exec(t, `INSERT INTO foundry_load_resends (load_id, document_id, reason) VALUES (?, ?, 'link')`, load, id26("D001"))
+	agent := &fakeAgent{t: t, respond: listing}
+	w.runnerOf(agent, 10).fills(ctx)
+	if len(agent.sent()) != 0 {
+		t.Fatal("nothing to list")
+	}
+	if n := count(t, `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id=? AND state='filled' AND reviews_taken=0`, load); n != 1 {
+		t.Fatal("the fill didn't end")
+	}
+	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND status='owed'`, load); n != 0 {
+		t.Fatalf("%d rows still owed", n)
 	}
 }

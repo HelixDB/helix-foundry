@@ -99,7 +99,8 @@ type healStore interface {
 	GetFoundryGraphJob(ctx context.Context, ontologyID, id string) (*model.FoundryGraphJob, error)
 	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
-	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string) (bool, error)
+	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
+	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
 	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error
 	ResumeFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, resend *model.FoundryGraphJob) (bool, error)
 }
@@ -219,7 +220,10 @@ func (t *Task) Stop(ctx context.Context) error {
 // interval: the next tick lists them again, so a load just made current
 // waits for one run at most, not every one queued.
 func (r *runner) tick(ctx context.Context) {
-	r.fills(ctx)
+	// Off, the binary is the rollback floor: no fill runs, as none shows.
+	if r.cfg.AddInPlace {
+		r.fills(ctx)
+	}
 	listed := time.Now()
 	due, err := r.db.DueFoundryHealOntologies(ctx, r.cfg.Every, r.cfg.RetryAfter, dueBatch)
 	if err != nil {

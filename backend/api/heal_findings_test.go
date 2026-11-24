@@ -317,3 +317,61 @@ func TestSetCurrentFillingIsOffUnlessOn(t *testing.T) {
 		})
 	}
 }
+
+// pressStore records a press that went through to the store.
+type pressStore struct {
+	*healStore
+	pressed []string
+}
+
+func (s *pressStore) SetCurrentOntologyVersionFilling(_ context.Context, _, _, versionID string, _ *string, fingerprint string,
+	_ *foundrymodel.FoundryGraphJob) (*foundrymodel.FoundryHealFill, error) {
+	s.pressed = append(s.pressed, versionID+"/"+fingerprint)
+	return nil, nil
+}
+
+// A press goes through only for an open finding of a relationship no link
+// covers, to a version that declares and routes its link for its set: it
+// attaches no other version to the finding.
+func TestSetCurrentFillingChecksTheFindingAndTheVersion(t *testing.T) {
+	_, base := newHealService()
+	base.findings["fp3"] = &foundrymodel.FoundryHealFinding{OntologyID: "o1", Fingerprint: "fp3", Kind: "clash", Status: foundrymodel.FoundryHealOpen,
+		Finding: json.RawMessage(`{"signal":{"kind":"clash"}}`)}
+	db := &pressStore{healStore: base}
+	cfg := &config.Config{}
+	cfg.Foundry.Heal.Enabled, cfg.Foundry.Heal.AddInPlace = true, true
+	svc := &Service{deps: &runtimeDeps{DB: db, Cfg: cfg}}
+	version := func(links string) *foundrymodel.OntologyVersion {
+		def, _ := json.Marshal(map[string]any{"format": "agent_bundle", "ontology_toml": "[links.supplier_of]\nfrom = \"P\"\nto = \"C\"",
+			"mappings_toml": "[extractions.notes]\ndocuments = [\"set_1\"]\nlinks = " + links})
+		return &foundrymodel.OntologyVersion{ID: "v2", Version: 2, Definition: def}
+	}
+	stating, other := version(`["supplier_of"]`), version(`["works_at"]`)
+	for name, c := range map[string]struct {
+		version     *foundrymodel.OntologyVersion
+		fingerprint string
+		code        codes.Code
+	}{
+		"not the finding's":  {stating, "nope", codes.NotFound},
+		"a finding not open": {stating, "fp2", codes.FailedPrecondition},
+		"no relationship":    {stating, "fp3", codes.FailedPrecondition},
+		"a version without":  {other, "fp1", codes.FailedPrecondition},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.setCurrentFilling(context.Background(), base.ontology, c.version, nil, c.fingerprint, nil)
+			if status.Code(err) != c.code {
+				t.Fatalf("err = %v, want %s", err, c.code)
+			}
+		})
+	}
+	if len(db.pressed) != 0 {
+		t.Fatalf("refused presses reached the store: %v", db.pressed)
+	}
+	_, err := svc.setCurrentFilling(context.Background(), base.ontology, stating, nil, "fp1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(db.pressed) != 1 || db.pressed[0] != "v2/fp1" {
+		t.Fatalf("pressed %v", db.pressed)
+	}
+}

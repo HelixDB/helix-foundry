@@ -105,8 +105,16 @@ export type CardState =
   | { kind: "open" }
   | { kind: "covered"; version: number; versionId: string }
   | { kind: "moving"; version: number }
-  | { kind: "moved"; version: number; links: string[] }
-  | { kind: "needs_load"; version: number; versionId: string; why: string[] }
+  | { kind: "moved"; version: number; links: string[]; fillPending: boolean }
+  | {
+      kind: "needs_load";
+      version: number;
+      versionId: string;
+      why: string[];
+      // Whether the version itself changes more than a link, rather than
+      // the load's move or fill having failed.
+      changes: boolean;
+    }
   | ({ kind: "applying" | "fixed" | "stopped"; version: number } & Fill);
 
 /** A fill of the documents behind a finding, as its card counts it. */
@@ -115,6 +123,8 @@ export type Fill = {
   done: number;
   left: number;
   resolved: number;
+  // Of done, those refused, which kept their reviews.
+  refused: number;
   facts: number;
   spent: number;
   cap: number;
@@ -137,6 +147,7 @@ function fillOf(f: wfe.FoundryHealFill): Fill {
     done: whole(f.docsDone),
     left: whole(f.docsLeft),
     resolved: whole(f.reviewsResolved),
+    refused: whole(f.docsRefused),
     facts: whole(f.factsAdded),
     spent: usd(f.spentUsd),
     cap: usd(f.capUsd),
@@ -152,7 +163,7 @@ function fillOf(f: wfe.FoundryHealFill): Fill {
  *
  * @example
  * cardState({ moved: { versionId: "v8", version: "8", linksAdded: ["ceo_of"] } });
- * // { kind: "moved", version: 8, links: ["ceo_of"] }
+ * // { kind: "moved", version: 8, links: ["ceo_of"], fillPending: false }
  */
 export function cardState(
   state: wfe.FoundryHealFindingState | undefined,
@@ -174,6 +185,7 @@ export function cardState(
       kind: "moved",
       version: n(state.moved),
       links: state.moved.linksAdded || [],
+      fillPending: state.moved.fillPending === true,
     };
   if (state.needsLoad)
     return {
@@ -181,6 +193,9 @@ export function cardState(
       version: n(state.needsLoad),
       versionId: state.needsLoad.versionId || "",
       why: (state.needsLoad.why || []).map(whyText),
+      changes: (state.needsLoad.why || []).every(
+        (w) => !RUNTIME.has(w.kind || ""),
+      ),
     };
   for (const kind of ["applying", "fixed", "stopped"] as const) {
     const fill = state[kind];
@@ -195,11 +210,24 @@ const STOPPED: Record<string, string> = {
   model_unavailable: "the model kept failing",
   dismissed: "the suggestion was dismissed",
   load_replaced: "another load became current",
+  finding_gone: "the suggestion no longer names this link",
 };
 
 const plural = (n: number, one: string, many = `${one}s`) =>
   `${n} ${n === 1 ? one : many}`;
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
+
+/**
+ * The kinds of reason a load needs a new load that say what went wrong with
+ * its move or fill, not what the version changes.
+ */
+const RUNTIME = new Set([
+  "move_failed",
+  "load_moved",
+  "marker_elsewhere",
+  "collect_failed",
+  "not_filled",
+]);
 
 /** Each kind of reason a version needs a load, in words. */
 const WHY: Record<string, (item: string) => string> = {
@@ -223,6 +251,11 @@ const WHY: Record<string, (item: string) => string> = {
   link_referenced: (i) => `rules or other links read ${i}`,
   load_moved: (i) => `the load moved to version ${i} for another suggestion`,
   move_failed: () => "moving the load failed",
+  collect_failed: () => "the documents behind these reviews couldn't be listed",
+  not_filled: (i) =>
+    Number(i) > 0
+      ? `filling took no review (${plural(Number(i), "document")} refused)`
+      : "filling took no review",
   document_sets: () => "it reads other document sets",
   sources: (i) =>
     `it reads other ${i === "table_files" ? "table files" : "tables"}`,
@@ -261,9 +294,13 @@ export function stateText(s: CardState): string | undefined {
     case "moving":
       return `Updating the current load to ${version}…`;
     case "moved":
-      return `The current load is on ${version} now: documents read from now on state this link. The reviews here stay until their documents are read again.`;
+      return s.fillPending
+        ? `The current load is on ${version} now: documents read from now on state this link, and the documents behind these reviews are being asked it next.`
+        : `The current load is on ${version} now: documents read from now on state this link. The reviews here stay until their documents are read again.`;
     case "needs_load":
-      return `Needs a new load: ${version} changes more than a link${s.why.length ? `: ${s.why.join("; ")}` : ""}.`;
+      return s.changes
+        ? `Needs a new load: ${version} changes more than a link${s.why.length ? `: ${s.why.join("; ")}` : ""}.`
+        : `Needs a new load of ${version}: ${s.why.join("; ")}.`;
     case "applying": {
       const spend =
         s.cap > 0 ? `, ${dollars(s.spent)} of ${dollars(s.cap)}` : "";
@@ -276,7 +313,10 @@ export function stateText(s: CardState): string | undefined {
       const left = s.left
         ? ` ${plural(s.left, "more document")} state it: a new load asks them.`
         : "";
-      return `${plural(s.resolved, "review")} resolved, ${plural(s.facts, "fact")} added in the current load (${version}).${left}`;
+      const refused = s.refused
+        ? ` Reviews stay in ${plural(s.refused, "document")} that couldn't be filled.`
+        : "";
+      return `${plural(s.resolved, "review")} resolved, ${plural(s.facts, "fact")} added in the current load (${version}).${refused}${left}`;
     }
     case "stopped":
       return `Filling stopped after ${s.done} of ${plural(s.owed, "document")}: ${STOPPED[s.stopReason] || s.stopReason.replaceAll("_", " ") || "it stopped"}. ${plural(s.resolved, "review")} resolved, ${plural(s.facts, "fact")} added.`;

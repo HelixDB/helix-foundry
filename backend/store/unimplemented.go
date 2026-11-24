@@ -127,6 +127,10 @@ func (u Unimplemented) RecordFoundryFillDocument(context.Context, string, string
 	u.unimplemented("RecordFoundryFillDocument")
 	return nil
 }
+func (u Unimplemented) SpendFoundryFillDocument(context.Context, string, string, model.FoundryFillDocument) error {
+	u.unimplemented("SpendFoundryFillDocument")
+	return nil
+}
 func (u Unimplemented) EndFoundryFillDocument(context.Context, string, string, string, int, string) error {
 	u.unimplemented("EndFoundryFillDocument")
 	return nil
@@ -147,9 +151,13 @@ func (u Unimplemented) DueFoundryHealFills(context.Context, int) ([]model.Foundr
 	u.unimplemented("DueFoundryHealFills")
 	return nil, nil
 }
-func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string) (bool, error) {
+func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string, bool) (bool, error) {
 	u.unimplemented("OweFoundryFillDocuments")
 	return false, nil
+}
+func (u Unimplemented) FailFoundryFillCollect(context.Context, *model.FoundryHealFill, string) error {
+	u.unimplemented("FailFoundryFillCollect")
+	return nil
 }
 func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, int64, int64, *model.FoundryGraphJob) error {
 	u.unimplemented("StartFoundryFill")

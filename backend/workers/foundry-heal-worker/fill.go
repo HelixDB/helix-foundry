@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
@@ -16,10 +17,12 @@ import (
 // fills acts on the fills due (store.DueFoundryHealFills): a load moved in
 // place by a suggestion's "Add this link" has the documents behind the
 // suggestion's reviews collected (collect) and owed a fill of the link; one
-// whose fill paused, or waits with no job live, is resumed. One at a time,
-// the one with the least support first, as a load fills one suggestion at a
-// time. A collect that fails is tried again at the next tick: it owes
-// documents again, which costs nothing.
+// whose fill paused, or waits with no job live, is resumed, as is a move
+// whose job failed, once it backed off. One at a time, the one with the
+// least support first, as a load fills one suggestion at a time. A collect
+// that fails, or outlasts maxRunTime, backs off and is tried again
+// (store.FailFoundryFillCollect), until it has failed too often and the
+// suggestion needs a load: it owes documents again, which costs nothing.
 func (r *runner) fills(ctx context.Context) {
 	due, err := r.db.DueFoundryHealFills(ctx, dueBatch)
 	if err != nil {
@@ -41,14 +44,21 @@ func (r *runner) fills(ctx context.Context) {
 			}
 			continue
 		}
-		owed, left, err := r.collect(ctx, d)
+		collectCtx, cancel := context.WithTimeout(ctx, r.maxRun)
+		owed, left, err := r.collect(collectCtx, d)
+		cancel()
 		switch {
 		case errors.Is(err, errFillChanged):
 			fillRuns.WithLabelValues("changed").Inc()
 			continue
+		case err != nil && ctx.Err() != nil:
+			return
 		case err != nil:
 			fillRuns.WithLabelValues("failed").Inc()
 			logger.Warn("collect fill failed", "err", err)
+			if err := r.db.FailFoundryFillCollect(ctx, d.Fill, err.Error()); err != nil {
+				logger.Error("record failed collect", "err", err)
+			}
 			continue
 		}
 		switch err := r.db.StartFoundryFill(ctx, d.Fill, d.Due.WorkspaceID, owed, left, &model.FoundryGraphJob{ID: r.newID()}); {
@@ -74,17 +84,29 @@ var errFillChanged = errors.New("the fill or its load changed")
 // page by page, so no list of them is held: owed is how many, left those
 // past model.FoundryFillMaxDocuments. The pages are the load's documents
 // with reviews, as an audit's; a page the agent's wall cuts is read again at
-// half the size.
+// half the size. A move that didn't add the suggestion's link (its finding's
+// canonical) owes none: there is nothing of it to fill.
 func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, left int64, err error) {
 	var finding struct {
 		Signal struct {
 			Kind      string   `json:"kind"`
+			Canonical string   `json:"canonical"`
 			Set       string   `json:"set"`
 			Spellings []string `json:"spellings"`
 		} `json:"signal"`
 	}
 	if err := json.Unmarshal(d.Finding, &finding); err != nil || finding.Signal.Kind != "unmatched" || len(finding.Signal.Spellings) == 0 {
 		return 0, 0, fmt.Errorf("the fill's suggestion names no relationship to fill: %v", err)
+	}
+	// A fresh collect ends what one that stopped partway left owed.
+	switch ok, err := r.db.OweFoundryFillDocuments(ctx, d.Fill, d.Due.WorkspaceID, nil, true); {
+	case err != nil:
+		return 0, 0, err
+	case !ok:
+		return 0, 0, errFillChanged
+	}
+	if !slices.Contains(d.Fill.LinksAdded, finding.Signal.Canonical) {
+		return 0, 0, nil
 	}
 	info, err := r.agent.Info(ctx)
 	if err != nil {
@@ -138,7 +160,7 @@ func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, lef
 		docs := result.DocumentsOf[0]
 		take := docs[:min(int64(len(docs)), max(0, model.FoundryFillMaxDocuments-owed))]
 		if len(take) > 0 {
-			switch ok, err := r.db.OweFoundryFillDocuments(ctx, d.Fill, d.Due.WorkspaceID, take); {
+			switch ok, err := r.db.OweFoundryFillDocuments(ctx, d.Fill, d.Due.WorkspaceID, take, false); {
 			case err != nil:
 				return 0, 0, err
 			case !ok:

@@ -2680,8 +2680,9 @@ message FoundryHealFindingState {
     // being filled with the link it gained, each as a later transaction of
     // that document alone (contract 4.33.0).
     FoundryHealFill applying = 6;
-    // The fill is done: reviews_resolved reviews went, facts_added facts
-    // were added, in the current load.
+    // The fill is done and took reviews: reviews_resolved reviews went,
+    // facts_added facts were added, in the current load. A fill that took
+    // none reads as needs_load (why not_filled).
     FoundryHealFill fixed = 7;
     // The fill stopped before its documents were done, for stop_reason.
     FoundryHealFill stopped = 8;
@@ -2714,6 +2715,9 @@ message FoundryHealFill {
   // stopped's reason: cap_reached, model_unavailable, dismissed or
   // load_replaced.
   string stop_reason = 12;
+  // Of docs_done, those refused (no saved work, names that differ, too
+  // large, gone or failed), which kept their reviews.
+  int64 docs_refused = 13;
 }
 
 message FoundryHealOpen {}
@@ -2729,6 +2733,10 @@ message FoundryHealMoved {
   int64 version = 2;
   // The links the load gained.
   repeated string links_added = 3;
+  // Whether self-healing fills the documents behind the finding's reviews
+  // next: true for a move pressed for the finding, false where the load's
+  // own version states the link (a rebuild of a moved load).
+  bool fill_pending = 4;
 }
 
 message FoundryHealNeedsLoad {
@@ -2736,8 +2744,11 @@ message FoundryHealNeedsLoad {
   int64 version = 2;
   // What needs a new load: the engine's kind and item (contract 4.32.0's
   // fold why, such as type_added and types.Deal), or Foundry's own:
-  // document_sets, sources (tables or table_files), not_a_draft, or
-  // marker_elsewhere with the version the load holds.
+  // document_sets, sources (tables or table_files), not_a_draft,
+  // marker_elsewhere with the version the load holds, move_failed,
+  // load_moved, collect_failed (the documents behind the finding couldn't
+  // be listed), or not_filled (a fill took no review; item the documents
+  // refused).
   repeated FoundryFoldWhy why = 3;
 }
 

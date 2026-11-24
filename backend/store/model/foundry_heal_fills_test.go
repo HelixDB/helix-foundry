@@ -10,8 +10,10 @@ func TestFoundryFindingStateOf(t *testing.T) {
 	v8 := FoundryVersionRef{ID: "ver-8", Version: 8}
 	fill := func(state FoundryHealFillState) *FoundryHealFill {
 		return &FoundryHealFill{ToVersionID: "ver-8", ToVersion: 8, State: state, LinksAdded: []string{"ceo_of"},
-			Why: []FoundryFoldWhy{{Kind: "type_added", Item: "types.Deal"}}}
+			Why: []FoundryFoldWhy{{Kind: "type_added", Item: "types.Deal"}}, Counts: FoundryFillCounts{ReviewsTaken: 2}}
 	}
+	untaken := fill(FoundryFillFilled)
+	untaken.Counts = FoundryFillCounts{Owed: 3, Refused: 2, Nothing: 1}
 	for name, c := range map[string]struct {
 		fill    *FoundryHealFill
 		covered *FoundryVersionRef
@@ -20,11 +22,13 @@ func TestFoundryFindingStateOf(t *testing.T) {
 		"nothing done":          {nil, nil, FoundryFindingOpen{}},
 		"a version adds it":     {nil, &v8, FoundryFindingCovered{Version: v8}},
 		"moving":                {fill(FoundryFillMoving), &v8, FoundryFindingMoving{Version: v8}},
-		"moved":                 {fill(FoundryFillMoved), nil, FoundryFindingMoved{Version: v8, LinksAdded: []string{"ceo_of"}}},
+		"moved":                 {fill(FoundryFillMoved), nil, FoundryFindingMoved{Version: v8, LinksAdded: []string{"ceo_of"}, FillPending: true}},
 		"needs a load":          {fill(FoundryFillNeedsLoad), &v8, FoundryFindingNeedsLoad{Version: v8, Why: []FoundryFoldWhy{{"type_added", "types.Deal"}}}},
 		"a fill after the move": {fill(FoundryFillApplying), nil, FoundryFindingApplying{Version: v8, Fill: *fill(FoundryFillApplying)}},
 		"a fill stopped":        {fill(FoundryFillStopped), &v8, FoundryFindingStopped{Version: v8, Fill: *fill(FoundryFillStopped)}},
 		"a fill done":           {fill(FoundryFillFilled), nil, FoundryFindingFixed{Version: v8, Fill: *fill(FoundryFillFilled)}},
+		"a fill that took no review": {untaken, nil, FoundryFindingNeedsLoad{Version: v8,
+			Why: []FoundryFoldWhy{{Kind: FoundryWhyNotFilled, Item: "2"}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := FoundryFindingStateOf(c.fill, c.covered); !reflect.DeepEqual(got, c.want) {

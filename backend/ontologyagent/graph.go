@@ -119,6 +119,10 @@ type ExtractDocument struct {
 	// apart, and what they state is written as a later transaction of the
 	// document. A "filled" event says what came of it (FilledEvent).
 	Fill []string `json:"fill,omitempty"`
+	// FillSpellings are the spellings of the suggestion whose reviews the
+	// fill takes (its finding's): a review of another relationship in the
+	// same words stays. Sent with Fill, and only with it.
+	FillSpellings []string `json:"fill_spellings,omitempty"`
 }
 
 // ExtractLimits are the hard caps on one Extract.
