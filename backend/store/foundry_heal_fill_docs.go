@@ -633,11 +633,14 @@ func (s *mysqlDB) FailFoundryFillCollect(ctx context.Context, fill *model.Foundr
 			why = why[:len(why)-1]
 		}
 	}
+	if fill.PausedUntil == nil {
+		return nil
+	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		var failures int
 		err := tx.db.QueryRowContext(ctx, `SELECT failures FROM foundry_heal_fills WHERE id=? AND state='moved' AND paused_until=? FOR UPDATE`,
-			fill.ID, leaseOf(fill)).Scan(&failures)
+			fill.ID, *fill.PausedUntil).Scan(&failures)
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -692,21 +695,27 @@ WHERE f.id=? AND f.state='moved' AND (f.paused_until IS NULL OR f.paused_until<=
 	return true, nil
 }
 
-// leaseOf is the collect lease a claim gave fill (ClaimFoundryFillCollect),
-// as the writes of its collect name it: the zero time, which no row holds,
-// for none.
-func leaseOf(fill *model.FoundryHealFill) time.Time {
+// ReleaseFoundryFillCollect gives up fill's collect lease
+// (ClaimFoundryFillCollect) without counting a failure, as a heal worker
+// that stops mid-collect does: the fill is due again at once, and its next
+// collect ends what this one owed. Only while it holds the lease.
+func (s *mysqlDB) ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error {
 	if fill.PausedUntil == nil {
-		return time.Time{}
+		return nil
 	}
-	return *fill.PausedUntil
+	_, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET paused_until=NULL WHERE id=? AND state='moved' AND paused_until=?`,
+		fill.ID, *fill.PausedUntil)
+	return err
 }
 
 // holdsFoundryFillCollect reports whether fill is still moved under the
 // collect lease this collect claimed (ClaimFoundryFillCollect).
 func (s *mysqlDB) holdsFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) (bool, error) {
+	if fill.PausedUntil == nil {
+		return false, nil
+	}
 	var held bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_heal_fills WHERE id=? AND state='moved' AND paused_until=?)`,
-		fill.ID, leaseOf(fill)).Scan(&held)
+		fill.ID, *fill.PausedUntil).Scan(&held)
 	return held, err
 }

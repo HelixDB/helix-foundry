@@ -155,6 +155,10 @@ func (u Unimplemented) ClaimFoundryFillCollect(context.Context, *model.FoundryHe
 	u.unimplemented("ClaimFoundryFillCollect")
 	return false, nil
 }
+func (u Unimplemented) ReleaseFoundryFillCollect(context.Context, *model.FoundryHealFill) error {
+	u.unimplemented("ReleaseFoundryFillCollect")
+	return nil
+}
 func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string, bool) (bool, error) {
 	u.unimplemented("OweFoundryFillDocuments")
 	return false, nil

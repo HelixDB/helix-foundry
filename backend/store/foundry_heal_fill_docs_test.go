@@ -613,3 +613,20 @@ func TestFoundryFillOfAFindingNoLongerOpen(t *testing.T) {
 	assert.Empty(t, got.Link)
 	assert.Empty(t, got.Spellings)
 }
+
+// A collect released (its worker stopping) is due again at once, counting
+// no failure; a release without the lease releases nothing.
+func TestFoundryFillCollectReleased(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "FILLRL")
+	fill := f.collecting(t, f.moved(t, "FILLRL"))
+	stale, other := *fill, time.Now().UTC()
+	stale.PausedUntil = &other
+	require.NoError(t, f.db.ReleaseFoundryFillCollect(ctx, &stale))
+	_, listed := f.dueLoads(t)[f.load]
+	assert.False(t, listed, "still held")
+	require.NoError(t, f.db.ReleaseFoundryFillCollect(ctx, fill))
+	_, listed = f.dueLoads(t)[f.load]
+	assert.True(t, listed)
+	assert.Zero(t, f.fill(t, "FILLRL").Failures)
+}

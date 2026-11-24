@@ -100,6 +100,7 @@ type healStore interface {
 	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
 	ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (bool, error)
+	ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error
 	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
 	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
 	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error

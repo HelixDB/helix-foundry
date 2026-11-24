@@ -67,6 +67,13 @@ func (r *runner) fills(ctx context.Context) {
 			fillRuns.WithLabelValues("changed").Inc()
 			continue
 		case err != nil && ctx.Err() != nil:
+			// Stopping: the lease goes, so the next worker collects it at
+			// once rather than when the lease would run out.
+			release, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			if err := r.db.ReleaseFoundryFillCollect(release, d.Fill); err != nil {
+				logger.Warn("release fill collect failed", "err", err)
+			}
+			cancel()
 			return
 		case err != nil:
 			fillRuns.WithLabelValues("failed").Inc()
