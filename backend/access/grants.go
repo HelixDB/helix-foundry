@@ -286,7 +286,7 @@ func (g Grants) Keeps(seen Inputs, items []ItemRef) bool {
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1"}, at)}, nil))
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
 //	g.SeesItems([]access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
 func (g Grants) SeesItems(items []ItemRef) bool {
 	return !slices.ContainsFunc(items, func(i ItemRef) bool { return !g.sharing.sees(i) })

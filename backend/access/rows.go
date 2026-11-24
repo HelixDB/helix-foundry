@@ -87,10 +87,14 @@ func (r TableRows) Held() (field string, prefix bool, texts []string) {
 }
 
 // holds reports whether r holds every row before held: the same table, by
-// the same rule, of every item it held.
+// the same rule, of every item it held. Items are sorted, so each is found by
+// binary search: a retry compares up to MaxHeldItems of them a table.
 func (r TableRows) holds(before TableRows) bool {
 	return r.Table == before.Table && r.Rule == before.Rule &&
-		!slices.ContainsFunc(before.Items, func(i string) bool { return !slices.Contains(r.Items, i) })
+		!slices.ContainsFunc(before.Items, func(i string) bool {
+			_, found := slices.BinarySearch(r.Items, i)
+			return !found
+		})
 }
 
 // tableHold is what a reader holds of one table: all of it, some of its rows,
