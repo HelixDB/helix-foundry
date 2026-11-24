@@ -77,7 +77,7 @@ export function PartnerAuthorizePage() {
       ? shellWorkspaces(me.data, list.data.workspaces || []).filter(
           (w) => w.role === "owner" || w.role === "admin",
         )
-      : [];
+      : null;
   const app = auth.data?.app,
     deny = request && cancelUrl(auth.data?.denyUrl, request);
   const cancel = async () => {
@@ -116,7 +116,31 @@ export function PartnerAuthorizePage() {
         }
       />
     </div>
-  ) : !choices.length ? (
+  ) : !me.data || !list.data ? (
+    // Not knowing who signed in, or their workspaces, is no refusal: the
+    // page offers no Cancel, so the app isn't told access_denied for it.
+    <div role="alert">
+      <EmptyState
+        icon={Link2Off}
+        title="Couldn’t read your workspaces"
+        text={
+          me.error || list.error
+            ? sentence((me.error || list.error)!.message)
+            : "Try again in a moment."
+        }
+        action={
+          <Button
+            onClick={() => {
+              if (!me.data) void me.refetch();
+              if (!list.data) void list.refetch();
+            }}
+          >
+            Retry
+          </Button>
+        }
+      />
+    </div>
+  ) : !choices?.length ? (
     <div role="alert">
       <EmptyState
         icon={Link2Off}
@@ -301,6 +325,25 @@ function ConsentSources({
         <Button size="sm" onClick={data.retry}>
           Retry
         </Button>
+      </>
+    );
+  // Without its installs the page can't say the app is connected already,
+  // or start from what it reads, so nothing is approved until they read.
+  if (installs.error)
+    return (
+      <>
+        <p role="alert" className="hf-form-error">
+          Couldn’t read the workspace’s connected apps.{" "}
+          {sentence(installs.error.message)}
+        </p>
+        <div className="hf-form-actions">
+          <Button size="sm" onClick={() => void installs.refetch()}>
+            Retry
+          </Button>
+          <Button size="sm" onClick={() => void onCancel()}>
+            Cancel
+          </Button>
+        </div>
       </>
     );
   const existing = existingInstall(installs.data || [], app.clientId),

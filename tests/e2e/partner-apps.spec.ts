@@ -330,6 +330,80 @@ test("a second consent starts from what the app reads, and replaces it", async (
   ).not.toBeChecked();
 });
 
+test("a failed read of the installs offers Retry, and nothing to approve until they read", async ({
+  page,
+}) => {
+  await mock.configure({ partnerAppInstalled: true });
+  await signIn(page);
+  await answerAsApp(page);
+  let failing = true;
+  await page.route("**/papi/v1/workspaces/*/partner-apps/installs", (route) =>
+    failing
+      ? route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ code: 14, message: "the backend is busy" }),
+        })
+      : route.continue(),
+  );
+  await page.goto(authorizePath());
+  const form = consent(page);
+  await expect(form.getByRole("alert")).toContainText(
+    "Couldn’t read the workspace’s connected apps. The backend is busy.",
+  );
+  await expect(form.getByRole("button", { name: "Approve" })).toHaveCount(0);
+  await expect(form.getByRole("checkbox", { name: /^Stripe ·/ })).toHaveCount(
+    0,
+  );
+  failing = false;
+  await form.getByRole("button", { name: "Retry" }).click();
+  // Read, the page says the app is connected and starts from what it reads.
+  await expect(form).toContainText(
+    "Northwind Insights is already connected to Acme. Approving replaces what it can read.",
+  );
+  await expect(form.getByRole("checkbox", { name: /^Stripe ·/ })).toBeChecked();
+  await expect(form.getByRole("button", { name: "Approve" })).toBeEnabled();
+});
+
+test("a failed read of who is signed in, or their workspaces, is no refusal", async ({
+  page,
+}) => {
+  await signIn(page);
+  await answerAsApp(page);
+  const failing = { whoami: false, workspaces: false };
+  const unavailable = {
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ code: 14, message: "unavailable" }),
+  };
+  await page.route("**/papi/v1/whoami", (route) =>
+    failing.whoami ? route.fulfill(unavailable) : route.continue(),
+  );
+  await page.route("**/papi/v1/workspaces?*", (route) =>
+    failing.workspaces ? route.fulfill(unavailable) : route.continue(),
+  );
+  const notRefused = async () => {
+    await expect(
+      page.getByText("Only a workspace’s owners and admins connect apps"),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+    await expect(page).toHaveURL(/\/oauth\/authorize$/);
+  };
+  for (const which of ["whoami", "workspaces"] as const) {
+    failing[which] = true;
+    await page.goto("/ask");
+    await page.goto(authorizePath());
+    const retry = page.getByRole("button", { name: "Retry" });
+    await expect(retry).toBeVisible({ timeout: 10_000 });
+    await notRefused();
+    failing[which] = false;
+    await retry.click();
+    await expect(
+      consent(page).getByRole("button", { name: "Approve" }),
+    ).toBeVisible();
+  }
+});
+
 test("an install's sources are edited, alone, and it is revoked", async ({
   page,
 }) => {

@@ -106,6 +106,14 @@ const apps: App[] = Object.values(PARTNER_APPS);
 /** The authorization server's issuer, as partneroauth.Issuer names dev's. */
 export const PARTNER_ISSUER = "https://mcp.dev.helix-db.com/apps";
 
+/** The source kinds a consent may name (the proto's, unspecified aside). */
+const KINDS = [
+  "KIND_CONNECTOR",
+  "KIND_TABLE",
+  "KIND_DOCUMENT_SET",
+  "KIND_ENRICHMENT",
+] as const;
+
 const CODE_TTL_MS = 5 * 60_000,
   MAX_STATE = 512,
   MAX_SOURCES = 1000,
@@ -175,14 +183,22 @@ const sha256url = (s: string) =>
 const secret = (prefix: string) =>
   prefix + randomBytes(32).toString("base64url");
 
-/** The scopes `scope` names (space-delimited; empty for all the app's), or why not. */
+/**
+ * The scopes an authorization request's `scope` asks for (RFC 6749 3.3:
+ * known names separated by single spaces; empty for all the app's), in
+ * canonical order, or the WFE's refusal (partnerRequestedScopes).
+ */
 function scopesOf(app: App, scope: unknown): Scope[] | string {
-  const named =
-    typeof scope === "string" ? scope.split(" ").filter(Boolean) : [];
-  if (!named.length) return [...app.scopes];
-  for (const s of named)
-    if (!app.scopes.includes(s as Scope))
-      return `scope ${s} isn't one this app may ask for`;
+  const raw = typeof scope === "string" ? scope : "";
+  if (!raw) return [...app.scopes];
+  const named = raw.split(" ");
+  if (named.some((s) => !SCOPES.includes(s as Scope)))
+    return "scope names a scope Helix doesn't have";
+  if (named.some((s) => !app.scopes.includes(s as Scope)))
+    return (
+      "scope asks for more than this app may: " +
+      SCOPES.filter((s) => app.scopes.includes(s)).join(" ")
+    );
   return SCOPES.filter((s) => named.includes(s));
 }
 
@@ -194,8 +210,15 @@ function back(redirectUri: string, params: Record<string, string>) {
   return url.toString();
 }
 
-/** The app and redirect URI a request names, or the WFE's refusal. */
+/**
+ * The app and redirect URI a request names, or the WFE's refusal
+ * (partnerAuthorizationApp). The state is checked by each route: hosted's
+ * GET takes none (the site keeps it in the browser), approve requires it.
+ */
 function checkRequest(clientId: unknown, redirectUri: unknown) {
+  if (!offered()) return fail("FAILED_PRECONDITION", NOT_OFFERED);
+  if (!clientId || !redirectUri)
+    return fail("INVALID_ARGUMENT", "client_id and redirect_uri are required");
   const app = appOf(clientId);
   if (!app)
     return fail("INVALID_ARGUMENT", "This app isn't registered with Helix");
@@ -279,11 +302,24 @@ function seedIfAsked() {
 }
 onConfig(seedIfAsked);
 
-/** The caller's membership when it owns or administers the workspace, where offered. */
+/**
+ * The caller's membership when it owns or administers the workspace (the
+ * WFE's authz gate: workspace.members.manage), or its refusal.
+ */
 function manager(workspaceId: string, userId: string) {
   const m = membership(workspaceId, userId);
   if (isReply(m)) return m;
-  if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
+  if (!manages(m))
+    return fail(
+      "PERMISSION_DENIED",
+      "permission workspace.members.manage required",
+    );
+  return m;
+}
+/** A manager where connected apps are offered (list and revoke). */
+function offeredManager(workspaceId: string, userId: string) {
+  const m = manager(workspaceId, userId);
+  if (isReply(m)) return m;
   if (!offered()) return fail("FAILED_PRECONDITION", NOT_OFFERED);
   return m;
 }
@@ -308,15 +344,14 @@ export const partnerAppRoutes: MockRoute[] = [
     method: "GET",
     path: "/v1/partner-apps/authorization",
     handle: ({ query }) => {
-      if (!offered()) return fail("FAILED_PRECONDITION", NOT_OFFERED);
       const app = checkRequest(query.get("clientId"), query.get("redirectUri"));
       if (refused(app)) return app;
-      const scopes = scopesOf(app, query.get("scope"));
-      if (typeof scopes === "string") return fail("INVALID_ARGUMENT", scopes);
-      // The state is optional here: the site keeps it in the browser.
+      // No state is fine here: the site keeps it in the browser.
       const s = query.get("state") || "";
       if (s.length > MAX_STATE)
         return fail("INVALID_ARGUMENT", "state is too long");
+      const scopes = scopesOf(app, query.get("scope"));
+      if (typeof scopes === "string") return fail("INVALID_ARGUMENT", scopes);
       const redirectUri = query.get("redirectUri")!;
       return ok({
         app: publicOf(app),
@@ -339,35 +374,37 @@ export const partnerAppRoutes: MockRoute[] = [
         {}) as Partial<ApprovePartnerAppAuthorizationRequest>;
       const app = checkRequest(req.clientId, req.redirectUri);
       if (refused(app)) return app;
-      if (
-        typeof req.state !== "string" ||
-        !req.state ||
-        req.state.length > MAX_STATE
-      )
-        return fail("INVALID_ARGUMENT", "state is 1 to 512 characters");
+      if (typeof req.state !== "string" || !req.state)
+        return fail("INVALID_ARGUMENT", "state is required");
+      if (req.state.length > MAX_STATE)
+        return fail("INVALID_ARGUMENT", "state is too long");
+      const asked = Array.isArray(req.scopes) ? req.scopes : [];
+      if (!asked.length || asked.some((s) => !app.scopes.includes(s as Scope)))
+        return fail(
+          "INVALID_ARGUMENT",
+          "scopes must be one or more of what the app asks for",
+        );
       if (
         typeof req.codeChallenge !== "string" ||
         !/^[A-Za-z0-9_-]{43}$/.test(req.codeChallenge)
       )
         return fail(
           "INVALID_ARGUMENT",
-          "code_challenge is an S256 PKCE challenge",
+          "code_challenge must be an S256 challenge",
         );
-      const asked = Array.isArray(req.scopes) ? req.scopes : [];
-      if (!asked.length || asked.some((s) => !app.scopes.includes(s as Scope)))
-        return fail(
-          "INVALID_ARGUMENT",
-          "scopes are some of what this app may ask for",
-        );
+      const sent = Array.isArray(req.targets) ? req.targets : [];
+      if (!sent.length || sent.length > MAX_SOURCES)
+        return fail("INVALID_ARGUMENT", `choose 1 to ${MAX_SOURCES} sources`);
       const targets: FoundryAccessTarget[] = [];
-      for (const t of req.targets || []) {
+      for (const t of sent) {
+        if (!KINDS.includes(t.kind as (typeof KINDS)[number]))
+          return fail("INVALID_ARGUMENT", "each source needs a kind");
         const parsed = parseTarget(t);
-        if (typeof parsed === "string") return fail("INVALID_ARGUMENT", parsed);
+        if (typeof parsed === "string")
+          return fail("INVALID_ARGUMENT", `a source is malformed: ${parsed}`);
         if (!targets.some((x) => JSON.stringify(x) === JSON.stringify(parsed)))
           targets.push(parsed);
       }
-      if (!targets.length || targets.length > MAX_SOURCES)
-        return fail("INVALID_ARGUMENT", "choose 1 to 1000 sources");
       if (!sourcesLive(m.workspaceId, targets))
         return fail("NOT_FOUND", "One of the sources you chose was deleted");
       const code = secret("hlxpa_");
@@ -392,7 +429,7 @@ export const partnerAppRoutes: MockRoute[] = [
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/partner-apps/installs",
     handle: ({ params, principal: { user } }) => {
-      const m = manager(params.workspaceId!, user.id);
+      const m = offeredManager(params.workspaceId!, user.id);
       if (isReply(m)) return m;
       const used = (i: Install) => i.lastUsedAt || i.approvedAt;
       return ok({
@@ -407,7 +444,7 @@ export const partnerAppRoutes: MockRoute[] = [
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/partner-apps/installs/{installId}",
     handle: ({ params, principal: { user } }) => {
-      const m = manager(params.workspaceId!, user.id);
+      const m = offeredManager(params.workspaceId!, user.id);
       if (isReply(m)) return m;
       const i = state.installs.find(
         (x) =>
@@ -415,7 +452,7 @@ export const partnerAppRoutes: MockRoute[] = [
           x.workspaceId === m.workspaceId &&
           !x.revokedAt,
       );
-      if (!i) return fail("NOT_FOUND", "no such connected app");
+      if (!i) return fail("NOT_FOUND", "connected app not found");
       // Revoking its key ends it (onKeyRevoked).
       revokeKey(m.workspaceId, i.credentialId);
       if (!i.revokedAt) endInstall(i);

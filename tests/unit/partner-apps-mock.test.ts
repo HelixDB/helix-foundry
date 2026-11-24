@@ -194,20 +194,42 @@ describe("reading an app's request", () => {
       "redirect_uri is not registered for this app",
     );
     await refused(
+      { clientId: "" },
+      400,
+      "client_id and redirect_uri are required",
+    );
+    await refused(
+      { redirectUri: "" },
+      400,
+      "client_id and redirect_uri are required",
+    );
+    await refused(
       { scope: "foundry.admin" },
       400,
-      "scope foundry.admin isn't one this app may ask for",
+      "scope names a scope Helix doesn't have",
+    );
+    // Names are separated by single spaces, as RFC 6749 3.3 writes them.
+    await refused(
+      { scope: "foundry.read  foundry.ask" },
+      400,
+      "scope names a scope Helix doesn't have",
     );
     await refused(
       {
         clientId: contoso.clientId,
         redirectUri: contoso.redirectUris[0]!,
-        scope: "foundry.ask",
+        scope: "foundry.read foundry.ask",
       },
       400,
-      "scope foundry.ask isn't one this app may ask for",
+      "scope asks for more than this app may: foundry.read",
     );
     await refused({ state: "s".repeat(513) }, 400, "state is too long");
+    // The state is checked before the scope, as the WFE does.
+    await refused(
+      { state: "s".repeat(513), scope: "foundry.admin" },
+      400,
+      "state is too long",
+    );
     config({ partnerAppsAvailable: false });
     await refused({}, 400, "Connected apps aren't offered here");
   });
@@ -235,7 +257,13 @@ describe("approving", () => {
   });
   it("is for owners and admins of the workspace", async () => {
     const { approve, config } = await setup();
-    expect((await approve({}, "usr_alan")).status).toBe(403);
+    const denied = await approve({}, "usr_alan");
+    expect(denied.status).toBe(403);
+    // The WFE's authz gate refuses before any check of the request.
+    expect(denied.body.message).toBe(
+      "permission workspace.members.manage required",
+    );
+    expect((await approve({ state: "" }, "usr_alan")).status).toBe(403);
     expect((await approve({}, "usr_eve")).status).toBe(403);
     config({ alanRole: "WORKSPACE_ROLE_ADMIN" });
     expect((await approve({}, "usr_alan")).status).toBe(200);
@@ -261,32 +289,48 @@ describe("approving", () => {
       400,
       "redirect_uri is not registered for this app",
     );
-    await refused({ state: "" }, 400, "state is 1 to 512 characters");
     await refused(
-      { state: "s".repeat(513) },
+      { clientId: undefined },
       400,
-      "state is 1 to 512 characters",
+      "client_id and redirect_uri are required",
     );
-    await refused(
-      { codeChallenge: "plain" },
-      400,
-      "code_challenge is an S256 PKCE challenge",
-    );
+    // GET takes no state (the site keeps it); approve requires it.
+    await refused({ state: "" }, 400, "state is required");
+    await refused({ state: undefined }, 400, "state is required");
+    await refused({ state: "s".repeat(513) }, 400, "state is too long");
+    expect((await approve({ state: "s".repeat(512) })).status).toBe(200);
     await refused(
       { scopes: [] },
       400,
-      "scopes are some of what this app may ask for",
+      "scopes must be one or more of what the app asks for",
     );
     await refused(
       { scopes: ["foundry.read", "foundry.write"] },
       400,
-      "scopes are some of what this app may ask for",
+      "scopes must be one or more of what the app asks for",
+    );
+    await refused(
+      { codeChallenge: "plain" },
+      400,
+      "code_challenge must be an S256 challenge",
+    );
+    // Scopes are checked before the challenge, as the WFE does.
+    await refused(
+      { codeChallenge: "plain", scopes: [] },
+      400,
+      "scopes must be one or more of what the app asks for",
     );
     await refused({ targets: [] }, 400, "choose 1 to 1000 sources");
     await refused(
+      { targets: [{ kind: "KIND_UNSPECIFIED" }] },
+      400,
+      "each source needs a kind",
+    );
+    await refused({ targets: [{}] }, 400, "each source needs a kind");
+    await refused(
       { targets: [{ kind: "KIND_CONNECTOR" }] },
       400,
-      `access: a connector grant can't name connector "", table "" and set ""`,
+      `a source is malformed: access: a connector grant can't name connector "", table "" and set ""`,
     );
     await refused(
       {
@@ -531,9 +575,9 @@ describe("an install", () => {
     expect((await exchange(pending)).body).toEqual({ error: "invalid_grant" });
     expect(await installs()).toEqual([]);
     // Gone: a second revoke finds nothing.
-    expect(
-      (await call("DELETE", `${W}/partner-apps/installs/${i.id}`)).status,
-    ).toBe(404);
+    const gone = await call("DELETE", `${W}/partner-apps/installs/${i.id}`);
+    expect(gone.status).toBe(404);
+    expect(gone.body.message).toBe("connected app not found");
     // A new consent makes a new install, with a new key.
     await exchange(await code());
     const [again] = await installs();
