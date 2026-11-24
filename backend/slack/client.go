@@ -445,29 +445,39 @@ func (c *Client) OpenDM(ctx context.Context, bot Bot, userID string) (string, er
 	return out.Channel.ID, nil
 }
 
-// ExtShared reports whether a channel is shared with another organisation,
-// or invited to be (conversations.info's is_ext_shared and
-// is_pending_ext_shared), where Foundry's data never shows. It needs
-// channels:read, groups:read or mpim:read for the channel's kind.
-func (c *Client) ExtShared(ctx context.Context, bot Bot, channel string) (bool, error) {
+// ChannelInfo is what conversations.info says of a channel.
+type ChannelInfo struct {
+	// ExtShared is a channel shared with another organisation, or invited
+	// to be (is_ext_shared, is_pending_ext_shared), where Foundry's data
+	// never shows.
+	ExtShared bool
+	// Member is a channel the bot is in (is_member): where it may post.
+	Member bool
+}
+
+// ConversationInfo reads a channel (conversations.info). It needs
+// channels:read, groups:read or mpim:read for the channel's kind, and Slack
+// answers channel_not_found for a private one the bot isn't in.
+func (c *Client) ConversationInfo(ctx context.Context, bot Bot, channel string) (ChannelInfo, error) {
 	if !idRE.MatchString(channel) {
-		return false, fmt.Errorf("slack: conversations.info of %q", channel)
+		return ChannelInfo{}, fmt.Errorf("slack: conversations.info of %q", channel)
 	}
 	var out struct {
 		Channel struct {
 			ID               string `json:"id"`
 			ExtShared        bool   `json:"is_ext_shared"`
 			PendingExtShared bool   `json:"is_pending_ext_shared"`
+			Member           bool   `json:"is_member"`
 		} `json:"channel"`
 	}
 	form := url.Values{"channel": {channel}}
 	if err := c.call(ctx, request{method: ConversationsInfo, bot: bot, form: form}, &out); err != nil {
-		return false, err
+		return ChannelInfo{}, err
 	}
 	if out.Channel.ID != channel {
-		return false, errors.New("slack: conversations.info answered for another channel")
+		return ChannelInfo{}, errors.New("slack: conversations.info answered for another channel")
 	}
-	return out.Channel.ExtShared || out.Channel.PendingExtShared, nil
+	return ChannelInfo{ExtShared: out.Channel.ExtShared || out.Channel.PendingExtShared, Member: out.Channel.Member}, nil
 }
 
 // AgentStatus is an agent session's status: a closed set.

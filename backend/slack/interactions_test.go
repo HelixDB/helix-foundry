@@ -36,6 +36,11 @@ func TestParseInteractionFixtures(t *testing.T) {
 	ephemeral.ThreadTS, ephemeral.Ephemeral = "", true
 	grid := clicked
 	grid.TeamID, grid.EnterpriseID, grid.UserID = "T0GRIDWS01", "E0ACME001", "W0GRID0001"
+	// A shortcut is on a message in a thread, or at top level: its time is
+	// the shortcut's action_ts.
+	shortcut := clicked
+	topLevel := clicked
+	topLevel.ThreadTS = ""
 	cases := map[string]slack.Interaction{
 		"approve.json":         slack.Approve{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash},
 		"approve_grid.json":    slack.Approve{Clicked: grid, ActionID: actionID, PayloadHash: payloadHash},
@@ -54,6 +59,9 @@ func TestParseInteractionFixtures(t *testing.T) {
 		"not_json_value.json":  slack.Unhandled{Why: "a button value the bot didn't write"},
 		"two_actions.json":     slack.Unhandled{Why: "2 actions"},
 		"in_view.json":         slack.Unhandled{Why: `a click in a "view"`},
+		"ask_about.json":       slack.AskAbout{Clicked: shortcut, AuthorID: "U0GRACE01", Text: "Is <@U0ALAN001> renewing *Globex*?"},
+		"ask_about_app.json":   slack.AskAbout{Clicked: topLevel, Text: "Deploy failed"},
+		"other_shortcut.json":  slack.Unhandled{Why: `shortcut "someone.else"`},
 	}
 	entries, err := os.ReadDir("testdata/interactions")
 	require.NoError(t, err)
@@ -147,6 +155,46 @@ func TestParseInteractionClickFields(t *testing.T) {
 	require.Equal(t, slack.Unlink{Clicked: slack.Clicked{TeamID: "T1", EnterpriseID: "E1", UserID: "U1", ChannelID: "C9", MessageTS: "1.2", ActionTS: "3.4"}}, got)
 }
 
+// A shortcut names its team, user, channel, message and time, and an author
+// only as a user id; its enterprise is the team's, else the payload's.
+func TestParseShortcutFields(t *testing.T) {
+	shortcut := func(fields string) []byte {
+		return []byte(url.Values{"payload": {`{"type":"message_action","callback_id":"foundry.ask_about",` + fields + `}`}}.Encode())
+	}
+	const (
+		who  = `"user":{"id":"U1"},"team":{"id":"T1"},"channel":{"id":"C1"}`
+		when = `"message_ts":"1.2","action_ts":"3.4"`
+		msg  = `"message":{"user":"U2","text":"hi","thread_ts":"1.1"}`
+	)
+	for name, c := range map[string]struct {
+		fields string
+		why    string
+	}{
+		"no message":         {who + "," + when, "a shortcut without its message"},
+		"bad user":           {`"user":{"id":"u"},"team":{"id":"T1"},"channel":{"id":"C1"},` + when + "," + msg, "a shortcut without its team, user, channel or author"},
+		"no channel":         {`"user":{"id":"U1"},"team":{"id":"T1"},` + when + "," + msg, "a shortcut without its team, user, channel or author"},
+		"bad enterprise":     {`"user":{"id":"U1"},"team":{"id":"T1","enterprise_id":"e"},"channel":{"id":"C1"},` + when + "," + msg, "a shortcut without its team, user, channel or author"},
+		"bad author":         {who + "," + when + `,"message":{"user":"<@U2>","text":"hi"}`, "a shortcut without its team, user, channel or author"},
+		"bad message ts":     {who + `,"message_ts":"x","action_ts":"3.4",` + msg, "a shortcut without its message or time"},
+		"no action ts":       {who + `,"message_ts":"1.2",` + msg, "a shortcut without its message or time"},
+		"bad thread ts":      {who + "," + when + `,"message":{"user":"U2","text":"hi","thread_ts":"x"}`, "a shortcut without its message or time"},
+		"org-wide install":   {who + "," + when + "," + msg + `,"is_enterprise_install":true`, "an org-wide install"},
+		"no team":            {`"user":{"id":"U1"},"channel":{"id":"C1"},` + when + "," + msg, "an org-wide install"},
+		"another shortcut":   {`"callback_id":"x",` + who + "," + when + "," + msg, `shortcut "x"`},
+		"no callback at all": {`"callback_id":"",` + who + "," + when + "," + msg, `shortcut ""`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := slack.ParseInteraction(shortcut(c.fields))
+			require.NoError(t, err)
+			require.Equal(t, slack.Unhandled{Why: c.why}, got)
+		})
+	}
+	got, err := slack.ParseInteraction(shortcut(who + "," + when + "," + msg + `,"enterprise":{"id":"E1"}`))
+	require.NoError(t, err)
+	require.Equal(t, slack.AskAbout{Clicked: slack.Clicked{TeamID: "T1", EnterpriseID: "E1", UserID: "U1", ChannelID: "C1", MessageTS: "1.2",
+		ThreadTS: "1.1", ActionTS: "3.4"}, AuthorID: "U2", Text: "hi"}, got)
+}
+
 func TestParseInteractionRefusals(t *testing.T) {
 	for name, body := range map[string]string{
 		"bad form":     "%zz",
@@ -172,7 +220,8 @@ func TestInteractionKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, key, slack.InteractionKey(again))
 	seen := map[string]bool{key: true}
-	for _, name := range []string{"dismiss.json", "refresh.json", "review.json", "run_no_spec.json", "stop.json", "unlink.json", "approve_grid.json"} {
+	for _, name := range []string{"dismiss.json", "refresh.json", "review.json", "run_no_spec.json", "stop.json", "unlink.json", "approve_grid.json",
+		"ask_about.json"} {
 		in, err := slack.ParseInteraction(form(t, name))
 		require.NoError(t, err)
 		k := slack.InteractionKey(in)
@@ -183,6 +232,11 @@ func TestInteractionKey(t *testing.T) {
 	later.ActionTS = "1795000101.000000"
 	require.NotEqual(t, key, slack.InteractionKey(later))
 	require.Empty(t, slack.InteractionKey(slack.Unhandled{}))
+	ask, err := slack.ParseInteraction(form(t, "ask_about.json"))
+	require.NoError(t, err)
+	app, err := slack.ParseInteraction(form(t, "ask_about_app.json"))
+	require.NoError(t, err)
+	require.Equal(t, slack.InteractionKey(ask), slack.InteractionKey(app), "one pick of the shortcut, whatever its message says")
 }
 
 func TestButtonValueString(t *testing.T) {

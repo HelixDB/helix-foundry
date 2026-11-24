@@ -24,6 +24,11 @@ features:
         message: What can you do in Foundry?
       - title: Ask the data
         message: Which customers renewed last month?
+  shortcuts:
+    - name: Ask Founder about this
+      type: message
+      callback_id: foundry.ask_about
+      description: Ask Founder about this message
 oauth_config:
   redirect_urls:
     - https://foundry.helix-db.com/slack/installed
@@ -39,6 +44,7 @@ oauth_config:
       - channels:read
       - groups:read
       - mpim:read
+      - commands
       - channels:history
       - groups:history
 settings:
