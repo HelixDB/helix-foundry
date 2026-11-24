@@ -64,6 +64,11 @@ import { isSampleSet } from "./sample";
 import { useOntology } from "./scope";
 import { useSampleOntology } from "./use-sample-ontology";
 import { documentSetQueries } from "../documents/documents-api";
+import {
+  AddLinkForm,
+  AddLinkSaved,
+  addLinkAsk,
+} from "../suggestions/add-link-form";
 import { useAccessCheck } from "../workspace/access-guard";
 
 /**
@@ -178,6 +183,8 @@ export function AgentEdit({
   // The Types tab's Edit enrichment opens a type: ?item=type.Person.
   const [params] = useSearchParams();
   const asked = params.get("item") || "";
+  // A finding's Add this link: its link, set and fingerprint.
+  const ask = addLinkAsk(params);
   const typeItem = (item: string) =>
     bundle.ontology.ok &&
     bundle.ontology.value.types.some((t) => `type.${t.name}` === item)
@@ -299,6 +306,12 @@ export function AgentEdit({
     setRun(null);
     void start(true, batch, true);
   };
+  // Add this link's batch: staged, then previewed and, if clean, created.
+  const saveLink = (batch: wfe.OntologyEdit[]) => {
+    setEdits(batch);
+    setRun(null);
+    void start(true, batch, true);
+  };
   // The pending edits each editor starts from: a change to them (a save
   // from the other editor, an undo) starts it afresh.
   const startsFrom = (ids: (id: string) => boolean) =>
@@ -311,6 +324,15 @@ export function AgentEdit({
         constraints. Preview the edits, then create a new version. Ask the agent
         to change table bindings or the schema.
       </p>
+      {ask && !run?.save && (
+        <AddLinkForm
+          bundle={bundle}
+          ask={ask}
+          setName={sets.data?.find((x) => x.id === ask.setId)?.name || ""}
+          busy={busy}
+          onSave={saveLink}
+        />
+      )}
       <fieldset disabled={busy} className="on-stack">
         <label className="hf-field">
           <span>Item to edit</span>
@@ -483,7 +505,11 @@ export function AgentEdit({
         </Button>
       </div>
       {run?.save && g ? (
-        <SaveStatus generation={g} pending={pending} />
+        <SaveStatus
+          generation={g}
+          pending={pending}
+          fill={ask?.fingerprint}
+        />
       ) : (
         run &&
         g && (
@@ -511,9 +537,12 @@ export function AgentEdit({
 function SaveStatus({
   generation: g,
   pending,
+  fill,
 }: {
   generation: wfe.OntologyGeneration;
   pending: boolean;
+  // A finding's fingerprint, when Add this link saved it.
+  fill?: string;
 }) {
   const { id: o } = useOntology();
   const result = readRevisionResult(g.revision?.resultJson);
@@ -526,6 +555,8 @@ function SaveStatus({
       (g.revision.resultWithheld || result?.status === "revised"))
   )
     return <p role="status">Checking edits…</p>;
+  if (g.resultVersionId && fill)
+    return <AddLinkSavedVersion versionId={g.resultVersionId} fill={fill} />;
   if (g.resultVersionId) return <SavedVersion versionId={g.resultVersionId} />;
   // The engine's words, without its code: "current_title is already filled
   // by contacts.title."
@@ -546,6 +577,26 @@ function SaveStatus({
         View revision
       </ButtonLink>
     </div>
+  );
+}
+
+/** A version Add this link saved, with its number read. */
+function AddLinkSavedVersion({
+  versionId,
+  fill,
+}: {
+  versionId: string;
+  fill: string;
+}) {
+  const { id: ws } = useWorkspace(),
+    { id: o } = useOntology();
+  const version = useQuery(ontologyQueries.version(ws, o, versionId));
+  return (
+    <AddLinkSaved
+      versionId={versionId}
+      version={version.data?.version?.version}
+      fingerprint={fill}
+    />
   );
 }
 

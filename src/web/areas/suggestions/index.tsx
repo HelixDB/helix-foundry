@@ -2,14 +2,16 @@
 // ontology and mappings lack (self-healing), the Review page's Ontology tab
 // (../reviews/page.tsx, /ontology/:ontologyId/review?tab=ontology). Each
 // suggestion shows its kind, its support, examples and what it proposes; a
-// manager may dismiss one, or open Generate to add a link for a relationship
-// no link covers. Nothing here changes the ontology. Where
-// foundry.heal.enabled is off, the page has no Ontology tab.
+// manager may dismiss one, or add a link for a relationship no link covers:
+// in place (the current version's Edit tab saves a version with the link,
+// and making it current moves the current load to it, ./add-link.ts), or by
+// drafting with the agent (Generate). Where foundry.heal.enabled is off, the
+// page has no Ontology tab.
 import "./suggestions.css";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lightbulb, Sparkles } from "lucide-react";
+import { Lightbulb, Link2, Sparkles } from "lucide-react";
 import type { ListHealFindingsResponse } from "../../../shared/wfe";
 import {
   Button,
@@ -23,7 +25,9 @@ import {
 import { paths } from "../../paths";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import { documentSetQueries } from "../documents/documents-api";
+import { setCurrentVersion } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
+import { stateText } from "./add-link";
 import { dismissSuggestion, suggestionQueries } from "./api";
 import {
   auditPending,
@@ -41,6 +45,9 @@ const UNDO_MS = 5000;
 // How often the page asks again while the current load isn't audited
 // whole, or an audit of it runs.
 const POLL_MS = 15_000;
+// How often it asks while the current load moves to a version: a move
+// asks no model, so it ends in seconds.
+const MOVE_POLL_MS = 2_000;
 
 // The dismissal behind the Undo toast: its finding, and the timer that
 // sends it.
@@ -55,9 +62,14 @@ export function OntologySuggestions() {
   const list = useQuery({
       ...suggestionQueries.list(ws, o),
       // Until the current load's audit completes, its suggestions are on
-      // their way.
+      // their way; while a load moves to a version that adds a link, its
+      // card says when it has.
       refetchInterval: (q) =>
-        auditPending(q.state.data, current) ? POLL_MS : false,
+        auditPending(q.state.data, current)
+          ? POLL_MS
+          : q.state.data?.findings?.some((f) => f.state?.moving)
+            ? MOVE_POLL_MS
+            : false,
     }),
     sets = useQuery(documentSetQueries.list(ws));
   // The card a dismissal, its undo or its failure moves focus to: a
@@ -221,9 +233,31 @@ function SuggestionCard({
   another: boolean;
   onDismiss: (fingerprint: string) => void;
 }) {
-  const { role } = useWorkspace(),
-    { id: o } = useOntology();
-  const [all, setAll] = useState(false);
+  const { id: ws, role, notify } = useWorkspace(),
+    { id: o, ontology } = useOntology();
+  const qc = useQueryClient(),
+    navigate = useNavigate();
+  const [all, setAll] = useState(false),
+    [pending, setPending] = useState(false);
+  const state = s.state,
+    open = !state || state.kind === "open",
+    line = state && stateText(state);
+  // Covered: make the version that adds the link current, moving the load.
+  const makeCurrent = async (versionId: string) => {
+    setPending(true);
+    try {
+      await setCurrentVersion(ws, o, {
+        versionId,
+        expectedCurrentVersionId: ontology.currentVersionId || "",
+        fillFinding: s.fingerprint,
+      });
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      setPending(false);
+      void qc.invalidateQueries({ queryKey: [ws, "ontology", o] });
+    }
+  };
   const examples = all ? s.examples : s.examples.slice(0, SHOWN_EXAMPLES);
   // Its buttons are named Add this link and Dismiss alone, described by the
   // card's title: an accessible name may reach analytics, and the title
@@ -238,15 +272,52 @@ function SuggestionCard({
       actions={
         manager && (
           <>
-            {s.goal && (
+            {open && s.addLink && ontology.currentVersionId && (
               <ButtonLink
                 size="sm"
-                icon={Sparkles}
-                to={paths.generate(o, { goal: s.goal })}
+                icon={Link2}
+                to={paths.addLink(o, ontology.currentVersionId, {
+                  fingerprint: s.fingerprint,
+                  ...s.addLink,
+                })}
                 aria-describedby={titleId}
               >
                 Add this link
               </ButtonLink>
+            )}
+            {open && s.goal && (
+              <ButtonLink
+                size="sm"
+                variant={s.addLink ? "ghost" : undefined}
+                icon={Sparkles}
+                to={paths.generate(o, { goal: s.goal })}
+                aria-describedby={titleId}
+              >
+                {s.addLink ? "Draft with the agent" : "Add this link"}
+              </ButtonLink>
+            )}
+            {state?.kind === "covered" && state.versionId && (
+              <Button
+                size="sm"
+                pending={pending}
+                onClick={() => void makeCurrent(state.versionId)}
+                aria-describedby={titleId}
+              >
+                Make it current
+              </Button>
+            )}
+            {state?.kind === "needs_load" && state.versionId && (
+              <Button
+                size="sm"
+                onClick={() =>
+                  navigate(paths.version(o, state.versionId), {
+                    state: { openLoad: true },
+                  })
+                }
+                aria-describedby={titleId}
+              >
+                Start a new load
+              </Button>
             )}
             <Button
               size="sm"
@@ -272,7 +343,12 @@ function SuggestionCard({
           </span>
         </p>
         {s.proposal && <p>Suggested: {s.proposal}</p>}
-        {manager && s.goal && s.support > 0 && (
+        {line && (
+          <p role="status" className="sg-state">
+            {line}
+          </p>
+        )}
+        {manager && open && s.goal && s.support > 0 && (
           // Support is the reviews behind it: each a claim a document
           // states that no link let a load store.
           <p>

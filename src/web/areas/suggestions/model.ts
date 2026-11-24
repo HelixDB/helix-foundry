@@ -11,6 +11,7 @@ import type {
 } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
 import { MAX_GOAL } from "../ontology/model";
+import { cardState, type CardState } from "./add-link";
 
 /** One review behind a finding: its document and the text it is about. */
 export type SuggestionExample = { docId: string; quote: string };
@@ -41,6 +42,13 @@ export type Suggestion = {
   // The load its support was counted over: another than the current one
   // until the current load is audited.
   loadId: string;
+  // Add this link in place (contract 4.32.0): the link it adds, its set and
+  // the description it starts from; none where the finding gathers under a
+  // link the version has (a description draft), or names no relationship.
+  addLink?: { link: string; setId: string; describe: string };
+  // Where that stands in the current load; none from a backend that says
+  // nothing of it.
+  state?: CardState;
 };
 
 const KIND_LABELS: Record<string, string> = {
@@ -230,6 +238,15 @@ export function suggestion(
     examples,
     spellings,
     proposal,
+    addLink:
+      canonical && text(signal.set) && addsInPlace(record.proposal)
+        ? {
+            link: canonical,
+            setId: text(signal.set),
+            describe: linkDescription(canonical, examples[0]?.quote),
+          }
+        : undefined,
+    state: cardState(f.state),
     goal: canonical
       ? linkGoal({
           canonical,
@@ -240,6 +257,39 @@ export function suggestion(
         })
       : undefined,
   };
+}
+
+/**
+ * Whether a finding's link is added in place: it proposes nothing, or a new
+ * link. One that gathers under a link the version has (a route proposal, a
+ * description draft) is a change to that link, which Generate drafts.
+ */
+const addsInPlace = (p: unknown) =>
+  !isRecord(p) ||
+  (text(p.proposal) === "draft" &&
+    isRecord(p.brief) &&
+    text(p.brief.brief) === "link");
+
+// The most characters of a quote a link's description starts from.
+const DESCRIPTION_QUOTE = 160;
+
+/**
+ * The description an added link starts from: its name in words, and the
+ * first quote that states it, whitespace collapsed and cut short.
+ *
+ * @example
+ * linkDescription("ceo_of", "Ada runs Acme."); // "Ceo of, as documents state it: “Ada runs Acme.”"
+ */
+export function linkDescription(canonical: string, quote?: string): string {
+  const name = words(canonical);
+  const head = name.charAt(0).toUpperCase() + name.slice(1);
+  const q = (quote || "").replace(/\s+/g, " ").trim();
+  if (!q) return `${head}, as documents state it.`;
+  const cut =
+    [...q].length > DESCRIPTION_QUOTE
+      ? `${[...q].slice(0, DESCRIPTION_QUOTE - 1).join("")}…`
+      : q;
+  return `${head}, as documents state it: ${quoted(cut)}`;
 }
 
 // How many of a suggestion's quotes its goal gives.

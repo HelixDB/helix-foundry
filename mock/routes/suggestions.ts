@@ -20,6 +20,12 @@ import { isScope, ontologyOf } from "./ontologies";
 // so it proposes nothing), a name that resolved to no one, and rows that
 // didn't load.
 //
+// A finding's Add this link makes a version current with its fingerprint
+// (fillFinding, ./ontology.ts's set-current): the current load moves to it,
+// shown moving the first time the list is read and moved after, unless
+// `healMove: "needs_load"`, which the version then needs. Each relationship
+// no link covers carries a state; the others none.
+//
 // Knobs, through POST /__mock/config: `healEnabled: false` (a Foundry
 // whose foundry.heal.enabled is off: no audit runs), `healRun: "running" |
 // "failed" | "incomplete"` (the current load's audit, from then on, hasn't
@@ -30,6 +36,7 @@ import { isScope, ontologyOf } from "./ontologies";
 // report kept no rows, so the complete audit didn't check them).
 type Knobs = {
   healEnabled?: boolean;
+  healMove?: "needs_load";
   // null clears it: the current load's audit completes when next asked.
   healRun?: "running" | "failed" | "incomplete" | null;
   healDismiss?: "superseded" | "fails";
@@ -37,11 +44,51 @@ type Knobs = {
 };
 const knobs = config as typeof config & Knobs;
 onReset(() => {
+  delete knobs.healMove;
+  fills.clear();
   delete knobs.healEnabled;
   delete knobs.healRun;
   delete knobs.healDismiss;
   delete knobs.healRowsMeasured;
 });
+
+// A finding's move, by ontology and fingerprint: the version it moves the
+// current load to, and how often the list has shown it.
+type Fill = { versionId: string; version: number; shown: number };
+const fills = new Map<string, Fill>();
+
+/** Records a finding's Add this link: the current load moves to the version. */
+export function fillFinding(
+  ontologyId: string,
+  fingerprint: string,
+  versionId: string,
+  version: number,
+) {
+  fills.set(`${ontologyId}/${fingerprint}`, { versionId, version, shown: 0 });
+}
+
+/** A listed finding's state: its move, else open for a relationship no link covers. */
+function stateOf(ontologyId: string, f: FoundryHealFinding): FoundryHealFinding {
+  if (f.kind !== "unmatched") return f;
+  const fill = fills.get(`${ontologyId}/${f.fingerprint}`);
+  if (!fill) return { ...f, state: { open: {} } };
+  const version = { versionId: fill.versionId, version: String(fill.version) };
+  if (knobs.healMove === "needs_load")
+    return {
+      ...f,
+      state: {
+        needsLoad: {
+          ...version,
+          why: [{ kind: "type_added", item: "types.Deal" }],
+        },
+      },
+    };
+  fill.shown++;
+  if (fill.shown === 1) return { ...f, state: { moving: version } };
+  const canonical = (JSON.parse(f.findingJson) as { signal: { canonical: string } })
+    .signal.canonical;
+  return { ...f, state: { moved: { ...version, linksAdded: [canonical] } } };
+}
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const SHOWN = 20;
@@ -279,7 +326,7 @@ export const suggestionRoutes: MockRoute[] = [
       };
       return ok({
         enabled,
-        findings: open,
+        findings: open.map((f) => stateOf(s.o.id, f)),
         lastRun: held || complete,
         lastCompleteRun: complete,
       } satisfies ListHealFindingsResponse);

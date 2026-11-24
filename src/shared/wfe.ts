@@ -1280,6 +1280,10 @@ export type SetCurrentOntologyVersionRequest = {
   versionId: string;
   // The version the caller saw as current; empty for none.
   expectedCurrentVersionId?: string;
+  // A self-healing finding's fingerprint, from its card's Add this link:
+  // the current load then moves in place to the version, when the version
+  // only adds what none of its documents was asked (contract 4.32.0).
+  fillFinding?: string;
 };
 
 /** v1OntologyGenerationStatus */
@@ -4914,6 +4918,25 @@ export type FoundryHealFinding = {
   findingJson: string;
   dismissedByUserId?: string;
   supportAtDismissal?: string;
+  // Where its Add this link stands in the current load; unset for a finding
+  // that names no relationship to add.
+  state?: FoundryHealFindingState;
+};
+/** v1FoundryHealVersion: a version, by id and number (int64 as a string). */
+export type FoundryHealVersion = { versionId?: string; version?: string };
+/** v1FoundryFoldWhy: what needs a new load, as the engine or Foundry says it. */
+export type FoundryFoldWhy = { kind?: string; item?: string };
+/**
+ * v1FoundryHealFindingState: one of open (nothing done), covered (a version
+ * adds the link and isn't current), moving (the current load moves to it),
+ * moved (it did, gaining linksAdded) and needsLoad (it can't, for why).
+ */
+export type FoundryHealFindingState = {
+  open?: Record<string, never>;
+  covered?: FoundryHealVersion;
+  moving?: FoundryHealVersion;
+  moved?: FoundryHealVersion & { linksAdded?: string[] };
+  needsLoad?: FoundryHealVersion & { why?: FoundryFoldWhy[] };
 };
 /** v1FoundryHealRun: one audit of a load. */
 export type FoundryHealRun = {

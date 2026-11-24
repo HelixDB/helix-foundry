@@ -42,6 +42,23 @@ export const ontologyPaths = {
     if (item) q.set("item", item);
     return at(ontologyId) + "/versions/" + enc(id) + (q.size ? "?" + q : "");
   },
+  // A version's Edit tab with a finding's Add this link open: its
+  // fingerprint, the link to add, the set whose documents state it, and the
+  // words to describe it with.
+  addLink: (
+    ontologyId: string,
+    versionId: string,
+    add: { fingerprint: string; link: string; setId: string; describe: string },
+  ) => {
+    const q = new URLSearchParams({
+      tab: "edit",
+      fill: add.fingerprint,
+      link: add.link,
+      set: add.setId,
+      describe: add.describe,
+    });
+    return at(ontologyId) + "/versions/" + enc(versionId) + "?" + q;
+  },
   // A generation: a draft's progress, or why it failed. Its list is the
   // versions' section.
   generation: (ontologyId: string, id: string) =>

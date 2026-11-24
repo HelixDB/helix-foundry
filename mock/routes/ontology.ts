@@ -108,6 +108,7 @@ import {
 import { aiModel, aiRefusal, draftFailure } from "./ai";
 import { currentLoadVersionId, liveJob, queueLoad } from "./loads";
 import { comparableSchema, reviseDefinition } from "./ontology-revise";
+import { fillFinding } from "./suggestions";
 import { checkAnswers, type CheckedAnswer } from "../agent-questions";
 import {
   ENGINE_QUESTIONS,
@@ -1103,6 +1104,9 @@ export const ontologyRoutes: MockRoute[] = [
         );
       state.current.set(scope.o.id, v.id);
       pruneDecisions(scope.o.id, v);
+      // A finding's Add this link: the current load moves to the version.
+      if (body.fillFinding)
+        fillFinding(scope.o.id, body.fillFinding, v.id, v.version || 0);
       return ok({ version: full(v) } satisfies OntologyVersionResponse);
     },
   },
