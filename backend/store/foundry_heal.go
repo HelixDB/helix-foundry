@@ -60,6 +60,18 @@ WHERE ontology_id=? AND fingerprint=?`, ontologyID, fingerprint))
 func (s *mysqlDB) DismissFoundryHealFinding(ctx context.Context, ontologyID, fingerprint, userID string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		// Under the ontology's lock, as a fill starts (StartFoundryFill): one
+		// starting now is seen, and stopped, here.
+		var workspaceID string
+		if err := tx.db.QueryRowContext(ctx, `SELECT workspace_id FROM foundry_ontologies WHERE id=?`, ontologyID).Scan(&workspaceID); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.lockFoundryOntology(ctx, workspaceID, ontologyID); err != nil {
+			return err
+		}
 		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_heal_findings SET status='dismissed', dismissed_by=?, support_at_dismissal=support
 WHERE ontology_id=? AND fingerprint=? AND status='open'`, userID, ontologyID, fingerprint); err != nil {
 			return err
@@ -83,11 +95,11 @@ WHERE ontology_id=? AND fingerprint=? AND status='open'`, userID, ontologyID, fi
 			return err
 		}
 		for _, id := range loads {
-			if err := tx.stopFoundryFill(ctx, id, model.FoundryFillDismissed, ""); err != nil {
+			if err := tx.stopFoundryFill(ctx, id, "", model.FoundryFillDismissed, ""); err != nil {
 				return err
 			}
 		}
-		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?, paused_until=NULL
 WHERE ontology_id=? AND fingerprint=? AND state='moved'`, model.FoundryFillDismissed, ontologyID, fingerprint)
 		return err
 	})

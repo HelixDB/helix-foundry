@@ -1371,5 +1371,23 @@ func TestResendMovesTheLoadInPlace(t *testing.T) {
 		if len(h.store.moves) != 0 {
 			t.Fatalf("recorded %+v", h.store.moves)
 		}
+		// It sent the move: its failure is the move's.
+		if !outcome.MoveSent {
+			t.Fatal("the outcome doesn't say the move was sent")
+		}
+	})
+	// A job that ends before it reaches a move, or owes none, didn't send
+	// one: its failure is no move's.
+	t.Run("a job that sent no move", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a")
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA)}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{`{"event":"extract_finished"}`}, `{"status":"store_failed","error":"x"}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || outcome.MoveSent {
+			t.Fatalf("%+v", outcome)
+		}
 	})
 }

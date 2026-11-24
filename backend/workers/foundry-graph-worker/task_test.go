@@ -320,7 +320,11 @@ type memStore struct {
 	// fillEnded what jobs recorded of each document they sent it; fillStop
 	// and fillPause what they stopped or paused it for, fillSpend the
 	// ontology's fills' spend today.
-	fill      *model.FoundryHealFill
+	fill *model.FoundryHealFill
+	// fillNext, when set, replaces fill from its second read on: another
+	// fill of the load applying while a job runs. fillReads counts them.
+	fillNext  *model.FoundryHealFill
+	fillReads int
 	links     []*model.FoundryLoadResend
 	fillEnded []model.FoundryFillDocument
 	// fillSpent is what documents whose fill ended in no word spent.
@@ -670,6 +674,10 @@ func (s *memStore) FoundryAskedApart(_ context.Context, loadID string) ([]string
 func (s *memStore) FoundryFillApplying(context.Context, string) (*model.FoundryHealFill, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fillReads++
+	if s.fillReads > 1 && s.fillNext != nil {
+		s.fill, s.fillNext = s.fillNext, nil
+	}
 	if s.fill == nil || s.fill.State != model.FoundryFillApplying {
 		return nil, nil
 	}
@@ -712,21 +720,27 @@ func (s *memStore) SpendFoundryFillDocument(_ context.Context, _, _ string, d mo
 	return nil
 }
 
-func (s *memStore) EndFoundryFillDocument(ctx context.Context, jobID, workerID, docID string, requests int, reason string) error {
-	return s.RecordFoundryFillDocument(ctx, jobID, workerID, model.FoundryFillDocument{DocumentID: docID, Requests: requests,
+func (s *memStore) EndFoundryFillDocument(ctx context.Context, jobID, workerID, fillID, docID string, requests int, reason string) error {
+	return s.RecordFoundryFillDocument(ctx, jobID, workerID, model.FoundryFillDocument{FillID: fillID, DocumentID: docID, Requests: requests,
 		Outcome: "refused", Reason: reason})
 }
 
-func (s *memStore) StopFoundryFill(_ context.Context, _, _, _, reason string) error {
+func (s *memStore) StopFoundryFill(_ context.Context, _, _, _, fillID, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.fill.ID != fillID {
+		return nil
+	}
 	s.fillStop, s.fill.State, s.links = reason, model.FoundryFillStopped, nil
 	return nil
 }
 
-func (s *memStore) PauseFoundryFill(_ context.Context, _, _, _ string, until time.Time) error {
+func (s *memStore) PauseFoundryFill(_ context.Context, _, _, _, fillID string, until time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.fill.ID != fillID {
+		return nil
+	}
 	s.fillPause, s.fill.PausedUntil = &until, &until
 	return nil
 }

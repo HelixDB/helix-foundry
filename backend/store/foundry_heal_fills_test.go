@@ -179,6 +179,16 @@ func (f resendFixture) press(t *testing.T, tag, version string, expected *string
 		&model.FoundryGraphJob{ID: id26("RS-" + tag)})
 }
 
+// moveFailed ends job failed, having sent its load's move
+// (FoundryGraphJobOutcome.MoveSent), naming what it may queue after by tag.
+func (f resendFixture) moveFailed(t *testing.T, job *model.FoundryGraphJob, tag string) {
+	t.Helper()
+	_, err := f.db.FinishFoundryGraphJob(context.Background(), job.ID, f.worker, model.FoundryGraphJobOutcome{
+		Status: model.FoundryGraphJobFailed, Next: next(tag), MoveSent: true,
+	})
+	require.NoError(t, err)
+}
+
 // moveOwed counts the load's owed move requests.
 func (f resendFixture) moveOwed(t *testing.T) int {
 	t.Helper()
@@ -241,6 +251,28 @@ func TestFoundryLoadMovesInPlaceForAFinding(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, again)
 	assert.Zero(t, f.moveOwed(t))
+	// Another finding of the link the move added, pressed at the version the
+	// load is at now: it joins the move, moved, for the heal worker to fill.
+	finding := func(tag, canonical string) string {
+		_, err := testDB.Exec(`INSERT INTO foundry_heal_findings (ontology_id, fingerprint, kind, status, base_version_id, load_id, finding, support, sources)
+VALUES (?, ?, 'unmatched', 'open', ?, ?, ?, 3, 3)`, f.ontology.ID, fingerprint(tag), to.ID, f.load,
+			`{"signal":{"kind":"unmatched","canonical":"`+canonical+`","spellings":["`+canonical+`"],"set":"set_1"}}`)
+		require.NoError(t, err)
+		return fingerprint(tag)
+	}
+	joined, err := f.press(t, "2b", to.ID, &to.ID, finding("MOVEJ", "ceo_of"))
+	require.NoError(t, err)
+	require.NotNil(t, joined)
+	assert.Equal(t, model.FoundryFillMoved, joined.State)
+	assert.Equal(t, []string{"ceo_of"}, joined.LinksAdded)
+	assert.Equal(t, from, joined.FromVersionID)
+	assert.Equal(t, to.ID, joined.ToVersionID)
+	assert.Zero(t, f.moveOwed(t), "nothing moves")
+	// One whose link no move of the load added: its documents were asked it.
+	_, err = f.press(t, "2c", to.ID, &to.ID, finding("MOVEN", "owns"))
+	var refused *store.FillRefusal
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Why, "asked it")
 	// A second move along the chain asks both links apart.
 	next := f.draftVersion(t, "MOVE-3", customerTOML)
 	f.generated(t, next.ID, "customers")
@@ -327,15 +359,25 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	f.generated(t, other.ID, "customers")
 	_, err := f.press(t, "1", to.ID, f.ontologyNow(t).CurrentVersionID, fingerprint("MOVEF"))
 	require.NoError(t, err)
+	// A job that failed before it sent the move counts nothing against it.
 	job := f.claim(t)
-	f.end(t, job, "failed", model.FoundryGraphJobFailed)
+	f.end(t, job, "failed-first", model.FoundryGraphJobFailed)
+	got := f.fill(t, "MOVEF")
+	assert.Zero(t, got.Failures)
+	assert.Nil(t, got.PausedUntil)
+	queued, err := f.db.ResumeFoundryFill(ctx, got, f.ontology.WorkspaceID, &model.FoundryGraphJob{ID: id26("RS-MOVEF1")})
+	require.NoError(t, err)
+	require.True(t, queued)
+	job = f.claim(t)
+	f.moveFailed(t, job, "failed")
 	assert.Equal(t, 1, f.moveOwed(t))
 	assert.Nil(t, f.liveJob(t), "a failed move doesn't follow itself")
+	// It backs off, then the heal worker sends it again: never stuck moving.
+	// Meanwhile no job sends it.
 	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
 	require.NoError(t, err)
-	require.NotNil(t, owed)
-	// It backs off, then the heal worker sends it again: never stuck moving.
-	got := f.fill(t, "MOVEF")
+	assert.Nil(t, owed, "backing off: no job meets it")
+	got = f.fill(t, "MOVEF")
 	require.NotNil(t, got.PausedUntil)
 	assert.WithinDuration(t, time.Now().Add(model.FoundryFillBackoff[0]), *got.PausedUntil, time.Minute)
 	f.finding(t, "MOVEF")
@@ -346,14 +388,17 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	resume, listed := f.dueLoads(t)[f.load]
 	require.True(t, listed)
 	require.True(t, resume)
+	owed, err = f.db.FoundryLoadMoveOwed(ctx, f.load)
+	require.NoError(t, err)
+	require.NotNil(t, owed)
 	due, err := f.db.DueFoundryHealFills(ctx, 10)
 	require.NoError(t, err)
-	queued, err := f.db.ResumeFoundryFill(ctx, due[0].Fill, f.ontology.WorkspaceID, &model.FoundryGraphJob{ID: id26("RS-MOVEF2")})
+	queued, err = f.db.ResumeFoundryFill(ctx, due[0].Fill, f.ontology.WorkspaceID, &model.FoundryGraphJob{ID: id26("RS-MOVEF2")})
 	require.NoError(t, err)
 	require.True(t, queued)
 	retry := f.claim(t)
-	f.end(t, retry, "failed-again", model.FoundryGraphJobFailed)
-	assert.Equal(t, 2, f.fill(t, "MOVEF").Failures, "each attempt counts toward the give-up")
+	f.moveFailed(t, retry, "failed-again")
+	assert.Equal(t, 2, f.fill(t, "MOVEF").Failures, "each attempt that sent it counts toward the give-up")
 	// The marker may be ahead now: no press rewrites the versions, of this
 	// finding or another.
 	for _, fp := range []string{fingerprint("MOVEF"), fingerprint("OTHER")} {
@@ -366,6 +411,23 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, to.ID, fills[fingerprint("MOVEF")].ToVersionID)
 	assert.Equal(t, to.ID, *f.ontologyNow(t).CurrentVersionID, "a refused press changes nothing")
+	// Moved at last: its failures and backoff were the move's, so its
+	// collect starts with none.
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET paused_until=NOW(6) - INTERVAL 1 SECOND WHERE load_id=?`, f.load)
+	require.NoError(t, err)
+	queued, err = f.db.ResumeFoundryFill(ctx, f.fill(t, "MOVEF"), f.ontology.WorkspaceID, &model.FoundryGraphJob{ID: id26("RS-MOVEF3")})
+	require.NoError(t, err)
+	require.True(t, queued)
+	last := f.claim(t)
+	owed, err = f.db.FoundryLoadMoveOwed(ctx, f.load)
+	require.NoError(t, err)
+	require.NotNil(t, owed)
+	require.NoError(t, f.db.RecordFoundryLoadMove(ctx, last.ID, f.worker, owed,
+		model.FoundryFoldOutcome{State: model.FoundryFillMoved, LinksAdded: []string{"ceo_of"}}))
+	got = f.fill(t, "MOVEF")
+	assert.Equal(t, model.FoundryFillMoved, got.State)
+	assert.Zero(t, got.Failures)
+	assert.Nil(t, got.PausedUntil)
 }
 
 // Past three failed jobs a move is given up as needing a load, its error kept
@@ -387,7 +449,7 @@ func TestFoundryLoadMoveGivenUpThenRepaired(t *testing.T) {
 	// Two bytes a character, cut at byte 200 lands between them unless cut on an edge.
 	said := "x" + strings.Repeat("é", 150)
 	_, err = f.db.FinishFoundryGraphJob(ctx, job.ID, f.worker, model.FoundryGraphJobOutcome{
-		Status: model.FoundryGraphJobFailed, Error: said, Next: next("given-up"),
+		Status: model.FoundryGraphJobFailed, Error: said, Next: next("given-up"), MoveSent: true,
 	})
 	require.NoError(t, err)
 	assert.Zero(t, f.moveOwed(t))

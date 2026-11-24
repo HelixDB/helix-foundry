@@ -51,7 +51,7 @@ const FoundryResendMove FoundryResendReason = "move"
 // place (foundry_heal_fills, contract 4.33.0): the heal worker owes it, and a
 // resend job sends it, with its saved work and the links to fill, under the
 // fill's budget. It counts as owed only while its load's fill applies and
-// isn't paused (store.foundryLinkLive), so a paused fill queues no job; a
+// isn't paused (store.foundryResendLive), so a paused fill queues no job; a
 // failed job leaves it owed and backs the fill off; a fill that stops ends
 // it.
 const FoundryResendLink FoundryResendReason = "link"

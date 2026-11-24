@@ -455,7 +455,8 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, jobID 
 // internal error is Helix's bug: it is logged as an error, for on-call, and
 // gets ontologyagent.InternalAttempts attempts at most.
 func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attempt, err error, stopping bool) model.FoundryGraphJobOutcome {
-	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress, ReindexReviews: a.reindexReviews()}
+	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress, ReindexReviews: a.reindexReviews(),
+		MoveSent: a.moveSent}
 	if err == nil {
 		outcome.Status = model.FoundryGraphJobSucceeded
 		return outcome
