@@ -53,7 +53,9 @@ func TestAuditRequestContract(t *testing.T) {
 	withRows := base
 	withRows.DocIDs = []string{}
 	withRows.Rows = &AuditRows{RowErrors: []AuditMappingErrors{{Mapping: "people", Count: 2, Examples: []string{"row 4"}}}, SourceDrift: []AuditMappingDrift{}}
-	for name, req := range map[string]AuditRequest{"a page": base, "rows alone": withRows} {
+	fill := base
+	fill.DocumentsFor = []AuditDocumentsFor{{Set: "set_1", Spellings: []string{"mentors", "mentor_of"}}}
+	for name, req := range map[string]AuditRequest{"a page": base, "rows alone": withRows, "a fill's documents": fill} {
 		body, err := json.Marshal(req)
 		if err != nil {
 			t.Fatal(err)
@@ -428,5 +430,27 @@ func TestIngestRowErrors(t *testing.T) {
 		if rows := IngestRowErrors(json.RawMessage(raw)); rows != nil {
 			t.Fatalf("%s: rows %+v, want unmeasured", name, rows)
 		}
+	}
+}
+
+// A page's documents of a finding (contract 4.33.0), in the request's order;
+// none from a result that lists none.
+func TestDecodeAuditDocumentsOf(t *testing.T) {
+	done := `{"outcome":"done","findings":[],"mined":{"mined":"complete"},"rows":"unmeasured","documents":2,"unread":0,` +
+		`"new_link_support":{"docs":7,"quotes":7}`
+	if err := contracttest.Validate(t, contracttest.Schema(t, "audit_result.json"),
+		[]byte(done+`,"documents_of":[{"set":"set_1","doc_ids":["d1","d2"]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	r, err := DecodeAuditResult([]byte(done + `,"documents_of":[{"set":"set_1","doc_ids":["d1","d2"]},{"set":"set_2","doc_ids":[]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.DocumentsOf) != 2 || !slices.Equal(r.DocumentsOf[0], []string{"d1", "d2"}) || len(r.DocumentsOf[1]) != 0 {
+		t.Fatalf("documents of %v", r.DocumentsOf)
+	}
+	r, err = DecodeAuditResult([]byte(done + `}`))
+	if err != nil || r.DocumentsOf != nil {
+		t.Fatalf("%v %v", r.DocumentsOf, err)
 	}
 }

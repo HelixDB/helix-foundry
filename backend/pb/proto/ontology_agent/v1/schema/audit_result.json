@@ -13,6 +13,13 @@
           "format": "uint",
           "minimum": 0
         },
+        "documents_of": {
+          "description": "The page's documents of each of the request's `documents_for`, in its order: none\nwhen a page is cut short.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DocumentsOf"
+          }
+        },
         "findings": {
           "description": "Each signal the page's reviews give, by kind then target, with what it proposes.",
           "type": "array",
@@ -556,6 +563,27 @@
             "user_id"
           ]
         }
+      ]
+    },
+    "DocumentsOf": {
+      "description": "The documents of a page with a review of a relationship no link covers\n([`AuditRequest::documents_for`]).",
+      "type": "object",
+      "properties": {
+        "doc_ids": {
+          "description": "Each once, sorted.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "description": "Its set.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "set",
+        "doc_ids"
       ]
     },
     "Drift": {

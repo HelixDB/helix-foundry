@@ -11650,6 +11650,66 @@
         }
       }
     },
+    "v1FoundryHealFill": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        },
+        "linksAdded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The links the load gained, which the documents are asked."
+        },
+        "docsOwed": {
+          "type": "string",
+          "format": "int64",
+          "description": "The documents owed a fill, those of them done (written, nothing to\nwrite, already stating the link, or refused), and those past the most\none fill takes, which a load in full asks."
+        },
+        "docsDone": {
+          "type": "string",
+          "format": "int64"
+        },
+        "docsLeft": {
+          "type": "string",
+          "format": "int64"
+        },
+        "reviewsResolved": {
+          "type": "string",
+          "format": "int64",
+          "description": "What the fill did: reviews of the relationship that went, and facts of\nthe link added."
+        },
+        "factsAdded": {
+          "type": "string",
+          "format": "int64"
+        },
+        "spentUsd": {
+          "type": "number",
+          "format": "double",
+          "description": "What it spent of what it may spend, in US dollars."
+        },
+        "capUsd": {
+          "type": "number",
+          "format": "double"
+        },
+        "pausedUntil": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a paused fill resumes: the ontology's fills spent the day's cap,\nthe workspace its month's, or a job failed and the fill backs off."
+        },
+        "stopReason": {
+          "type": "string",
+          "description": "stopped's reason: cap_reached, model_unavailable, dismissed or\nload_replaced."
+        }
+      },
+      "description": "FoundryHealFill is a fill of the documents behind a finding's reviews\nwith the link the load gained by its move in place."
+    },
     "v1FoundryHealFinding": {
       "type": "object",
       "properties": {
@@ -11730,6 +11790,18 @@
         "needsLoad": {
           "$ref": "#/definitions/v1FoundryHealNeedsLoad",
           "description": "The load can't move: a new load of the version is needed, for why."
+        },
+        "applying": {
+          "$ref": "#/definitions/v1FoundryHealFill",
+          "description": "The load moved, and the documents behind the finding's reviews are\nbeing filled with the link it gained, each as a later transaction of\nthat document alone (contract 4.33.0)."
+        },
+        "fixed": {
+          "$ref": "#/definitions/v1FoundryHealFill",
+          "description": "The fill is done: reviews_resolved reviews went, facts_added facts\nwere added, in the current load."
+        },
+        "stopped": {
+          "$ref": "#/definitions/v1FoundryHealFill",
+          "description": "The fill stopped before its documents were done, for stop_reason."
         }
       },
       "description": "FoundryHealFindingState is where a finding's \"Add this link\" stands in\nthe ontology's current load, derived from the finding and the load's\nmove for it; nothing stores it."

@@ -141,7 +141,8 @@ type AgentClient interface {
 	// document's commit or sweep page, and the errors of the request's models and key (see
 	// above). A request with `fold` moves the load in place to its version first, when the change
 	// only adds (a `fold` event says what came of it); `asked_apart` asks a moved load's new
-	// links in calls of their own.
+	// links in calls of their own, and a document's `fill` fills one the load holds with them,
+	// as a later transaction of it (a `filled` event says what came of it).
 	Extract(ctx context.Context, in *ExtractRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExtractEvent], error)
 	// Removes one load from a graph: its edges, then its nodes, `batch` per request, then its
 	// marker. Deleting the load's nodes also deletes every edge attached to them, edges the
@@ -591,7 +592,8 @@ type AgentServer interface {
 	// document's commit or sweep page, and the errors of the request's models and key (see
 	// above). A request with `fold` moves the load in place to its version first, when the change
 	// only adds (a `fold` event says what came of it); `asked_apart` asks a moved load's new
-	// links in calls of their own.
+	// links in calls of their own, and a document's `fill` fills one the load holds with them,
+	// as a later transaction of it (a `filled` event says what came of it).
 	Extract(*ExtractRequest, grpc.ServerStreamingServer[ExtractEvent]) error
 	// Removes one load from a graph: its edges, then its nodes, `batch` per request, then its
 	// marker. Deleting the load's nodes also deletes every edge attached to them, edges the

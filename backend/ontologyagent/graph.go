@@ -2,6 +2,7 @@ package ontologyagent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -113,6 +114,11 @@ type ExtractDocument struct {
 	// request it finds in any of them and pays only for the rest, so a route
 	// edit re-pays only the calls it changes. Never nil.
 	Artifacts []string `json:"artifacts"`
+	// Fill are links of the request's AskedApart to fill a document the load
+	// holds with (contract 4.33.0): its saved work replays with them asked
+	// apart, and what they state is written as a later transaction of the
+	// document. A "filled" event says what came of it (FilledEvent).
+	Fill []string `json:"fill,omitempty"`
 }
 
 // ExtractLimits are the hard caps on one Extract.
@@ -177,6 +183,53 @@ type FoldEvent struct {
 		Why        []model.FoundryFoldWhy `json:"why"`
 		Version    string                 `json:"version"`
 	} `json:"outcome"`
+}
+
+// FilledEvent is an Extract's "filled" event, just before the document's
+// "document" event (contract 4.33.0): what came of filling it with links its
+// commit wasn't asked. Facts, Held and ReviewsTaken are what the document
+// states of them, the same however often it is sent, so a caller counts them
+// once per owed document. A document with no such event needed a call the
+// budget refused, or its run stopped before its fill: it stays owed.
+type FilledEvent struct {
+	DocID   string   `json:"doc_id"`
+	Links   []string `json:"links"`
+	Outcome struct {
+		Kind   string `json:"kind"`
+		Reason string `json:"reason"`
+	} `json:"outcome"`
+	Facts        int64 `json:"facts"`
+	Held         int64 `json:"held"`
+	ReviewsTaken int64 `json:"reviews_taken"`
+}
+
+// The kinds of FilledEvent's outcome, and its refusal reasons.
+const (
+	FillWritten     = "written"
+	FillNothing     = "nothing"
+	FillNative      = "native"
+	FillRefused     = "refused"
+	FillNotReplayed = "not_replayed"
+)
+
+// DecodeFilledEvent reads a "filled" event, refusing one with no document
+// or an outcome it doesn't know.
+func DecodeFilledEvent(data []byte) (FilledEvent, error) {
+	var e FilledEvent
+	if err := json.Unmarshal(data, &e); err != nil {
+		return e, fmt.Errorf("read filled event: %w", err)
+	}
+	switch {
+	case e.DocID == "":
+		return e, errors.New("a filled event names no document")
+	case e.Outcome.Kind == FillRefused && e.Outcome.Reason == "":
+		return e, errors.New("a refused fill gives no reason")
+	case e.Outcome.Kind != FillWritten && e.Outcome.Kind != FillNothing && e.Outcome.Kind != FillNative && e.Outcome.Kind != FillRefused:
+		return e, fmt.Errorf("a filled event has outcome %q", e.Outcome.Kind)
+	case e.Facts < 0 || e.Held < 0 || e.ReviewsTaken < 0:
+		return e, errors.New("a filled event counts less than nothing")
+	}
+	return e, nil
 }
 
 // The kinds of FoldEvent's outcome.

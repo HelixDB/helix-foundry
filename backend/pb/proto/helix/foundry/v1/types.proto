@@ -2676,7 +2676,44 @@ message FoundryHealFindingState {
     FoundryHealMoved moved = 4;
     // The load can't move: a new load of the version is needed, for why.
     FoundryHealNeedsLoad needs_load = 5;
+    // The load moved, and the documents behind the finding's reviews are
+    // being filled with the link it gained, each as a later transaction of
+    // that document alone (contract 4.33.0).
+    FoundryHealFill applying = 6;
+    // The fill is done: reviews_resolved reviews went, facts_added facts
+    // were added, in the current load.
+    FoundryHealFill fixed = 7;
+    // The fill stopped before its documents were done, for stop_reason.
+    FoundryHealFill stopped = 8;
   }
+}
+
+// FoundryHealFill is a fill of the documents behind a finding's reviews
+// with the link the load gained by its move in place.
+message FoundryHealFill {
+  string version_id = 1;
+  int64 version = 2;
+  // The links the load gained, which the documents are asked.
+  repeated string links_added = 3;
+  // The documents owed a fill, those of them done (written, nothing to
+  // write, already stating the link, or refused), and those past the most
+  // one fill takes, which a load in full asks.
+  int64 docs_owed = 4;
+  int64 docs_done = 5;
+  int64 docs_left = 6;
+  // What the fill did: reviews of the relationship that went, and facts of
+  // the link added.
+  int64 reviews_resolved = 7;
+  int64 facts_added = 8;
+  // What it spent of what it may spend, in US dollars.
+  double spent_usd = 9;
+  double cap_usd = 10;
+  // When a paused fill resumes: the ontology's fills spent the day's cap,
+  // the workspace its month's, or a job failed and the fill backs off.
+  google.protobuf.Timestamp paused_until = 11;
+  // stopped's reason: cap_reached, model_unavailable, dismissed or
+  // load_replaced.
+  string stop_reason = 12;
 }
 
 message FoundryHealOpen {}

@@ -180,6 +180,58 @@
       ]
     },
     {
+      "description": "What came of filling a document with links its commit wasn't asked\n([`ExtractDocument::fill`]), just before its `document` event. Its numbers are what the\ndocument states of those links, whatever this run wrote of it, so a fill sent again,\nafter its first event was lost, says the same.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "filled"
+        },
+        "facts": {
+          "description": "Its facts of those links its work accepts.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "held": {
+          "description": "Its claims of those links held for a person.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "links": {
+          "description": "The links filled, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outcome": {
+          "description": "What came of it: `written`, `nothing` (the load holds it all already, or it states\nnothing of them), `native` (its commit was asked them) or refused and why.",
+          "$ref": "#/$defs/FillOutcome"
+        },
+        "reviews_taken": {
+          "description": "Its relationships reported as no link's that a stated fact of them covers: the\nreviews the fill takes, or took.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "doc_id",
+        "links",
+        "outcome",
+        "facts",
+        "held",
+        "reviews_taken"
+      ]
+    },
+    {
       "description": "The run ended; the result follows.",
       "type": "object",
       "properties": {
@@ -490,6 +542,87 @@
         "output_tokens",
         "replayed",
         "phases"
+      ]
+    },
+    "FillOutcome": {
+      "description": "How a fill ended ([`Filled`]).",
+      "oneOf": [
+        {
+          "description": "Written, in one transaction of its own (origin `fill`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "written"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The load holds all of it already, as after a fill sent again, or it states nothing of\nthe links.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "nothing"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Its commit was asked the links already: a document committed after the load moved, or\nin this run.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "native"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Nothing was written, for this reason.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "refused"
+            },
+            "reason": {
+              "$ref": "#/$defs/FillRefusal"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "FillRefusal": {
+      "description": "Why a fill wrote nothing ([`FillOutcome::Refused`]).",
+      "oneOf": [
+        {
+          "description": "No saved work of its text replays: its entity pass would be asked again, and could\ndiffer from what its commit wrote.",
+          "type": "string",
+          "const": "not_replayed"
+        },
+        {
+          "description": "What the load holds of its names isn't what its commit, replayed, gives: as after a\nchoice of a name changed since, or a row arrived that a name now reaches.",
+          "type": "string",
+          "const": "differs"
+        },
+        {
+          "description": "It holds more reviews than a read takes, or its write is more than one takes.",
+          "type": "string",
+          "const": "too_large"
+        }
       ]
     },
     "Folded": {
