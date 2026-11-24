@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -350,9 +351,10 @@ func TestAGranteesCallsRecordWhatTheyMayRead(t *testing.T) {
 
 // slackWorkspace is ws1 with a Slack connection (conn-slack) whose
 // Conversations set (set-conv) Eve is granted: #general (C1) and #leadership
-// (C2) are shared with her. load-general holds a day of #general, and
-// load-leadership a day of #leadership; q-general and q-leadership are
-// Analyst answers that read each.
+// (C2) are shared with her. load-general holds a day of #general,
+// load-leadership a day of #leadership, and load-both a day of each, as one
+// load of the whole set does; q-general and q-leadership are Analyst answers
+// that read each.
 func slackWorkspace(h *harness) {
 	h.backend.grantee = true
 	h.backend.items = []*foundryv1.FoundrySourceItem{{ConnectorId: "conn-slack", ItemKey: "C1"}, {ConnectorId: "conn-slack", ItemKey: "C2"}}
@@ -364,6 +366,7 @@ func slackWorkspace(h *harness) {
 	h.db.holdings = map[string]access.Holdings{
 		"load-general":    {Documents: []access.DocumentRef{day("doc-general", "C1")}},
 		"load-leadership": {Documents: []access.DocumentRef{day("doc-leadership", "C2")}},
+		"load-both":       {Documents: []access.DocumentRef{day("doc-general", "C1"), day("doc-leadership", "C2")}},
 	}
 	h.db.questions = map[string]*model.FoundryQuestion{
 		"q-general":    {ID: "q-general", OntologyID: ontology, SeenItems: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}}},
@@ -384,14 +387,24 @@ func TestAGranteesThreadHoldsTheChannelsItReadAlone(t *testing.T) {
 	general, leadership := access.ItemRef{ConnectorID: "conn-slack", Item: "C1"}, access.ItemRef{ConnectorID: "conn-slack", Item: "C2"}
 	// An ask's answer is the backend's question (setup).
 	ask := call("toolu_1", "helix_foundry_ask", `{"workspace_id":"ws1","ontology_id":"ont1","question":"What changed?"}`)
+	// A list's questions are the backend's (setup), their text with them.
+	list := call("toolu_1", "helix_foundry_list_questions", `{"workspace_id":"ws1","ontology_id":"ont1"}`)
 	for name, tc := range map[string]struct {
 		read  []llm.Chunk
 		setup func(h *harness)
 		holds []access.ItemRef
 	}{
-		"a read of #general":      {read: readLoad("load-general"), holds: []access.ItemRef{general}},
-		"a read of #leadership":   {read: readLoad("load-leadership"), holds: []access.ItemRef{leadership}},
-		"nothing item-bound read": {read: call("toolu_1", "helix_foundry_list_ontologies", `{"workspace_id":"ws1"}`)},
+		"a read of #general":       {read: readLoad("load-general"), holds: []access.ItemRef{general}},
+		"a read of #leadership":    {read: readLoad("load-leadership"), holds: []access.ItemRef{leadership}},
+		"a read of a load of both": {read: readLoad("load-both"), holds: []access.ItemRef{general, leadership}},
+		"a list of #general's questions": {read: list,
+			setup: func(h *harness) { h.backend.questions = []*foundryv1.FoundryQuestion{{Id: "q-general"}} }, holds: []access.ItemRef{general}},
+		"a list of both channels' questions": {read: list, holds: []access.ItemRef{general, leadership},
+			setup: func(h *harness) {
+				h.backend.questions = []*foundryv1.FoundryQuestion{{Id: "q-leadership"}, {Id: "q-general"}}
+			}},
+		"an empty list of questions": {read: list},
+		"nothing item-bound read":    {read: call("toolu_1", "helix_foundry_list_ontologies", `{"workspace_id":"ws1"}`)},
 		"an answer from #general": {read: ask, holds: []access.ItemRef{general},
 			setup: func(h *harness) { h.backend.question = &foundryv1.FoundryQuestion{Id: "q-general", Status: "answered"} }},
 		"an answer from #leadership": {read: ask, holds: []access.ItemRef{leadership},
@@ -469,6 +482,37 @@ func TestAGranteesCallRecordsTheChannelsAroundIt(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []access.ItemRef{leadership}, h.db.thread("thread1").Granted.Items)
 	})
+	// A sync trims the only day of #leadership out of the load while the
+	// read reads it: what the load held before the read is recorded too.
+	t.Run("a day trimmed out of the load during the read", func(t *testing.T) {
+		h := newHarness(t, readLoad("load-leadership"), say("Here it is."))
+		slackWorkspace(h)
+		h.backend.onCall = func() { h.db.holdings["load-leadership"] = access.Holdings{} }
+		_, err := h.runner.Run(context.Background(), message("What did #leadership say?"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.ItemRef{leadership}, h.db.thread("thread1").Granted.Items)
+	})
+	// An ask that returns before its answer records what its question read
+	// then; the get_question that reads the answer, what the ask worker
+	// recorded since (the thread's earlier answers it was told).
+	t.Run("an answer read after the ask returned", func(t *testing.T) {
+		h := newHarness(t,
+			call("toolu_1", "helix_foundry_ask", `{"workspace_id":"ws1","ontology_id":"ont1","question":"What changed?"}`),
+			call("toolu_2", "helix_foundry_get_question", `{"workspace_id":"ws1","ontology_id":"ont1","question_id":"q-general"}`),
+			say("Here it is."))
+		slackWorkspace(h)
+		h.backend.question = &foundryv1.FoundryQuestion{Id: "q-general", Status: "queued"}
+		h.model.tick = func() {
+			if len(h.model.requests) == 2 && h.backend.question.Status == "queued" {
+				assert.Equal(t, []access.ItemRef{general}, h.db.thread("thread1").Granted.Items)
+				h.db.questions["q-general"].SeenItems = []access.ItemRef{general, leadership}
+				h.backend.question = &foundryv1.FoundryQuestion{Id: "q-general", Status: "answered"}
+			}
+		}
+		_, err := h.runner.Run(context.Background(), message("What changed?"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.ItemRef{general, leadership}, h.db.thread("thread1").Granted.Items)
+	})
 	t.Run("a load it can't tell fails the attempt to retry", func(t *testing.T) {
 		h := newHarness(t, readLoad("load-gone"), say("Never said."))
 		slackWorkspace(h)
@@ -478,6 +522,47 @@ func TestAGranteesCallRecordsTheChannelsAroundIt(t *testing.T) {
 		assert.False(t, f.Permanent)
 		assert.Len(t, h.model.requests, 1, "the result never reached the model")
 	})
+}
+
+// A Slack install's bot's calls are read around as a restricted member's:
+// its thread holds the channels of what it read under its key's grants, and
+// a call of a channel no longer shared with it during the call fails the
+// turn for good.
+func TestABotsCallRecordsTheChannelsItRead(t *testing.T) {
+	for name, tc := range map[string]struct {
+		read   []llm.Chunk
+		change func(h *harness)
+		holds  []access.ItemRef
+		failed bool
+	}{
+		"a read of #leadership": {read: readLoad("load-leadership"), holds: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}},
+		"a read of #general, #leadership no longer shared during it": {read: readLoad("load-general"),
+			change: func(h *harness) { h.backend.items = h.backend.items[:1] }, holds: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}}},
+		"a read of #leadership, no longer shared during it": {read: readLoad("load-leadership"),
+			change: func(h *harness) { h.backend.items = h.backend.items[:1] }, holds: []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}, failed: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, tc.read, say("Here it is."))
+			slackWorkspace(h)
+			h.db.grants = []model.FoundryAccessGrant{{Principal: model.AgentBot{CredentialID: botKey}.Access(), Target: access.DocumentSetTarget("set-conv")}}
+			if tc.change != nil {
+				h.backend.onCall = func() { tc.change(h) }
+			}
+			turn := botMessage("What did they say?")
+			h.db.turns = []*model.FoundryAgentTurn{turn}
+			_, err := h.runner.Run(context.Background(), turn)
+			assert.Equal(t, tc.holds, h.db.thread(turn.ThreadID).Granted.Items)
+			if tc.failed {
+				var f *Failure
+				require.ErrorAs(t, err, &f)
+				assert.True(t, f.Permanent)
+				assert.Len(t, h.model.requests, 1, "the result never reached the model")
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, h.model.requests, 2)
+		})
+	}
 }
 
 // A helper's call records the channels of what it read as the worker's do,
@@ -503,4 +588,104 @@ func TestAHelpersCallRecordsTheChannelsItRead(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "no longer lets you read")
 	assert.Contains(t, db.thread(turn.ThreadID).Granted.Items, access.ItemRef{ConnectorID: "conn-slack", Item: "C2"}, "the thread is no longer hers")
+	// The turn ends there, as the worker's would, after the call shows.
+	require.Len(t, db.settled, 1)
+	assert.Equal(t, model.FoundryAgentTurnFailed, db.settled[0].Status)
+	assert.Contains(t, db.settled[0].Error, "no longer lets you read")
+	events := db.eventTypes()
+	assert.Equal(t, []string{"tool_result", "finished"}, events[len(events)-2:])
+
+	// Its CLI's next request finds the thread no longer hers, and ends the
+	// turn, as one between calls does.
+	_, err := hosts.Server(context.Background(), turn, "host:1", func(context.Context, bool) error { return nil })
+	var f *Failure
+	require.ErrorAs(t, err, &f)
+	assert.True(t, f.Permanent)
+	assert.Len(t, db.settled, 2)
+}
+
+// A helper's call during which its reader's reach or grants changed makes the
+// thread the whole view's and ends the turn, as the worker's does; what its
+// load held before it ran is recorded too; and a read of the reader's access
+// that fails after it returns its CLI a tool error to call it again, the
+// turn going on.
+func TestAHelpersCallIsReadAroundAsTheWorkersAre(t *testing.T) {
+	setup := func(t *testing.T) (*mcp.ClientSession, *hostMem, *harness, *model.FoundryAgentTurn) {
+		hosts, db, h := newHosts(t)
+		slackWorkspace(h)
+		turn := message("What did they say?")
+		db.turns = []*model.FoundryAgentTurn{turn}
+		return connectHost(t, hosts, turn, func(context.Context, bool) error { return nil }), db, h, turn
+	}
+	read := func(t *testing.T, client *mcp.ClientSession, load string) *mcp.CallToolResult {
+		t.Helper()
+		result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: "helix_foundry_read_graph",
+			Arguments: map[string]any{"workspace_id": ws, "ontology_id": ontology, "load_id": load, "reads": []any{map[string]any{"query": map[string]any{}}}}})
+		require.NoError(t, err)
+		return result
+	}
+	for name, change := range map[string]func(h *harness){
+		"made an admin during a call": func(h *harness) { h.backend.grantee = false },
+		"a grant given during a call": func(h *harness) {
+			h.db.grants = append(h.db.grants, model.FoundryAccessGrant{Principal: access.Principal{Kind: access.PrincipalUser, ID: user},
+				Target: access.ConnectorTarget("conn-stripe")})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client, db, h, turn := setup(t)
+			h.backend.onCall = func() { change(h) }
+			result := read(t, client, "load-general")
+			assert.True(t, result.IsError)
+			assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "Your access changed while Founder was answering")
+			assert.Nil(t, db.thread(turn.ThreadID).Granted, "the thread is the whole view's, for good")
+			require.Len(t, db.settled, 1)
+			assert.Equal(t, model.FoundryAgentTurnFailed, db.settled[0].Status)
+		})
+	}
+	t.Run("a day trimmed out of the load during the read", func(t *testing.T) {
+		client, db, h, turn := setup(t)
+		h.backend.onCall = func() { h.db.holdings["load-leadership"] = access.Holdings{} }
+		assert.False(t, read(t, client, "load-leadership").IsError)
+		assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C2"}}, db.thread(turn.ThreadID).Granted.Items)
+	})
+	t.Run("access that can't be read after the call", func(t *testing.T) {
+		client, db, h, _ := setup(t)
+		h.backend.onCall = func() { h.backend.accessErr = status.Error(codes.Unavailable, "the API is down") }
+		result := read(t, client, "load-general")
+		assert.True(t, result.IsError)
+		assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "call it again")
+		assert.NotContains(t, result.Content[0].(*mcp.TextContent).Text, "Helix will retry")
+		assert.Empty(t, db.settled, "the turn goes on")
+	})
+}
+
+// holdingBefore reads the load a graph read is about to read: the input's,
+// else the ontology's current one; nothing for another call, or a load or
+// ontology that isn't there to read.
+func TestHoldingBeforeReadsTheLoadAboutToBeRead(t *testing.T) {
+	h := newHarness(t)
+	slackWorkspace(h)
+	for name, tc := range map[string]struct {
+		tool, input, current string
+		want                 string
+	}{
+		"its input's load":                 {toolReadGraph, `{"ontology_id":"ont1","load_id":"load-general"}`, "load-leadership", "load-general"},
+		"the ontology's current load":      {toolReadGraph, `{"ontology_id":"ont1"}`, "load-leadership", "load-leadership"},
+		"an ontology with no current load": {toolReadGraph, `{"ontology_id":"ont1"}`, "", ""},
+		"a load not there to read":         {toolReadGraph, `{"ontology_id":"ont1","load_id":"load-gone"}`, "", ""},
+		"an ontology not there":            {toolReadGraph, `{"ontology_id":"ont-gone"}`, "load-leadership", ""},
+		"an input that isn't one":          {toolReadGraph, `[]`, "load-leadership", ""},
+		"another call":                     {toolAsk, `{"ontology_id":"ont1","load_id":"load-general"}`, "load-leadership", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h.db.ontologies[0].CurrentLoadID = nil
+			if tc.current != "" {
+				h.db.ontologies[0].CurrentLoadID = &tc.current
+			}
+			got, err := holdingBefore(context.Background(), h.db, ws, tc.tool, json.RawMessage(tc.input))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.id)
+			assert.Equal(t, h.db.holdings[tc.want], got.holdings)
+		})
+	}
 }

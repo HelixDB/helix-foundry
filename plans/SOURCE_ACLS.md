@@ -63,11 +63,14 @@ kind only differs in what its adapter can report.
   items of the documents and table files of its load that the reader reads
   (`access.Grants.Part`, the part the API narrows the read to: a result names
   only its quotes' documents, not those its rows, entities and counts came
-  from); for an ask or get_question, its question's items. Its other tools
+  from), as the load held them before the call and after (a sync may trim a
+  document out of it meanwhile); for an ask or get_question, its question's
+  items; for a list_questions, every listed question's. Its other tools
   read no document's content and record nothing, so a thread that read
   nothing of a channel is never hidden by losing it. Items are read on both
   sides of each call (a helper's too): one the call drew on and the reader
-  lost during it fails the turn for good, before the result is delivered.
+  lost during it fails the turn for good, before the result is delivered
+  (a helper's turn ends there, as the worker's does).
 
 So effective visibility of a connector's content for a grantee is:
 `granted (connector or set) ∧ visible(item)`, always partial.

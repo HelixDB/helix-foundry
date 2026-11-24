@@ -325,39 +325,61 @@ func threadReach(ctx context.Context, db Store, session integration.Session, tur
 // reachAround runs call, a restricted member's or a bot's call of name with
 // input, between two reads of their reach, grants and the items their
 // sources share with them (threadReach), and records on the thread the items
-// of what it read once it returned (recordDrew): the API reads every call as
-// they are at that moment, so a call during which they were made an owner or
-// admin, or their grants changed, may have read what the thread doesn't hold.
-// Such a call makes the thread the whole view's and fails the turn for good,
-// before its result reaches the model or the person. A channel shared with
-// them, or no longer, during the call matters only to a call that drew on it
-// (recordDrew).
+// of what it read once it returned (callBefore.after).
 func (t *turnRun) reachAround(ctx context.Context, name string, input json.RawMessage, call func() (output any, failed bool)) error {
-	read := func() (Reach, threadView, error) {
-		reach, err := turnReach(t.session, t.turn)
-		if err != nil {
-			return reach, threadView{}, err
-		}
-		view, err := threadReach(ctx, t.r.DB, t.session, t.turn, reach)
-		return reach, view, err
+	reach, err := turnReach(t.session, t.turn)
+	if err != nil {
+		return err
 	}
-	before, held, err := read()
+	held, err := threadReach(ctx, t.r.DB, t.session, t.turn, reach)
+	if err != nil {
+		return err
+	}
+	loaded, err := holdingBefore(ctx, t.r.DB, t.turn.WorkspaceID, name, input)
 	if err != nil {
 		return err
 	}
 	output, failed := call()
-	after, holds, err := read()
+	return callBefore{reach: reach, held: held, loaded: loaded}.after(ctx, t.r.DB, t.session, t.turn, name, input, output, failed)
+}
+
+// callBefore is what a restricted member's or a bot's tool call was read
+// against before it ran, by the worker (reachAround) and a helper's server
+// alike: their reach, what they held (threadReach), and what the load a
+// graph read was about to read held (holdingBefore).
+type callBefore struct {
+	reach  Reach
+	held   threadView
+	loaded heldLoad
+}
+
+// after reads the reach, grants and items of the reader of a call that ran
+// from c once it returned output (failed: none, only why), recorded on the
+// thread (threadReach), and records the items of what it read (recordDrew).
+// The API reads every call as they are at that moment, so a call during
+// which they were made an owner or admin, or their grants changed, may have
+// read what the thread doesn't hold: such a call makes the thread the whole
+// view's and fails the turn for good, before its result reaches the model or
+// the person. A channel shared with them, or no longer, during the call
+// matters only to a call that drew on it (recordDrew).
+func (c callBefore) after(ctx context.Context, db Store, session integration.Session, turn *model.FoundryAgentTurn, name string,
+	input json.RawMessage, output any, failed bool) error {
+	reach, err := turnReach(session, turn)
 	if err != nil {
 		return err
 	}
-	if before == after && held.sameTargets(holds) {
+	holds, err := threadReach(ctx, db, session, turn, reach)
+	if err != nil {
+		return err
+	}
+	if c.reach == reach && c.held.sameTargets(holds) {
 		if failed {
 			return nil
 		}
-		return recordDrew(ctx, t.r.DB, t.turn, name, input, output, held, holds)
+		return recordDrew(ctx, db, turn, name, input, output, c.held, holds, c.loaded)
 	}
-	if err := t.r.DB.RecordFoundryAgentThreadGrants(ctx, t.turn.WorkspaceID, t.turn.ThreadID, nil); err != nil {
-		return &Failure{Message: "Your access to this workspace couldn't be read; Helix will retry", Err: err}
+	if err := db.RecordFoundryAgentThreadGrants(ctx, turn.WorkspaceID, turn.ThreadID, nil); err != nil {
+		return accessRetry(err)
 	}
 	return &Failure{Message: "Your access changed while Founder was answering: start a new conversation", Permanent: true}
 }

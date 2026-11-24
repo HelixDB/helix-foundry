@@ -633,8 +633,9 @@ type backend struct {
 	answered  []*foundryv1.AnswerOntologyGenerationRequest
 	answerErr error
 	// question is what an ask and a get_question answer: q1, answered,
-	// unless a test says.
-	question *foundryv1.FoundryQuestion
+	// unless a test says; questions what a list of them returns.
+	question  *foundryv1.FoundryQuestion
+	questions []*foundryv1.FoundryQuestion
 	// created are the dashboards made; deleted the ids of those deleted.
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
@@ -748,6 +749,13 @@ func (b *backend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQ
 
 func (b *backend) GetFoundryQuestion(context.Context, *foundryv1.GetFoundryQuestionRequest, ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
+}
+
+func (b *backend) ListFoundryQuestions(context.Context, *foundryv1.ListFoundryQuestionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryQuestionsResponse, error) {
+	if b.onCall != nil {
+		b.onCall()
+	}
+	return &foundryv1.ListFoundryQuestionsResponse{Questions: b.questions}, nil
 }
 
 // CreateFoundryDashboard makes dash<n>, unpinned and unpublished, as the

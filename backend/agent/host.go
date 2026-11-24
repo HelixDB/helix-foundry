@@ -809,6 +809,14 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 		return nil, err
 	}
 	held, err := threadReach(ctx, h.DB, session, turn, reach)
+	var failure *Failure
+	if errors.As(err, &failure) && failure.Permanent {
+		// The thread is no longer the person's: the turn ends here, as the
+		// worker's would, and every later call of its CLI is refused.
+		if err := h.end(ctx, turn, workerID, 0, Finished{Status: string(model.FoundryAgentTurnFailed), Reason: StopFailed, Error: failure.Message}); err != nil {
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -826,18 +834,22 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 			if method != "tools/call" || !ok {
 				return next(session.Ctx, method, req)
 			}
+			// A restricted member's call is read around as the worker's
+			// are (callBefore): this server read their reach and grants
+			// once, before the call (stateless, one per request).
+			before := callBefore{reach: reach, held: held}
+			if !reach.wholeView() {
+				loaded, err := holdingBefore(session.Ctx, h.DB, turn.WorkspaceID, call.Params.Name, call.Params.Arguments)
+				if err != nil {
+					return nil, err
+				}
+				before.loaded = loaded
+			}
 			return h.call(session.Ctx, turn, workerID, spend, call, offered, next, method, func(ctx context.Context, output any) error {
-				// A restricted member's call records what it read, as the
-				// worker's do (recordDrew): this server reads their access
-				// once, before the call (stateless, one per request).
 				if reach.wholeView() {
 					return nil
 				}
-				holds, err := threadReach(ctx, h.DB, session, turn, reach)
-				if err != nil {
-					return err
-				}
-				return recordDrew(ctx, h.DB, turn, call.Params.Name, call.Params.Arguments, output, held, holds)
+				return before.after(ctx, h.DB, session, turn, call.Params.Name, call.Params.Arguments, output, false)
 			})
 		}
 	})
@@ -845,8 +857,10 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 }
 
 // call runs one of a claim's tool calls, showing it to the person. read
-// records what a call that returned output read before its result is
-// returned: one it refuses returns none, only why.
+// records what a call that returned output read before its
+// result is returned: one it refuses returns none, only why, and one it
+// refuses for good (the thread is no longer the person's) ends the turn, as
+// the worker's would, so every later call of its CLI is refused.
 func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, spend HostSpend, call *mcp.CallToolRequest,
 	offered map[string]*mcp.Tool, next mcp.MethodHandler, method string, read func(context.Context, any) error) (mcp.Result, error) {
 	name := call.Params.Name
@@ -894,6 +908,7 @@ func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 	}
 	result, err := next(ctx, method, call)
 	shown := ToolReturned{ToolUseID: use.ToolUseID, Name: name}
+	var ended *Failure
 	switch r, _ := result.(*mcp.CallToolResult); {
 	case err != nil:
 		shown.IsError, shown.Error = true, err.Error()
@@ -913,8 +928,13 @@ func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 			if !errors.As(why, &failure) {
 				return nil, why
 			}
-			shown.IsError, shown.Error = true, failure.Message
-			result = &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: failure.Message}}}
+			// Nothing retries a helper's call but its CLI.
+			told := "Founder couldn't check your access to what this call read: call it again."
+			if failure.Permanent {
+				told, ended = failure.Message, failure
+			}
+			shown.IsError, shown.Error = true, told
+			result = &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: told}}}
 			break
 		}
 		if raw, err := json.Marshal(r.StructuredContent); err == nil && len(raw) <= maxResultBytes {
@@ -926,6 +946,11 @@ func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 	}
 	if err := h.event(ctx, turn.ID, workerID, shown); err != nil {
 		return nil, err
+	}
+	if ended != nil {
+		if err := h.end(ctx, turn, workerID, 0, Finished{Status: string(model.FoundryAgentTurnFailed), Reason: StopFailed, Error: ended.Message}); err != nil {
+			return nil, err
+		}
 	}
 	return result, err
 }
