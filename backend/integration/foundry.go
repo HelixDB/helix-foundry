@@ -158,6 +158,8 @@ type FoundryBackendAPI interface {
 	GetOntologyGeneration(context.Context, *foundryv1.GetOntologyGenerationRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error)
 	ListFoundryDocuments(context.Context, *foundryv1.ListFoundryDocumentsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error)
 	ListFoundryOntologyDocuments(context.Context, *foundryv1.ListFoundryOntologyDocumentsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error)
+	GetFoundryOntologyDocument(context.Context, *foundryv1.GetFoundryOntologyDocumentRequest, ...grpc.CallOption) (*foundryv1.FoundryDocumentResponse, error)
+	GetFoundryDocumentContent(context.Context, *foundryv1.GetFoundryDocumentContentRequest, ...grpc.CallOption) (*foundryv1.GetFoundryDocumentContentResponse, error)
 	ListFoundryQuestions(context.Context, *foundryv1.ListFoundryQuestionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryQuestionsResponse, error)
 	ListFoundryReviewDecisions(context.Context, *foundryv1.ListFoundryReviewDecisionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewDecisionsResponse, error)
 	ListFoundryReviews(context.Context, *foundryv1.ListFoundryReviewsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error)

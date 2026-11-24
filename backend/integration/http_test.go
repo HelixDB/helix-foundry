@@ -759,8 +759,9 @@ func TestHTTPUnroutedRequestsAreTheContractsError(t *testing.T) {
 		{"GET", httpAskPath, 405, "method_not_allowed", "POST"},
 		{"DELETE", httpAskPath, 405, "method_not_allowed", "POST"},
 		{"POST", httpQuestionPath, 405, "method_not_allowed", "GET"},
-		{"POST", "/v1/ontologies/ontology-1", 404, "not_found", ""},
-		{"GET", "/v1/ontologies/ontology-1/questions", 404, "not_found", ""},
+		{"POST", "/v1/ontologies/ontology-1", 405, "method_not_allowed", "GET"},
+		{"POST", "/v1/ontologies/ontology-1/questions", 405, "method_not_allowed", "GET"},
+		{"GET", "/v1/ontologies/ontology-1/entities", 404, "not_found", ""},
 		{"GET", "/metrics", 404, "not_found", ""},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {

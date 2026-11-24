@@ -58,12 +58,12 @@ func (b *readsBackend) ListFoundryOntologies(_ context.Context, r *foundryv1.Lis
 func (b *readsBackend) GetFoundryOntology(_ context.Context, r *foundryv1.GetFoundryOntologyRequest, _ ...grpc.CallOption) (*foundryv1.FoundryOntologyResponse, error) {
 	b.saw("GetFoundryOntology", r)
 	return &foundryv1.FoundryOntologyResponse{Ontology: &foundryv1.FoundryOntology{
-		Id: "ontology-1", Name: "Sales", CurrentLoad: &foundryv1.FoundryLoadRef{Id: "load-1"},
+		Id: "ontology-1", Name: "Sales", CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: "load-1"},
 	}}, nil
 }
 
 func (b *readsBackend) GetCurrentOntologyVersion(context.Context, *foundryv1.GetCurrentOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyVersionResponse, error) {
-	return nil, status.Error(codes.NotFound, "no current version")
+	return &foundryv1.OntologyVersionResponse{}, nil
 }
 
 func (b *readsBackend) ListOntologyVersions(context.Context, *foundryv1.ListOntologyVersionsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyVersionsResponse, error) {
