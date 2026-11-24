@@ -655,7 +655,7 @@ const SLACK_ROWS: Record<string, RowRule> = {
   channel_days: { match: "prefix", field: "channel_day_id", separator: ":" },
 };
 /** The most channels whose rows a reader may hold (access.MaxHeldItems). */
-const MAX_HELD_ITEMS = 10_000;
+const MAX_HELD_ITEMS = 1_000;
 
 /** An item of an audienced source the reader read (access.ItemRef). */
 type Item = { connectorId: string; item: string };

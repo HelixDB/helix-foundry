@@ -51,7 +51,9 @@ kind only differs in what its adapter can report.
   `channel_id`, messages and channel_days by `<channel>:`; users is the
   directory, whole for a matched non-guest person only. A table with no
   rule, a mapping whose `row_key` lacks the field, unknown audiences, or
-  over 10,000 items: full readers only. Nothing loads write changes.
+  over 1,000 items (`access.MaxHeldItems`: the engine repeats every held
+  item, per mapping naming the field, in each partial entity's read, which
+  must fit Helix's 2 MiB request): full readers only. Nothing loads write changes.
   Rollout: every agent call checks the agent speaks the contract exactly,
   so an older engine refuses all calls rather than seeing `rows`; the
   hosted pin bumps the helixsvc and agent images (one pod) together.

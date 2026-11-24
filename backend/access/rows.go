@@ -7,9 +7,15 @@ import (
 
 // MaxHeldItems is the most items of one source a reader may hold the rows
 // of: past it, every table its rows are told apart in goes to full readers
-// only, since the items are sent on every read and question
-// (plans/SOURCE_ACLS.md).
-const MaxHeldItems = 10_000
+// only (plans/SOURCE_ACLS.md). The engine (contract 4.32.0) repeats every
+// held item, once per mapping whose row key names the field (about 290
+// bytes each), in each partly held entity's read of who states it, and one
+// entity's read must fit Helix's 2 MiB request: a reader in 1,000 channels
+// of a version with Slack's four row tables sends about 1.2 MB a read, and
+// up to about seven such mappings fit. Past that every one of their partial
+// reads would fail, so the cap is the engine's budget, not the API's; it
+// rises once the engine sends a source's held items as one set.
+const MaxHeldItems = 1_000
 
 // RowMatch is how a table of an audienced connector tells which of its rows
 // a reader holds.

@@ -774,7 +774,7 @@ const NAMES_LISTED = 5;
  * Slack connection's tables by their rows (access.MaxHeldItems): past it,
  * they read only its documents.
  */
-export const MAX_HELD_ITEMS = 10_000;
+export const MAX_HELD_ITEMS = 1_000;
 
 /**
  * Names, the first NAMES_LISTED of them, then how many more.

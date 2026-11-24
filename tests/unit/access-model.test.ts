@@ -832,7 +832,7 @@ describe("source permissions", () => {
   it("says a connection with more channels than a restricted person may read the tables of", () => {
     const over = { ...slack, everyoneItems: MAX_HELD_ITEMS, membersItems: 1 };
     expect(sourcePermissions(over, name, relative).notes).toEqual([
-      "Over 10,000 channels: someone restricted who is in more than 10,000 reads its documents, but none of its tables.",
+      "Over 1,000 channels: someone restricted who is in more than 1,000 reads its documents, but none of its tables.",
     ]);
     expect(
       sourcePermissions({ ...over, membersItems: 0 }, name, relative).notes,
