@@ -93,7 +93,7 @@ test("links to Helix, adds Slack through it, and lets the owner choose who uses 
   ).toBeVisible();
   const mine = panel(page, "Your Slack account");
   await expect(mine).toContainText(
-    "Not linked. Message @Helix Foundry in Acme Slack from the Slack account that added it",
+    "Not linked. Message @Founder in Acme Slack from the Slack account that added it",
   );
 
   // The app's link to the Slack account that added it.

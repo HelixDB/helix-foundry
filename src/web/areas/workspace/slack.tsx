@@ -70,13 +70,13 @@ import {
 // no shared bot.
 
 const PURPOSE =
-  "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from your Foundry data as you.";
+  "Ask Founder from Slack: mention @Founder in a channel or message it directly, and it answers from your Foundry data as you.";
 const LOCAL_PURPOSE =
-  "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from this Foundry’s data, through Helix.";
+  "Ask Founder from Slack: mention @Founder in a channel or message it directly, and it answers from this Foundry’s data, through Helix.";
 const LOCAL_NOTICE =
   "Links in its answers open on the computer running this Foundry.";
 const BOT_PURPOSE =
-  "Ask Founder from Slack: anyone in your Slack workspace mentions @Helix Foundry in a channel or messages it directly, and the shared bot answers from the sources you give it.";
+  "Ask Founder from Slack: anyone in your Slack workspace mentions @Founder in a channel or messages it directly, and the shared bot answers from the sources you give it.";
 
 /** The two modes as their cards say them. */
 const MODES = {
@@ -671,9 +671,9 @@ function YourAccount({
           </>
         ) : LOCAL ? (
           <p className="wk-note">
-            Not linked. Message @Helix Foundry in {team} from the Slack account
-            that added it: it sends you a link that makes that account this
-            Foundry’s owner in Slack.
+            Not linked. Message @Founder in {team} from the Slack account that
+            added it: it sends you a link that makes that account this Foundry’s
+            owner in Slack.
           </p>
         ) : mode.kind === "bot" && !canManage ? (
           <p className="wk-note">
@@ -688,8 +688,8 @@ function YourAccount({
           </p>
         ) : (
           <p className="wk-note">
-            Not linked. Message @Helix Foundry in {team}: it sends you a link
-            that connects your Slack account to your Foundry account.
+            Not linked. Message @Founder in {team}: it sends you a link that
+            connects your Slack account to your Foundry account.
           </p>
         )}
       </div>

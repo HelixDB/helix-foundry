@@ -438,7 +438,7 @@ export function AllowedPeople() {
         <EmptyState
           size="sm"
           title="No one yet"
-          text="Message @Helix Foundry in Slack from the account that added it to link it as you. Anyone else who messages it asks you, here."
+          text="Message @Founder in Slack from the account that added it to link it as you. Anyone else who messages it asks you, here."
         />
       )}
       {error && !removing && (
