@@ -15,19 +15,15 @@ export const PAD = 24;
 const clampK = (k: number) => Math.min(ZOOM.max, Math.max(ZOOM.min, k));
 
 /**
- * The whole schema in the frame, centred, never larger than drawn (a small
- * schema isn't blown up), and never under the least zoom.
+ * The whole schema filling the frame, centred: as large as the frame's
+ * tighter side allows, within ZOOM.
  *
  * @example
  * fit({ w: 1000, h: 500 }, { w: 524, h: 400 }) // { x: 24, y: 81, k: 0.476 }
  */
 export function fit(content: Size, frame: Size): View {
   const k = clampK(
-    Math.min(
-      1,
-      (frame.w - 2 * PAD) / content.w,
-      (frame.h - 2 * PAD) / content.h,
-    ),
+    Math.min((frame.w - 2 * PAD) / content.w, (frame.h - 2 * PAD) / content.h),
   );
   return clamp({ x: PAD, y: PAD, k }, content, frame);
 }
