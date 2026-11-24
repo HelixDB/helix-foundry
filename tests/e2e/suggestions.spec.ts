@@ -281,7 +281,7 @@ test("says when the version needs a new load", async ({ page }) => {
     .getByRole("button", { name: "Make current and update the load" })
     .click({ timeout: 15_000 });
   await expect(none().getByRole("status")).toHaveText(
-    /^Needs a new load: version \d+ it adds types\.Deal\.$/,
+    /^Needs a new load: version \d+ changes more than a link: it adds types\.Deal\.$/,
   );
   await expect(
     none().getByRole("button", { name: "Start a new load" }),

@@ -149,6 +149,16 @@ describe("cardState", () => {
     expect(
       stateText({ kind: "needs_load", version: 9, versionId: "v9", why: [] }),
     ).toBe("Needs a new load: version 9 changes more than a link.");
+    expect(
+      stateText({
+        kind: "needs_load",
+        version: 3,
+        versionId: "v3",
+        why: ["it adds types.Deal", "it changes extractions.notes.types.Deal"],
+      }),
+    ).toBe(
+      "Needs a new load: version 3 changes more than a link: it adds types.Deal; it changes extractions.notes.types.Deal.",
+    );
     expect(whyText({ kind: "sources", item: "table_files" })).toBe(
       "it reads other table files",
     );

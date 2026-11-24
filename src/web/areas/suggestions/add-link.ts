@@ -206,6 +206,6 @@ export function stateText(s: CardState): string | undefined {
     case "moved":
       return `The current load is on ${version} now: documents read from now on state this link. The reviews here stay until their documents are read again.`;
     case "needs_load":
-      return `Needs a new load: ${version} ${s.why.length ? s.why.join("; ") : "changes more than a link"}.`;
+      return `Needs a new load: ${version} changes more than a link${s.why.length ? `: ${s.why.join("; ")}` : ""}.`;
   }
 }
