@@ -276,7 +276,7 @@ func newSlackAppFixture(t *testing.T) slackAppFixture {
 func (f slackAppFixture) install(t *testing.T) *model.SlackInstall {
 	t.Helper()
 	i := f.db.install(t, f.keys, model.SlackPerPerson{})
-	i.Scopes = append(slices.Clone(slack.Scopes), slack.HistoryScopes...)
+	i.Scopes, _ = slack.Required(true, true)
 	i.BotID, i.InstallerAdmin = "B0BOT0001", true
 	return i
 }
@@ -318,7 +318,7 @@ func TestCreateSlackAppConnector(t *testing.T) {
 		assert.JSONEq(t, `{"history_days":30,"credential":"helix_app","team_id":"T0AAA1111"}`, string(row.Config))
 		assert.Equal(t, "user-1", *row.CreatedByUserID)
 		require.Len(t, f.db.feed.binds, 1)
-		assert.Equal(t, model.SlackFeedBind{InstallID: "inst-1", Scopes: f.s.slackRequired(), NoticeVersion: slackFeedNotice, BoundBy: "user-1",
+		assert.Equal(t, model.SlackFeedBind{InstallID: "inst-1", Scopes: f.s.slackFeedScopes(), NoticeVersion: slackFeedNotice, BoundBy: "user-1",
 			HistoryDays: 30, Channels: []string{"C0GEN0001", "C0PRIV0001"}}, f.db.feed.binds[0])
 		call := f.slack.call("users.conversations")
 		assert.Equal(t, "Bearer xoxb-live", call.auth, "through the install's token")
@@ -648,8 +648,12 @@ func TestSlackConnectorStatus(t *testing.T) {
 		f := newSlackAppFixture(t)
 		i := f.install(t)
 		f.appConnector(t)
-		i.Scopes = slack.Scopes
+		i.Scopes = slack.FeedScopes(true, true)
 		st := get(t, f).GetSlackStatus()
+		assert.Equal(t, foundryv1.SlackFeedState_SLACK_FEED_STATE_LIVE, st.GetState(), "the shortcut's scopes are no connection's")
+		assert.Empty(t, st.GetMissingScopes())
+		i.Scopes = slack.Scopes
+		st = get(t, f).GetSlackStatus()
 		assert.Equal(t, foundryv1.SlackFeedState_SLACK_FEED_STATE_NEEDS_REINSTALL, st.GetState())
 		assert.Equal(t, slack.HistoryScopes, st.GetMissingScopes())
 
@@ -774,7 +778,7 @@ func TestListConnectorKindsSlackSetup(t *testing.T) {
 	i.InstallerAdmin, i.Scopes = false, slack.Scopes
 	got = setup(t, f, as("user-1"))
 	assert.False(t, got.GetInstallerAdmin())
-	assert.Equal(t, slack.HistoryScopes, got.GetInstall().GetMissingScopes())
+	assert.Equal(t, slices.Concat(slack.ShortcutScopes, slack.HistoryScopes), got.GetInstall().GetMissingScopes(), "the shortcut's too")
 	assert.Empty(t, got.GetInUseByConnectorId())
 	f.tokenConnector(t, `{"history_days":90}`)
 	assert.Empty(t, setup(t, f, as("user-1")).GetInUseByConnectorId(), "a token's reads nothing through the app")

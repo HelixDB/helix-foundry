@@ -68,6 +68,14 @@ func (s *Service) slackRequired() []string {
 	return scopes
 }
 
+// slackFeedScopes is the scopes a Slack connection reading through the app
+// needs of its install under foundry.slack's flags (slack.FeedScopes): all
+// but the shortcut's, which an install without them answers without.
+func (s *Service) slackFeedScopes() []string {
+	cfg := s.slackConfig()
+	return slack.FeedScopes(cfg.Feed.Enabled, cfg.Follow.Enabled)
+}
+
 // slackInstallToProto is an install as Settings › Slack and the Slack
 // connection's form show it, with the scopes it lacks under the stamp's
 // flags.
@@ -159,7 +167,7 @@ func (s *Service) slackAppInstall(ctx context.Context, workspaceID string) (*mod
 	}
 	refusal := model.SlackFeedRefusalReason("")
 	switch {
-	case slices.ContainsFunc(s.slackRequired(), func(scope string) bool { return !slices.Contains(install.Scopes, scope) }):
+	case slices.ContainsFunc(s.slackFeedScopes(), func(scope string) bool { return !slices.Contains(install.Scopes, scope) }):
 		refusal = model.SlackFeedScopes
 	case !install.InstallerAdmin:
 		refusal = model.SlackFeedAdmin
@@ -247,7 +255,7 @@ func (s *Service) slackBinding(ctx context.Context, install *model.SlackInstall,
 	if err != nil {
 		return model.SlackFeedBind{}, status.Errorf(codes.Unavailable, "Slack couldn't list the channels Helix Foundry is in just now (%v); try again", err)
 	}
-	return model.SlackFeedBind{InstallID: install.ID, Scopes: s.slackRequired(), NoticeVersion: notice, BoundBy: actor(ctx).UserID,
+	return model.SlackFeedBind{InstallID: install.ID, Scopes: s.slackFeedScopes(), NoticeVersion: notice, BoundBy: actor(ctx).UserID,
 		HistoryDays: historyDays, Channels: channels}, nil
 }
 
@@ -451,7 +459,7 @@ func (s *Service) updateSlackConnector(ctx context.Context, catalog *connector.C
 			return nil, err
 		}
 	} else {
-		bind = model.SlackFeedBind{InstallID: install.ID, Scopes: s.slackRequired(), NoticeVersion: feed.NoticeVersion, BoundBy: feed.BoundBy,
+		bind = model.SlackFeedBind{InstallID: install.ID, Scopes: s.slackFeedScopes(), NoticeVersion: feed.NoticeVersion, BoundBy: feed.BoundBy,
 			HistoryDays: prepared.HistoryDays}
 	}
 	secret := ""
@@ -528,7 +536,7 @@ func (s *Service) slackStatus(ctx context.Context, c *model.Connector, settings 
 	if at := install.EventsLimitedAt; at != nil && time.Since(*at) < slackEventsLimitedShown {
 		out.EventsLimitedAt = timestamppb.New(*at)
 	}
-	state, missing := syncer.SlackAppStateOf(feed, live, s.slackRequired())
+	state, missing := syncer.SlackAppStateOf(feed, live, s.slackFeedScopes())
 	out.State, out.MissingScopes = map[syncer.SlackAppState]foundryv1.SlackFeedState{
 		syncer.SlackAppLive:           foundryv1.SlackFeedState_SLACK_FEED_STATE_LIVE,
 		syncer.SlackAppNeedsReinstall: foundryv1.SlackFeedState_SLACK_FEED_STATE_NEEDS_REINSTALL,

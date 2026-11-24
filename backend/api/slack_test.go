@@ -41,6 +41,10 @@ const (
 	slackWS            = "ws-1"
 )
 
+// slackScopes are what an install holds with foundry.slack's feed and
+// follow-ups off: the fixtures' install's, and what Slack grants it.
+var slackScopes, _ = slack.Required(false, false)
+
 // slackStore keeps the Slack rows the API reads and writes.
 type slackStore struct {
 	foundrystore.Unimplemented
@@ -293,7 +297,7 @@ func (s *slackStore) QueueFoundrySlackIntake(_ context.Context, in *model.SlackI
 func (s *slackStore) install(t *testing.T, keys *secretbox.Keyring, mode model.SlackIdentityMode) *model.SlackInstall {
 	t.Helper()
 	i := &model.SlackInstall{ID: "inst-1", WorkspaceID: slackWS, TeamID: slackTeam, TeamName: "Acme", AppID: "A0FOUNDRY", BotUserID: "U0BOT0001",
-		Scopes: slack.Scopes, InstalledByUserID: "user-1", InstalledBySlackUserID: slackAda, Mode: mode,
+		Scopes: slackScopes, InstalledByUserID: "user-1", InstalledBySlackUserID: slackAda, Mode: mode,
 		CreatedAt: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)}
 	sealed, keyID, err := keys.Seal([]byte("xoxb-live"), i.ID)
 	require.NoError(t, err)
@@ -685,6 +689,35 @@ func TestReceiveSlackClicks(t *testing.T) {
 		receive(t, f, clickBody(t, "approve.json"))
 		assert.Len(t, f.db.intake, 5, "a click taken once")
 	})
+	t.Run("the message shortcut waits its turn in its message's thread, once", func(t *testing.T) {
+		f := newSlackFixture(t)
+		install := f.db.install(t, f.keys, model.SlackPerPerson{})
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "ask_about.json")))
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "ask_about.json")), "a retry")
+		require.Len(t, f.db.intake, 1, "taken once")
+		in := f.db.intake[0]
+		assert.Equal(t, model.SlackIntakeShortcut, in.Kind)
+		assert.Equal(t, slackAda, in.SlackUserID)
+		assert.Equal(t, model.SlackConversation(install.ID, "C0GEN0001", "1795000000.000100", slackAda), in.Conversation,
+			"the thread of the message asked about, as a mention there")
+		p, err := slack.ReadPayload(in.Payload)
+		require.NoError(t, err)
+		ask, err := slack.DecodeInteraction(p.Kind, p.Data)
+		require.NoError(t, err)
+		assert.Equal(t, slack.InteractionKey(ask), in.DedupeKey)
+		assert.Equal(t, "U0GRACE01", ask.(slack.AskAbout).AuthorID)
+		assert.Empty(t, f.slack.called(), "no call to Slack while Slack waits")
+
+		// A message at top level is its own thread; a bot's thread is
+		// everyone's.
+		f.db.intake = nil
+		install.Mode = model.SlackSharedBot{CredentialID: "cred-1"}
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "ask_about_app.json")))
+		require.Len(t, f.db.intake, 1)
+		assert.Equal(t, model.SlackConversation(install.ID, "C0GEN0001", "1795000050.000100", ""), f.db.intake[0].Conversation)
+		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "other_shortcut.json")), "another app's shortcut")
+		assert.Len(t, f.db.intake, 1)
+	})
 	t.Run("stop and unlink buttons", func(t *testing.T) {
 		f := newSlackFixture(t)
 		f.db.install(t, f.keys, model.SlackPerPerson{})
@@ -833,7 +866,7 @@ func TestStartFoundrySlackInstall(t *testing.T) {
 		assert.Equal(t, f.slack.URL+"/oauth/v2/authorize", u.Scheme+"://"+u.Host+u.Path)
 		q := u.Query()
 		assert.Equal(t, "1.2", q.Get("client_id"))
-		assert.Equal(t, strings.Join(slack.Scopes, ","), q.Get("scope"))
+		assert.Equal(t, strings.Join(slackScopes, ","), q.Get("scope"))
 		assert.Equal(t, "https://foundry.example.com/slack/installed", q.Get("redirect_uri"))
 		assert.Empty(t, q.Get("user_scope"), "no user scopes")
 		state := q.Get("state")
@@ -878,7 +911,7 @@ func TestStartFoundrySlackInstall(t *testing.T) {
 
 // grantJSON is oauth.v2.access's answer for the fixtures' team.
 func grantJSON(mutate func(map[string]any)) string {
-	g := map[string]any{"ok": true, "app_id": "A0FOUNDRY", "access_token": "xoxb-new", "token_type": "bot", "scope": strings.Join(slack.Scopes, ","),
+	g := map[string]any{"ok": true, "app_id": "A0FOUNDRY", "access_token": "xoxb-new", "token_type": "bot", "scope": strings.Join(slackScopes, ","),
 		"bot_user_id": "U0BOT0001", "team": map[string]any{"id": slackTeam, "name": "Acme"}, "enterprise": nil,
 		"is_enterprise_install": false, "authed_user": map[string]any{"id": slackAda}}
 	if mutate != nil {
@@ -913,7 +946,7 @@ func TestFinishFoundrySlackInstall(t *testing.T) {
 		assert.Equal(t, slackWS, in.WorkspaceID)
 		assert.Equal(t, "user-1", in.InstalledByUserID)
 		assert.Equal(t, slackAda, in.InstalledBySlackUserID)
-		assert.Equal(t, slack.Scopes, in.Scopes)
+		assert.Equal(t, slackScopes, in.Scopes)
 		sealed := f.db.tokens[in.ID]
 		token, err := f.keys.Open(sealed.Sealed, sealed.KeyID, in.ID)
 		require.NoError(t, err)
