@@ -19,11 +19,13 @@ import {
 // told so; taking every source away takes the ontology away, and Founder's
 // composer with it; a change that would cut someone off asks first; and a
 // Slack connection follows channel membership: Eve, given it, reads only
-// the channels she is in, and Source permissions says whom Slack matches.
+// the channels she is in (their documents, and in Records the rows of its
+// tables keyed by them), and Source permissions says whom Slack matches.
 // Eve is a member of Acme restricted to the General set; Alan, a member who
 // queries databases, can't be restricted.
 
 const O = "/ontology/ont_acme_contracts";
+const O_API = `/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts`;
 /** A customer's id in an entity page's address. */
 const customer = (key: string) =>
   Buffer.from(`Customer\0k:${key}`).toString("base64url");
@@ -48,6 +50,35 @@ async function shareWithEve(page: Page) {
     "Customer contracts",
   );
   await sources.getByRole("button", { name: "Close" }).first().click();
+}
+
+/** The WFE's Foundry routes of Acme. */
+const WS = "/v1/workspaces/ws_acme/foundry";
+
+/**
+ * Connects Acme's Slack, three days of its history, and waits for its first
+ * sync, which reads who each channel is shared with: the connector.
+ */
+async function syncedSlack(page: Page): Promise<{ id: string }> {
+  const { connector } = await postToWfe(page, `${WS}/connectors`, {
+    name: "Acme Slack",
+    config: {
+      slack: { botToken: "xoxb-1234-5678-e2eAclTokenWXYZ", historyDays: 3 },
+    },
+  });
+  await postToWfe(page, `${WS}/connectors/${connector.id}:sync`, {});
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/papi${WS}/connectors/${connector.id}`)
+          ).json()
+        ).connector.lastSync?.status,
+      { timeout: 15_000 },
+    )
+    .toBe("CONNECTOR_SYNC_STATUS_SUCCEEDED");
+  return connector;
 }
 
 /** Founder's composer on its page. */
@@ -1404,26 +1435,8 @@ test("a grantee given Slack reads only the channels she's in, and Source permiss
   page,
   browser,
 }) => {
-  const ws = "/v1/workspaces/ws_acme/foundry";
   await signIn(page);
-  const { connector } = await postToWfe(page, `${ws}/connectors`, {
-    name: "Acme Slack",
-    config: {
-      slack: { botToken: "xoxb-1234-5678-e2eAclTokenWXYZ", historyDays: 3 },
-    },
-  });
-  await postToWfe(page, `${ws}/connectors/${connector.id}:sync`, {});
-  await expect
-    .poll(
-      async () =>
-        (
-          await (
-            await page.request.get(`/papi${ws}/connectors/${connector.id}`)
-          ).json()
-        ).connector.lastSync?.status,
-      { timeout: 15_000 },
-    )
-    .toBe("CONNECTOR_SYNC_STATUS_SUCCEEDED");
+  const connector = await syncedSlack(page);
 
   // Its sync read who each channel is shared with: Slack knows Eve, Acme's
   // one restricted member, by her email.
@@ -1458,12 +1471,12 @@ test("a grantee given Slack reads only the channels she's in, and Source permiss
   // Its Conversations, one per channel and day: #leadership is private,
   // without Eve.
   const set = (
-    (await (await page.request.get(`/papi${ws}/document-sets`)).json())
+    (await (await page.request.get(`/papi${WS}/document-sets`)).json())
       .sets as { id: string; connector?: { connectorId: string } }[]
   ).find((x) => x.connector?.connectorId === connector.id)!;
   const docs = (
     await (
-      await page.request.get(`/papi${ws}/documents?setId=${set.id}`)
+      await page.request.get(`/papi${WS}/documents?setId=${set.id}`)
     ).json()
   ).documents as { id: string; source: { externalId: string } }[];
   const channel = (d: { source: { externalId: string } }) =>
@@ -1473,14 +1486,88 @@ test("a grantee given Slack reads only the channels she's in, and Source permiss
   const query = docs.map((d) => `ids=${d.id}`).join("&");
 
   const as = await asEve(browser);
-  const read = await as.request.get(`/papi${ws}/documents?${query}`);
+  const read = await as.request.get(`/papi${WS}/documents?${query}`);
   expect(read.status()).toBe(200);
   const hers = [
     ...new Set(((await read.json()).documents as typeof docs).map(channel)),
   ].sort();
   expect(hers).toEqual(channels.filter((c) => c !== "C0MOCKLDR"));
   // Source permissions is for owners and admins.
-  expect((await as.request.get(`/papi${ws}/access/sources`)).status()).toBe(
+  expect((await as.request.get(`/papi${WS}/access/sources`)).status()).toBe(
     403,
   );
+});
+
+test("a grantee given Slack reads its messages of her channels in Records, none of #leadership's", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ ontologyStepMs: 100, loadStepMs: 100 });
+  await signIn(page);
+  const connector = await syncedSlack(page);
+  // Customer contracts drafted from Slack's tables, current and loaded.
+  const { generation } = await postToWfe(page, `${O_API}:generate`, {
+    goal: "Who said what in Slack",
+    connectorIds: [connector.id],
+  });
+  let versionId = "";
+  await expect
+    .poll(
+      async () => {
+        const g = (
+          await (
+            await page.request.get(`/papi${O_API}/generations/${generation.id}`)
+          ).json()
+        ).generation;
+        versionId = g.resultVersionId || "";
+        return g.status;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe("ONTOLOGY_GENERATION_STATUS_SUCCEEDED");
+  await postToWfe(page, `${O_API}:set-current`, {
+    versionId,
+    expectedCurrentVersionId: "ver_seed_1",
+  });
+  const { load } = await postToWfe(page, `${O_API}/loads`, {
+    versionId,
+    clientToken: crypto.randomUUID(),
+  });
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/papi${O_API}/loads/${load.id}`)
+          ).json()
+        ).load.status,
+      { timeout: 20_000 },
+    )
+    .toBe("ready");
+
+  // The owner reads every channel the app is in: #leadership's too. A
+  // message is named by its key, "<channel>:<ts>".
+  const general = "C0MOCKGEN:",
+    leadership = "C0MOCKLDR:";
+  await page.goto("/explore/ont_acme_contracts/records?type=Message");
+  const owners = page.getByRole("grid", { name: "Message records" });
+  await expect(owners).toContainText(general);
+  await expect(owners).toContainText(leadership);
+
+  const sources = await openSources(page, "people", "Eve Adler");
+  await sources.getByRole("checkbox", { name: /^Acme Slack ·/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+
+  // Eve reads the messages of the channels Slack shares with her, by the
+  // channel in their key, and none of private #leadership's.
+  const as = await asEve(browser);
+  await as.goto("/explore/ont_acme_contracts/records?type=Message");
+  await expect(
+    as.getByText("You can read part of this ontology"),
+  ).toBeVisible();
+  const hers = as.getByRole("grid", { name: "Message records" });
+  await expect(hers).toContainText(general);
+  await expect(hers).not.toContainText(leadership);
 });
