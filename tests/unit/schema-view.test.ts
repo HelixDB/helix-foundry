@@ -89,7 +89,11 @@ describe("reveal", () => {
   });
   it("moves a box before the near edge in", () => {
     expect(
-      reveal({ x: -500, y: 0, k: 0.5 }, { x: 100, y: 100, w: 100, h: 100 }, frame),
+      reveal(
+        { x: -500, y: 0, k: 0.5 },
+        { x: 100, y: 100, w: 100, h: 100 },
+        frame,
+      ),
     ).toEqual({ x: PAD - 50, y: 0, k: 0.5 });
   });
   it("shows the start of a box too large to show whole", () => {

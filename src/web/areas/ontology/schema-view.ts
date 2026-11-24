@@ -65,7 +65,11 @@ export function clamp(v: View, content: Size, frame: Size): View {
 export function zoomAt(v: View, k: number, at: Point): View {
   const next = clampK(k),
     r = next / v.k;
-  return { x: at[0] - (at[0] - v.x) * r, y: at[1] - (at[1] - v.y) * r, k: next };
+  return {
+    x: at[0] - (at[0] - v.x) * r,
+    y: at[1] - (at[1] - v.y) * r,
+    k: next,
+  };
 }
 
 /**

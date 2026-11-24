@@ -31,7 +31,8 @@ import "./suggested-ontology.css";
 // around the most-linked type, links drawn between them with their names on
 // pills, on a canvas that fits the whole schema and pans and zooms
 // (SchemaFrame), whatever its size. The layout engine (arrange, layoutSchema)
-// is foundry's, drawn at a fixed column width and with its search bounded;
+// is foundry's, drawn as wide as the page allows readable cards, with its
+// search bounded;
 // the cards show a version's types (key, description, the tables they come
 // from) and the pills its links, with no editing.
 
@@ -88,8 +89,10 @@ const cardHeight = (e: SchemaEntity, lines: number) =>
   20 * e.members.length +
   (e.members.length > 1 || e.kind === "activity" ? 26 : 0);
 const VW = 1000;
-// A column of the drawn schema, in px at 100%: its card takes cardShare().
-const COLUMN_PX = 360;
+// A column of the drawn schema, in px at 100%, its card cardShare() of it:
+// as wide as the page allows between these, so a schema that fits the page
+// at a readable size is drawn at 100%, and a larger one is zoomed out.
+const COLUMN_PX = { min: 270, max: 360 };
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // Lines a card's name needs at this card width, from average glyph widths.
 function nameLines(name: string, e: SchemaEntity, cardPx: number) {
@@ -178,7 +181,8 @@ function arrange(entities: SchemaEntity[], links: SchemaLink[]) {
     );
   const hub = rank[0] ?? 0;
   // About as wide as tall once drawn, since rows are shorter than columns.
-  const cols = n <= 9 ? 3 : n <= 16 ? 4 : Math.max(5, Math.round(Math.sqrt(n * 1.2))),
+  const cols =
+      n <= 9 ? 3 : n <= 16 ? 4 : Math.max(5, Math.round(Math.sqrt(n * 1.2))),
     rows = n <= 3 ? 1 : Math.ceil((n + 1) / cols),
     slots = rows * cols,
     hubSlot = Math.floor((rows - 1) / 2) * cols + Math.floor((cols - 1) / 2);
@@ -236,7 +240,7 @@ function arrange(entities: SchemaEntity[], links: SchemaLink[]) {
   // every other pair, a round of improve() tries every card in every slot.
   // Past the budget, cards take the slots nearest the hub in breadth-first
   // order and fewer rounds (or none) improve on that.
-  const perCost = Math.max(1, pairs.length * n + (pairs.length ** 2) / 2),
+  const perCost = Math.max(1, pairs.length * n + pairs.length ** 2 / 2),
     perRound = n * slots,
     budget = Math.floor(2e7 / perCost);
   let spent = 0;
@@ -660,7 +664,8 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
   };
   const zoomBy = (r: number) => {
     const { view, port } = live.current;
-    if (view && port) go(zoomAt(view, view.k * r, [port.w / 2, port.h / 2]), true);
+    if (view && port)
+      go(zoomAt(view, view.k * r, [port.w / 2, port.h / 2]), true);
   };
   // Scrolls pan, or with Ctrl or ⌘ (a trackpad's pinch too) zoom. A native
   // listener: React's wheel listeners are passive, so can't keep the page
@@ -754,6 +759,11 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
         if (e.pointerType === "mouse" && e.button !== 0) return;
         if ((e.target as HTMLElement).closest(".so-toolbar")) return;
         dragged.current = false;
+        // A new gesture: drop pointers released outside the frame.
+        if (e.isPrimary) {
+          pointers.current.clear();
+          gesture.current = null;
+        }
         pointers.current.set(e.pointerId, at(e));
         begin();
       }}
@@ -766,14 +776,18 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
             ps.reduce((s, p) => s + p[0], 0) / ps.length,
             ps.reduce((s, p) => s + p[1], 0) / ps.length,
           ];
-        if (!g.moved && ps.length < 2 && Math.hypot(c[0] - g.from[0], c[1] - g.from[1]) < 4)
+        if (
+          !g.moved &&
+          ps.length < 2 &&
+          Math.hypot(c[0] - g.from[0], c[1] - g.from[1]) < 4
+        )
           return;
         if (!g.moved) {
           g.moved = true;
           setPanning(true);
-          for (const id of pointers.current.keys())
-            frame.current!.setPointerCapture(id);
         }
+        if (!frame.current!.hasPointerCapture(e.pointerId))
+          frame.current!.setPointerCapture(e.pointerId);
         const panned = {
           x: g.start.x + c[0] - g.from[0],
           y: g.start.y + c[1] - g.from[1],
@@ -808,7 +822,9 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
         if (!target.matches(":focus-visible")) return;
         const el = target.closest<HTMLElement>(".so-node") ?? target,
           box = el.getBoundingClientRect(),
-          stage = frame.current!.querySelector(".so-stage")!.getBoundingClientRect();
+          stage = frame
+            .current!.querySelector(".so-stage")!
+            .getBoundingClientRect();
         const next = reveal(
           view,
           {
@@ -836,7 +852,10 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
         else if (e.key === "-") zoomBy(1 / STEP);
         else if (e.key === "0") setMoved(null);
         else if (pan[e.key])
-          go({ ...view, x: view.x + pan[e.key][0], y: view.y + pan[e.key][1] }, true);
+          go(
+            { ...view, x: view.x + pan[e.key][0], y: view.y + pan[e.key][1] },
+            true,
+          );
         else return;
         e.preventDefault();
       }}
@@ -847,7 +866,9 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
           width: size.w,
           height: size.h,
           ...(view
-            ? { transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }
+            ? {
+                transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`,
+              }
             : { visibility: "hidden" }),
         }}
       >
@@ -898,17 +919,35 @@ export function OntologySchema({
   const uid = useId();
   // The hovered or focused type or link; its tip goes with the pointer.
   const [active, setActive] = useState<string | null>(null);
-  // Drawn at a fixed column width; the frame fits and zooms it.
+  // The page's width, which the drawn schema takes when its cards stay readable.
+  const root = useRef<HTMLDivElement>(null),
+    [room, setRoom] = useState(0);
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const measure = () => setRoom(el.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const arrangement = useMemo(
+    () => (entities.length ? arrange(entities, links) : null),
+    [entities, links],
+  );
   const drawn = useMemo(() => {
-    if (!entities.length) return null;
-    const arrangement = arrange(entities, links),
-      width = gridOf(arrangement) * COLUMN_PX;
+    if (!arrangement || !room) return null;
+    const grid = gridOf(arrangement),
+      width = Math.max(
+        grid * COLUMN_PX.min,
+        Math.min(grid * COLUMN_PX.max, room - 2 * PAD),
+      );
     return {
       width,
       order: arrangement.order.map((i) => entities[i].id),
       ...layoutSchema(entities, links, arrangement, width, (e) => e.name),
     };
-  }, [entities, links]);
+  }, [arrangement, entities, links, room]);
   // Hub first, then outward: the order cards are revealed and read.
   const order = drawn?.order ?? [];
   const entity = new Map(entities.map((e) => [e.id, e]));
@@ -928,7 +967,7 @@ export function OntologySchema({
   ];
 
   return (
-    <div className="so-view is-readonly">
+    <div ref={root} className="so-view is-readonly">
       <div className="so-stats">
         <span className="so-stack" aria-hidden>
           {sources.map((s) => (
@@ -1126,8 +1165,8 @@ export function OntologySchema({
           </SchemaFrame>
           <div className="so-legend">
             <span>
-              Open a type to see its properties and where it comes from. Drag
-              to move; pinch, or hold Ctrl and scroll, to zoom.
+              Open a type to see its properties and where it comes from. Drag to
+              move; pinch, or hold Ctrl and scroll, to zoom.
             </span>
             <span className="so-keys" aria-hidden>
               <span>
