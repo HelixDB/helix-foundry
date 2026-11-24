@@ -357,8 +357,8 @@ func TestFoundryFillCollectedAfterALaterMove(t *testing.T) {
 	assert.False(t, listed, "a version no move recorded: not collected")
 	at, _ := f.loadVersion(t)
 	f.moveRow(t, "FILLCH-B", at, later.ID, model.FoundryFillFilled)
-	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET from_version_id=(SELECT to_version_id FROM (SELECT to_version_id FROM foundry_heal_fills WHERE id=?) x)
-WHERE id=?`, id26("HF-FILLCH"), id26("HF-FILLCH-B"))
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET from_version_id=(SELECT to_version_id FROM (SELECT to_version_id FROM foundry_heal_fills WHERE id=?) x),
+  links_added='["advises"]' WHERE id=?`, id26("HF-FILLCH"), id26("HF-FILLCH-B"))
 	require.NoError(t, err)
 	due, err := f.db.DueFoundryHealFills(context.Background(), 10)
 	require.NoError(t, err)
