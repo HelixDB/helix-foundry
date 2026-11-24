@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as toml from "smol-toml";
 import { readAgentBundle } from "@/web/areas/ontology/model";
+import { validateEdit } from "@/web/areas/ontology/edit-model";
 import { suggestion } from "@/web/areas/suggestions/model";
 import {
   addLinkEdits,
@@ -70,6 +71,19 @@ describe("addLinkEdits", () => {
     expect(table.links).toEqual(["works_at", "chair_of"]);
     expect(table.documents).toEqual(["set_1"]);
     expect(Object.keys(table.types)).toEqual(["Person", "Company"]);
+  });
+
+  it("makes edits Revise takes: a new link beside the route that reads it", () => {
+    const b = bundle(ONTOLOGY, route("notes", '["set_1"]', ["works_at"]));
+    const got = addLinkEdits(b, ask);
+    if (got.kind !== "edits") throw new Error(got.why);
+    expect(
+      got.edits.map((e) => validateEdit(b, e, got.edits)).filter(Boolean),
+    ).toEqual([]);
+    // The link alone, with no route reading it, is refused, as Revise does.
+    expect(validateEdit(b, got.edits[0], [got.edits[0]])).toMatch(
+      /EditNotAllowed: a new link must be/,
+    );
   });
 
   it("routes a link the version declares without putting it again", () => {
