@@ -138,8 +138,10 @@ test("workspace: a new workspace's first steps, and upgrading it", async ({
   page,
 }) => {
   await signInToNewWorkspace(page);
-  // Set up with your agent: a prompt to copy for the user's own agent.
+  // Get started's two cards: Set up with your agent (a prompt to copy for
+  // the user's own agent) and Set up here, with the sample's link under them.
   await expect(page.getByRole("button", { name: "Copy prompt" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Set up here" })).toBeVisible();
   await shot(page, "start-here", "onboarding");
   await page.goto("/settings/billing");
   await expect(
@@ -179,7 +181,7 @@ test("workspace: video", async ({ browser }) => {
   ).toBeVisible();
   await caption(
     page,
-    "A new workspace opens on Get started: a sample, your own data or your agent",
+    "A new workspace opens on Get started: set it up with your agent, or here",
     2500,
   );
   await caption(page, "Invite the people you work with from Settings");

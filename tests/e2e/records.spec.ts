@@ -1,11 +1,13 @@
 import type { Locator, Page } from "@playwright/test";
 import {
   choose,
+  chooseDatabase,
   createdOntology,
   expect,
   file,
   finishOntology,
   mock,
+  reviewOntology,
   signIn,
   startOntology,
   test,
@@ -375,8 +377,9 @@ test("names what a load holds by the load's version", async ({ page }) => {
 test("says to finish setting up with no current version", async ({ page }) => {
   // A new ontology on the team's own database: no version names anything.
   await signIn(page);
-  await startOntology(page, "Orders");
-  await page.getByRole("radio", { name: "orders in Production" }).check();
+  await startOntology(page);
+  await reviewOntology(page, "Orders");
+  await chooseDatabase(page, "orders in Production");
   await finishOntology(page);
   await createdOntology(page);
   await page

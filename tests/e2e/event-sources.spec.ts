@@ -324,7 +324,7 @@ test("opens the MCP's token link on the onboarding wizard's send panel", async (
   ).toHaveValue(/^hx_ev_/);
   await dialog.getByRole("button", { name: "Close" }).click();
   await expect(dialog).toHaveCount(0);
-  // Over the first ontology's sources step, past Get started.
+  // Over the first ontology's wizard, past Get started.
   await expect(
     tab.getByRole("heading", { level: 1, name: "Your first ontology" }),
   ).toBeVisible();

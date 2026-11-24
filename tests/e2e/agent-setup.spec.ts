@@ -1,7 +1,9 @@
 import {
+  chooseDatabase,
   createdOntology,
   expect,
   finishOntology,
+  reviewOntology,
   signIn,
   signInToNewWorkspace,
   startOntology,
@@ -17,11 +19,11 @@ test("copies the setup prompt where there is no ontology yet", async ({
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
-  // A new workspace opens on its onboarding, whose toggle starts on it.
+  // A new workspace opens on its onboarding, whose first card is it.
   await signInToNewWorkspace(page);
-  const agent = page.getByRole("radio", { name: "Set up with your agent" }),
+  const agent = page.getByText("Set up with your agent", { exact: true }),
     copy = page.getByRole("button", { name: "Copy prompt" });
-  await expect(agent).toBeChecked();
+  await expect(agent).toBeVisible();
   await copy.click();
   await expect(page.getByText("Copied the prompt")).toBeVisible();
   await expect.poll(clipboard).toContain("# Set up Helix Foundry with me");
@@ -35,11 +37,10 @@ test("copies the setup prompt where there is no ontology yet", async ({
   await copy.click();
   await expect.poll(clipboard).toContain("- No ontology yet.");
 
-  // The toggle's other side is the user's own data: no prompt, and one action
-  // that continues into the wizard.
-  await page.getByRole("radio", { name: "Use my own data" }).click();
+  // The card beside it, Set up here, continues into the wizard, which has
+  // no prompt.
+  await page.getByRole("button", { name: "Set up here" }).click();
   await expect(copy).toHaveCount(0);
-  await page.getByRole("button", { name: "Continue" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Your first ontology" }),
   ).toBeVisible();
@@ -62,8 +63,9 @@ test("copies the setup prompt from an unfinished ontology's step", async ({
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
   await signIn(page);
-  await startOntology(page, "Orders");
-  await page.getByRole("radio", { name: "orders in Production" }).check();
+  await startOntology(page);
+  await reviewOntology(page, "Orders");
+  await chooseDatabase(page, "orders in Production");
   await finishOntology(page);
   const overview = await createdOntology(page);
   await page.goto(overview);

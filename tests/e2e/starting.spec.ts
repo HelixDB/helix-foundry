@@ -1,13 +1,12 @@
 import type { Page } from "@playwright/test";
 import {
-  createdOntology,
   expect,
   loadContracts,
   makeContractsCurrent,
   mock,
+  postToWfe,
   signIn,
   startContractsLoad,
-  startOntology,
   test,
 } from "./support/mock";
 
@@ -20,22 +19,28 @@ import {
 
 /**
  * Creates "Billing" on the empty sandbox database, as new as the ontology,
- * with a draft of the Stripe account as its current version 1; the
+ * with a draft of the Stripe account as its current version 1, not loaded
+ * (made through the WFE: the wizard's first draft loads by itself); the
  * overview's path.
  */
 async function newBillingOntology(page: Page): Promise<string> {
   await signIn(page);
-  await startOntology(page, "Billing");
-  await page.getByRole("radio", { name: /sandbox/ }).check();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page
-    .getByRole("list", { name: "Connectors" })
-    .getByRole("checkbox", { name: /Shop/ })
-    .uncheck();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Skip" }).click();
-  await page.getByRole("button", { name: "Create and generate" }).click();
-  const overview = await createdOntology(page);
+  const path = "/v1/workspaces/ws_acme/foundry/ontologies";
+  const { ontology } = await postToWfe(page, path, {
+    name: "Billing",
+    tenantId: "ten_acme_sandbox",
+    clientToken: "billing",
+  });
+  const { generation } = await postToWfe(
+    page,
+    `${path}/${ontology.id}:generate`,
+    {
+      connectorIds: ["conn_acme_stripe"],
+      documentSetIds: [],
+    },
+  );
+  const overview = `/ontology/${ontology.id}`;
+  await page.goto(`${overview}/generations/${generation.id}`);
   await page
     .getByRole("link", { name: "Review version 1" })
     .click({ timeout: 15_000 });

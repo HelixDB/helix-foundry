@@ -2,6 +2,7 @@ import type { Page, Route } from "@playwright/test";
 import {
   APP_ORIGIN,
   addBillingReplica,
+  chooseDatabase,
   createdOntology,
   csrfToken,
   expect,
@@ -9,6 +10,7 @@ import {
   finishOntology,
   mock,
   postToWfe,
+  reviewOntology,
   signIn,
   startOntology,
   test,
@@ -695,14 +697,13 @@ test("starts a new ontology empty, drafting from the workspace's synced connecto
   await signIn(page);
   // A fresh ontology on Staging's empty database.
   // Another ontology's live generation doesn't hold a new one's first.
-  await startOntology(page, "Scratch");
-  await page.getByRole("radio", { name: /sandbox/ }).check();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await startOntology(page);
   // Acme's connectors are synced, so the wizard offers them.
   await expect(
     page.getByRole("list", { name: "Connectors" }).getByRole("checkbox"),
   ).toHaveCount(2);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await reviewOntology(page, "Scratch");
+  await chooseDatabase(page, /sandbox/);
   await finishOntology(page);
   await createdOntology(page);
 });
