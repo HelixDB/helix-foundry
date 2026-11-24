@@ -121,7 +121,8 @@ func foundryHealFindingProto(f *foundrymodel.FoundryHealFinding) *foundryv1.Foun
 // since), so a move's word stays shown. A version covers a finding when it
 // is the ontology's current version or its newest, isn't the load's, and
 // declares and routes the finding's link for its set
-// (ontologyagent.StatesLink).
+// (ontologyagent.StatesLink). A load whose own version states the link, as a
+// rebuild of a moved load, reads as moved to it.
 func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.FoundryOntology, findings []*foundrymodel.FoundryHealFinding) (
 	map[string]foundrymodel.FoundryFindingState, []*foundrymodel.FoundryHealFinding, error) {
 	states := map[string]foundrymodel.FoundryFindingState{}
@@ -179,9 +180,22 @@ func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.Foundry
 		}
 		candidates = append(candidates, v)
 	}
+	own, err := s.deps.DB.GetOntologyVersion(ctx, o.ID, load.VersionID)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "get the load's version: %v", err)
+	}
+	var ownDef ontologyagent.Definition
+	_ = json.Unmarshal(own.Definition, &ownDef)
 	for _, f := range findings {
 		canonical, set, ok := unmatchedLink(f)
 		if !ok {
+			continue
+		}
+		if fills[f.Fingerprint] == nil && ontologyagent.StatesLink(ownDef.OntologyTOML, ownDef.MappingsTOML, canonical, set) {
+			states[f.Fingerprint] = foundrymodel.FoundryFindingMoved{
+				Version:    foundrymodel.FoundryVersionRef{ID: own.ID, Version: own.Version},
+				LinksAdded: []string{canonical},
+			}
 			continue
 		}
 		var covered *foundrymodel.FoundryVersionRef

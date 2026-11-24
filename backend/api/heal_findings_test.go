@@ -205,3 +205,85 @@ func TestDismissFoundryHealFinding(t *testing.T) {
 		t.Fatalf("dismissed again = %v, %v", again, err)
 	}
 }
+
+// stateStore is healStore with a current load, its version, the newest and
+// current versions, and its fill rows.
+type stateStore struct {
+	*healStore
+	load     *foundrymodel.FoundryLoad
+	versions map[string]*foundrymodel.OntologyVersion
+	newest   string
+	fills    map[string]*foundrymodel.FoundryHealFill
+}
+
+func (s *stateStore) GetFoundryLoad(context.Context, string, string) (*foundrymodel.FoundryLoad, error) {
+	return s.load, nil
+}
+func (s *stateStore) ListFoundryHealFills(context.Context, string) (map[string]*foundrymodel.FoundryHealFill, error) {
+	return s.fills, nil
+}
+func (s *stateStore) ListOntologyVersions(context.Context, string, int) ([]*foundrymodel.OntologyVersion, error) {
+	return []*foundrymodel.OntologyVersion{s.versions[s.newest]}, nil
+}
+func (s *stateStore) GetOntologyVersion(_ context.Context, _, id string) (*foundrymodel.OntologyVersion, error) {
+	v, ok := s.versions[id]
+	if !ok {
+		return nil, foundrystore.ErrNotFound
+	}
+	return v, nil
+}
+
+// A finding's state: open with no version adding its link, covered by the
+// newest version that does, the fill row's word once pressed, and moved
+// where the load's own version states it; none for a finding that names no
+// link; a superseded finding with a fill row is still listed.
+func TestListFoundryHealFindingsStates(t *testing.T) {
+	bundle := func(n int, links string) *foundrymodel.OntologyVersion {
+		def, _ := json.Marshal(map[string]any{"format": "agent_bundle", "ontology_toml": "[links.mentors]\nfrom = \"P\"\nto = \"P\"",
+			"mappings_toml": "[extractions.notes]\ndocuments = \"all\"\nlinks = " + links})
+		return &foundrymodel.OntologyVersion{ID: "v" + string(rune('0'+n)), Version: n, Definition: def}
+	}
+	finding := func(fp, kind, status string) *foundrymodel.FoundryHealFinding {
+		return &foundrymodel.FoundryHealFinding{Fingerprint: fp, Kind: kind, Status: foundrymodel.FoundryHealStatus(status), Support: 3, Sources: 3,
+			Finding: json.RawMessage(`{"signal":{"kind":"` + kind + `","canonical":"mentors","set":"set_1"}}`)}
+	}
+	states := func(s *stateStore) map[string]string {
+		svc := &Service{deps: &runtimeDeps{DB: s, Cfg: &config.Config{}}}
+		out, err := svc.ListFoundryHealFindings(context.Background(), &foundryv1.ListFoundryHealFindingsRequest{WorkspaceId: "ws-1", OntologyId: "o1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, f := range out.Findings {
+			raw, _ := json.Marshal(f.GetState())
+			got[f.Fingerprint] = string(raw)
+		}
+		return got
+	}
+	_, base := newHealService()
+	load, current := "load-1", "v1"
+	base.ontology.CurrentLoadID, base.ontology.CurrentVersionID = &load, &current
+	base.findings = map[string]*foundrymodel.FoundryHealFinding{
+		"aa": finding("aa", "unmatched", "open"), "bb": finding("bb", "clash", "open"), "cc": finding("cc", "unmatched", "superseded"),
+	}
+	s := &stateStore{healStore: base, load: &foundrymodel.FoundryLoad{ID: load, VersionID: "v1"},
+		versions: map[string]*foundrymodel.OntologyVersion{"v1": bundle(1, `["works_at"]`), "v2": bundle(2, `["works_at", "mentors"]`)},
+		newest:   "v1", fills: map[string]*foundrymodel.FoundryHealFill{}}
+	got := states(s)
+	if got["aa"] != `{"State":{"Open":{}}}` || got["bb"] != "null" || len(got) != 2 {
+		t.Fatalf("before any version adds it: %v", got)
+	}
+	s.newest = "v2"
+	if got := states(s); got["aa"] != `{"State":{"Covered":{"version_id":"v2","version":2}}}` {
+		t.Fatalf("a newer version adds it: %v", got)
+	}
+	s.fills["cc"] = &foundrymodel.FoundryHealFill{Fingerprint: "cc", ToVersionID: "v2", ToVersion: 2, State: foundrymodel.FoundryFillMoving}
+	if got := states(s); got["cc"] != `{"State":{"Moving":{"version_id":"v2","version":2}}}` {
+		t.Fatalf("a superseded finding being filled: %v", got)
+	}
+	// A rebuild at the version that states it.
+	s.load.VersionID = "v2"
+	if got := states(s); got["aa"] != `{"State":{"Moved":{"version_id":"v2","version":2,"links_added":["mentors"]}}}` {
+		t.Fatalf("a load of a version that states it: %v", got)
+	}
+}
