@@ -27,7 +27,8 @@ import { onReset } from "../state";
 // Ingest: rows of a mapped table become keyed entities {entity_key, name,
 // props, <names prop>__nn, <identifier prop>__id, foundry_part:
 // "<load>:rows"} (foundry_part only when a row creates it), each with a row
-// FoundryEvidence {..., props: the props the row set} -FOUNDRY_ABOUT-> it
+// FoundryEvidence {..., row_key (joinKey), props: the props the row set,
+// values: JSON of {prop: {value, valid}}} -FOUNDRY_ABOUT-> it
 // and -FOUNDRY_FROM_CHUNK-> its FoundryChunk; a row that links two entities
 // becomes a fact edge {fact_key, provenance: "stated", confidence 1,
 // evidence_count} with its own row FoundryEvidence. A load that finds a
@@ -277,10 +278,23 @@ function sentenceAt(text: string, i: number): [number, number] {
 
 // ---------------------------------------------------------------- Ingest
 
+/**
+ * A row's key as the engine stores it (`mapping::field::join_key`): its
+ * mapping's `row_key` fields' key texts, each `\`, `|` and `/` escaped with a
+ * `\`, joined by `|`; a nested mapping's after its parent's and a `/`.
+ *
+ *     joinKey(["C1", "a|b"]) // "C1|a\\|b"
+ */
+export const joinKey = (parts: readonly string[]) =>
+  parts.map((p) => p.replace(/[\\|/]/g, "\\$&")).join("|");
+
 /** One row of a mapped table: the entity it states, and the links it makes. */
 export type Row = {
   type: string;
   key: string;
+  // The row's key as stored (joinKey of its mapping's row_key fields); its
+  // entity's key when the mapping's row_key is that key's one field.
+  rowKey?: string;
   name: string;
   props: Props;
   // `names` props: their normalized value is stored beside them.
@@ -378,10 +392,19 @@ export function ingestChunk(
         foundry_part: `${g.load}:rows`,
       });
     Object.assign(g.node(e)!.props, r.props, nn, ids);
+    const rowKey = r.rowKey ?? r.key;
     const ev = evidence({
-      row_key: r.key,
-      row_hash: sha256(r.key),
+      row_key: rowKey,
+      row_hash: sha256(rowKey),
       props: Object.keys(r.props).sort(),
+      values: JSON.stringify(
+        Object.fromEntries(
+          Object.entries(r.props).map(([p, value]) => [
+            p,
+            { value, valid: null },
+          ]),
+        ),
+      ),
     });
     g.addEdge(E.FROM_CHUNK, ev, c);
     g.addEdge(E.ABOUT, ev, e);
@@ -404,8 +427,8 @@ export function ingestChunk(
         fact_key: factKey,
         link: l.link,
         fact_source: `${factKey}\u001f${chunk.source}`,
-        row_key: r.key,
-        row_hash: sha256(r.key),
+        row_key: rowKey,
+        row_hash: sha256(rowKey),
       });
       g.addEdge(E.FROM_CHUNK, fev, c);
     }
