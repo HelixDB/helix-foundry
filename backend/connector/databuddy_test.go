@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -115,18 +116,19 @@ func TestDatabuddyDiscover(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"websites", "daily_metrics", "pages", "referrers", "custom_events", "sessions", "profiles"}
+		want := []string{"websites", "daily_metrics", "pages", "referrers", "custom_events", "custom_events_daily", "custom_event_occurrences", "sessions", "profiles"}
 		if !slices.Equal(tableNames(d), want) || len(d.Unavailable) != 0 {
 			t.Fatalf("tables = %v, unavailable = %v", tableNames(d), d.Unavailable)
 		}
 		keys := map[string][]string{"websites": {"website_id"}, "daily_metrics": {"website_id", "date"}, "pages": {"website_id", "path"},
-			"referrers": {"website_id", "referrer"}, "custom_events": {"website_id", "event_name"}, "sessions": {"website_id", "session_id"}, "profiles": {"website_id", "visitor_id"}}
+			"referrers": {"website_id", "referrer"}, "custom_events": {"website_id", "event_name"}, "custom_events_daily": {"website_id", "event_name", "date"},
+			"custom_event_occurrences": {"website_id", "event_id"}, "sessions": {"website_id", "session_id"}, "profiles": {"website_id", "visitor_id"}}
 		for name, key := range keys {
 			table := findTable(t, d, name)
 			if !slices.Equal(table.PrimaryKey, key) {
 				t.Errorf("%s key = %v, want %v", name, table.PrimaryKey, key)
 			}
-			if windowed := name == "daily_metrics" || name == "sessions" || name == "profiles"; table.Windowed != windowed {
+			if windowed := name != "websites" && name != "pages" && name != "referrers" && name != "custom_events"; table.Windowed != windowed {
 				t.Errorf("%s windowed = %v", name, table.Windowed)
 			}
 			if want := []ForeignKey{foreignKey("website_id", "websites", "website_id")}; name != "websites" && !slices.Equal(table.ForeignKeys, want) {
@@ -139,7 +141,7 @@ func TestDatabuddyDiscover(t *testing.T) {
 		}
 		for i, site := range []string{"web_a", "web_b"} {
 			q := (*queries)[i]
-			if q.site != site || len(q.body.Parameters) != 6 || q.body.Limit != 1 || q.body.StartDate != today || q.body.EndDate != today {
+			if q.site != site || len(q.body.Parameters) != 8 || q.body.Limit != 1 || q.body.StartDate != today || q.body.EndDate != today {
 				t.Fatalf("probe = %+v", q)
 			}
 		}
@@ -181,6 +183,19 @@ func TestDatabuddyDiscover(t *testing.T) {
 		}
 	})
 
+	t.Run("occurrences are unavailable when the daily counts that size them are", func(t *testing.T) {
+		k, _ := databuddyServer(t, databuddySites, failing(map[string]map[string]string{
+			"web_b": {"custom_events_trends_by_event": "Website permission required"},
+		}))
+		d, err := k.Discover(ctx, databuddySource(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprint(d.Unavailable); got != "[{custom_events_daily Website permission required} {custom_event_occurrences Website permission required}]" {
+			t.Fatalf("unavailable = %s", got)
+		}
+	})
+
 	// A table that was synced and is unavailable pauses its connector, so a
 	// failure that may pass is refused, and the sync retried.
 	for name, failed := range map[string]map[string]map[string]string{
@@ -205,7 +220,7 @@ func TestDatabuddyDiscover(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(tableNames(d), []string{"websites"}) || len(d.Unavailable) != 6 || d.Unavailable[0].Reason != "the key reads no website yet" {
+		if !slices.Equal(tableNames(d), []string{"websites"}) || len(d.Unavailable) != 8 || d.Unavailable[0].Reason != "the key reads no website yet" {
 			t.Fatalf("tables = %v, unavailable = %v", tableNames(d), d.Unavailable)
 		}
 		if len(*queries) != 0 {
@@ -512,7 +527,12 @@ func TestDatabuddyChanges(t *testing.T) {
 				t.Errorf("%s capture = %s", table.Name, got)
 			}
 		}
-		for _, table := range []string{"daily_metrics", "sessions", "profiles"} {
+		for _, table := range []string{"custom_events_daily", "custom_event_occurrences"} {
+			if got := k.Capture(Source{}, table); got != CaptureCursor {
+				t.Errorf("%s capture = %s", table, got)
+			}
+		}
+		for _, table := range []string{"daily_metrics", "custom_events_daily", "custom_event_occurrences", "sessions", "profiles"} {
 			if !WindowedTable("databuddy", table) {
 				t.Errorf("%s is not windowed", table)
 			}
@@ -661,6 +681,274 @@ func TestDatabuddyChanges(t *testing.T) {
 		}
 		if _, err := reader.Changes(ctx, databuddySource(`{}`), sessions, cursor, &cursorChanges{}); err == nil || !strings.Contains(err.Error(), "down") {
 			t.Errorf("failed query: %v", err)
+		}
+	})
+}
+
+// databuddyEvents is a site's custom events as the two query types that
+// read them answer: occurrences by UTC day for custom_events_recent, and
+// each day's count, which counts may set apart from the occurrences, for
+// custom_events_trends_by_event.
+type databuddyEvents struct {
+	byDay  map[string][]map[string]any
+	counts map[string]float64
+}
+
+func (e databuddyEvents) answer(q databuddyQuery) (int, string) {
+	return http.StatusOK, databuddyAnswer(q, func(p string) []map[string]any {
+		switch p {
+		case "custom_events_trends_by_event":
+			var rows []map[string]any
+			for day, n := range e.counts {
+				if day >= q.body.StartDate && day <= q.body.EndDate {
+					rows = append(rows, map[string]any{"date": day, "bucket_start": day + "T00:00:00Z", "event_name": "signup_completed", "total_events": n})
+				}
+			}
+			return rows
+		case "custom_events_recent":
+			if q.body.StartDate != q.body.EndDate {
+				panic("occurrences read over more than a day: " + q.body.StartDate + " to " + q.body.EndDate)
+			}
+			rows := e.byDay[q.body.StartDate]
+			start := (q.body.Page - 1) * q.body.Limit
+			return rows[min(start, len(rows)):min(start+q.body.Limit, len(rows))]
+		}
+		return nil
+	})
+}
+
+// occurrence is a custom_events_recent row at at.
+func occurrence(at time.Time, name string, properties any) map[string]any {
+	return map[string]any{"event_name": name, "namespace": nil, "path": "/signup", "source": "browser", "properties": properties,
+		"anonymous_id": "anon_1", "session_id": "sess_1", "timestamp": at.UTC().Format("2006-01-02 15:04:05.000")}
+}
+
+func TestDatabuddyCustomEvents(t *testing.T) {
+	ctx := context.Background()
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	day := func(ago int) string { return today.AddDate(0, 0, -ago).Format(time.DateOnly) }
+
+	t.Run("writes each event's count of each day", func(t *testing.T) {
+		k, queries := databuddyServer(t, databuddySites, databuddyEvents{counts: map[string]float64{day(1): 89, day(8): 31}}.answer)
+		var sink rowSink
+		if _, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":30}`), Table{Name: "custom_events_daily"}, &sink); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.rows) != 2 || len(*queries) != 1 || (*queries)[0].body.Limit != 10000 || (*queries)[0].body.StartDate != day(30) {
+			t.Fatalf("rows = %v, queries = %+v", sink.rows, *queries)
+		}
+		for _, row := range sink.rows {
+			if len(row) != 5 || row["website_id"] != "web_a" || row["event_name"] != "signup_completed" || row["bucket_start"] != fmt.Sprint(row["date"], "T00:00:00Z") {
+				t.Errorf("row = %v", row)
+			}
+		}
+	})
+
+	t.Run("reads occurrences a day at a time, paging each day, keyed by their content", func(t *testing.T) {
+		at := today.Add(-26 * time.Hour)
+		busy := make([]map[string]any, 10001)
+		for i := range busy {
+			busy[i] = occurrence(at.Add(time.Duration(i)*time.Millisecond), "page_click", `{"n":1}`)
+		}
+		events := databuddyEvents{
+			counts: map[string]float64{day(2): 10001, day(0): 3},
+			byDay: map[string][]map[string]any{
+				day(2): busy,
+				day(0): {
+					occurrence(today.Add(time.Hour), "signup_completed", `{"plan":"pro","seats":3}`),
+					// The same occurrence read twice, as a page that shifted would: it is written once.
+					occurrence(today.Add(time.Hour), "signup_completed", `{"plan":"pro","seats":3}`),
+					occurrence(today.Add(2*time.Hour), "signup_completed", "not json"),
+					occurrence(today.Add(3*time.Hour), "signup_completed", nil),
+				},
+			},
+		}
+		k, queries := databuddyServer(t, databuddySites, events.answer)
+		var sink rowSink
+		if _, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":3}`), Table{Name: databuddyOccurrences}, &sink); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.rows) != 10004 {
+			t.Fatalf("rows = %d", len(sink.rows))
+		}
+		var asked []string
+		for _, q := range *queries {
+			asked = append(asked, fmt.Sprintf("%s:%s:%d", q.body.Parameters[0], q.body.StartDate, q.body.Page))
+		}
+		want := []string{"custom_events_trends_by_event:" + day(3) + ":1",
+			"custom_events_recent:" + day(3) + ":1", "custom_events_recent:" + day(2) + ":1", "custom_events_recent:" + day(2) + ":2",
+			"custom_events_recent:" + day(1) + ":1", "custom_events_recent:" + day(0) + ":1"}
+		if !slices.Equal(asked, want) {
+			t.Fatalf("asked %v, want %v", asked, want)
+		}
+		first := sink.rows[10001]
+		if first["timestamp"] != today.Add(time.Hour).Format("2006-01-02T15:04:05.000Z") || first["date"] != day(0) ||
+			fmt.Sprint(first["properties"]) != "map[plan:pro seats:3]" || first["website_id"] != "web_a" || first["path"] != "/signup" ||
+			first["namespace"] != nil || len(databuddyText(first["event_id"])) != 32 {
+			t.Fatalf("row = %v", first)
+		}
+		if p := sink.rows[10002]["properties"]; p != nil {
+			t.Errorf("unreadable properties = %v", p)
+		}
+		if p := sink.rows[10003]["properties"]; p != nil {
+			t.Errorf("missing properties = %v", p)
+		}
+		ids := map[any]bool{}
+		for _, row := range sink.rows {
+			ids[row["event_id"]] = true
+		}
+		if len(ids) != len(sink.rows) {
+			t.Fatalf("%d ids for %d rows", len(ids), len(sink.rows))
+		}
+
+		// A second read keys every occurrence the same.
+		var again rowSink
+		if _, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":3}`), Table{Name: databuddyOccurrences}, &again); err != nil {
+			t.Fatal(err)
+		}
+		for i, row := range again.rows {
+			if row["event_id"] != sink.rows[i]["event_id"] {
+				t.Fatalf("row %d keyed %v then %v", i, sink.rows[i]["event_id"], row["event_id"])
+			}
+		}
+	})
+
+	t.Run("keeps the newest whole days that fit, by the daily counts of every site", func(t *testing.T) {
+		// Over both sites: today 200k, yesterday 250k (450k), two days ago 100k (550k, past the cap).
+		counts := map[string]map[string]float64{
+			"web_a": {day(0): 100_000, day(1): 200_000, day(2): 50_000, day(5): 1},
+			"web_b": {day(0): 100_000, day(1): 50_000, day(2): 50_000},
+		}
+		k, queries := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
+			return databuddyEvents{counts: counts[q.site]}.answer(q)
+		})
+		if _, err := k.Sync(ctx, databuddySource(`{"history_days":30}`), Table{Name: databuddyOccurrences}, &rowSink{}); err != nil {
+			t.Fatal(err)
+		}
+		var read []string
+		for _, q := range *queries {
+			if q.body.Parameters[0] == "custom_events_recent" {
+				read = append(read, q.site+":"+q.body.StartDate)
+			}
+		}
+		if want := []string{"web_a:" + day(1), "web_a:" + day(0), "web_b:" + day(1), "web_b:" + day(0)}; !slices.Equal(read, want) {
+			t.Fatalf("read %v, want %v", read, want)
+		}
+	})
+
+	t.Run("reads the whole window when it fits", func(t *testing.T) {
+		k, queries := databuddyServer(t, databuddySites, databuddyEvents{counts: map[string]float64{day(0): maxDatabuddyOccurrences}}.answer)
+		if _, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":2}`), Table{Name: databuddyOccurrences}, &rowSink{}); err != nil {
+			t.Fatal(err)
+		}
+		if len(*queries) != 4 || (*queries)[1].body.StartDate != day(2) {
+			t.Fatalf("queries = %+v", *queries)
+		}
+	})
+
+	t.Run("a day too large to keep alone is refused", func(t *testing.T) {
+		k, queries := databuddyServer(t, databuddySites, databuddyEvents{counts: map[string]float64{day(0): maxDatabuddyOccurrences + 1}}.answer)
+		_, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"]}`), Table{Name: databuddyOccurrences}, &rowSink{})
+		var invalidErr *InvalidError
+		if !errors.As(err, &invalidErr) || !strings.Contains(err.Error(), "more custom events today than Foundry keeps of them (500000)") || len(*queries) != 1 {
+			t.Fatalf("err = %v after %d queries", err, len(*queries))
+		}
+	})
+
+	t.Run("a count without a day or number, or an occurrence without a time, fails the read", func(t *testing.T) {
+		for name, answer := range map[string]func(q databuddyQuery) (int, string){
+			"a row has no day or count": func(q databuddyQuery) (int, string) {
+				return http.StatusOK, databuddyAnswer(q, func(string) []map[string]any { return []map[string]any{{"date": "soon", "total_events": 3}} })
+			},
+			"no readable timestamp": func(q databuddyQuery) (int, string) {
+				return http.StatusOK, databuddyAnswer(q, func(p string) []map[string]any {
+					if p == "custom_events_recent" {
+						return []map[string]any{{"event_name": "x", "timestamp": "later"}}
+					}
+					return nil
+				})
+			},
+			"refused the custom_events_trends_by_event query": func(q databuddyQuery) (int, string) {
+				return http.StatusOK, `{"success":true,"data":[{"parameter":"custom_events_trends_by_event","success":false,"error":"down"}]}`
+			},
+		} {
+			k, _ := databuddyServer(t, databuddySites, answer)
+			if _, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":1}`), Table{Name: databuddyOccurrences}, &rowSink{}); err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("%s: err = %v", name, err)
+			}
+		}
+	})
+
+	t.Run("a writer's error stops the read", func(t *testing.T) {
+		events := databuddyEvents{byDay: map[string][]map[string]any{day(0): {occurrence(today, "x", "{}")}}}
+		k, _ := databuddyServer(t, databuddySites, events.answer)
+		if _, err := k.Sync(ctx, databuddySource(`{"website_ids":["web_a"],"history_days":1}`), Table{Name: databuddyOccurrences}, &calcomFullWriter{}); !errors.Is(err, errCalcomFull) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("an event id differs by every field it hashes, a null from an empty string", func(t *testing.T) {
+		at := "2026-11-24T20:00:16.840Z"
+		base := occurrence(time.Date(2026, 11, 24, 20, 0, 16, 840e6, time.UTC), "signup_completed", `{"plan":"pro"}`)
+		id := databuddyEventID("web_a", at, base)
+		if databuddyEventID("web_a", at, maps.Clone(base)) != id {
+			t.Fatal("the same occurrence keyed twice differs")
+		}
+		if databuddyEventID("web_b", at, base) == id || databuddyEventID("web_a", "2026-11-24T20:00:16.841Z", base) == id {
+			t.Error("another site or time shares the id")
+		}
+		for _, field := range []string{"event_name", "namespace", "path", "source", "anonymous_id", "session_id", "properties"} {
+			for _, v := range []any{"other", "", nil} {
+				changed := maps.Clone(base)
+				changed[field] = v
+				if base[field] != v && databuddyEventID("web_a", at, changed) == id {
+					t.Errorf("%s = %#v shares the id", field, v)
+				}
+			}
+		}
+	})
+
+	t.Run("reads Databuddy's days", func(t *testing.T) {
+		for v, want := range map[any]string{"2026-11-15": "2026-11-15", "2026-11-15T05:00:00Z": "2026-11-15", "2026-11-15 23:59:59": "2026-11-15"} {
+			if got, ok := databuddyDay(v); !ok || got.Format(time.DateOnly) != want {
+				t.Errorf("databuddyDay(%v) = %v, %v", v, got, ok)
+			}
+		}
+		for _, v := range []any{"", 3.0, nil, "15/11/2026"} {
+			if _, ok := databuddyDay(v); ok {
+				t.Errorf("databuddyDay(%v) read a day", v)
+			}
+		}
+	})
+
+	t.Run("a change read upserts occurrences and counts from the day before the cursor", func(t *testing.T) {
+		events := databuddyEvents{
+			counts: map[string]float64{day(1): 2, day(0): 1},
+			byDay: map[string][]map[string]any{
+				day(1): {occurrence(today.Add(-time.Hour), "signup_completed", "{}"), occurrence(today.Add(-2*time.Hour), "signup_completed", "{}")},
+				day(0): {occurrence(today.Add(time.Minute), "signup_completed", "{}")},
+			},
+		}
+		k, queries := databuddyServer(t, databuddySites, events.answer)
+		times := map[string]time.Time{"custom_events_daily": today.Add(time.Hour), databuddyOccurrences: today.Add(time.Hour)}
+		cursor, _ := json.Marshal(databuddyCursor{Tables: times, HistoryDays: 90, Sites: []string{"web_a"}})
+		w := &cursorChanges{}
+		tables := []Table{{Name: "custom_events_daily"}, {Name: databuddyOccurrences}}
+		if _, err := k.(ChangeReader).Changes(ctx, databuddySource(`{"website_ids":["web_a"]}`), tables, cursor, w); err != nil {
+			t.Fatal(err)
+		}
+		if len(w.upserts[databuddyOccurrences]) != 3 || len(w.upserts["custom_events_daily"]) != 2 || len(w.resets) != 0 {
+			t.Fatalf("upserts = %v, resets = %v", w.upserts, w.resets)
+		}
+		var asked []string
+		for _, q := range *queries {
+			asked = append(asked, q.body.Parameters[0]+":"+q.body.StartDate+":"+q.body.EndDate)
+		}
+		// No count is read to size a change read: it keeps the newest days whatever their size.
+		want := []string{"custom_events_trends_by_event:" + day(1) + ":" + day(0),
+			"custom_events_recent:" + day(1) + ":" + day(1), "custom_events_recent:" + day(0) + ":" + day(0)}
+		if !slices.Equal(asked, want) {
+			t.Fatalf("asked %v, want %v", asked, want)
 		}
 	})
 }
