@@ -754,7 +754,11 @@ function tableHold(
 ):
   | { kind: "none" }
   | { kind: "whole" }
-  | { kind: "rows"; rule: Exclude<RowRule, { match: "directory" }>; items: string[] } {
+  | {
+      kind: "rows";
+      rule: Exclude<RowRule, { match: "directory" }>;
+      items: string[];
+    } {
   if (!givesTable(r.targets, x)) return { kind: "none" };
   const reach = r.sharing.get(x.connectorId),
     rule = SLACK_ROWS[x.table];
