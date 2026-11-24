@@ -123,9 +123,11 @@ type FoundryAgentThread struct {
 
 // FoundryAgentThreadGrants are the grant targets a restricted member's turns
 // of a thread ran under, through themselves and their teams, and the items
-// of audienced sources (Slack channels) shared with them as they ran, sorted:
-// the thread is theirs only while they hold every target and each item is
-// still shared with them.
+// of audienced sources (Slack channels) that what its calls read was of
+// (the documents of a load read, an answer's), sorted: the thread is theirs
+// only while they hold every target and each item is still shared with them.
+// A thread that read nothing of an item holds none, so losing a channel
+// never takes it away.
 type FoundryAgentThreadGrants struct {
 	Targets []access.Target
 	Items   []access.ItemRef

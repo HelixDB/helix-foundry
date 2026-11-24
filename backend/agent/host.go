@@ -808,7 +808,8 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 	if err != nil {
 		return nil, err
 	}
-	if _, err := threadReach(ctx, h.DB, session, turn, reach); err != nil {
+	held, err := threadReach(ctx, h.DB, session, turn, reach)
+	if err != nil {
 		return nil, err
 	}
 	sink.reach = reach
@@ -825,15 +826,29 @@ func (h *Hosts) Server(ctx context.Context, turn *model.FoundryAgentTurn, worker
 			if method != "tools/call" || !ok {
 				return next(session.Ctx, method, req)
 			}
-			return h.call(session.Ctx, turn, workerID, spend, call, offered, next, method)
+			return h.call(session.Ctx, turn, workerID, spend, call, offered, next, method, func(ctx context.Context, output any) error {
+				// A restricted member's call records what it read, as the
+				// worker's do (recordDrew): this server reads their access
+				// once, before the call (stateless, one per request).
+				if reach.wholeView() {
+					return nil
+				}
+				holds, err := threadReach(ctx, h.DB, session, turn, reach)
+				if err != nil {
+					return err
+				}
+				return recordDrew(ctx, h.DB, turn, call.Params.Name, call.Params.Arguments, output, held, holds)
+			})
 		}
 	})
 	return server, nil
 }
 
-// call runs one of a claim's tool calls, showing it to the person.
+// call runs one of a claim's tool calls, showing it to the person. read
+// records what a call that returned output read before its result is
+// returned: one it refuses returns none, only why.
 func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID string, spend HostSpend, call *mcp.CallToolRequest,
-	offered map[string]*mcp.Tool, next mcp.MethodHandler, method string) (mcp.Result, error) {
+	offered map[string]*mcp.Tool, next mcp.MethodHandler, method string, read func(context.Context, any) error) (mcp.Result, error) {
 	name := call.Params.Name
 	// A person's turn records under no workflow run, whatever its model
 	// wrote, as the worker's own turns don't.
@@ -893,6 +908,15 @@ func (h *Hosts) call(ctx context.Context, turn *model.FoundryAgentTurn, workerID
 		}
 		shown.IsError, shown.Error = true, cut(strings.Join(texts, "\n"))
 	default:
+		if why := read(ctx, r.StructuredContent); why != nil {
+			var failure *Failure
+			if !errors.As(why, &failure) {
+				return nil, why
+			}
+			shown.IsError, shown.Error = true, failure.Message
+			result = &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: failure.Message}}}
+			break
+		}
 		if raw, err := json.Marshal(r.StructuredContent); err == nil && len(raw) <= maxResultBytes {
 			shown.Output = json.RawMessage(raw)
 		} else {
