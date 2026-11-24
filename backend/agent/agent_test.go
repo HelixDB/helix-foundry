@@ -87,6 +87,10 @@ type memStore struct {
 	// grants are the workspace's source grants; teams each user's teams.
 	grants []model.FoundryAccessGrant
 	teams  map[string][]string
+	// holdings are what each load holds, by id; questions the Analyst's, by
+	// id: none unless a test says.
+	holdings  map[string]access.Holdings
+	questions map[string]*model.FoundryQuestion
 	// causes are the syncs and loads marked as an automation run's, by run.
 	causes map[string][]model.FoundryAutomationJob
 	// continued and first are the last finished click's continuation and
@@ -138,6 +142,22 @@ func (s *memStore) RecordFoundryAgentThreadGrants(_ context.Context, _, id strin
 		t.Granted = &model.FoundryAgentThreadGrants{Targets: merged, Items: access.SortItems(slices.Concat(t.Granted.Items, granted.Items))}
 	}
 	return nil
+}
+
+func (s *memStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
+	h, ok := s.holdings[loadID]
+	if !ok {
+		return access.Holdings{}, foundrystore.ErrNotFound
+	}
+	return h, nil
+}
+
+func (s *memStore) GetFoundryQuestion(_ context.Context, ontologyID, id string) (*model.FoundryQuestion, error) {
+	q, ok := s.questions[id]
+	if !ok || q.OntologyID != ontologyID {
+		return nil, foundrystore.ErrNotFound
+	}
+	return q, nil
 }
 
 func (s *memStore) FoundryTeamsOf(_ context.Context, _, userID string) ([]string, error) {
@@ -613,8 +633,9 @@ type backend struct {
 	answered  []*foundryv1.AnswerOntologyGenerationRequest
 	answerErr error
 	// question is what an ask and a get_question answer: q1, answered,
-	// unless a test says.
-	question *foundryv1.FoundryQuestion
+	// unless a test says; questions what a list of them returns.
+	question  *foundryv1.FoundryQuestion
+	questions []*foundryv1.FoundryQuestion
 	// created are the dashboards made; deleted the ids of those deleted.
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
@@ -708,6 +729,19 @@ func (b *backend) ListFoundryOntologies(context.Context, *foundryv1.ListFoundryO
 	return &foundryv1.ListFoundryOntologiesResponse{Ontologies: []*foundryv1.FoundryOntology{{Id: ontology, Name: "Sales graph"}}}, nil
 }
 
+// GetFoundryLoad is every load ready to read.
+func (b *backend) GetFoundryLoad(_ context.Context, r *foundryv1.GetFoundryLoadRequest, _ ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
+	return &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: r.GetId(), Status: "ready"}}, nil
+}
+
+// ReadFoundryGraph answers every read with nothing found.
+func (b *backend) ReadFoundryGraph(context.Context, *foundryv1.ReadFoundryGraphRequest, ...grpc.CallOption) (*foundryv1.ReadFoundryGraphResponse, error) {
+	if b.onCall != nil {
+		b.onCall()
+	}
+	return &foundryv1.ReadFoundryGraphResponse{ResultJson: `{"asked_at":"2026-11-23","results":[{"ok":{"kind":"query","result":{"rows":[]}}}],"stats":{"instances":0,"wall_ms":1}}`}, nil
+}
+
 func (b *backend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	b.asked = append(b.asked, r)
 	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
@@ -715,6 +749,13 @@ func (b *backend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQ
 
 func (b *backend) GetFoundryQuestion(context.Context, *foundryv1.GetFoundryQuestionRequest, ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	return &foundryv1.FoundryQuestionResponse{Question: b.question}, nil
+}
+
+func (b *backend) ListFoundryQuestions(context.Context, *foundryv1.ListFoundryQuestionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryQuestionsResponse, error) {
+	if b.onCall != nil {
+		b.onCall()
+	}
+	return &foundryv1.ListFoundryQuestionsResponse{Questions: b.questions}, nil
 }
 
 // CreateFoundryDashboard makes dash<n>, unpinned and unpublished, as the

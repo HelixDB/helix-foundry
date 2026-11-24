@@ -80,7 +80,7 @@ const (
 )
 
 // FoundryFoldWhy is one thing a version changes that needs a new load, as
-// the engine says it (contract 4.32.0's not_additive why): its kind and the
+// the engine says it (contract 4.33.0's not_additive why): its kind and the
 // item, as a dotted path of its table.
 type FoundryFoldWhy struct {
 	Kind string `json:"kind"`

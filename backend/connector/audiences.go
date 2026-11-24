@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/helixdb/helix-foundry/backend/access"
 )
 
 // Audienced is a kind that reports its source's own permissions: who each
@@ -20,7 +22,16 @@ type Audienced interface {
 	// external id; ok is false for a document of no item the kind knows,
 	// which only full readers read.
 	ItemOfDocument(stream, externalID string) (item string, ok bool)
+	// TableRows is how a table the kind syncs tells which item each of its
+	// rows is of: by a field of the row key a version's mapping reads it by
+	// (the table's primary key, as Discover gives it), the item itself or
+	// the item and a separator before the rest, or as the source's
+	// directory of people. The zero access.RowRule is a table whose rows
+	// aren't told apart, which only full readers read.
+	TableRows(table string) access.RowRule
 }
+
+var _ access.SourceKind = Audienced(nil)
 
 // audiencedKinds are the catalog's kinds that are Audienced, by name. Their
 // ItemOfDocument reads nothing of the network, so a catalog wired to none

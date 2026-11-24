@@ -22,13 +22,14 @@ func TestEncodeDecode(t *testing.T) {
 		slack.KindTokensRevoked: slack.TokensRevoked{TeamID: "T1", Bot: true, EventTime: eventTime},
 	}
 	clicks := map[slack.Kind]slack.Interaction{
-		slack.KindApprove: slack.Approve{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash},
-		slack.KindDismiss: slack.Dismiss{Clicked: clicked, ActionID: actionID},
-		slack.KindRefresh: slack.Refresh{Clicked: clicked, ActionID: actionID},
-		slack.KindReview:  slack.Review{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash},
-		slack.KindRun:     slack.Run{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash, SpecHash: specHash},
-		slack.KindStop:    slack.Stop{Clicked: clicked, TurnID: turnID},
-		slack.KindUnlink:  slack.Unlink{Clicked: clicked},
+		slack.KindApprove:  slack.Approve{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash},
+		slack.KindDismiss:  slack.Dismiss{Clicked: clicked, ActionID: actionID},
+		slack.KindRefresh:  slack.Refresh{Clicked: clicked, ActionID: actionID},
+		slack.KindReview:   slack.Review{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash},
+		slack.KindRun:      slack.Run{Clicked: clicked, ActionID: actionID, PayloadHash: payloadHash, SpecHash: specHash},
+		slack.KindStop:     slack.Stop{Clicked: clicked, TurnID: turnID},
+		slack.KindUnlink:   slack.Unlink{Clicked: clicked},
+		slack.KindAskAbout: slack.AskAbout{Clicked: clicked, AuthorID: "U2", Text: "renewals are *due*"},
 	}
 	for want, e := range events {
 		k, data, err := slack.EncodeEvent(e)

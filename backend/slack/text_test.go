@@ -109,6 +109,8 @@ func TestCompose(t *testing.T) {
 	require.Equal(t, "", slack.Italic(slack.Mrkdwn{}).String())
 	require.Equal(t, "<@U0ADA0001>", slack.UserMention("U0ADA0001").String())
 	require.Equal(t, "@&lt;!here&gt;", slack.UserMention("<!here>").String())
+	require.Equal(t, "<#C0GEN0001>", slack.ChannelMention("C0GEN0001").String())
+	require.Equal(t, "#&lt;!channel&gt;", slack.ChannelMention("<!channel>").String())
 	require.Equal(t, "Ran by <@U1>: `x.com` `y.com`", slack.Join(s.Text("Ran by "), slack.UserMention("U1"), s.Text(": x.com"), s.Text("y.com")).String())
 	require.Equal(t, "", slack.Join().String())
 }

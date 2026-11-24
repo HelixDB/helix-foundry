@@ -1989,6 +1989,11 @@ func (u Unimplemented) HoldFoundrySlackReply(context.Context, *model.SlackReply)
 	return nil, nil
 }
 
+func (u Unimplemented) MoveFoundrySlackHold(context.Context, string, string, string, string, string) error {
+	u.unimplemented("MoveFoundrySlackHold")
+	return nil
+}
+
 func (u Unimplemented) ReleaseFoundrySlackHold(context.Context, string) error {
 	u.unimplemented("ReleaseFoundrySlackHold")
 	return nil

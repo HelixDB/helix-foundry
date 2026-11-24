@@ -15811,7 +15811,7 @@ type FoundryHealNeedsLoad struct {
 
 	VersionId string `protobuf:"bytes,1,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	Version   int64  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	// What needs a new load: the engine's kind and item (contract 4.32.0's
+	// What needs a new load: the engine's kind and item (contract 4.33.0's
 	// fold why, such as type_added and types.Deal), or Foundry's own:
 	// document_sets, sources (tables or table_files), not_a_draft,
 	// marker_elsewhere with the version the load holds, move_failed,

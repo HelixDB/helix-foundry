@@ -280,19 +280,15 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 		t.ThreadID = id.New()
 		thread = &foundrymodel.FoundryAgentThread{ID: t.ThreadID, WorkspaceID: ws, Principal: principal, Title: foundryagent.Title(t.Input),
 			Runtime: runtime}
-		// A restricted member's thread holds what their grants give now,
-		// and the channels their sources share with them; each of its turns
-		// adds what they hold when it runs.
+		// A restricted member's thread holds what their grants give now;
+		// each of its turns adds what they hold when it runs, and the
+		// channels of what its calls read (Founder's worker records them).
 		if grantee {
 			targets, err := s.targetsOf(ctx, ws, g.Principals())
 			if err != nil {
 				return nil, err
 			}
-			grants, err := s.grantsOf(ctx, g)
-			if err != nil {
-				return nil, err
-			}
-			thread.Granted = &foundrymodel.FoundryAgentThreadGrants{Targets: targets, Items: grants.VisibleItems()}
+			thread.Granted = &foundrymodel.FoundryAgentThreadGrants{Targets: targets}
 		}
 	}
 	err = s.deps.DB.CreateFoundryAgentTurn(ctx, t, thread, s.agentLimits(principal), first)

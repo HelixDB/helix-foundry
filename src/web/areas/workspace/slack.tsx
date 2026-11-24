@@ -70,13 +70,16 @@ import {
 // no shared bot.
 
 const PURPOSE =
-  "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from your Foundry data as you.";
+  "Ask Founder from Slack: mention @Founder in a channel or message it directly, and it answers from your Foundry data as you.";
 const LOCAL_PURPOSE =
-  "Ask Founder from Slack: mention @Helix Foundry in a channel or message it directly, and it answers from this Foundry’s data, through Helix.";
+  "Ask Founder from Slack: mention @Founder in a channel or message it directly, and it answers from this Foundry’s data, through Helix.";
 const LOCAL_NOTICE =
   "Links in its answers open on the computer running this Foundry.";
 const BOT_PURPOSE =
-  "Ask Founder from Slack: anyone in your Slack workspace mentions @Helix Foundry in a channel or messages it directly, and the shared bot answers from the sources you give it.";
+  "Ask Founder from Slack: anyone in your Slack workspace mentions @Founder in a channel or messages it directly, and the shared bot answers from the sources you give it.";
+/** The message shortcut (backend slack.CallbackAskAbout), in one line. */
+const SHORTCUT =
+  "On any message, More actions › Ask Founder about this asks what Foundry knows about it.";
 
 /** The two modes as their cards say them. */
 const MODES = {
@@ -377,58 +380,53 @@ function Installed({
           { label: "Added", value: added && formatDate(added, false) },
         ]}
       />
-      {(!!missing.length ||
-        !!feed ||
-        !!install.eventsLimitedAt ||
-        (!!error && !confirm)) && (
-        <div className="wk-pad">
-          {!!missing.length && (
+      <div className="wk-pad">
+        <p className="wk-note">{SHORTCUT}</p>
+        {!!missing.length && (
+          <p className="wk-note">
+            Helix Foundry needs new Slack permissions ({missing.join(", ")}) for
+            what it does in Slack.{" "}
+            {canManage
+              ? "Reinstall it to grant them; it keeps answering in Slack meanwhile."
+              : "An owner or admin reinstalls it to grant them."}
+          </p>
+        )}
+        {feed && !install.installerAdmin && (
+          <p className="wk-note">
+            Installed by a non-admin: syncing its channels needs a Slack
+            workspace admin or owner to add it.
+          </p>
+        )}
+        {feed &&
+          (feed.inUseByConnectorId ? (
             <p className="wk-note">
-              Helix Foundry needs new Slack permissions ({missing.join(", ")})
-              to sync channels and follow threads.{" "}
-              {canManage
-                ? "Reinstall it to grant them; it keeps answering in Slack meanwhile."
-                : "An owner or admin reinstalls it to grant them."}
+              Its channels sync into{" "}
+              <Link to={paths.connection(feed.inUseByConnectorId)}>
+                a Slack connection
+              </Link>
+              .
             </p>
-          )}
-          {feed && !install.installerAdmin && (
-            <p className="wk-note">
-              Installed by a non-admin: syncing its channels needs a Slack
-              workspace admin or owner to add it.
-            </p>
-          )}
-          {feed &&
-            (feed.inUseByConnectorId ? (
+          ) : (
+            canManage && (
               <p className="wk-note">
-                Its channels sync into{" "}
-                <Link to={paths.connection(feed.inUseByConnectorId)}>
-                  a Slack connection
-                </Link>
-                .
+                <Link to="/data?add=slack">Sync its channels</Link> into Foundry
+                as a Slack connection.
               </p>
-            ) : (
-              canManage && (
-                <p className="wk-note">
-                  <Link to="/data?add=slack">Sync its channels</Link> into
-                  Foundry as a Slack connection.
-                </p>
-              )
-            ))}
-          {install.eventsLimitedAt && (
-            <p className="wk-note">
-              Slack held back some of {team}’s events on{" "}
-              {formatDate(install.eventsLimitedAt)}: it sends an app at most
-              30,000 an hour per workspace, so some messages may have been
-              missed.
-            </p>
-          )}
-          {error && !confirm && (
-            <p role="alert" className="hf-form-error">
-              {error}
-            </p>
-          )}
-        </div>
-      )}
+            )
+          ))}
+        {install.eventsLimitedAt && (
+          <p className="wk-note">
+            Slack held back some of {team}’s events on{" "}
+            {formatDate(install.eventsLimitedAt)}: it sends an app at most
+            30,000 an hour per workspace, so some messages may have been missed.
+          </p>
+        )}
+        {error && !confirm && (
+          <p role="alert" className="hf-form-error">
+            {error}
+          </p>
+        )}
+      </div>
       {confirm && (
         <ConfirmDialog
           title={`Disconnect ${team}?`}
@@ -671,9 +669,9 @@ function YourAccount({
           </>
         ) : LOCAL ? (
           <p className="wk-note">
-            Not linked. Message @Helix Foundry in {team} from the Slack account
-            that added it: it sends you a link that makes that account this
-            Foundry’s owner in Slack.
+            Not linked. Message @Founder in {team} from the Slack account that
+            added it: it sends you a link that makes that account this Foundry’s
+            owner in Slack.
           </p>
         ) : mode.kind === "bot" && !canManage ? (
           <p className="wk-note">
@@ -688,8 +686,8 @@ function YourAccount({
           </p>
         ) : (
           <p className="wk-note">
-            Not linked. Message @Helix Foundry in {team}: it sends you a link
-            that connects your Slack account to your Foundry account.
+            Not linked. Message @Founder in {team}: it sends you a link that
+            connects your Slack account to your Foundry account.
           </p>
         )}
       </div>

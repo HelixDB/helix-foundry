@@ -24,12 +24,14 @@ const (
 	KindRun           Kind = "run"
 	KindStop          Kind = "stop"
 	KindUnlink        Kind = "unlink"
+	KindAskAbout      Kind = "ask_about"
 )
 
 // kinds are the kinds ParseKind reads.
 var kinds = map[Kind]bool{
 	KindMention: true, KindDM: true, KindReply: true, KindStopped: true, KindUninstalled: true, KindTokensRevoked: true,
 	KindApprove: true, KindDismiss: true, KindRefresh: true, KindReview: true, KindRun: true, KindStop: true, KindUnlink: true,
+	KindAskAbout: true,
 }
 
 // ParseKind reads a stored kind, refusing any other.
@@ -64,8 +66,8 @@ func EncodeEvent(e Event) (Kind, json.RawMessage, error) {
 	return k, b, err
 }
 
-// EncodeInteraction is a click's kind and JSON, to store. Unhandled isn't
-// stored.
+// EncodeInteraction is a click's or a shortcut's kind and JSON, to store.
+// Unhandled isn't stored.
 func EncodeInteraction(in Interaction) (Kind, json.RawMessage, error) {
 	var k Kind
 	switch in.(type) {
@@ -83,6 +85,8 @@ func EncodeInteraction(in Interaction) (Kind, json.RawMessage, error) {
 		k = KindStop
 	case Unlink:
 		k = KindUnlink
+	case AskAbout:
+		k = KindAskAbout
 	default:
 		return "", nil, fmt.Errorf("slack: %T isn't stored", in)
 	}
@@ -126,6 +130,8 @@ func DecodeInteraction(k Kind, data []byte) (Interaction, error) {
 		return decodeInteraction[Stop](k, data)
 	case KindUnlink:
 		return decodeInteraction[Unlink](k, data)
+	case KindAskAbout:
+		return decodeInteraction[AskAbout](k, data)
 	}
 	return nil, fmt.Errorf("slack: %q is no click's kind", k)
 }

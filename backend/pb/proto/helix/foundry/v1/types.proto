@@ -2742,7 +2742,7 @@ message FoundryHealMoved {
 message FoundryHealNeedsLoad {
   string version_id = 1;
   int64 version = 2;
-  // What needs a new load: the engine's kind and item (contract 4.32.0's
+  // What needs a new load: the engine's kind and item (contract 4.33.0's
   // fold why, such as type_added and types.Deal), or Foundry's own:
   // document_sets, sources (tables or table_files), not_a_draft,
   // marker_elsewhere with the version the load holds, move_failed,

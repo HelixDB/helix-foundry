@@ -657,6 +657,7 @@ type Store interface {
 	EndFoundrySlackIntake(ctx context.Context, id, owner string, outcome model.SlackIntakeOutcome) error
 	WakeFoundrySlackIntake(ctx context.Context, turnID string) (int64, error)
 	HoldFoundrySlackReply(ctx context.Context, r *model.SlackReply) (*model.SlackReply, error)
+	MoveFoundrySlackHold(ctx context.Context, turnID, channelID, threadTS, intakeID, intakeOwner string) error
 	ReleaseFoundrySlackHold(ctx context.Context, turnID string) error
 	StartFoundrySlackReply(ctx context.Context, turnID, messageTS, intakeID, intakeOwner string) error
 	ClaimFoundrySlackReply(ctx context.Context, lease time.Duration) (*model.SlackReply, error)

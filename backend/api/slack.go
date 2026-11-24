@@ -249,7 +249,10 @@ func (s *Service) uninstallSlackTeam(ctx context.Context, team, key string, even
 	return slackOK(), named, nil
 }
 
-// receiveSlackClick takes a verified request to the interactivity URL.
+// receiveSlackClick takes a verified request to the interactivity URL: a
+// click, or the message shortcut, which is a message to the bot about
+// another one and waits its turn in that message's thread, as a mention
+// there does.
 func (s *Service) receiveSlackClick(ctx context.Context, body []byte) (*foundryv1.ReceiveSlackRequestResponse, string, error) {
 	in, err := slack.ParseInteraction(body)
 	if err != nil {
@@ -270,6 +273,8 @@ func (s *Service) receiveSlackClick(ctx context.Context, body []byte) (*foundryv
 	case slack.Stop:
 		c = in.Clicked
 	case slack.Unlink:
+		c = in.Clicked
+	case slack.AskAbout:
 		c = in.Clicked
 	default:
 		return slackOK(), "ignored", nil
@@ -297,10 +302,29 @@ func (s *Service) receiveSlackClick(ctx context.Context, body []byte) (*foundryv
 	intake := &model.SlackIntake{
 		ID: id.New(), InstallID: install.ID, DedupeKey: slack.InteractionKey(in), Kind: model.SlackIntakeInteraction, SlackUserID: c.UserID, Payload: payload,
 	}
+	seen := model.RelaySeen{UserIDs: []string{c.UserID}}
+	if ask, ok := in.(slack.AskAbout); ok {
+		thread, person := c.ThreadTS, c.UserID
+		if thread == "" {
+			thread = c.MessageTS
+		}
+		if _, bot := install.Mode.(model.SlackSharedBot); bot {
+			person = ""
+		}
+		intake.Kind, intake.Conversation = model.SlackIntakeShortcut, model.SlackConversation(install.ID, c.ChannelID, thread, person)
+		// Its install may answer in the message's channel, unless Slack says
+		// it is shared with another organisation, and name its author and
+		// the users it mentions.
+		seen = relaySeen(slack.Conversation{ChannelID: c.ChannelID}, c.UserID, ask.Text)
+		if ask.AuthorID != "" {
+			seen.UserIDs = append(seen.UserIDs, ask.AuthorID)
+		}
+	}
 	// A click on a relayed install's message is its local install's: the
-	// message's channel is one it was sent something from already.
+	// message's channel is one it was sent something from already. A
+	// shortcut is its local install's too, which asks Slack where to answer.
 	if _, relayed := install.Destination.(model.SlackServesRelay); relayed {
-		return s.queueRelayDelivery(ctx, intake, model.RelaySeen{UserIDs: []string{c.UserID}})
+		return s.queueRelayDelivery(ctx, intake, seen)
 	}
 	return s.queueSlackIntake(ctx, intake)
 }

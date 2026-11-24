@@ -20,7 +20,7 @@ const foundryHealFillColumns = `f.id, f.ontology_id, f.load_id, f.fingerprint, f
 const foundryHealFillFrom = ` FROM foundry_heal_fills f JOIN foundry_ontology_versions v ON v.id=f.to_version_id`
 
 // A self-healing suggestion's "Add this link" moves the ontology's current
-// load in place to the version that adds the link (contract 4.32.0's fold),
+// load in place to the version that adds the link (contract 4.33.0's fold),
 // when that version only adds: foundry_loads.version_id then names the
 // version the load's marker records, not the one it was created with.
 // foundry_heal_fills records each move, per load and suggestion. The engine
@@ -461,7 +461,7 @@ WHERE load_id=? AND document_id='' AND reason=? AND status='owed'`, jobID, loadI
 }
 
 // FoundryAskedApart is what every Extract of load loadID asks apart
-// (contract 4.32.0's asked_apart): the links the load's own moves in place
+// (contract 4.33.0's asked_apart): the links the load's own moves in place
 // added, and, for a refresh or rebuild of another load, that load's too, and
 // so on back: a rebuild replays what each document was asked, at no cost.
 // None for a load a person made at a version (a load in full asks every link

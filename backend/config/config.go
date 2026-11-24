@@ -311,7 +311,7 @@ type HealConfig struct {
 	// runs and no finding is stored, even where the worker is a task.
 	Enabled bool `koanf:"enabled"`
 	// AddInPlace lets a finding's "Add this link" move the current load in
-	// place to the version that adds the link (contract 4.32.0's fold), off
+	// place to the version that adds the link (contract 4.33.0's fold), off
 	// by default and only with Enabled. Off, the binary is its rollback
 	// floor: no move is pressed, findings carry no state and the card drafts
 	// with the agent, while moves already made stay as they are and are read.

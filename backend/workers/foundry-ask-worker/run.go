@@ -463,7 +463,7 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 	}
 	out := make([]ontologyagent.CatalogEntry, 0, len(tables)+len(files)+len(scope))
 	for _, t := range tables {
-		if held.part != nil && !grants.CoversTable(access.TableRef{ConnectorID: t.ConnectorID, Table: t.Table}) {
+		if held.part != nil && !grants.ReadsTable(access.TableRef{ConnectorID: t.ConnectorID, Table: t.Table}) {
 			continue
 		}
 		name, ok := names[t.ConnectorID]

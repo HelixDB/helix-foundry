@@ -159,14 +159,14 @@ type ExtractRequest struct {
 	// extracted; one the load doesn't hold is nothing to remove.
 	Remove []string `json:"remove,omitempty"`
 	// Fold moves the load in place from the version its marker records to
-	// OntologyVersion first, when the change only adds (contract 4.32.0): it
+	// OntologyVersion first, when the change only adds (contract 4.33.0): it
 	// takes no Documents and no Remove, and a "fold" event says what came of
 	// it (FoldEvent).
 	Fold *ExtractFold `json:"fold,omitempty"`
 	// AskedApart are the links a load gained by moves in place along its
 	// version's chain (FoundryAskedApart): every other call leaves them out,
 	// so the documents loaded before replay, and new text is asked them in a
-	// pass of their own (contract 4.32.0).
+	// pass of their own (contract 4.33.0).
 	AskedApart []string `json:"asked_apart,omitempty"`
 }
 

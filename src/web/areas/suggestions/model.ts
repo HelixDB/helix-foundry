@@ -42,7 +42,7 @@ export type Suggestion = {
   // The load its support was counted over: another than the current one
   // until the current load is audited.
   loadId: string;
-  // Add this link in place (contract 4.32.0): the link it adds, its set and
+  // Add this link in place (contract 4.33.0): the link it adds, its set and
   // the description it starts from; none where the finding gathers under a
   // link the version has (a description draft), names no relationship, or
   // the backend says nothing of its state (adding in place is off there).

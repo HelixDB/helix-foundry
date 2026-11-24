@@ -144,14 +144,14 @@ func NewGrants(targets []Target) Grants {
 }
 
 // WithSharing is g narrowed by what the sources of its connectors share with
-// the reader (plans/SOURCE_ACLS.md): a table of an audienced connector is
-// covered for no grantee, since its rows aren't told apart by item, and a
-// set it owns never whole, so a load holding one is always read in part: a
-// document of the set is read only while the source shares its item.
+// the reader (plans/SOURCE_ACLS.md): neither a table nor a set of an
+// audienced connector is ever covered whole, so a load holding one is always
+// read in part: a table's rows (ReadsTable) and a set's documents (Reads)
+// only while the source shares their item.
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1", "C2"}, at)}, nil))
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1", "C2"}}, at)}, kinds))
 //	g.CoversTable(access.TableRef{ConnectorID: "slack", Table: "messages"}) // false, though it reads every channel listed
 func (g Grants) WithSharing(s Sharing) Grants {
 	g.sharing = s
@@ -190,9 +190,9 @@ func (g Grants) Holds(targets []Target) bool {
 
 // CoversTable reports whether the grants cover a table: it is granted, by
 // itself or its connector, and its connector's source doesn't report its
-// permissions. A table of one that does goes to full readers only: its rows
-// aren't told apart by item, and may be of items the last read of the
-// source's permissions didn't list.
+// permissions. A table of one that does is never covered whole: its rows may
+// be of items the last read of the source's permissions didn't list, so a
+// grantee reads only the rows of the items shared with it (ReadsTable).
 func (g Grants) CoversTable(t TableRef) bool {
 	return (g.connectors[t.ConnectorID] || g.tables[t]) && !g.sharing.audienced(t.ConnectorID)
 }
@@ -259,15 +259,16 @@ func (g Grants) Covers(in Inputs) bool {
 }
 
 // Keeps reports whether a grantee that read seen, part of a load, and the
-// items of audienced sources that part held documents of (Part.Items) may
-// still read what it said (a question's answer): as Covers, but a set of an
-// audienced connector counts while it is granted and its source shares any
-// item with the reader, and every one of items must still be shared with
-// them, so an answer goes with the channel it read.
+// items of audienced sources that part held documents and rows of
+// (Part.Items) may still read what it said (a question's answer): as Covers,
+// but a set of an audienced connector counts while it is granted and its
+// source shares any item with the reader, a table of one while the grants
+// still read some of it (ReadsTable), and every one of items must still be
+// shared with them, so an answer goes with the channel it read.
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1"}, at)}, nil))
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
 //	seen := access.Inputs{Sets: []access.SetRef{{SetID: "conversations", ConnectorID: "slack"}}}
 //	g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
 //	g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C2"}}) // false: C2 isn't shared with them now
@@ -275,7 +276,7 @@ func (g Grants) Keeps(seen Inputs, items []ItemRef) bool {
 	held := len(seen.Tables)+len(seen.Sets) > 0 || seen.Enrichment
 	sets := !slices.ContainsFunc(seen.Sets, func(s SetRef) bool { return !g.ReachesSet(s) }) &&
 		!slices.ContainsFunc(seen.DecisionSets, func(s SetRef) bool { return !g.CoversSet(s) })
-	return held && sets && !slices.ContainsFunc(seen.Tables, func(t TableRef) bool { return !g.CoversTable(t) }) &&
+	return held && sets && !slices.ContainsFunc(seen.Tables, func(t TableRef) bool { return !g.ReadsTable(t) }) &&
 		(g.enrichment || !seen.Enrichment) && !seen.Uncoverable && !seen.Unknown && g.SeesItems(items)
 }
 
@@ -285,17 +286,18 @@ func (g Grants) Keeps(seen Inputs, items []ItemRef) bool {
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, []string{"C1"}, at)}, nil))
+//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
 //	g.SeesItems([]access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
 func (g Grants) SeesItems(items []ItemRef) bool {
 	return !slices.ContainsFunc(items, func(i ItemRef) bool { return !g.sharing.sees(i) })
 }
 
 // VisibleItems are the items every audienced source shares with the reader
-// now, sorted; none for grants that give nothing. A restricted member's
-// Founder thread records them as it runs, and is theirs only while every
-// one is still shared with them (SeesItems): its reads go through the API
-// tool by tool, so which of them it read isn't known.
+// now, sorted; none for grants that give nothing. GetMyFoundryAccess tells a
+// grantee them, which Founder's worker reads each call of a restricted
+// member's thread under: the thread records only the items of what its calls
+// read, and is theirs only while every one is still shared with them
+// (SeesItems).
 func (g Grants) VisibleItems() []ItemRef {
 	if g.Empty() {
 		return nil
@@ -304,9 +306,10 @@ func (g Grants) VisibleItems() []ItemRef {
 }
 
 // Reaches reports whether the grants hold anything of in, so a grantee may
-// read the part of its load they hold: a covered table, a granted set (of an
-// audienced connector, while its source shares an item with the reader) or
-// People enrichment. What holds what can't be told isn't read at all.
+// read the part of its load they hold: a table they read (ReadsTable), a
+// granted set (of an audienced connector, while its source shares an item
+// with the reader) or People enrichment. What holds what can't be told isn't
+// read at all.
 //
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
 //	g.Reaches(access.Inputs{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}, {ConnectorID: "crm", Table: "accounts"}}}) // true
@@ -314,7 +317,7 @@ func (g Grants) Reaches(in Inputs) bool {
 	if in.Unknown {
 		return false
 	}
-	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.CoversTable) || slices.ContainsFunc(in.Sets, g.ReachesSet)
+	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.ReadsTable) || slices.ContainsFunc(in.Sets, g.ReachesSet)
 }
 
 // DocumentRef is a document or table file of a load, and the set it is in now.
@@ -352,14 +355,21 @@ type PropRef struct{ Type, Prop string }
 // Part is what a grantee holds of a load it doesn't hold all of. AllDocuments
 // says the load holds documents and it holds every one of them.
 type Part struct {
-	Tables       []TableRef
+	// Tables are those it holds whole.
+	Tables []TableRef
+	// Rows are the tables of audienced connectors it holds some rows of, in
+	// the load's order.
+	Rows         []TableRows
 	Files        []string
 	AllDocuments bool
 	Documents    []string
 	Sets         []SetRef
-	// Items are the items of audienced sources the documents and files it
-	// reads are of, sorted: what it says can be of them, so it stays the
-	// reader's only while they are (Keeps).
+	// Items are the items of audienced sources the documents, files and rows
+	// it reads are of, and the directory (DirectoryItem) of each source whose
+	// directory it reads, sorted: what it says can be of them, so it stays
+	// the reader's only while they are (Keeps). A table read by its rows
+	// gives every item it holds (up to MaxHeldItems), since the engine
+	// doesn't say which rows an answer drew on.
 	Items []ItemRef
 	// DecisionSets are the sets of the documents the decisions it reads came
 	// from: its answers carry those values, so grants must keep covering them.
@@ -369,9 +379,10 @@ type Part struct {
 	Withheld []PropRef
 }
 
-// Part is what the grants hold of h: the tables they cover, and the
-// documents and table files they read (Reads), each by the item its source
-// shares with the reader when its set's connector reports its permissions.
+// Part is what the grants hold of h: the tables they cover, or hold some
+// rows of (ReadsTable), and the documents and table files they read (Reads),
+// each by the item its source shares with the reader when its set's or
+// table's connector reports its permissions.
 //
 //	g := access.NewGrants([]access.Target{access.DocumentSetTarget("contracts")})
 //	g.Part(access.Holdings{Documents: []access.DocumentRef{{ID: "d1", Set: access.SetRef{SetID: "contracts"}}, {ID: "d2", Set: access.SetRef{SetID: "hr"}}}}).Documents // [d1]
@@ -383,8 +394,18 @@ func (g Grants) Part(h Holdings) Part {
 		}
 	}
 	for _, t := range h.Tables {
-		if g.CoversTable(t) {
+		switch hold, rows := g.table(t); hold {
+		case holdsWhole:
 			out.Tables = append(out.Tables, t)
+			// An audienced source's table held whole is its directory.
+			if g.sharing.audienced(t.ConnectorID) {
+				out.Items = append(out.Items, ItemRef{ConnectorID: t.ConnectorID, Item: DirectoryItem})
+			}
+		case holdsRows:
+			out.Rows = append(out.Rows, rows)
+			for _, item := range rows.Items {
+				out.Items = append(out.Items, ItemRef{ConnectorID: t.ConnectorID, Item: item})
+			}
 		}
 	}
 	addItem := func(d DocumentRef) {
@@ -436,13 +457,21 @@ func (p Part) Holds(before Part) bool {
 	}
 	documents := p.AllDocuments || !before.AllDocuments && subset(p.Documents, before.Documents)
 	tables := !slices.ContainsFunc(before.Tables, func(t TableRef) bool { return !slices.Contains(p.Tables, t) })
+	rows := !slices.ContainsFunc(before.Rows, func(b TableRows) bool {
+		return !slices.ContainsFunc(p.Rows, func(r TableRows) bool { return r.holds(b) })
+	})
 	withheld := !slices.ContainsFunc(p.Withheld, func(w PropRef) bool { return !slices.Contains(before.Withheld, w) })
-	return documents && tables && withheld && subset(p.Files, before.Files) && (p.Enrichment || !before.Enrichment)
+	return documents && tables && rows && withheld && subset(p.Files, before.Files) && (p.Enrichment || !before.Enrichment)
 }
 
-// Inputs is what p reads, for telling later whether grants still hold it.
+// Inputs is what p reads, for telling later whether grants still hold it:
+// its tables, whole or by their rows (whose items are p.Items).
 func (p Part) Inputs() Inputs {
-	return Inputs{Tables: p.Tables, Sets: p.Sets, DecisionSets: p.DecisionSets, Enrichment: p.Enrichment}
+	tables := slices.Clone(p.Tables)
+	for _, r := range p.Rows {
+		tables = append(tables, r.Table)
+	}
+	return Inputs{Tables: tables, Sets: p.Sets, DecisionSets: p.DecisionSets, Enrichment: p.Enrichment}
 }
 
 // Union is what in and other hold between them.

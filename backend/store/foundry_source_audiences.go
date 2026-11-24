@@ -214,12 +214,13 @@ ON DUPLICATE KEY UPDATE problem=VALUES(problem), problem_at=VALUES(problem_at)`,
 
 // SourceSharingFor is what reader reads of each live connector of the
 // workspace with audiences stored, by connector id. A person (reader not
-// nil) reads the items that list them, and those shared with everyone while
-// the source has an account for them by that email that isn't a guest's: a
-// person it has no account for, such as an offboarded one, or one whose
-// email is the zero Email, reads only items that list them, which are none.
-// A nil reader is no one in any source (an agent's key): it reads the items
-// shared with everyone. Both reads see one moment of the store.
+// nil) reads the items that list them, and those shared with everyone and
+// the source's directory (Member) while the source has an account for them
+// by that email that isn't a guest's: a person it has no account for, such
+// as an offboarded one, or one whose email is the zero Email, reads only
+// items that list them, which are none. A nil reader is no one in any source
+// (an agent's key): it reads the items shared with everyone, and no
+// directory. The reads see one moment of the store.
 func (s *mysqlDB) SourceSharingFor(ctx context.Context, workspaceID string, reader *connector.Email) ([]model.FoundrySourceSharing, error) {
 	agent, email := reader == nil, ""
 	if reader != nil {
@@ -280,6 +281,27 @@ ORDER BY i.connector_id, i.item_key`, email, email, workspaceID, agent, email, e
 			// An item of a connector deleted since isn't the first query's.
 			if i, ok := at[v[0]]; ok {
 				out[i].Visible = append(out[i].Visible, v[1])
+			}
+		}
+		if email == "" {
+			return nil
+		}
+		rows, err = tx.db.QueryContext(ctx, `SELECT p.connector_id FROM foundry_source_people p
+JOIN foundry_source_audiences a ON a.connector_id = p.connector_id
+WHERE a.workspace_id = ? AND p.email = ? AND NOT p.guest ORDER BY p.connector_id`, workspaceID, email)
+		if err != nil {
+			return fmt.Errorf("read the sources a reader has an account in: %w", err)
+		}
+		members, err := scanAll(rows, func(row rowScanner) (connectorID string, err error) {
+			err = row.Scan(&connectorID)
+			return connectorID, err
+		})
+		if err != nil {
+			return fmt.Errorf("read the sources a reader has an account in: %w", err)
+		}
+		for _, id := range members {
+			if i, ok := at[id]; ok {
+				out[i].Member = true
 			}
 		}
 		return nil

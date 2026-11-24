@@ -2,7 +2,7 @@
 // current version and route it for its set's documents, and where the move
 // of the current load to the version that adds it stands. Making that
 // version current with the finding's fingerprint (`fillFinding`) moves the
-// load in place when the version only adds (contract 4.32.0's fold): no new
+// load in place when the version only adds (contract 4.33.0's fold): no new
 // load, no model call. Documents read from then on state the link; those the
 // load holds keep their reviews until they are read again.
 import * as toml from "smol-toml";
@@ -158,7 +158,7 @@ function fillOf(f: wfe.FoundryHealFill): Fill {
 
 /**
  * The card's state from the finding's `state`, read without trust: none for
- * a finding that names no relationship to add (or a backend before 4.32.0),
+ * a finding that names no relationship to add (or a backend before 4.33.0),
  * and open for one the backend says nothing of past that.
  *
  * @example

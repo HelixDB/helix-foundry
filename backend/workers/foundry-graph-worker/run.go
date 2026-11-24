@@ -1657,7 +1657,7 @@ func (r *runner) recordFill(ctx context.Context, job *model.FoundryGraphJob, eve
 // (model.FoundryResendMove, a suggestion's "Add this link"): one Extract of
 // no documents and no decisions, with fold, which spends nothing, at
 // the version the load moves to. The engine moves its marker if the change
-// only adds (contract 4.32.0), and its fold event says what came of it, which
+// only adds (contract 4.33.0), and its fold event says what came of it, which
 // RecordFoundryLoadMove records in one transaction with the load's and the
 // job's version. moved reports the load, and job, records the new version
 // now. The engine's move is idempotent: sent again after its event was lost,
@@ -1702,7 +1702,7 @@ func (r *runner) move(ctx context.Context, job *model.FoundryGraphJob, binding g
 	body, err := json.Marshal(ontologyagent.ExtractRequest{
 		RequestID: job.ID + ":move", Database: binding.TenantID, Load: job.LoadID, OntologyTOML: toDef.OntologyTOML,
 		OntologyVersion: label(to), MappingsTOML: toDef.MappingsTOML, Helix: target, Documents: []ontologyagent.ExtractDocument{},
-		// A move in place does nothing else (contract 4.32.0): no decision goes
+		// A move in place does nothing else (contract 4.33.0): no decision goes
 		// with it, so none is applied that this call wouldn't record.
 		Limits: ontologyagent.ExtractLimits{
 			MaxUSD: 0, DocumentsInFlight: uint64(r.cfg.Foundry.Graph.DocumentsInFlight), MaxTextBytes: uint64(r.cfg.Foundry.Documents.MaxBytes),

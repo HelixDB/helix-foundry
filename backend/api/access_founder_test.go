@@ -155,6 +155,7 @@ func TestRestrictedMembersTalkToFounder(t *testing.T) {
 		thread := store.agent.threads[sent.GetTurn().GetThreadId()]
 		require.NotNil(t, thread.Granted, "a restricted member's thread")
 		assert.Equal(t, []access.Target{access.DocumentSetTarget("set-general")}, thread.Granted.Targets, "holding what its grants give now")
+		assert.Empty(t, thread.Granted.Items, "and no channel: it has read nothing yet")
 	})
 	t.Run("drops what its grants don't show", func(t *testing.T) {
 		sent, err := send("eve-2", &foundryv1.FoundryAgentPageContext{OntologyId: "ont-3", DashboardId: "dash-draft", NewAutomation: true})

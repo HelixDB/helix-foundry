@@ -1,4 +1,5 @@
 import {
+  Bot,
   Cable,
   LayoutDashboard,
   Rocket,
@@ -57,10 +58,11 @@ const item = (
 // Questions about an ontology's database, the main page (/ opens it): with
 // Founder in the build, Founder's page, whose answers are the Analyst's;
 // else the Analyst's. Each opens the ontology last opened, and picks another
-// in its header.
-const ask = (label: string) => item("ask", "/ask", label, Sparkles, ["/ask"]);
+// in its header. Founder wears the agent's icon, as its dock button does.
+const ask = (label: string, icon: LucideIcon) =>
+  item("ask", "/ask", label, icon, ["/ask"]);
 export const primaryNav: NavItem[] = [
-  ask(FOUNDER ? "Founder" : "Analyst"),
+  FOUNDER ? ask("Founder", Bot) : ask("Analyst", Sparkles),
   // Tiles of queries over ontologies' loads, pinned ones first.
   item("dashboards", "/dashboards", "Dashboards", LayoutDashboard, [
     "/dashboards",

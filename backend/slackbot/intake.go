@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -157,6 +158,19 @@ func (b *Bot) handle(ctx context.Context, in *model.SlackIntake, held *string) (
 		if err != nil {
 			return b.failed(c, err)
 		}
+	case model.SlackIntakeShortcut:
+		in, err := slack.DecodeInteraction(p.Kind, p.Data)
+		if err != nil {
+			return model.SlackIntakeGaveUp{Error: err.Error()}, nil
+		}
+		ask, ok := in.(slack.AskAbout)
+		if !ok {
+			return model.SlackIntakeGaveUp{Error: fmt.Sprintf("a shortcut row holding a %s", p.Kind)}, nil
+		}
+		outcome, err = b.askAbout(ctx, c, ask)
+		if err != nil {
+			return b.failed(c, err)
+		}
 	default:
 		return model.SlackIntakeGaveUp{Error: fmt.Sprintf("an intake row of kind %q", in.Kind)}, nil
 	}
@@ -221,6 +235,12 @@ type said struct {
 	userTeam    string
 	text        string
 	unmentioned bool
+	// about is the shortcut that asks about another message (askAbout),
+	// nil for a message to the bot: text is then that message's, quoted
+	// as data (aboutInput), and at is where the bot answers, a direct
+	// message's top level (ThreadTS "") until the turn opens a thread
+	// there (answerAbout).
+	about *slack.AskAbout
 }
 
 // memberOf reports a Slack user the bot answers for install: a full member
@@ -246,7 +266,8 @@ func memberOf(u slack.User, install *model.SlackInstall, userTeam string) bool {
 // for anyone in the Slack workspace within
 // foundry.slack.bot.per_user_per_hour, its text saying who wrote it, and the
 // sender then counts among the thread's people, whose replies reach the bot
-// unmentioned.
+// unmentioned. A shortcut's question (m.about) goes the same way, its
+// message quoted, and answerAbout says where it is answered.
 func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOutcome, error) {
 	tell := func(text string) (model.SlackIntakeOutcome, error) {
 		if err := b.tell(ctx, c.bot, m.at.ChannelID, m.at.ThreadTS, m.user, b.say(text)); err != nil {
@@ -282,12 +303,19 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 			}
 		}
 		names := map[string]string{}
-		for i, mentioned := range slack.MentionedUsers(m.text) {
+		lookups, by := slack.MentionedUsers(m.text), ""
+		if m.about != nil && m.about.AuthorID != "" && !slices.Contains(lookups, m.about.AuthorID) {
+			lookups = slices.Insert(lookups, 0, m.about.AuthorID)
+		}
+		for i, mentioned := range lookups {
 			if i >= maxMentionNames || mentioned == c.install.BotUserID {
 				continue
 			}
 			if who, err := b.user(ctx, c.bot, mentioned); err == nil {
 				names[mentioned] = who.Shown()
+				if m.about != nil && mentioned == m.about.AuthorID {
+					by = "@" + speaker(who)
+				}
 			}
 		}
 		text := slack.InputText(m.text, c.install.BotUserID, func(id string) string { return names[id] })
@@ -296,7 +324,19 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		if isBot {
 			prefix = "[Slack] " + speaker(u) + " wrote:\n"
 		}
-		switch room := maxInputChars - utf8.RuneCountInString(prefix); {
+		room := maxInputChars - utf8.RuneCountInString(prefix)
+		if m.about != nil {
+			switch author := m.about.AuthorID; {
+			case text == "":
+				return tell("That message has no text I can read.")
+			case author == c.install.BotUserID:
+				by = "you"
+			case author != "" && by == "":
+				by = "@" + author
+			}
+			text = aboutInput(text, by, room)
+		}
+		switch {
 		case text == "" && m.unmentioned:
 			return model.SlackIntakeEnded{}, nil
 		case text == "":
@@ -345,11 +385,20 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	if done || err != nil {
 		return model.SlackIntakeEnded{}, err
 	}
-	thread, err := b.db.GetFoundrySlackThread(ctx, c.install.ID, m.at.ChannelID, m.at.ThreadTS, person)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("read the thread: %w", err)
+	// A shortcut answered in a direct message opens a thread there: no
+	// Founder thread continues it.
+	var thread *model.SlackThread
+	if m.at.ThreadTS != "" {
+		if thread, err = b.db.GetFoundrySlackThread(ctx, c.install.ID, m.at.ChannelID, m.at.ThreadTS, person); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("read the thread: %w", err)
+		}
 	}
+	// The client token is the message's, or the shortcut's own pick of it,
+	// wherever it is answered.
 	sum := sha256.Sum256([]byte("slack\x00" + m.at.TeamID + "\x00" + m.at.ChannelID + "\x00" + m.ts))
+	if m.about != nil {
+		sum = sha256.Sum256([]byte("slack-shortcut\x00" + m.about.TeamID + "\x00" + m.user + "\x00" + m.about.ActionTS))
+	}
 	req := &foundryv1.SendFoundryAgentMessageRequest{
 		WorkspaceId: c.install.WorkspaceID, Input: &foundryv1.SendFoundryAgentMessageRequest_Text{Text: input},
 		ClientToken: hex.EncodeToString(sum[:]), Surface: foundryv1.FoundryAgentSurface_FOUNDRY_AGENT_SURFACE_SLACK,
@@ -391,36 +440,52 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 		}
 		return b.retry(c.in, fmt.Errorf("send the message: %w", err)), nil
 	}
+	if m.about != nil {
+		return b.answerAbout(ctx, c, m, turn, thread)
+	}
+	if err := b.answer(ctx, c, m.at, m.user, turn, thread); err != nil {
+		return nil, err
+	}
+	return model.SlackIntakeEnded{}, nil
+}
+
+// answer answers turn in the Slack thread at for user, who asked: it maps
+// at to the turn's Founder thread, unless thread (at's mapping, nil for
+// none) does already, and starts the reply there. In bot mode user then
+// counts among the thread's people, whose replies reach the bot
+// unmentioned.
+func (b *Bot) answer(ctx context.Context, c claim, at slack.Conversation, user string, turn *model.FoundryAgentTurn, thread *model.SlackThread) error {
+	person := user
+	if _, isBot := c.install.Mode.(model.SlackSharedBot); isBot {
+		person = ""
+	}
 	if thread == nil {
-		thread = &model.SlackThread{ID: id.New(), InstallID: c.install.ID, ChannelID: m.at.ChannelID, ThreadTS: m.at.ThreadTS, SlackUserID: person,
+		thread = &model.SlackThread{ID: id.New(), InstallID: c.install.ID, ChannelID: at.ChannelID, ThreadTS: at.ThreadTS, SlackUserID: person,
 			AgentThreadID: turn.ThreadID}
 		switch err := b.db.CreateFoundrySlackThread(ctx, thread); {
 		case errors.Is(err, store.ErrConflict):
 			// The conversation's rows run one at a time, so no other sender
 			// mapped it: a bug, and the mapping kept is the first.
 			log.From(ctx).Error("a Slack thread was mapped twice; the first mapping is kept", "agent_thread", turn.ThreadID)
-			if thread, err = b.db.GetFoundrySlackThread(ctx, c.install.ID, m.at.ChannelID, m.at.ThreadTS, person); err != nil {
-				return nil, fmt.Errorf("read the thread mapped first: %w", err)
+			if thread, err = b.db.GetFoundrySlackThread(ctx, c.install.ID, at.ChannelID, at.ThreadTS, person); err != nil {
+				return fmt.Errorf("read the thread mapped first: %w", err)
 			}
 		case err != nil:
-			return nil, fmt.Errorf("map the thread: %w", err)
+			return fmt.Errorf("map the thread: %w", err)
 		}
 	} else if err := b.db.TouchFoundrySlackThread(ctx, thread.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("touch the thread: %w", err)
+		return fmt.Errorf("touch the thread: %w", err)
 	}
-	if isBot {
-		switch err := b.db.AddFoundrySlackThreadPerson(ctx, thread.ID, m.user); {
+	if person == "" {
+		switch err := b.db.AddFoundrySlackThreadPerson(ctx, thread.ID, user); {
 		case errors.Is(err, store.ErrNotFound):
 			// Its mapping went (bot mode turned off meanwhile): no reply of
 			// theirs reaches the bot unmentioned there.
 		case err != nil:
-			return nil, fmt.Errorf("record who spoke in the thread: %w", err)
+			return fmt.Errorf("record who spoke in the thread: %w", err)
 		}
 	}
-	if err := b.startReply(ctx, c, turn.ID, m.at.ChannelID, m.at.ThreadTS, m.user); err != nil {
-		return nil, err
-	}
-	return model.SlackIntakeEnded{}, nil
+	return b.startReply(ctx, c, turn.ID, at.ChannelID, at.ThreadTS, user)
 }
 
 // localAccess answers a Slack user of a standalone install who isn't linked

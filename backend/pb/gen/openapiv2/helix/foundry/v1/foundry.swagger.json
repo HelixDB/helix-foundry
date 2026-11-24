@@ -11850,7 +11850,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryFoldWhy"
           },
-          "description": "What needs a new load: the engine's kind and item (contract 4.32.0's\nfold why, such as type_added and types.Deal), or Foundry's own:\ndocument_sets, sources (tables or table_files), not_a_draft,\nmarker_elsewhere with the version the load holds, move_failed,\nload_moved, collect_failed (the documents behind the finding couldn't\nbe listed), or not_filled (a fill took no review; item the documents\nrefused)."
+          "description": "What needs a new load: the engine's kind and item (contract 4.33.0's\nfold why, such as type_added and types.Deal), or Foundry's own:\ndocument_sets, sources (tables or table_files), not_a_draft,\nmarker_elsewhere with the version the load holds, move_failed,\nload_moved, collect_failed (the documents behind the finding couldn't\nbe listed), or not_filled (a fill took no review; item the documents\nrefused)."
         }
       }
     },
@@ -13790,7 +13790,7 @@
         },
         "stale": {
           "type": "boolean",
-          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, as its tables always do."
+          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, and so do its tables."
         },
         "problem": {
           "$ref": "#/definitions/v1FoundrySourceAudienceProblem",
@@ -14685,7 +14685,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundrySourceItem"
           },
-          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under."
+          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under.\nA source's directory of people (Slack's users) is the item \"*directory\",\nshared with a person the source has a non-guest account for."
         }
       }
     },

@@ -16,6 +16,10 @@ type FoundrySourceSharing struct {
 	// Visible are the keys of the items the source shares with the reader,
 	// sorted.
 	Visible []string
+	// Member says the source has an account for the reader, a person, by
+	// their email that isn't a guest's: its directory of people is shared
+	// with them (access.RowsDirectory).
+	Member bool
 }
 
 // FoundrySourceAudienceRead is when a connector's audiences were last read

@@ -8,10 +8,6 @@
   --so-hot: var(--hf-muted);
   color: var(--hf-text);
 }
-/* Four or more columns need a wider canvas for cards to stay readable. */
-.so-view.is-wide {
-  --so-canvas: min(1320px, calc(100vw - 64px));
-}
 .so-sr {
   position: absolute;
   width: 1px;
@@ -114,15 +110,73 @@
   width: var(--so-canvas);
   margin: 18px calc((100% - var(--so-canvas)) / 2) 0;
 }
-.so-stage {
+/* The frame the schema pans and zooms in (SchemaFrame); its dots move with
+   the schema. Clipped, never scrolled: a focused card is brought into view
+   by moving the schema, not by scrolling the frame. */
+.so-frame {
   position: relative;
-  box-sizing: content-box;
+  overflow: clip;
   border: 1px solid var(--hf-border);
   border-radius: var(--hf-radius-xl);
-  background:
-    radial-gradient(circle, var(--hf-border) 1px, transparent 1.3px) 0 0 / 20px
-      20px,
-    var(--hf-sunken);
+  background-color: var(--hf-sunken);
+  background-image: radial-gradient(
+    circle,
+    var(--hf-border) 1px,
+    transparent 1.3px
+  );
+  background-size: 20px 20px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.so-frame:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.so-frame.is-panning {
+  cursor: grabbing;
+}
+.so-frame.is-panning .so-node,
+.so-frame.is-panning .so-pill {
+  pointer-events: none;
+}
+/* The schema as drawn at 100%, placed and scaled by the frame. */
+.so-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+.so-stage.is-gliding {
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.so-toolbar {
+  position: absolute;
+  right: var(--hf-space-2);
+  bottom: var(--hf-space-2);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-2);
+  cursor: default;
+}
+.so-zoom {
+  min-width: 44px;
+  color: var(--hf-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.so-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--hf-border);
 }
 .so-edges {
   position: absolute;
@@ -738,36 +792,6 @@
   box-shadow: 0 0 0 2px
     color-mix(in srgb, var(--hf-accent-border) 35%, transparent);
 }
-.so-node-links {
-  display: none;
-  gap: 7px;
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 11px 0 0;
-  border-top: 1px solid var(--hf-border);
-}
-.so-node-links li {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  gap: 6px;
-  color: var(--hf-muted);
-  font-size: 12.5px;
-  line-height: 1.4;
-}
-.so-node-links svg {
-  margin-top: 2px;
-  color: var(--hf-muted);
-}
-.so-node-links strong {
-  color: var(--hf-text);
-  font-weight: 600;
-}
-.so-node-links small {
-  display: block;
-  color: var(--hf-muted);
-  font-size: 11.5px;
-}
-
 .so-notes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -921,123 +945,6 @@
     background: none;
     -webkit-text-fill-color: currentColor;
   }
-}
-
-/* Stacked when there are more than MAX_DRAWN entities or cards would be too narrow
-   to read (MIN_CARD in the view): cards list their links, under a small map. */
-.so-canvas.is-stacked {
-  width: auto;
-  margin: 20px 0 0;
-}
-.so-canvas.is-stacked .so-stage {
-  border: 0;
-  background: none;
-}
-.so-canvas.is-stacked .so-nodes {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
-  align-items: start;
-  gap: 12px;
-}
-.so-canvas.is-stacked .so-node {
-  position: relative;
-}
-.so-canvas.is-stacked .so-node-head {
-  height: auto;
-}
-.so-canvas.is-stacked .so-name > span:first-child {
-  -webkit-line-clamp: 3;
-}
-.so-canvas.is-stacked .so-desc {
-  height: auto;
-  max-height: 68px;
-  -webkit-line-clamp: 4;
-}
-.so-canvas.is-stacked .so-node-links {
-  display: grid;
-}
-.so-canvas.is-stacked .so-keys {
-  display: none;
-}
-.so-canvas.is-stacked .so-legend {
-  padding: 0;
-}
-
-.so-minimap {
-  position: relative;
-  max-width: 420px;
-  margin: 0 auto 18px;
-  aspect-ratio: 340 / 220;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius-xl);
-  background:
-    radial-gradient(circle, var(--hf-border) 1px, transparent 1.3px) 0 0 / 16px
-      16px,
-    var(--hf-sunken);
-}
-.so-minimap svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-.so-minimap line {
-  stroke: var(--hf-faint);
-  stroke-width: 1.2;
-  stroke-dasharray: 3 3;
-  transition: opacity 0.2s;
-}
-.so-minimap line.is-off {
-  opacity: 0.25;
-}
-.so-minimap ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.so-minimap li {
-  position: absolute;
-  transform: translate(-50%, -50%);
-}
-.so-mini-node {
-  display: block;
-  max-width: 122px;
-  overflow: hidden;
-  padding: 3px 9px;
-  border: 1px solid var(--hf-border-strong);
-  border-radius: var(--hf-radius-pill);
-  background: var(--hf-raised);
-  color: var(--hf-text);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 550;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: 0 1px 2px
-    color-mix(in srgb, var(--hf-shadow-color) 6%, transparent);
-}
-.so-mini-node.is-hub {
-  padding: 5px 12px;
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.so-mini-node.is-merged {
-  border-color: var(--so-mint-border);
-  background: var(--so-mint);
-  color: var(--so-mint-ink);
-}
-.so-mini-node.is-activity {
-  border-style: dashed;
-}
-.so-mini-node.is-excluded {
-  opacity: 0.45;
-  text-decoration: line-through;
-}
-.so-mini-node:focus-visible {
-  outline: 2px solid var(--hf-focus);
-  outline-offset: 2px;
 }
 
 /* Tablets: one row, so the floating bar covers less of the cards. */
