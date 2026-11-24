@@ -563,7 +563,11 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 	loadID := *o.CurrentLoadID
 	held := ""
 	if !unread {
-		held = ` AND NOT (w.reason='` + string(model.FoundryResendName) + `' AND ` + foundryAliasUnread + `)`
+		// After a failed resend a move waits too: queued for it alone, a
+		// move that fails would follow itself (failFoundryResends gives up
+		// on one that keeps failing).
+		held = ` AND NOT (w.reason='` + string(model.FoundryResendName) + `' AND ` + foundryAliasUnread + `) AND w.reason<>'` +
+			string(model.FoundryResendMove) + `'`
 	}
 	var owed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=? AND w.status='owed' AND `+
@@ -844,6 +848,9 @@ WHERE load_id=? AND kind IN (`+kinds+`) AND doc_id=? AND applied_status IN ('pen
 // the next resend any later job's end or settle queues reads it. The caller
 // holds the ontology's lock.
 func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob) error {
+	if err := s.failFoundryLoadMove(ctx, job); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
 WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried', 'removed')`, model.FoundryReleaseJobFailed, job.LoadID); err != nil {
 		return err

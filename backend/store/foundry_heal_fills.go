@@ -45,6 +45,53 @@ func (s *mysqlDB) moveFoundryLoadVersion(ctx context.Context, loadID, from, to s
 	return err == nil, err
 }
 
+// foundryMoveFailures is how many resend jobs may fail with a move owed
+// before the move is given up as needing a load (failFoundryLoadMove).
+const foundryMoveFailures = 3
+
+// failFoundryLoadMove counts a failed resend job against the move its load
+// owes, if any: the move stays owed, for the next job that ends to send
+// (the fold is idempotent at its version), until foundryMoveFailures jobs
+// have failed with it, when its fill row reads needs_load (why
+// move_failed, the job's error) and the request ends. The caller holds the
+// ontology's lock.
+func (s *mysqlDB) failFoundryLoadMove(ctx context.Context, job *model.FoundryGraphJob) error {
+	var owed bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends
+WHERE load_id=? AND document_id='' AND reason=? AND status='owed')`, job.LoadID, string(model.FoundryResendMove)).Scan(&owed); err != nil || !owed {
+		return err
+	}
+	why := ""
+	if job.Error != nil {
+		why = *job.Error
+	}
+	why = why[:min(len(why), 200)]
+	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET failures=failures+1, last_error=NULLIF(?, '')
+WHERE load_id=? AND state='moving'`, why, job.LoadID); err != nil {
+		return err
+	}
+	given, err := json.Marshal([]model.FoundryFoldWhy{{Kind: "move_failed", Item: why}})
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='needs_load', why=?
+WHERE load_id=? AND state='moving' AND failures>=?`, string(given), job.LoadID, foundryMoveFailures)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	var moving bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_heal_fills WHERE load_id=? AND state='moving')`, job.LoadID).
+		Scan(&moving); err != nil || moving {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE foundry_load_resends SET status='done', ended_at=NOW(6), job_id=?
+WHERE load_id=? AND document_id='' AND reason=? AND status='owed'`, job.ID, job.LoadID, string(model.FoundryResendMove))
+	return err
+}
+
 // ReconcileFoundryLoadMarker puts back load loadID whose marker records
 // storedVersion (the engine's word, "foundry-v<N>", from a load_mismatch)
 // where Foundry still records the version it moved from: only when a fill

@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -47,13 +49,13 @@ func (f resendFixture) loadVersion(t *testing.T) (load string, jobs []string) {
 	return load, jobs
 }
 
-// Rows of a reason this binary doesn't know ('move', 'link', as a later
-// binary owes them) are never listed, sent, ended, failed or counted owed:
-// rolling back leaves them as they are, and queues no job for them.
+// Rows of a reason this binary doesn't know ('link', as a later binary owes
+// them) are never listed, sent, ended, failed or counted owed: rolling back
+// leaves them as they are, and queues no job for them.
 func TestFoundryResendsOfAReasonUnknownStayAsTheyAre(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RUNKNOWN")
-	f.owe(t, "", "move")
+	f.owe(t, "", "later")
 	f.owe(t, f.a, "link")
 	assert.Empty(t, f.owed(t), "not listed")
 	// An approval queues a resend, which sends only the approval's document.
@@ -68,7 +70,7 @@ func TestFoundryResendsOfAReasonUnknownStayAsTheyAre(t *testing.T) {
 	f.end(t, job, "failed", model.FoundryGraphJobFailed)
 	var known, unknown int
 	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND status='owed' AND reason='approval'`, f.load).Scan(&known))
-	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND status='owed' AND reason IN ('move', 'link')`, f.load).Scan(&unknown))
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND status='owed' AND reason IN ('later', 'link')`, f.load).Scan(&unknown))
 	assert.Equal(t, 0, known)
 	assert.Equal(t, 2, unknown)
 	assert.Nil(t, f.liveJob(t), "nothing queued for them: they aren't owed here")
@@ -154,7 +156,7 @@ func (f resendFixture) generated(t *testing.T, versionID string, tables ...strin
 	}
 	input, err := json.Marshal(in)
 	require.NoError(t, err)
-	gen := id26("G-" + versionID[len(versionID)-8:])
+	gen := id26("G" + strings.TrimRight(versionID[3:], "0"))
 	_, err = testDB.Exec(`INSERT INTO foundry_ontology_generations (id, workspace_id, ontology_id, status, input) VALUES (?, ?, ?, 'succeeded', ?)`,
 		gen, f.ontology.WorkspaceID, f.ontology.ID, string(input))
 	require.NoError(t, err)
@@ -292,7 +294,8 @@ func TestFoundryLoadMoveRefused(t *testing.T) {
 }
 
 // A resend job that fails leaves the move owed, unlike what it ends, and
-// one sent again records it.
+// queues no job for it alone: the next job that ends sends it. Past three
+// failed jobs the move is given up as needing a load.
 func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "MOVEF")
@@ -305,9 +308,23 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	job := f.claim(t)
 	f.end(t, job, "failed", model.FoundryGraphJobFailed)
 	assert.Equal(t, 1, f.moveOwed(t))
+	assert.Nil(t, f.liveJob(t), "a failed move doesn't follow itself")
 	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
 	require.NoError(t, err)
 	require.NotNil(t, owed)
+	// An approval's resend sends it again; two more failures give it up.
+	for i, d := range []*model.FoundryReviewDecision{f.held(f.a, 0, readA), f.held(f.b, 1, readB)} {
+		require.True(t, f.approve(t, fmt.Sprint(i), d))
+		f.end(t, f.claim(t), fmt.Sprint("failed", i), model.FoundryGraphJobFailed)
+	}
+	assert.Zero(t, f.moveOwed(t))
+	fills, err := f.db.ListFoundryHealFills(ctx, f.load)
+	require.NoError(t, err)
+	fill := fills[fingerprint("MOVEF")]
+	assert.Equal(t, model.FoundryFillNeedsLoad, fill.State)
+	require.Len(t, fill.Why, 1)
+	assert.Equal(t, "move_failed", fill.Why[0].Kind)
+	assert.Nil(t, f.liveJob(t))
 }
 
 // A load that replaces the current one as a job ends, of the version a move
