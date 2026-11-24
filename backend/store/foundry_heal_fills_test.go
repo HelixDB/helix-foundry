@@ -77,8 +77,8 @@ func TestFoundryResendsOfAReasonUnknownStayAsTheyAre(t *testing.T) {
 }
 
 // A load whose engine marker moved in place before Foundry recorded it is
-// put right from the recorded move, with its live jobs; never to a version
-// no move of it records, nor from a version it isn't at.
+// put right from the recorded move, in whatever state, with its live jobs;
+// never to a version no move of it records, nor from a version it isn't at.
 func TestFoundryLoadMarkerReconciledOnlyFromARecordedMove(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RECON")
@@ -111,7 +111,8 @@ func TestFoundryLoadMarkerReconciledOnlyFromARecordedMove(t *testing.T) {
 	reconciled, err = f.db.ReconcileFoundryLoadMarker(ctx, f.load, label(to))
 	require.NoError(t, err)
 	assert.False(t, reconciled)
-	// A move that needs a load moved nothing, so puts nothing right.
+	// A move recorded as needing a load whose marker is at its version after
+	// all (a fold given up on) is put right too, and owed again.
 	g := newResendFixture(t, "RECONNL")
 	gFrom, _ := g.loadVersion(t)
 	gTo := g.draftVersion(t, "RECONNL-2", customerTOML)
@@ -120,7 +121,11 @@ func TestFoundryLoadMarkerReconciledOnlyFromARecordedMove(t *testing.T) {
 	require.NoError(t, err)
 	reconciled, err = g.db.ReconcileFoundryLoadMarker(ctx, g.load, (&model.FoundryLoad{Version: got.Version}).OntologyVersion())
 	require.NoError(t, err)
-	assert.False(t, reconciled)
+	assert.True(t, reconciled)
+	fills, err := g.db.ListFoundryHealFills(ctx, g.load)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryFillMoving, fills[fingerprint("RECONNL")].State)
+	assert.Equal(t, 1, g.moveOwed(t))
 }
 
 // The table's checks keep its states whole: a needs_load row says why, a
