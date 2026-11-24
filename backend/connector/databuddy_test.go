@@ -136,13 +136,18 @@ func TestDatabuddyDiscover(t *testing.T) {
 			}
 		}
 		today := time.Now().UTC().Format(time.DateOnly)
-		if len(*queries) != 2 {
-			t.Fatalf("queries = %+v, want a probe a site", *queries)
+		if len(*queries) != 4 {
+			t.Fatalf("queries = %+v, want a probe a site, then each site's counts of yesterday and today", *queries)
 		}
 		for i, site := range []string{"web_a", "web_b"} {
 			q := (*queries)[i]
 			if q.site != site || len(q.body.Parameters) != 8 || q.body.Limit != 1 || q.body.StartDate != today || q.body.EndDate != today {
 				t.Fatalf("probe = %+v", q)
+			}
+			counts := (*queries)[2+i]
+			if counts.site != site || !slices.Equal(counts.body.Parameters, []string{"custom_events_trends_by_event"}) ||
+				counts.body.StartDate != time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly) || counts.body.EndDate != today {
+				t.Fatalf("counts = %+v", counts)
 			}
 		}
 	})
@@ -193,6 +198,39 @@ func TestDatabuddyDiscover(t *testing.T) {
 		}
 		if got := fmt.Sprint(d.Unavailable); got != "[{custom_events_daily Website permission required} {custom_event_occurrences Website permission required}]" {
 			t.Fatalf("unavailable = %s", got)
+		}
+	})
+
+	t.Run("occurrences are unavailable while a day holds more than a full read keeps", func(t *testing.T) {
+		yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly)
+		for n, unavailable := range map[float64]bool{maxDatabuddyOccurrences / 2: false, maxDatabuddyOccurrences/2 + 1: true} {
+			// Each site sends n yesterday: past the cap over both, a full read could keep no whole day.
+			k, _ := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
+				if q.body.Limit == 1 {
+					return http.StatusOK, databuddyAnswer(q, func(string) []map[string]any { return nil })
+				}
+				return databuddyEvents{counts: map[string]float64{yesterday: n}}.answer(q)
+			})
+			d, err := k.Discover(ctx, databuddySource(`{}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := fmt.Sprint(d.Unavailable); unavailable != (got == "[{custom_event_occurrences the websites send more custom events in a day than Foundry keeps of them (500000); choose fewer websites}]") ||
+				!unavailable && got != "[]" {
+				t.Fatalf("%v a site: unavailable = %s", n, got)
+			}
+		}
+	})
+
+	t.Run("counts that can't be read fail the test", func(t *testing.T) {
+		k, _ := databuddyServer(t, databuddySites, func(q databuddyQuery) (int, string) {
+			if q.body.Limit == 1 {
+				return http.StatusOK, databuddyAnswer(q, func(string) []map[string]any { return nil })
+			}
+			return http.StatusOK, `{"success":true,"data":[{"parameter":"custom_events_trends_by_event","success":false,"error":"Query timeout"}]}`
+		})
+		if _, err := k.Discover(ctx, databuddySource(`{}`)); err == nil || !strings.Contains(err.Error(), "Query timeout") {
+			t.Fatalf("err = %v", err)
 		}
 	})
 
