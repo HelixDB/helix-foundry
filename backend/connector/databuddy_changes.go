@@ -11,11 +11,11 @@ import (
 var _ ChangeReader = (*databuddyKind)(nil)
 
 // databuddyFollowed are the tables a change read follows: a day's metrics
-// and a session are whole once read again from before they began. Every
-// other table is a total over the whole window (a page's views, a visitor's
-// sessions), which a read of the last days alone would replace with that
-// part, so every sync reads them in full.
-var databuddyFollowed = map[string]bool{"daily_metrics": true, "sessions": true}
+// or event counts, a day's occurrences and a session are whole once read
+// again from before they began. Every other table is a total over the whole
+// window (a page's views, a visitor's sessions), which a read of the last
+// days alone would replace with that part, so every sync reads them in full.
+var databuddyFollowed = map[string]bool{"daily_metrics": true, "custom_events_daily": true, databuddyOccurrences: true, "sessions": true}
 
 // databuddyCursor is when each followed table's next change read begins, and
 // the window and sites it was taken for: a change read of other settings, or
@@ -69,7 +69,10 @@ func (k *databuddyKind) Start(ctx context.Context, src Source, tables []Table) (
 
 // Changes reads each followed table from the UTC day before its cursor's (no
 // earlier than the history window) to today, for every chosen site, and
-// upserts each row: a day read again replaces the row it was. A session that
+// upserts each row: a day read again replaces the row it was, and an
+// occurrence read again is the row it was (its key is its content). The
+// occurrences a change read adds are not held to maxDatabuddyOccurrences:
+// they are the newest days, and the next full read keeps what fits. A session that
 // began before that day would come back holding only its later events, so
 // sessions are read from a day earlier still and only those that began on
 // or after it are upserted. Days and sessions that leave the window stay
@@ -112,6 +115,12 @@ func (k *databuddyKind) Changes(ctx context.Context, src Source, tables []Table,
 			since = window
 		}
 		from, upsert := since, func(row map[string]any) error { return w.Upsert(table.Name, row) }
+		if table.Name == databuddyOccurrences {
+			if err := k.occurrences(ctx, src.Secret, sites, from, now, upsert); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if table.Name == "sessions" {
 			from = since.AddDate(0, 0, -1)
 			upsert = func(row map[string]any) error {

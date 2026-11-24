@@ -50,8 +50,9 @@ import { layout, type Listed } from "./data-files";
 //   key whose client_email contains "nocalendar" wasn't delegated
 //   Calendar's scope (calendars and their events can't be read). A
 //   Databuddy key reads the websites web_acme and web_docs; one containing
-//   "nocustom" lacks website permission, so custom_events and profiles
-//   can't be read, and a chosen website it doesn't read fails the test.
+//   "nocustom" lacks website permission, so custom_events,
+//   custom_events_daily, custom_event_occurrences and profiles can't be
+//   read, and a chosen website it doesn't read fails the test.
 //   An Attio access token is 64 characters; one containing "noscope" lacks
 //   the note:read and task:read scopes, so notes, tasks, task_assignees and
 //   task_records can't be read (each saying which scope it lacks) and
@@ -798,6 +799,32 @@ const databuddyObjects = [
     9,
   ),
   object(
+    "custom_events_daily",
+    ["website_id", "event_name", "date"],
+    ["website_id", "event_name", "date", "bucket_start", "total_events"],
+    640,
+  ),
+  // One row an occurrence, keyed by a hash of its fields (Databuddy gives
+  // none an id), its properties an object.
+  object(
+    "custom_event_occurrences",
+    ["website_id", "event_id"],
+    [
+      "website_id",
+      "event_id",
+      "event_name",
+      "timestamp",
+      "date",
+      "namespace",
+      "path",
+      "source",
+      "anonymous_id",
+      "session_id",
+      "properties",
+    ],
+    5210,
+  ),
+  object(
     "sessions",
     ["website_id", "session_id"],
     [
@@ -840,7 +867,12 @@ const databuddyForeignKeys: Record<string, ConnectorForeignKey[]> =
 // The websites every mock Databuddy key reads, and what a key without
 // website permission can't query.
 const databuddySites = ["web_acme", "web_docs"];
-const databuddyPermitted = new Set(["custom_events", "profiles"]);
+const databuddyPermitted = new Set([
+  "custom_events",
+  "custom_events_daily",
+  "custom_event_occurrences",
+  "profiles",
+]);
 
 // Granola's public API (public-api.granola.ai), as granola.go reads it: the
 // notes the key's scopes read with their owner, calendar event and summary,

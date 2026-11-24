@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -55,6 +56,14 @@ func (o *databuddyOrg) serve(t *testing.T) string {
 					rows = []string{`{"name":"google.com","pageviews":4}`}
 				case "custom_events":
 					rows = []string{`{"name":"signup","total_events":2}`}
+				case "custom_events_trends_by_event":
+					rows = []string{fmt.Sprintf(`{"date":%q,"event_name":"signup","total_events":1}`, time.Now().UTC().Format(time.DateOnly))}
+				case "custom_events_recent":
+					// One occurrence today; every other day has none.
+					if body.StartDate == time.Now().UTC().Format(time.DateOnly) {
+						rows = []string{fmt.Sprintf(`{"event_name":"signup","properties":"{\"plan\":\"pro\"}","session_id":"s1","timestamp":%q}`,
+							time.Now().UTC().Format(time.DateTime))}
+					}
 				case "session_list":
 					for _, id := range slices.Sorted(maps.Keys(o.sessions)) {
 						rows = append(rows, fmt.Sprintf(`{"session_id":%q,"visitor_id":"v1","page_views":%d}`, id, o.sessions[id]))
@@ -74,14 +83,15 @@ func (o *databuddyOrg) serve(t *testing.T) string {
 	return server.URL
 }
 
-// took are the queries asked since the last call, sorted.
+// took are the query types asked since the last call, sorted, each once:
+// occurrences are asked a day at a time.
 func (o *databuddyOrg) took() []string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	asked := o.asked
 	o.asked = nil
 	slices.Sort(asked)
-	return asked
+	return slices.Compact(asked)
 }
 
 func databuddyFixture(t *testing.T, code string, org *databuddyOrg) fixture {
@@ -93,7 +103,7 @@ func databuddyFixture(t *testing.T, code string, org *databuddyOrg) fixture {
 	return f
 }
 
-var databuddyTableNames = []string{"custom_events", "daily_metrics", "pages", "profiles", "referrers", "sessions", "websites"}
+var databuddyTableNames = []string{"custom_event_occurrences", "custom_events", "custom_events_daily", "daily_metrics", "pages", "profiles", "referrers", "sessions", "websites"}
 
 // TestDatabuddySyncs runs Databuddy through the syncer on each plan. Free
 // includes the kind and reads every table in full on every sync. Pro reads
@@ -109,9 +119,13 @@ func TestDatabuddySyncs(t *testing.T) {
 			if res.Mode != model.ConnectorSyncFull || !slices.Equal(slices.Sorted(maps.Keys(f.store.tables)), databuddyTableNames) {
 				t.Fatalf("%s: mode = %s, tables = %v", id, res.Mode, slices.Sorted(maps.Keys(f.store.tables)))
 			}
-			if asked := org.took(); len(asked) != 6 {
+			if asked := org.took(); len(asked) != 8 {
 				t.Fatalf("%s: asked %v", id, asked)
 			}
+		}
+		rows := f.snapshotRows(t, "custom_event_occurrences")
+		if len(rows) != 1 || !strings.Contains(rows[0], `"properties":{"plan":"pro"}`) || !strings.Contains(rows[0], `"website_id":"web_a"`) {
+			t.Fatalf("occurrences = %v", rows)
 		}
 		if rows := f.snapshotRows(t, "pages"); fmt.Sprint(rows) != `[{"pageviews":10,"path":"/","website_id":"web_a"}]` {
 			t.Fatalf("pages = %v", rows)
@@ -138,7 +152,7 @@ func TestDatabuddySyncs(t *testing.T) {
 		if res.Mode != model.ConnectorSyncChanges {
 			t.Fatalf("mode = %s", res.Mode)
 		}
-		if asked := org.took(); len(asked) != 6 {
+		if asked := org.took(); len(asked) != 8 {
 			t.Fatalf("asked %v; want the followed tables' changes and the others in full", asked)
 		}
 		want := []string{

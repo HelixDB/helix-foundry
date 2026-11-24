@@ -3,6 +3,8 @@ package connector
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,33 +26,48 @@ const (
 	maxDatabuddyPages = 1000
 )
 
-// databuddyTable is one table: the query type it reads, its key, the rows a
-// page asks for (a session or profile row is larger than an aggregate's),
-// and the column the type's name field lands in, when it has one.
+// databuddyTable is one table: its primary key, the query type it reads,
+// the rows a page asks for (a session or profile row is larger than an
+// aggregate's), and the column the type's name field lands in, when it has
+// one.
 type databuddyTable struct {
-	saasTable
+	name     string
+	key      []string
 	query    string
 	pageRows int
 	nameAs   string
 }
 
+// databuddyOccurrences is the one table read a UTC day at a time and keyed
+// by a hash of each row (databuddyEventID): Databuddy gives an occurrence no
+// id. maxDatabuddyOccurrences bounds what a full read of it keeps across the
+// chosen sites: the newest whole days that fit, sized from custom_events_daily's
+// counts before anything is read (occurrenceStart).
+const (
+	databuddyOccurrences    = "custom_event_occurrences"
+	maxDatabuddyOccurrences = 500_000
+)
+
 // databuddyTables are the tables in display order. websites is the key's
 // list of sites; every other table is one query type over each chosen
-// site's history window, its rows tagged with website_id.
+// site's history window, its rows tagged with website_id and keyed by it
+// first: a day, page or name repeats across sites, and so does a visitor id
+// where two sites share an origin.
 var databuddyTables = []databuddyTable{
-	{saasTable: saasTable{"websites", "website_id"}},
-	{saasTable{"daily_metrics", "date"}, "events_by_date", 1000, ""},
-	{saasTable{"pages", "path"}, "top_pages", 10000, "path"},
-	{saasTable{"referrers", "referrer"}, "top_referrers", 10000, "referrer"},
-	{saasTable{"custom_events", "event_name"}, "custom_events", 10000, "event_name"},
-	{saasTable{"sessions", "session_id"}, "session_list", 1000, ""},
-	{saasTable{"profiles", "visitor_id"}, "profile_list", 1000, ""},
+	{name: "websites", key: []string{"website_id"}},
+	{"daily_metrics", []string{"website_id", "date"}, "events_by_date", 1000, ""},
+	{"pages", []string{"website_id", "path"}, "top_pages", 10000, "path"},
+	{"referrers", []string{"website_id", "referrer"}, "top_referrers", 10000, "referrer"},
+	{"custom_events", []string{"website_id", "event_name"}, "custom_events", 10000, "event_name"},
+	{"custom_events_daily", []string{"website_id", "event_name", "date"}, "custom_events_trends_by_event", 10000, ""},
+	{databuddyOccurrences, []string{"website_id", "event_id"}, "custom_events_recent", 10000, ""},
+	{"sessions", []string{"website_id", "session_id"}, "session_list", 1000, ""},
+	{"profiles", []string{"website_id", "visitor_id"}, "profile_list", 1000, ""},
 }
 
-// databuddyForeignKeys tie every table but websites to its site. Each of
-// those is keyed by (website_id, its key): a day, page or name repeats across
-// sites, and so does a visitor id where two sites share an origin, so a
-// session's visitor is no single-column key of profiles and has no foreign key.
+// databuddyForeignKeys tie every table but websites to its site. A
+// session's visitor is no single-column key of profiles (it repeats across
+// sites), so it has no foreign key, and nor does an occurrence's session.
 var databuddyForeignKeys = func() map[string][]ForeignKey {
 	out := map[string][]ForeignKey{}
 	for _, t := range databuddyTables[1:] {
@@ -169,18 +186,31 @@ func (k *databuddyKind) Discover(ctx context.Context, src Source) (Discovery, er
 			}
 		}
 	}
+	// A full read of occurrences is sized from the daily counts, and keeps
+	// nothing of a day too large to keep whole.
+	if why := reasons["custom_events_daily"]; why != "" && reasons[databuddyOccurrences] == "" {
+		reasons[databuddyOccurrences] = why
+	}
+	if len(sites) > 0 && readable(databuddyOccurrences) {
+		why, err := k.occurrencesTooLarge(ctx, src.Secret, sites, time.Now().UTC())
+		if err != nil {
+			return Discovery{}, err
+		}
+		if why != "" {
+			reasons[databuddyOccurrences] = why
+		}
+	}
 	objects := make([]saasTable, len(databuddyTables))
 	for i, t := range databuddyTables {
-		objects[i] = t.saasTable
+		objects[i] = saasTable{t.name, t.key[0]}
 	}
 	d := saasDiscovery(objects, readable, databuddyForeignKeys)
 	for i := range d.Unavailable {
 		d.Unavailable[i].Reason = reasons[d.Unavailable[i].Name]
 	}
 	for i, t := range d.Tables {
-		if t.Name != "websites" {
-			d.Tables[i].PrimaryKey = []string{"website_id", t.PrimaryKey[0]}
-		}
+		table, _ := databuddyTableOf(t.Name)
+		d.Tables[i].PrimaryKey = slices.Clone(table.key)
 		d.Tables[i].Windowed = WindowedTable("databuddy", t.Name)
 	}
 	return d, nil
@@ -209,12 +239,109 @@ func (k *databuddyKind) Sync(ctx context.Context, src Source, table Table, w Row
 	}
 	now := time.Now().UTC()
 	from := now.AddDate(0, 0, -s.HistoryDays)
+	if t.name == databuddyOccurrences {
+		if from, err = k.occurrenceStart(ctx, src.Secret, sites, from, now); err != nil {
+			return table, err
+		}
+		return table, k.occurrences(ctx, src.Secret, sites, from, now, w.Write)
+	}
 	for _, site := range sites {
 		if err := k.rows(ctx, src.Secret, t, databuddyText(site["id"]), from, now, w.Write); err != nil {
 			return table, err
 		}
 	}
 	return table, nil
+}
+
+// occurrenceCounts are Databuddy's counts of custom events by UTC day,
+// summed over the sites, from from's day to to's.
+func (k *databuddyKind) occurrenceCounts(ctx context.Context, key string, sites []map[string]any, from, to time.Time) (map[string]int64, error) {
+	daily, _ := databuddyTableOf("custom_events_daily")
+	counts := map[string]int64{}
+	for _, site := range sites {
+		err := k.rows(ctx, key, daily, databuddyText(site["id"]), from, to, func(row map[string]any) error {
+			n, ok := row["total_events"].(float64)
+			day, dated := databuddyDay(row["date"])
+			if !ok || !dated || n < 0 {
+				return fmt.Errorf("databuddy %s: a row has no day or count: %v", daily.query, row)
+			}
+			counts[day.Format(time.DateOnly)] += int64(n)
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return counts, nil
+}
+
+// occurrencesTooLarge says why the sites' occurrences can't be kept: a day,
+// yesterday or today so far, holds more than maxDatabuddyOccurrences, so no
+// whole day fits. Discover makes the table unavailable for it rather than
+// fail every table's sync.
+func (k *databuddyKind) occurrencesTooLarge(ctx context.Context, key string, sites []map[string]any, now time.Time) (string, error) {
+	counts, err := k.occurrenceCounts(ctx, key, sites, now.AddDate(0, 0, -1), now)
+	if err != nil {
+		return "", err
+	}
+	for _, n := range counts {
+		if n > maxDatabuddyOccurrences {
+			return fmt.Sprintf("the websites send more custom events in a day than Foundry keeps of them (%d); choose fewer websites", maxDatabuddyOccurrences), nil
+		}
+	}
+	return "", nil
+}
+
+// occurrenceStart is the first day a full read of occurrences keeps: the
+// oldest day from from's on whose occurrences, with every later day's to
+// to's, fit maxDatabuddyOccurrences across the sites, by Databuddy's daily
+// counts. A day too large to keep alone is refused rather than kept in part
+// (Discover makes the table unavailable first, unless a day grew since).
+func (k *databuddyKind) occurrenceStart(ctx context.Context, key string, sites []map[string]any, from, to time.Time) (time.Time, error) {
+	counts, err := k.occurrenceCounts(ctx, key, sites, from, to)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var kept int64
+	first, last := databuddyDayOf(from), databuddyDayOf(to)
+	for day := last; !day.Before(first); day = day.AddDate(0, 0, -1) {
+		kept += counts[day.Format(time.DateOnly)]
+		switch {
+		case kept <= maxDatabuddyOccurrences:
+		case day.Equal(last):
+			return time.Time{}, invalid("the websites sent more custom events today than Foundry keeps of them (%d); choose fewer websites or turn off %s",
+				maxDatabuddyOccurrences, databuddyOccurrences)
+		default:
+			return day.AddDate(0, 0, 1), nil
+		}
+	}
+	return first, nil
+}
+
+// occurrences writes every site's custom event occurrences of each UTC day
+// from from's to to's, a day at a time: each day pages on its own, so the
+// page cap bounds a day, not the window. A row read twice (the pages are
+// offsets into a list that grows while it is read) is written once, and so
+// are two occurrences Databuddy holds identically (databuddyEventID).
+func (k *databuddyKind) occurrences(ctx context.Context, key string, sites []map[string]any, from, to time.Time, write func(map[string]any) error) error {
+	t, _ := databuddyTableOf(databuddyOccurrences)
+	for _, site := range sites {
+		id := databuddyText(site["id"])
+		for day := databuddyDayOf(from); !day.After(to); day = day.AddDate(0, 0, 1) {
+			seen := map[string]bool{}
+			err := k.rows(ctx, key, t, id, day, day, func(row map[string]any) error {
+				if seen[databuddyText(row["event_id"])] {
+					return nil
+				}
+				seen[databuddyText(row["event_id"])] = true
+				return write(row)
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // rows writes every row of t's query for one site from from's day to to's,
@@ -246,6 +373,11 @@ func (k *databuddyKind) rows(ctx context.Context, key string, t databuddyTable, 
 		}
 		for _, raw := range r.Data {
 			row := databuddyRow(t, site, raw)
+			if t.name == databuddyOccurrences {
+				if row, err = databuddyOccurrence(site, raw, row); err != nil {
+					return err
+				}
+			}
 			if t.name == "profiles" {
 				if seen[row["visitor_id"]] {
 					continue
@@ -288,6 +420,58 @@ func databuddyRow(t databuddyTable, site string, raw map[string]any) map[string]
 		row["website_id"] = site
 	}
 	return row
+}
+
+// databuddyOccurrence is an occurrence row as custom_event_occurrences
+// stores it: its time in RFC 3339 UTC to the millisecond, its UTC day, its
+// properties as an object (none when Databuddy's text holds no JSON object)
+// and its event_id. An occurrence without a readable time can't be dated or
+// keyed, so it fails the read.
+func databuddyOccurrence(site string, raw, row map[string]any) (map[string]any, error) {
+	at, ok := databuddyTime(raw["timestamp"])
+	if !ok {
+		return nil, fmt.Errorf("databuddy custom_events_recent: an occurrence has no readable timestamp (%v)", raw["timestamp"])
+	}
+	at = at.UTC()
+	row["timestamp"] = at.Format("2006-01-02T15:04:05.000Z")
+	row["date"] = at.Format(time.DateOnly)
+	var properties map[string]any
+	if text, ok := raw["properties"].(string); !ok || json.Unmarshal([]byte(text), &properties) != nil {
+		properties = nil
+	}
+	row["properties"] = properties
+	row["event_id"] = databuddyEventID(site, row["timestamp"], raw)
+	return row, nil
+}
+
+// databuddyEventID keys an occurrence: the first 128 bits, in hex, of the
+// SHA-256 of a JSON array of its site, its time to the millisecond, and the
+// fields custom_events_recent writes (event name, namespace, path, source,
+// anonymous and session ids and the properties' text), each as Databuddy
+// sent it, so a null and an empty string differ. It is the same at every
+// read; two occurrences alike in all of them share it and are kept once.
+func databuddyEventID(site string, at any, raw map[string]any) string {
+	fields := []any{site, at}
+	for _, name := range []string{"event_name", "namespace", "path", "source", "anonymous_id", "session_id", "properties"} {
+		fields = append(fields, raw[name])
+	}
+	text, _ := json.Marshal(fields)
+	sum := sha256.Sum256(text)
+	return hex.EncodeToString(sum[:16])
+}
+
+// databuddyDayOf is t's UTC day.
+func databuddyDayOf(t time.Time) time.Time { return t.UTC().Truncate(24 * time.Hour) }
+
+// databuddyDay reads a day Databuddy writes, YYYY-MM-DD or a time on it.
+func databuddyDay(v any) (time.Time, bool) {
+	if text, ok := v.(string); ok {
+		if day, err := time.Parse(time.DateOnly, text); err == nil {
+			return day, true
+		}
+	}
+	t, ok := databuddyTime(v)
+	return databuddyDayOf(t), ok
 }
 
 // databuddySettingsOf decodes prepared settings.

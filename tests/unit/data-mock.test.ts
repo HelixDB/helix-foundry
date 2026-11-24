@@ -506,6 +506,8 @@ describe("testing and creating", () => {
       pages: "website_id+path",
       referrers: "website_id+referrer",
       custom_events: "website_id+event_name",
+      custom_events_daily: "website_id+event_name+date",
+      custom_event_occurrences: "website_id+event_id",
       sessions: "website_id+session_id",
       profiles: "website_id+visitor_id",
     });
@@ -514,6 +516,8 @@ describe("testing and creating", () => {
     const limited = tested({ databuddy: { apiKey: "dbdy_nocustom1" } });
     expect(limited.discovery.unavailable).toEqual([
       "custom_events: Website permission required",
+      "custom_events_daily: Website permission required",
+      "custom_event_occurrences: Website permission required",
       "profiles: Website permission required",
     ]);
     expect(links(limited, "sessions")).toEqual([
@@ -532,7 +536,9 @@ describe("testing and creating", () => {
       call("GET", `${base()}/connectors/${c.id}`),
     ).connector;
     expect(read.tables!.map((t) => t.name)).toEqual([
+      "custom_event_occurrences",
       "custom_events",
+      "custom_events_daily",
       "daily_metrics",
       "pages",
       "profiles",
