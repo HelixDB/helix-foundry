@@ -1359,12 +1359,21 @@ const credentialOut = ({
   ...c
 }: StoredCredential): ServiceCredential => structuredClone(c);
 
+// What else ends with a key: a partner app's install ends with its key
+// (./partner-apps.ts), as the host's RevokeServiceCredential revokes it.
+const keyRevoked: ((workspaceId: string, credentialId: string) => void)[] = [];
+/** Registers what runs whenever a key is revoked, from any route. */
+export const onKeyRevoked = (
+  run: (workspaceId: string, credentialId: string) => void,
+) => keyRevoked.push(run);
+
 /**
  * Revokes a key, as the host does: its grants and Usage permission go with
- * it (DeleteFoundryAccessPrincipal).
+ * it (DeleteFoundryAccessPrincipal), and so does a partner app's install.
  */
 function revoke(c: StoredCredential) {
   c.revokedAt = now();
+  for (const run of keyRevoked) run(c.workspaceId, c.id);
   state.grants = state.grants.filter(
     (g) =>
       !(
@@ -1405,6 +1414,91 @@ export function makeBotKey(
   return c.id;
 }
 
+/**
+ * A partner app's install's key, as the backend's exchange makes it: a
+ * workspace key nobody holds the token of, with no database grants
+ * ("hlxs_partner"), named "App · <app>". Its id.
+ */
+export function makeAppKey(
+  workspaceId: string,
+  appName: string,
+  userId: string,
+): string {
+  const at = now();
+  const c: StoredCredential = {
+    id: id("sc"),
+    workspaceId,
+    name: [...`App · ${appName}`].slice(0, 64).join(""),
+    tokenPrefix: "hlxs_partner",
+    workspaceOwner: { workspaceId },
+    grants: [],
+    createdBy: userId,
+    expiresAt: null,
+    revokedAt: null,
+    lastUsedAt: null,
+    timestamps: { createdAt: at, updatedAt: at },
+  };
+  state.credentials.push(c);
+  return c.id;
+}
+
+/**
+ * Whether every target names a source live in the workspace: its connector
+ * or set (People enrichment always is).
+ */
+export function sourcesLive(
+  workspaceId: string,
+  targets: readonly FoundryAccessTarget[],
+): boolean {
+  const connectors = new Set(workspaceConnectors(workspaceId).map((c) => c.id)),
+    sets = new Set(documentSets(workspaceId).map((s) => s.id));
+  return targets.every((t) =>
+    t.kind === "KIND_DOCUMENT_SET"
+      ? sets.has(t.documentSetId!)
+      : t.kind === "KIND_ENRICHMENT" || connectors.has(t.connectorId!),
+  );
+}
+
+/**
+ * Replaces a key's grants with `targets` (parsed, once each, live: see
+ * sourcesLive) and turns its Usage permission off, as a partner app's
+ * exchange does through Foundry's store. Grants kept keep their id.
+ */
+export function setAppKeyGrants(
+  workspaceId: string,
+  credentialId: string,
+  targets: readonly FoundryAccessTarget[],
+  userId: string,
+) {
+  const principal: Principal = {
+      kind: "KIND_SERVICE_CREDENTIAL",
+      id: credentialId,
+    },
+    k = principalKey(principal),
+    mine = (g: StoredGrant) =>
+      g.workspaceId === workspaceId && principalKey(g.principal) === k;
+  const kept = state.grants.filter(
+    (g) => mine(g) && targets.some((t) => targetKey(t) === targetKey(g.target)),
+  );
+  const added = targets
+    .filter((t) => !kept.some((g) => targetKey(g.target) === targetKey(t)))
+    .map(
+      (target): StoredGrant => ({
+        id: id("grant"),
+        workspaceId,
+        principal,
+        target: { ...target },
+        createdByUserId: userId,
+        createdAt: now(),
+      }),
+    );
+  state.grants = [
+    ...state.grants.filter((g) => !mine(g) || kept.includes(g)),
+    ...added,
+  ];
+  state.workflowsOff.add(`${workspaceId}\u001f${k}`);
+}
+
 /** The workspace's live key `credentialId`, if it is one. */
 export const liveKey = (workspaceId: string, credentialId: string) =>
   state.credentials.find(
@@ -1431,7 +1525,9 @@ const KIND_NAMES: Partial<Record<string, string>> = {
 };
 
 /** A target as ParseTarget reads it: each kind names exactly what it needs. */
-function parseTarget(t: FoundryAccessTarget): FoundryAccessTarget | string {
+export function parseTarget(
+  t: FoundryAccessTarget,
+): FoundryAccessTarget | string {
   const kind = t.kind || "",
     c = t.connectorId || "",
     table = t.table || "",

@@ -267,6 +267,26 @@
   min-width: 0;
 }
 
+/* Connected apps: an app's consent page (/oauth/authorize) */
+.wk-consent {
+  justify-items: stretch;
+}
+.wk-consent > p {
+  margin: 0;
+}
+.wk-consent-publisher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hf-space-1);
+}
+.wk-consent-publisher a {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* Plan and billing */
 .wk-plan-current {
   display: flex;

@@ -97,6 +97,11 @@ const nextConfig: NextConfig = {
     // Founder (src/web/areas/agent): every build's, since every backend
     // serves it (prod's from helixsvc with foundry.agent on).
     NEXT_PUBLIC_FOUNDRY_ASSISTANT: "1",
+    // Connected apps (src/web/areas/workspace/partner-apps.ts): partner
+    // integrations reading a workspace through Helix's OAuth on the MCP
+    // host, offered where Helix runs it: dev (and the mock), not prod yet,
+    // never a local build.
+    NEXT_PUBLIC_FOUNDRY_APPS: mode === "local" || appEnv === "prod" ? "" : "1",
   },
   // foundry.new, the setup address (src/shared/setup-host.ts): its `/` is
   // the setup prompt, before the app's own `/`; any other path is the

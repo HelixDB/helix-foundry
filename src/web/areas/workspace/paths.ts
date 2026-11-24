@@ -7,6 +7,7 @@ export type SettingsTab =
   | "ai"
   | "members"
   | "access"
+  | "apps"
   | "billing"
   | "enrichment"
   | "sharing"

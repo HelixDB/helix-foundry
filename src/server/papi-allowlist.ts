@@ -30,7 +30,8 @@ export type PapiArea =
   | "dashboards"
   | "automations"
   | "access"
-  | "slack";
+  | "slack"
+  | "apps";
 export type PapiRoute = {
   area: PapiArea;
   method: HttpMethod;
@@ -971,6 +972,26 @@ export const papiRoutes = [
     area: "slack",
     method: "POST",
     path: "/v1/workspaces/{workspaceId}/foundry/relay-links/{linkId}:revoke",
+  },
+
+  // Connected apps: partner integrations Helix registered. Owners and admins
+  // approve one on /oauth/authorize, then list and revoke installs. An
+  // install's sources are its credential's Foundry grants (the access routes).
+  { area: "apps", method: "GET", path: "/v1/partner-apps/authorization" },
+  {
+    area: "apps",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/partner-apps/authorization:approve",
+  },
+  {
+    area: "apps",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/partner-apps/installs",
+  },
+  {
+    area: "apps",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/partner-apps/installs/{installId}",
   },
 ] as const satisfies readonly PapiRoute[];
 

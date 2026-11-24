@@ -10,6 +10,7 @@ import { pastRuns, pruneRun } from "./routes/automations";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
+import { exchangePartnerCode, usePartnerInstall } from "./routes/partner-apps";
 import { handleConnectPage } from "./routes/sign-ins";
 import {
   handleRelayPage,
@@ -61,7 +62,8 @@ import { handleWorkos } from "./workos";
 // automationSuggestionsAi, slackAvailable, slackInstallAllowed,
 // slackTeamTaken, slackEmailMismatch, slackFeedOff, slackScopesOld,
 // slackInstallerMember, slackEventsLimited, slackBackfillMs, slackLossyDays,
-// relayAvailable, relayLinked, relayOnline, relayLinkOutcome }.
+// relayAvailable, relayLinked, relayOnline, relayLinkOutcome,
+// partnerAppsAvailable, partnerAppInstalled }.
 //
 // GET /__mock/password-resets lists the reset links WorkOS would have
 // emailed, oldest first: [{ email, token }] (./routes/auth.ts).
@@ -79,6 +81,12 @@ import { handleWorkos } from "./workos";
 // /__mock/relay/slack-install { linkId } its Add to Slack through the door,
 // and /mock/relay/link Helix's page that asks to link a local install
 // (./routes/relay.ts).
+//
+// POST /__mock/partner-apps/exchange { clientId, clientSecret, code,
+// codeVerifier, redirectUri? } is a connected app trading the code the
+// site's /oauth/authorize sent it for tokens at Helix's token endpoint, and
+// POST /__mock/partner-apps/use { installId } the app reading through its
+// install (./routes/partner-apps.ts).
 //
 // POST /__mock/slack/feed { channel, text, workspaceId? } is a message
 // posted in a channel the app is in (by id or name), which Slack sends the
@@ -270,6 +278,20 @@ const server = createServer(async (req, res) => {
             : url.pathname === "/__mock/relay/slack-install"
               ? relaySlackInstall(body)
               : slackAccessRequest(body);
+        res.writeHead(reply.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+        return;
+      }
+      if (
+        (url.pathname === "/__mock/partner-apps/exchange" ||
+          url.pathname === "/__mock/partner-apps/use") &&
+        req.method === "POST"
+      ) {
+        const body = JSON.parse(raw || "{}");
+        const reply =
+          url.pathname === "/__mock/partner-apps/exchange"
+            ? exchangePartnerCode(body)
+            : usePartnerInstall(body);
         res.writeHead(reply.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(reply.body));
         return;

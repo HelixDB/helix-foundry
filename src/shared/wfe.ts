@@ -6377,3 +6377,88 @@ export type SetFoundrySlackAccessRequest = {
 
 /** v1FoundrySlackAccessResponse: the Slack user's link once READ; unset once NONE. */
 export type FoundrySlackAccessResponse = { link?: FoundrySlackLink | null };
+
+// ---------------------------------------------------------------- Workspace: connected apps
+// Partner apps (the WFE's partner_apps.go): other companies' integrations
+// Helix registered, which read a workspace's Foundry through the HTTP API on
+// the MCP host with OAuth tokens. GET /v1/partner-apps/authorization reads
+// one app's request on the site's /oauth/authorize (any signed-in user);
+// owners and admins approve it (POST
+// /v1/workspaces/{workspaceId}/partner-apps/authorization:approve), and list
+// and revoke a workspace's installs (GET and DELETE
+// .../partner-apps/installs). An install's sources are its credential's
+// Foundry source grants (Access, above), changed through the access routes.
+// Where Helix offers no connected apps, FAILED_PRECONDITION "Connected apps
+// aren't offered here".
+
+/** v1PublicPartnerApp: what a customer sees of a registered app. */
+export type PublicPartnerApp = {
+  clientId: string;
+  name: string;
+  publisher: string;
+  homepageUrl?: string;
+  verified?: boolean;
+};
+
+/**
+ * v1GetPartnerAppAuthorizationResponse: GET /v1/partner-apps/authorization
+ * ?clientId=&redirectUri=&scope=&state=. `scopes` is what the app asks for,
+ * in canonical order (foundry.read, foundry.ask); `redirectOrigin` the
+ * redirect URI's scheme and host; `denyUrl` the redirect URI with
+ * error=access_denied, the state and iss, where Cancel goes (denying records
+ * nothing). INVALID_ARGUMENT "This app isn't registered with Helix" for an
+ * unknown or disabled app, "redirect_uri is not registered for this app",
+ * "scope …" or "state is too long".
+ */
+export type GetPartnerAppAuthorizationResponse = {
+  app?: PublicPartnerApp;
+  scopes?: string[];
+  redirectOrigin?: string;
+  denyUrl?: string;
+};
+
+/**
+ * typesv1FoundrySourceTarget: one source an install reads, as Foundry's
+ * FoundryAccessTarget names it (the same JSON).
+ */
+export type FoundrySourceTarget = FoundryAccessTarget;
+
+/**
+ * WfeServiceApprovePartnerAppAuthorizationBody: POST
+ * .../partner-apps/authorization:approve, owners and admins on the Foundry
+ * site. `scopes` is what the person allowed, a non-empty subset of the
+ * app's; `targets` 1 to 1000 sources. It stores a one-time code (5 minutes)
+ * the app trades for tokens; NOT_FOUND "One of the sources you chose was
+ * deleted".
+ */
+export type ApprovePartnerAppAuthorizationRequest = {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  codeChallenge: string;
+  scopes: string[];
+  targets: FoundrySourceTarget[];
+};
+
+/** v1ApprovePartnerAppAuthorizationResponse: the redirect URI with ?code=hlxpa_…&state=…&iss=…. */
+export type ApprovePartnerAppAuthorizationResponse = { redirectUrl?: string };
+
+/**
+ * v1PartnerAppInstallView: one app's live access to the workspace: a
+ * service credential nobody holds the token of, reading only its source
+ * grants. `appDisabled` while Helix suspended the app.
+ */
+export type PartnerAppInstall = {
+  id: string;
+  app?: PublicPartnerApp;
+  credentialId: string;
+  scopes?: string[];
+  approvedByUserId?: string;
+  createdAt?: string;
+  approvedAt?: string;
+  lastUsedAt?: string | null;
+  appDisabled?: boolean;
+};
+
+/** v1ListPartnerAppInstallsResponse: GET .../partner-apps/installs, the most recently used first. */
+export type ListPartnerAppInstallsResponse = { installs?: PartnerAppInstall[] };
