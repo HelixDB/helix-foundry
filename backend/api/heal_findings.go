@@ -194,6 +194,12 @@ func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.Foundry
 		if !ok {
 			continue
 		}
+		// A fill of it says how far it got, whatever else.
+		if fill := fills[f.Fingerprint]; fill != nil && (fill.State == foundrymodel.FoundryFillApplying ||
+			fill.State == foundrymodel.FoundryFillFilled || fill.State == foundrymodel.FoundryFillStopped) {
+			states[f.Fingerprint] = foundrymodel.FoundryFindingStateOf(fill, nil)
+			continue
+		}
 		// The load's version states it: moved, whatever a move of it says (one
 		// to another version that states it too answered it).
 		if ontologyagent.StatesLink(ownDef.OntologyTOML, ownDef.MappingsTOML, canonical, set) {
@@ -234,6 +240,20 @@ func unmatchedLink(f *foundrymodel.FoundryHealFinding) (canonical, set string, o
 	return finding.Signal.Canonical, finding.Signal.Set, true
 }
 
+// foundryHealFillProto is a fill on the wire, of the version v it filled.
+func foundryHealFillProto(v foundrymodel.FoundryVersionRef, f foundrymodel.FoundryHealFill) *foundryv1.FoundryHealFill {
+	out := &foundryv1.FoundryHealFill{
+		VersionId: v.ID, Version: int64(v.Version), LinksAdded: f.LinksAdded,
+		DocsOwed: f.Counts.Owed, DocsDone: f.Counts.Done(), DocsLeft: f.Counts.Left,
+		ReviewsResolved: f.Counts.ReviewsTaken, FactsAdded: f.Counts.FactsAdded,
+		SpentUsd: f.SpentUSD, CapUsd: f.CapUSD, StopReason: f.StopReason,
+	}
+	if f.PausedUntil != nil {
+		out.PausedUntil = timestamppb.New(*f.PausedUntil)
+	}
+	return out
+}
+
 // foundryHealStateProto is st on the wire; nil for none.
 func foundryHealStateProto(st foundrymodel.FoundryFindingState) *foundryv1.FoundryHealFindingState {
 	version := func(v foundrymodel.FoundryVersionRef) *foundryv1.FoundryHealVersion {
@@ -250,6 +270,12 @@ func foundryHealStateProto(st foundrymodel.FoundryFindingState) *foundryv1.Found
 		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Moved{Moved: &foundryv1.FoundryHealMoved{
 			VersionId: st.Version.ID, Version: int64(st.Version.Version), LinksAdded: st.LinksAdded,
 		}}}
+	case foundrymodel.FoundryFindingApplying:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Applying{Applying: foundryHealFillProto(st.Version, st.Fill)}}
+	case foundrymodel.FoundryFindingFixed:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Fixed{Fixed: foundryHealFillProto(st.Version, st.Fill)}}
+	case foundrymodel.FoundryFindingStopped:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Stopped{Stopped: foundryHealFillProto(st.Version, st.Fill)}}
 	case foundrymodel.FoundryFindingNeedsLoad:
 		why := make([]*foundryv1.FoundryFoldWhy, len(st.Why))
 		for i, w := range st.Why {

@@ -571,7 +571,7 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 	}
 	var owed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=? AND w.status='owed' AND `+
-		foundryResendIn("w.reason", model.FoundryResendKnown)+held+`)`,
+		foundryResendIn("w.reason", model.FoundryResendKnown)+held+` AND `+foundryLinkLive+`)`,
 		loadID).Scan(&owed); err != nil || !owed {
 		return false, err
 	}
@@ -849,6 +849,9 @@ WHERE load_id=? AND kind IN (`+kinds+`) AND doc_id=? AND applied_status IN ('pen
 // holds the ontology's lock.
 func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob) error {
 	if err := s.failFoundryLoadMove(ctx, job); err != nil {
+		return err
+	}
+	if err := s.failFoundryFill(ctx, job); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?

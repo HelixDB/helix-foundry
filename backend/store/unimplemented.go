@@ -115,6 +115,50 @@ func (u Unimplemented) ListFoundryHealFills(context.Context, string) (map[string
 	u.unimplemented("ListFoundryHealFills")
 	return nil, nil
 }
+func (u Unimplemented) FoundryFillApplying(context.Context, string) (*model.FoundryHealFill, error) {
+	u.unimplemented("FoundryFillApplying")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryLinkResends(context.Context, string, int) ([]*model.FoundryLoadResend, error) {
+	u.unimplemented("ListFoundryLinkResends")
+	return nil, nil
+}
+func (u Unimplemented) RecordFoundryFillDocument(context.Context, string, string, model.FoundryFillDocument) error {
+	u.unimplemented("RecordFoundryFillDocument")
+	return nil
+}
+func (u Unimplemented) EndFoundryFillDocument(context.Context, string, string, string, int, string) error {
+	u.unimplemented("EndFoundryFillDocument")
+	return nil
+}
+func (u Unimplemented) StopFoundryFill(context.Context, string, string, string, string) error {
+	u.unimplemented("StopFoundryFill")
+	return nil
+}
+func (u Unimplemented) PauseFoundryFill(context.Context, string, string, string, time.Time) error {
+	u.unimplemented("PauseFoundryFill")
+	return nil
+}
+func (u Unimplemented) SumFoundryFillSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryFillSpend")
+	return 0, nil
+}
+func (u Unimplemented) DueFoundryHealFills(context.Context, int) ([]model.FoundryFillDue, error) {
+	u.unimplemented("DueFoundryHealFills")
+	return nil, nil
+}
+func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string) (bool, error) {
+	u.unimplemented("OweFoundryFillDocuments")
+	return false, nil
+}
+func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, int64, int64, *model.FoundryGraphJob) error {
+	u.unimplemented("StartFoundryFill")
+	return nil
+}
+func (u Unimplemented) ResumeFoundryFill(context.Context, *model.FoundryHealFill, string, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("ResumeFoundryFill")
+	return false, nil
+}
 func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
 	u.unimplemented("EndFoundryLoadResend")
 	return nil

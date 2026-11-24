@@ -445,6 +445,17 @@ type Store interface {
 	RecordFoundryLoadMove(ctx context.Context, jobID, workerID string, fill *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error
 	FoundryAskedApart(ctx context.Context, loadID string) ([]string, error)
 	ListFoundryHealFills(ctx context.Context, loadID string) (map[string]*model.FoundryHealFill, error)
+	FoundryFillApplying(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
+	ListFoundryLinkResends(ctx context.Context, loadID string, limit int) ([]*model.FoundryLoadResend, error)
+	RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error
+	EndFoundryFillDocument(ctx context.Context, jobID, workerID, docID string, requests int, reason string) error
+	StopFoundryFill(ctx context.Context, jobID, workerID, loadID, reason string) error
+	PauseFoundryFill(ctx context.Context, jobID, workerID, loadID string, until time.Time) error
+	SumFoundryFillSpend(ctx context.Context, ontologyID string, since time.Time) (int64, error)
+	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
+	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string) (bool, error)
+	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error
+	ResumeFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, resend *model.FoundryGraphJob) (bool, error)
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
 	RequestFoundryReviewPasses(ctx context.Context) (int, error)

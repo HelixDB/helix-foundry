@@ -84,6 +84,13 @@ type store interface {
 	FoundryLoadMoveOwed(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
 	RecordFoundryLoadMove(ctx context.Context, jobID, workerID string, fill *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error
 	FoundryAskedApart(ctx context.Context, loadID string) ([]string, error)
+	FoundryFillApplying(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
+	ListFoundryLinkResends(ctx context.Context, loadID string, limit int) ([]*model.FoundryLoadResend, error)
+	RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error
+	EndFoundryFillDocument(ctx context.Context, jobID, workerID, docID string, requests int, reason string) error
+	StopFoundryFill(ctx context.Context, jobID, workerID, loadID, reason string) error
+	PauseFoundryFill(ctx context.Context, jobID, workerID, loadID string, until time.Time) error
+	SumFoundryFillSpend(ctx context.Context, ontologyID string, since time.Time) (int64, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -207,6 +214,12 @@ type attempt struct {
 	resends map[string][]*model.FoundryLoadResend
 	// resendFailed are those of resends the engine failed.
 	resendFailed map[string]bool
+	// fills are the documents a resend job's Extract sent to be filled and
+	// has not ended yet, each with the request it read (fill); filled is
+	// each one's "filled" event, which comes just before its "document"
+	// event (contract 4.33.0).
+	fills  map[string]*model.FoundryLoadResend
+	filled map[string]ontologyagent.FilledEvent
 	// aliases are the load's aliases each staged document writes, by its id
 	// (documentAliases): an Extract sends those of its documents.
 	aliases map[string][]*model.FoundryReviewDecision
@@ -1368,11 +1381,209 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 			return err
 		}
 	}
+	// Then the documents a fill owes, bounded, under the fill's budget.
+	if err := r.fill(ctx, job, def, binding, target, ontologyVersion, providers, a); err != nil {
+		return err
+	}
 	// What else was owed went; a name whose read failed is read again.
 	if unread != nil {
 		return unread
 	}
 	return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
+}
+
+// fill sends the documents the load's applying fill owes
+// (model.FoundryResendLink, a suggestion's "Add this link" after its move in
+// place), with their saved work and the links the move added to fill
+// (contract 4.33.0), each document asked those links alone and written as a
+// later transaction of it. At most model.FoundryFillDocsPerJob a job,
+// model.FoundryFillDocsPerExtract an Extract, for model.FoundryFillJobWall:
+// what is left stays owed, and the job's end queues the next resend behind
+// whatever else is due. Each Extract's budget is fillBudget's; one the fill
+// can't afford stops the fill (cap reached) or pauses it (the ontology's
+// day, or the workspace's month, spent), its documents still owed. A
+// document that can't be sent ends refused; each that ends is recorded by
+// recordFill.
+func (r *runner) fill(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
+	target ontologyagent.HelixTarget, ontologyVersion string, providers []string, a *attempt) error {
+	fill, err := r.db.FoundryFillApplying(ctx, job.LoadID)
+	if err != nil {
+		return retry("could not read the load's fill; Helix will retry", err)
+	}
+	if fill == nil || fill.PausedUntil != nil && fill.PausedUntil.After(r.now()) {
+		return nil
+	}
+	owed, err := r.db.ListFoundryLinkResends(ctx, job.LoadID, model.FoundryFillDocsPerJob)
+	if err != nil {
+		return retry("could not list the documents to fill; Helix will retry", err)
+	}
+	if len(owed) == 0 {
+		return nil
+	}
+	jobDir := filepath.Join(jobsDir, job.ID, "fill")
+	if err := os.RemoveAll(filepath.Join(r.snapshots.WorkDir, jobDir)); err != nil {
+		return retry("could not prepare the documents; Helix will retry", err)
+	}
+	defer func() { _ = os.RemoveAll(filepath.Join(r.snapshots.WorkDir, jobDir)) }() // best-effort: the next attempt starts afresh
+	ended := func(o *model.FoundryLoadResend, reason string) error {
+		err := r.db.EndFoundryFillDocument(ctx, job.ID, r.workerID, o.DocumentID, o.Requests, reason)
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return retry("the job's lease was lost", err)
+		}
+		if err != nil {
+			return retry("could not record a document filled; Helix will retry", err)
+		}
+		return nil
+	}
+	a.fills, a.filled = map[string]*model.FoundryLoadResend{}, map[string]ontologyagent.FilledEvent{}
+	started := r.now()
+	for n, chunk := 1, owed; len(chunk) > 0 && r.now().Sub(started) < model.FoundryFillJobWall; n++ {
+		part := chunk[:min(len(chunk), model.FoundryFillDocsPerExtract)]
+		chunk = chunk[len(part):]
+		maxUSD, stopped, err := r.fillBudget(ctx, job, a)
+		if err != nil || stopped {
+			return err
+		}
+		var docs []*model.FoundryDocument
+		for _, o := range part {
+			if o.Document == nil {
+				if err := ended(o, o.Unsendable); err != nil {
+					return err
+				}
+				continue
+			}
+			docs = append(docs, o.Document)
+			a.fills[o.DocumentID] = o
+		}
+		if len(docs) == 0 {
+			continue
+		}
+		documents, err := r.stage(ctx, job, filepath.Join(jobDir, strconv.Itoa(n)), docs, everyDocument, a)
+		if err != nil {
+			return err
+		}
+		staged := map[string]bool{}
+		for i := range documents {
+			documents[i].Fill = fill.LinksAdded
+			staged[documents[i].DocID] = true
+		}
+		// stage leaves out a document whose text is gone.
+		for _, d := range docs {
+			if !staged[d.ID] {
+				if err := ended(a.fills[d.ID], model.FoundryReleaseDocumentGone); err != nil {
+					return err
+				}
+				delete(a.fills, d.ID)
+			}
+		}
+		if len(documents) == 0 {
+			continue
+		}
+		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":fill:"+strconv.Itoa(n), "fill:"+strconv.Itoa(n),
+			documents, nil, maxUSD, providers, a)
+		if err != nil {
+			return err
+		}
+		if exhausted {
+			// A document needed more than the budget left: the next budget
+			// says whether the fill stops or pauses.
+			_, _, err := r.fillBudget(ctx, job, a)
+			return err
+		}
+	}
+	return nil
+}
+
+// fillBudget is what the next Extract of the load's fill may spend: the
+// least of what the fill's cap leaves (model.FoundryFillCapUSD), what the
+// ontology's fills may still spend today (model.FoundryFillDailyCapUSD, its
+// resend jobs' spend over 24 hours, this attempt's too), and the job's and
+// the workspace's month caps (budget). stopped is a fill that can't go on
+// now: past its cap it stops (model.FoundryFillCapReached), its documents no
+// longer owed; past the day's, or the month's, it pauses until a day later,
+// still owed, and the heal worker resumes it.
+func (r *runner) fillBudget(ctx context.Context, job *model.FoundryGraphJob, a *attempt) (maxUSD float64, stopped bool, err error) {
+	fill, err := r.db.FoundryFillApplying(ctx, job.LoadID)
+	if err != nil {
+		return 0, false, retry("could not read the load's fill; Helix will retry", err)
+	}
+	if fill == nil {
+		return 0, true, nil
+	}
+	lost := func(err error) error {
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return retry("the job's lease was lost", err)
+		}
+		return retry("could not record the fill's budget; Helix will retry", err)
+	}
+	fillLeft := fill.CapUSD - fill.SpentUSD
+	if fillLeft <= 0 {
+		if err := r.db.StopFoundryFill(ctx, job.ID, r.workerID, job.LoadID, model.FoundryFillCapReached); err != nil {
+			return 0, false, lost(err)
+		}
+		log.From(ctx).Info("graph job: a fill spent its cap", "job", job.ID, "load", job.LoadID, "spent", fill.SpentUSD)
+		return 0, true, nil
+	}
+	now := r.now()
+	day, err := r.db.SumFoundryFillSpend(ctx, job.OntologyID, now.Add(-24*time.Hour))
+	if err != nil {
+		return 0, false, retry("could not read the day's spend; Helix will retry", err)
+	}
+	dayLeft := model.FoundryFillDailyCapUSD - float64(day+a.spent)/1e6
+	jobLeft, spent, err := r.budget(ctx, job, a)
+	if err != nil {
+		return 0, false, err
+	}
+	if dayLeft <= 0 || spent != nil {
+		if err := r.db.PauseFoundryFill(ctx, job.ID, r.workerID, job.LoadID, now.Add(24*time.Hour)); err != nil {
+			return 0, false, lost(err)
+		}
+		log.From(ctx).Info("graph job: a fill paused for a day", "job", job.ID, "load", job.LoadID, "day_left", dayLeft,
+			"cap", spent != nil)
+		return 0, true, nil
+	}
+	return min(fillLeft, dayLeft, jobLeft), false, nil
+}
+
+// recordFill records what the engine said of a document it was sent to be
+// filled (its "filled" event, then its "document" event), with what it
+// spent, which ends its request (store.RecordFoundryFillDocument). One the
+// engine failed for its model stays owed, and the attempt ends: a failure
+// the workspace's own provider gives every document stops the job as for
+// any, another is retried with the job's backoff; a job that fails for good
+// backs the fill off (store failFoundryFill), so a model that keeps failing
+// never sends job after job. One that ended with no "filled" event, or
+// failed otherwise, ends refused.
+func (r *runner) recordFill(ctx context.Context, job *model.FoundryGraphJob, event ontologyagent.DocumentEvent, o *model.FoundryLoadResend,
+	resolved ai.Resolved, a *attempt) error {
+	delete(a.fills, event.DocID)
+	a.progress.DocumentsDone++
+	a.spent += int64(event.Usage.USDMicros)
+	if f := event.Outcome.ModelFailure; f != "" {
+		cause := fmt.Errorf("document %s: the model failed: %s", event.DocID, f)
+		c, stop := ai.DocumentFailure(resolved, f)
+		if stop {
+			return &failure{Model: true, Message: c.Message, Err: cause}
+		}
+		return retry(c.Message, cause)
+	}
+	d := model.FoundryFillDocument{DocumentID: event.DocID, Requests: o.Requests, USDMicros: int64(event.Usage.USDMicros),
+		Outcome: ontologyagent.FillRefused, Reason: model.FoundryReleaseUnanswered}
+	if filled, ok := a.filled[event.DocID]; ok && event.Outcome.Kind != ontologyagent.OutcomeFailed {
+		d.Outcome, d.Reason, d.Facts, d.Held, d.ReviewsTaken = filled.Outcome.Kind, filled.Outcome.Reason, filled.Facts, filled.Held,
+			filled.ReviewsTaken
+	} else if event.Outcome.Kind == ontologyagent.OutcomeFailed {
+		d.Reason = model.FoundryReleaseDocumentFailed
+	}
+	fillOutcomes.WithLabelValues(d.Outcome, d.Reason).Inc()
+	err := r.db.RecordFoundryFillDocument(ctx, job.ID, r.workerID, d)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return retry("the job's lease was lost", err)
+	}
+	if err != nil {
+		return retry("could not record a document filled; Helix will retry", err)
+	}
+	return r.update(ctx, job, model.FoundryGraphJobDocuments, a)
 }
 
 // move sends the move in place the job's load owes, if any
@@ -1768,6 +1979,15 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 		switch name, _ := ontologyagent.EventName(e); name {
 		case "artifact":
 			r.saveArtifact(ctx, job, e, sent, artifacts)
+		case "filled":
+			filled, err := ontologyagent.DecodeFilledEvent(e)
+			if err != nil || !sent[filled.DocID] {
+				log.From(ctx).Warn("graph job: ignored a fill Helix didn't send", "job", job.ID, "err", err)
+				return nil
+			}
+			if a.filled != nil {
+				a.filled[filled.DocID] = filled
+			}
 		case "document":
 			return r.recordDocument(ctx, job, e, sent, artifacts, released, resolved, a)
 		case "document_removed":
@@ -2185,6 +2405,9 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 	if !sent[event.DocID] {
 		log.From(ctx).Warn("graph job: ignored a document it did not send", "job", job.ID, "document", event.DocID)
 		return nil
+	}
+	if o := a.fills[event.DocID]; o != nil {
+		return r.recordFill(ctx, job, event, o, resolved, a)
 	}
 	c, u := event.Counts, event.Usage
 	if c.ReleaseRefused+c.ReleaseMissed > 0 {

@@ -316,6 +316,16 @@ type memStore struct {
 	moves    []model.FoundryFoldOutcome
 	// moveErr is what recording a move returns: a lost lease, say.
 	moveErr error
+	// fill is the load's applying fill, links the documents it owes, and
+	// fillEnded what jobs recorded of each document they sent it; fillStop
+	// and fillPause what they stopped or paused it for, fillSpend the
+	// ontology's fills' spend today.
+	fill      *model.FoundryHealFill
+	links     []*model.FoundryLoadResend
+	fillEnded []model.FoundryFillDocument
+	fillStop  string
+	fillPause *time.Time
+	fillSpend int64
 	// askedApart are the links each version asks apart, by its id.
 	askedApart map[string][]string
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
@@ -653,6 +663,68 @@ func (s *memStore) RecordFoundryLoadMove(_ context.Context, _, _ string, _ *mode
 
 func (s *memStore) FoundryAskedApart(_ context.Context, loadID string) ([]string, error) {
 	return s.askedApart[loadID], nil
+}
+
+func (s *memStore) FoundryFillApplying(context.Context, string) (*model.FoundryHealFill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fill == nil || s.fill.State != model.FoundryFillApplying {
+		return nil, nil
+	}
+	fill := *s.fill
+	return &fill, nil
+}
+
+func (s *memStore) ListFoundryLinkResends(_ context.Context, _ string, limit int) ([]*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fill == nil || s.fill.State != model.FoundryFillApplying || s.fill.PausedUntil != nil {
+		return nil, nil
+	}
+	return s.links[:min(limit, len(s.links))], nil
+}
+
+func (s *memStore) RecordFoundryFillDocument(_ context.Context, _, _ string, d model.FoundryFillDocument) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, o := range s.links {
+		if o.DocumentID != d.DocumentID || o.Requests != d.Requests {
+			continue
+		}
+		s.links = append(s.links[:i:i], s.links[i+1:]...)
+		s.fillEnded = append(s.fillEnded, d)
+		s.fill.SpentUSD += float64(d.USDMicros) / 1e6
+		if len(s.links) == 0 {
+			s.fill.State = model.FoundryFillFilled
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *memStore) EndFoundryFillDocument(ctx context.Context, jobID, workerID, docID string, requests int, reason string) error {
+	return s.RecordFoundryFillDocument(ctx, jobID, workerID, model.FoundryFillDocument{DocumentID: docID, Requests: requests,
+		Outcome: "refused", Reason: reason})
+}
+
+func (s *memStore) StopFoundryFill(_ context.Context, _, _, _, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fillStop, s.fill.State, s.links = reason, model.FoundryFillStopped, nil
+	return nil
+}
+
+func (s *memStore) PauseFoundryFill(_ context.Context, _, _, _ string, until time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fillPause, s.fill.PausedUntil = &until, &until
+	return nil
+}
+
+func (s *memStore) SumFoundryFillSpend(context.Context, string, time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fillSpend, nil
 }
 
 func (s *memStore) GetOntologyVersion(_ context.Context, ontologyID, id string) (*model.OntologyVersion, error) {

@@ -22,14 +22,25 @@ func TestFoundryFindingStateOf(t *testing.T) {
 		"moving":                {fill(FoundryFillMoving), &v8, FoundryFindingMoving{Version: v8}},
 		"moved":                 {fill(FoundryFillMoved), nil, FoundryFindingMoved{Version: v8, LinksAdded: []string{"ceo_of"}}},
 		"needs a load":          {fill(FoundryFillNeedsLoad), &v8, FoundryFindingNeedsLoad{Version: v8, Why: []FoundryFoldWhy{{"type_added", "types.Deal"}}}},
-		"a fill after the move": {fill(FoundryFillApplying), nil, FoundryFindingMoved{Version: v8, LinksAdded: []string{"ceo_of"}}},
-		"a fill stopped":        {fill(FoundryFillStopped), nil, FoundryFindingMoved{Version: v8, LinksAdded: []string{"ceo_of"}}},
-		"a fill done":           {fill(FoundryFillFilled), nil, FoundryFindingMoved{Version: v8, LinksAdded: []string{"ceo_of"}}},
+		"a fill after the move": {fill(FoundryFillApplying), nil, FoundryFindingApplying{Version: v8, Fill: *fill(FoundryFillApplying)}},
+		"a fill stopped":        {fill(FoundryFillStopped), &v8, FoundryFindingStopped{Version: v8, Fill: *fill(FoundryFillStopped)}},
+		"a fill done":           {fill(FoundryFillFilled), nil, FoundryFindingFixed{Version: v8, Fill: *fill(FoundryFillFilled)}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := FoundryFindingStateOf(c.fill, c.covered); !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("got %#v, want %#v", got, c.want)
 			}
 		})
+	}
+}
+
+// A fill's done documents are those that ended, however each did.
+func TestFoundryFillCountsDone(t *testing.T) {
+	c := FoundryFillCounts{Owed: 9, Left: 3, Filled: 2, Nothing: 1, Refused: 1, Native: 1, ReviewsTaken: 7, FactsAdded: 4}
+	if c.Done() != 5 {
+		t.Fatalf("done %d, want 5", c.Done())
+	}
+	if len(FoundryFillBackoff) != 3 || FoundryFillBackoff[0] >= FoundryFillBackoff[2] {
+		t.Fatalf("backoff %v grows over three failures", FoundryFillBackoff)
 	}
 }

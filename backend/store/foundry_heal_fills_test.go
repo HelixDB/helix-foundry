@@ -49,9 +49,10 @@ func (f resendFixture) loadVersion(t *testing.T) (load string, jobs []string) {
 	return load, jobs
 }
 
-// Rows of a reason this binary doesn't know ('link', as a later binary owes
-// them) are never listed, sent, ended, failed or counted owed: rolling back
-// leaves them as they are, and queues no job for them.
+// Rows of a reason this binary doesn't know (as a later binary owes them)
+// are never listed, sent, ended, failed or counted owed: rolling back leaves
+// them as they are, and queues no job for them. Nor are 'link' rows of a
+// load whose fill doesn't apply.
 func TestFoundryResendsOfAReasonUnknownStayAsTheyAre(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "RUNKNOWN")

@@ -54,10 +54,43 @@ WHERE ontology_id=? AND fingerprint=?`, ontologyID, fingerprint))
 
 // DismissFoundryHealFinding dismisses an open finding for userID at its
 // support now, keeping its finding as it is: ErrNotFound when the ontology
-// has no such finding or it isn't open.
+// has no such finding or it isn't open. A fill of it under way stops
+// (model.FoundryFillDismissed), ending what it owes, and one waiting to
+// start never does.
 func (s *mysqlDB) DismissFoundryHealFinding(ctx context.Context, ontologyID, fingerprint, userID string) error {
-	return execOrNotFound(ctx, s.db, `UPDATE foundry_heal_findings SET status='dismissed', dismissed_by=?, support_at_dismissal=support
-WHERE ontology_id=? AND fingerprint=? AND status='open'`, userID, ontologyID, fingerprint)
+	return s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_heal_findings SET status='dismissed', dismissed_by=?, support_at_dismissal=support
+WHERE ontology_id=? AND fingerprint=? AND status='open'`, userID, ontologyID, fingerprint); err != nil {
+			return err
+		}
+		rows, err := tx.db.QueryContext(ctx, `SELECT load_id FROM foundry_heal_fills WHERE ontology_id=? AND fingerprint=? AND state='applying'`,
+			ontologyID, fingerprint)
+		if err != nil {
+			return err
+		}
+		var loads []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			loads = append(loads, id)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, id := range loads {
+			if err := tx.stopFoundryFill(ctx, id, model.FoundryFillDismissed, ""); err != nil {
+				return err
+			}
+		}
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?
+WHERE ontology_id=? AND fingerprint=? AND state='moved'`, model.FoundryFillDismissed, ontologyID, fingerprint)
+		return err
+	})
 }
 
 // GetLatestFoundryHealRun is an ontology's newest run: ErrNotFound for none.
