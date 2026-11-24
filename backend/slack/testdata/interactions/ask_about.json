@@ -1,0 +1,33 @@
+{
+  "type": "message_action",
+  "token": "legacy",
+  "action_ts": "1795000100.123456",
+  "team": {
+    "id": "T0AAA1111",
+    "domain": "acme"
+  },
+  "user": {
+    "id": "U0ADA0001",
+    "username": "ada",
+    "name": "ada",
+    "team_id": "T0AAA1111"
+  },
+  "channel": {
+    "id": "C0GEN0001",
+    "name": "general"
+  },
+  "is_enterprise_install": false,
+  "enterprise": null,
+  "callback_id": "foundry.ask_about",
+  "trigger_id": "123.456.abc",
+  "response_url": "https://hooks.slack.com/app/T0AAA1111/1/secret",
+  "message_ts": "1795000050.000100",
+  "message": {
+    "type": "message",
+    "user": "U0GRACE01",
+    "text": "Is <@U0ALAN001> renewing *Globex*?",
+    "ts": "1795000050.000100",
+    "thread_ts": "1795000000.000100",
+    "client_msg_id": "4a2b0f0e-0000-4000-8000-000000000000"
+  }
+}

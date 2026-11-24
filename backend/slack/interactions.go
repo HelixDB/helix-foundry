@@ -30,6 +30,11 @@ const (
 	ActionOpen = "foundry.open"
 )
 
+// CallbackAskAbout is the callback_id of the app's message shortcut, "Ask
+// Founder about this", which anyone in an installed workspace picks from a
+// message's menu (the manifests' features.shortcuts).
+const CallbackAskAbout = "foundry.ask_about"
+
 // Interaction is a click the bot acts on: a closed set. ParseInteraction
 // reads every other interactivity request into Unhandled.
 type Interaction interface{ slackInteraction() }
@@ -98,6 +103,20 @@ type Unlink struct {
 	Clicked
 }
 
+// AskAbout is the message shortcut "Ask Founder about this" (a
+// message_action): the clicker (UserID) asks Founder what Foundry knows about
+// the message at MessageTS, in ThreadTS's thread ("" at top level; threadOf
+// is its root either way). ActionTS is when they picked it, Slack's own
+// for the request, which a retry keeps.
+type AskAbout struct {
+	Clicked
+	// AuthorID is who wrote the message, "" for an app's or an
+	// integration's without a user.
+	AuthorID string `json:"author_id,omitempty"`
+	// Text is the message as Slack sent it: raw mrkdwn (InputText reads it).
+	Text string `json:"text"`
+}
+
 // Unhandled is an interactivity request the bot does nothing with, and why.
 type Unhandled struct{ Why string }
 
@@ -108,6 +127,7 @@ func (Review) slackInteraction()    {}
 func (Run) slackInteraction()       {}
 func (Stop) slackInteraction()      {}
 func (Unlink) slackInteraction()    {}
+func (AskAbout) slackInteraction()  {}
 func (Unhandled) slackInteraction() {}
 
 // MaxValue is the most a button's value holds.
@@ -134,9 +154,19 @@ func (v ButtonValue) String() string {
 	return string(b)
 }
 
-// payload is the fields of a block_actions payload the bot reads.
+// payload is the fields of a block_actions or message_action payload the
+// bot reads.
 type payload struct {
 	Type string `json:"type"`
+	// CallbackID, ActionTS, MessageTS and Message are a message_action's.
+	CallbackID string `json:"callback_id"`
+	ActionTS   string `json:"action_ts"`
+	MessageTS  string `json:"message_ts"`
+	Message    *struct {
+		User     string `json:"user"`
+		Text     string `json:"text"`
+		ThreadTS string `json:"thread_ts"`
+	} `json:"message"`
 	User struct {
 		ID string `json:"id"`
 	} `json:"user"`
@@ -168,7 +198,7 @@ type payload struct {
 // ParseInteraction reads a request to the interactivity URL: a form whose
 // payload field is JSON. It returns an error only for a body that isn't one;
 // a request the bot doesn't act on (another type, an org-wide install, a
-// button not its own, a value it didn't write) is Unhandled.
+// button or shortcut not its own, a value it didn't write) is Unhandled.
 func ParseInteraction(body []byte) (Interaction, error) {
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
@@ -182,11 +212,14 @@ func ParseInteraction(body []byte) (Interaction, error) {
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return nil, fmt.Errorf("slack: decode interaction payload: %w", err)
 	}
-	if p.Type != "block_actions" {
+	if p.Type != "block_actions" && p.Type != "message_action" {
 		return Unhandled{Why: fmt.Sprintf("interaction type %q", p.Type)}, nil
 	}
 	if p.IsEnterpriseInstall || p.Team == nil {
 		return Unhandled{Why: "an org-wide install"}, nil
+	}
+	if p.Type == "message_action" {
+		return readShortcut(p), nil
 	}
 	if len(p.Actions) != 1 {
 		return Unhandled{Why: fmt.Sprintf("%d actions", len(p.Actions))}, nil
@@ -263,9 +296,38 @@ func ParseInteraction(body []byte) (Interaction, error) {
 	return Unhandled{Why: fmt.Sprintf("a %s value the bot didn't write", action.ActionID)}, nil
 }
 
+// readShortcut reads a message_action: the bot's own shortcut is AskAbout,
+// any other, or one without its team, user, channel, message or time, is
+// Unhandled.
+func readShortcut(p payload) Interaction {
+	if p.CallbackID != CallbackAskAbout {
+		return Unhandled{Why: fmt.Sprintf("shortcut %q", p.CallbackID)}
+	}
+	if p.Message == nil {
+		return Unhandled{Why: "a shortcut without its message"}
+	}
+	c := Clicked{TeamID: p.Team.ID, EnterpriseID: p.Team.EnterpriseID, UserID: p.User.ID, MessageTS: p.MessageTS, ThreadTS: p.Message.ThreadTS,
+		ActionTS: p.ActionTS}
+	if c.EnterpriseID == "" && p.Enterprise != nil {
+		c.EnterpriseID = p.Enterprise.ID
+	}
+	if p.Channel != nil {
+		c.ChannelID = p.Channel.ID
+	}
+	author := p.Message.User
+	switch {
+	case !idRE.MatchString(c.TeamID) || (c.EnterpriseID != "" && !idRE.MatchString(c.EnterpriseID)) ||
+		!idRE.MatchString(c.UserID) || !idRE.MatchString(c.ChannelID) || (author != "" && !idRE.MatchString(author)):
+		return Unhandled{Why: "a shortcut without its team, user, channel or author"}
+	case !tsRE.MatchString(c.MessageTS) || !tsRE.MatchString(c.ActionTS) || (c.ThreadTS != "" && !tsRE.MatchString(c.ThreadTS)):
+		return Unhandled{Why: "a shortcut without its message or time"}
+	}
+	return AskAbout{Clicked: c, AuthorID: author, Text: p.Message.Text}
+}
+
 // InteractionKey is the intake dedupe key of a click: "i:" and the hex
-// SHA-256 of its team, user, action_ts and action_id, NUL-separated.
-// Unhandled has none ("").
+// SHA-256 of its team, user, action_ts and action_id (a shortcut's
+// callback_id), NUL-separated. Unhandled has none ("").
 func InteractionKey(in Interaction) string {
 	var (
 		c        Clicked
@@ -286,6 +348,8 @@ func InteractionKey(in Interaction) string {
 		c, actionID = in.Clicked, ActionStop
 	case Unlink:
 		c, actionID = in.Clicked, ActionUnlink
+	case AskAbout:
+		c, actionID = in.Clicked, CallbackAskAbout
 	default:
 		return ""
 	}

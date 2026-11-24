@@ -197,9 +197,8 @@ func New(d Deps) (*Task, error) {
 			Budget:     model.SlackFeedBudget{Rows: sl.Feed.ReadBudget.Rows, Bytes: sl.Feed.ReadBudget.Bytes},
 			HelixAppID: sl.AppID, DirectoryEvery: sl.Feed.DirectoryEvery, RedocumentEvery: sl.Feed.RedocumentEvery, RepliesDays: sl.Backfill.RepliesDays})
 		if !d.Cfg.Host.Local || d.SlackRelay != nil {
-			required, _ := slack.Required(sl.Feed.Enabled, sl.Follow.Enabled)
-			slackApps = syncer.HostedSlackApps{DB: d.DB, Keys: keys, AppID: sl.AppID, Required: required, OrphanRetention: sl.Feed.OrphanRetention,
-				Caller: d.SlackRelay}
+			slackApps = syncer.HostedSlackApps{DB: d.DB, Keys: keys, AppID: sl.AppID, Required: slack.FeedScopes(sl.Feed.Enabled, sl.Follow.Enabled),
+				OrphanRetention: sl.Feed.OrphanRetention, Caller: d.SlackRelay}
 		}
 	}
 	planCatalog, err := foundryplan.NewCatalog(d.Cfg.Billing.Plans, connector.KindNames())

@@ -4,8 +4,8 @@
 //
 //   - Verify checks a request's v0 signature within five minutes.
 //   - ParseEvent and ParseInteraction read the events and interactivity
-//     requests into closed sets of the events and clicks the bot acts on;
-//     everything else is Ignored or Unhandled.
+//     requests into closed sets of the events, clicks and the message
+//     shortcut the bot acts on; everything else is Ignored or Unhandled.
 //   - Site.Text makes model, document and tool strings safe mrkdwn (Mrkdwn):
 //     escaped, links only to Foundry's own site, other URLs and domains in
 //     inline code, never a mass mention.
@@ -51,6 +51,13 @@ var Subscriptions = []string{
 	"agent_session_stopped",
 }
 
+// ShortcutScopes are the scopes of the app's message shortcut, "Ask Founder
+// about this" (CallbackAskAbout): Slack shows an install an app's shortcuts
+// only once it holds commands. Required asks for them, but nothing waits on
+// them: an install without them answers as before, and the data connector
+// never needs them (FeedScopes).
+var ShortcutScopes = []string{"commands"}
+
 // HistoryScopes are the scopes to read the messages of the public and
 // private channels the bot is in, asked for only where the data connector
 // (foundry.slack.feed) or unmentioned follow-ups (foundry.slack.follow) are
@@ -85,11 +92,11 @@ var ChannelSubscriptions = []string{
 
 // Required is what an install must hold and subscribe to where the data
 // connector is on (feed) and where unmentioned follow-ups are (follow):
-// Scopes and Subscriptions always; HistoryScopes and MessageSubscriptions
-// with either; ChannelSubscriptions with feed. The slices are the caller's
-// own.
+// Scopes, ShortcutScopes and Subscriptions always; HistoryScopes and
+// MessageSubscriptions with either; ChannelSubscriptions with feed. The
+// slices are the caller's own.
 func Required(feed, follow bool) (scopes, events []string) {
-	scopes, events = slices.Clone(Scopes), slices.Clone(Subscriptions)
+	scopes, events = slices.Concat(Scopes, ShortcutScopes), slices.Clone(Subscriptions)
 	if feed || follow {
 		scopes, events = append(scopes, HistoryScopes...), append(events, MessageSubscriptions...)
 	}
@@ -97,4 +104,12 @@ func Required(feed, follow bool) (scopes, events []string) {
 		events = append(events, ChannelSubscriptions...)
 	}
 	return scopes, events
+}
+
+// FeedScopes are the scopes of Required the data connector reads with: all
+// but ShortcutScopes, so an install that lacks only those keeps syncing.
+// The slice is the caller's own.
+func FeedScopes(feed, follow bool) []string {
+	scopes, _ := Required(feed, follow)
+	return slices.DeleteFunc(scopes, func(s string) bool { return slices.Contains(ShortcutScopes, s) })
 }

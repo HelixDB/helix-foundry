@@ -200,8 +200,8 @@ func TestCountFoundrySlackUserMessages(t *testing.T) {
 		t.Helper()
 		in := &model.SlackIntake{ID: f.intakeID(n), InstallID: install, DedupeKey: model.SlackEventDedupe(fmt.Sprintf("EvCap%d", n)), Kind: kind,
 			SlackUserID: user, Payload: json.RawMessage(`{}`)}
-		if kind == model.SlackIntakeInteraction {
-			in.DedupeKey = model.SlackClickDedupe("T1", user, fmt.Sprint(n), "foundry.stop")
+		if kind != model.SlackIntakeEvent {
+			in.DedupeKey = model.SlackClickDedupe("T1", user, fmt.Sprint(n), string(kind))
 		}
 		require.NoError(t, f.db.QueueFoundrySlackIntake(ctx, in))
 		_, err := testDB.Exec(`UPDATE foundry_slack_intake SET created_at=? WHERE id=?`, at.Add(-ago), in.ID)
@@ -216,12 +216,13 @@ func TestCountFoundrySlackUserMessages(t *testing.T) {
 	row(7, other.ID, "UADA", model.SlackIntakeEvent, time.Minute)   // another install
 	row(8, i.ID, "UADA", model.SlackIntakeInteraction, time.Minute) // a click
 	row(9, i.ID, "UADA", model.SlackIntakeEvent, 0)                 // at the same moment
+	row(10, i.ID, "UADA", model.SlackIntakeShortcut, 2*time.Minute) // a shortcut asks the bot too
 	n, err := f.db.CountFoundrySlackUserMessages(ctx, i.ID, "UADA", f.intakeID(1), time.Hour)
 	require.NoError(t, err)
-	assert.Equal(t, 3, n, "rows 2, 3 and 9")
+	assert.Equal(t, 4, n, "rows 2, 3, 9 and 10")
 	n, err = f.db.CountFoundrySlackUserMessages(ctx, i.ID, "UADA", f.intakeID(1), 2*time.Hour)
 	require.NoError(t, err)
-	assert.Equal(t, 4, n, "row 4 within two hours")
+	assert.Equal(t, 5, n, "row 4 within two hours")
 	n, err = f.db.CountFoundrySlackUserMessages(ctx, other.ID, "UADA", f.intakeID(1), time.Hour)
 	require.NoError(t, err)
 	assert.Zero(t, n, "the row isn't that install's")

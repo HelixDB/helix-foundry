@@ -277,14 +277,14 @@ func (b *Bot) sharedChannel(ctx context.Context, c claim, k slack.Clicked) (stri
 	if inDM(k.ChannelID) {
 		return "", nil
 	}
-	shared, err := b.slack.ExtShared(ctx, c.bot, k.ChannelID)
+	info, err := b.slack.ConversationInfo(ctx, c.bot, k.ChannelID)
 	switch {
 	case slack.IsCode(err, "missing_scope"):
 		return "Helix Foundry needs to be added to Slack again to act in channels: an owner or admin of your Foundry " +
 			"workspace can do it in Settings › Slack.", nil
 	case err != nil:
 		return "", fmt.Errorf("conversations.info: %w", err)
-	case shared:
+	case info.ExtShared:
 		return "Helix Foundry doesn't act in channels shared with other organisations. Message me directly instead.", nil
 	}
 	return "", nil

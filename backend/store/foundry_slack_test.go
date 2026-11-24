@@ -1021,6 +1021,26 @@ func TestFoundrySlackReplies(t *testing.T) {
 	require.NotNil(t, released)
 	assert.Equal(t, f.turnID(3), released.TurnID)
 	assert.Nil(t, released.MessageTS)
+
+	// A held reply moves to another thread while the intake claim holding
+	// it does, and only until its first message is posted.
+	f.queue(t, i.ID, 4, "conv-b")
+	mover := f.claimedIntake(t, 4)
+	_, err = f.db.HoldFoundrySlackReply(ctx, f.reply(i.ID, 4))
+	require.NoError(t, err)
+	assert.Error(t, f.db.MoveFoundrySlackHold(ctx, f.turnID(4), "D1", "not a ts", mover.ID, *mover.LeaseOwner))
+	assert.ErrorIs(t, f.db.MoveFoundrySlackHold(ctx, f.turnID(4), "D1", "1712345679.000100", mover.ID, "someone-else"), store.ErrNotFound,
+		"fenced on the intake's lease")
+	require.NoError(t, f.db.MoveFoundrySlackHold(ctx, f.turnID(4), "D1", "1712345679.000100", mover.ID, *mover.LeaseOwner))
+	moved, err := f.db.GetFoundrySlackReply(ctx, f.turnID(4))
+	require.NoError(t, err)
+	assert.Equal(t, [2]string{"D1", "1712345679.000100"}, [2]string{moved.ChannelID, moved.ThreadTS})
+	assert.Nil(t, f.claimReply(t), "still held")
+	require.NoError(t, f.db.StartFoundrySlackReply(ctx, f.turnID(4), "1712345679.000200", mover.ID, *mover.LeaseOwner))
+	assert.ErrorIs(t, f.db.MoveFoundrySlackHold(ctx, f.turnID(4), "C1", "1712345678.000100", mover.ID, *mover.LeaseOwner), store.ErrNotFound,
+		"posted: it stays")
+	assert.ErrorIs(t, f.db.MoveFoundrySlackHold(ctx, f.turnID(9), "C1", "1712345678.000100", mover.ID, *mover.LeaseOwner), store.ErrNotFound,
+		"no reply")
 }
 
 // --- Retention and a deleted workspace ---
