@@ -17,8 +17,14 @@ describe("fit", () => {
     expect(v.x).toBeCloseTo(PAD);
     expect(v.y).toBeCloseTo((500 - 1000 * v.k) / 2);
   });
-  it("never blows a small schema up", () => {
-    expect(fit({ w: 300, h: 200 }, frame)).toEqual({ x: 250, y: 150, k: 1 });
+  it("scales a small schema up to fill the frame", () => {
+    const v = fit({ w: 300, h: 250 }, frame);
+    expect(v.k).toBeCloseTo((500 - 2 * PAD) / 250);
+    expect(v.y).toBeCloseTo(PAD);
+    expect(v.x).toBeCloseTo((800 - 300 * v.k) / 2);
+  });
+  it("stops at the most zoom", () => {
+    expect(fit({ w: 100, h: 50 }, frame).k).toBe(ZOOM.max);
   });
   it("stops at the least zoom, the schema's start in view", () => {
     const v = fit({ w: 100_000, h: 400 }, frame);

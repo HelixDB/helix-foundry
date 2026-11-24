@@ -620,14 +620,16 @@ type Gesture = { start: View; from: Point; spread?: number; moved: boolean };
  * The schema's frame: the drawn schema (`size` at 100%) fitted in it, then
  * moved by dragging (a card or pill too: a drag never opens one), scrolling
  * and the arrow keys, and zoomed by pinching, Ctrl or ⌘ and scrolling, its
- * buttons and + and -. It follows the frame's size, fitted, until the reader
- * moves it, and Fit (or 0) fits it again. A scroll it can't move by (the
- * schema's edge is in view) scrolls the page. The frame is as tall as the
- * fitted schema, at most the window less the page's head.
+ * buttons and + and -. It fills the frame, fitted, until the reader moves
+ * it; Fit (or 0), and any change of the frame's size (the window's), fit it
+ * again. A scroll it can't move by (the schema's edge is in view) scrolls
+ * the page. The frame is as tall as the schema fitted to its width, at most
+ * the window less the page's head.
  */
 function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
   const frame = useRef<HTMLDivElement>(null);
-  const [port, setPort] = useState<Size | null>(null);
+  const [port, setPort] = useState<Size | null>(null),
+    lastPort = useRef<Size | null>(null);
   // Null while fitted; `glide` eases a button's or key's step.
   const [moved, setMoved] = useState<{ view: View; glide: boolean } | null>(
     null,
@@ -646,8 +648,16 @@ function SchemaFrame({ size, children }: { size: Size; children: ReactNode }) {
     if (!el) return;
     const measure = () => {
       const w = el.clientWidth,
-        k = Math.min(1, (w - 2 * PAD) / size.w);
-      setPort({ w, h: Math.min(frameMax(), Math.ceil(size.h * k + 2 * PAD)) });
+        k = Math.min(ZOOM.max, (w - 2 * PAD) / size.w),
+        next = {
+          w,
+          h: Math.min(frameMax(), Math.ceil(size.h * k + 2 * PAD)),
+        },
+        last = lastPort.current;
+      // A frame of another size fits the schema again, moved or not.
+      if (last && (last.w !== next.w || last.h !== next.h)) setMoved(null);
+      lastPort.current = next;
+      setPort(next);
     };
     measure();
     const observer = new ResizeObserver(measure);
