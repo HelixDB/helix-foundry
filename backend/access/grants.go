@@ -292,10 +292,11 @@ func (g Grants) SeesItems(items []ItemRef) bool {
 }
 
 // VisibleItems are the items every audienced source shares with the reader
-// now, sorted; none for grants that give nothing. A restricted member's
-// Founder thread records them as it runs, and is theirs only while every
-// one is still shared with them (SeesItems): its reads go through the API
-// tool by tool, so which of them it read isn't known.
+// now, sorted; none for grants that give nothing. GetMyFoundryAccess tells a
+// grantee them, which Founder's worker reads each call of a restricted
+// member's thread under: the thread records only the items of what its calls
+// read, and is theirs only while every one is still shared with them
+// (SeesItems).
 func (g Grants) VisibleItems() []ItemRef {
 	if g.Empty() {
 		return nil
