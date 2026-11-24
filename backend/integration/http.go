@@ -7,32 +7,60 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 )
 
+// The routes' names in a host's audit and metrics.
 const (
-	// HTTPAskTool and HTTPGetQuestionTool name the two routes in a host's audit and metrics.
-	HTTPAskTool         = "helix_foundry_http_ask"
-	HTTPGetQuestionTool = "helix_foundry_http_get_question"
+	HTTPListOntologiesTool = "helix_foundry_http_list_ontologies"
+	HTTPGetOntologyTool    = "helix_foundry_http_get_ontology"
+	HTTPGetSchemaTool      = "helix_foundry_http_get_schema"
+	HTTPReadTool           = "helix_foundry_http_read"
+	HTTPGetLoadTool        = "helix_foundry_http_get_load"
+	HTTPListDocumentsTool  = "helix_foundry_http_list_documents"
+	HTTPGetDocumentTool    = "helix_foundry_http_get_document"
+	HTTPAskTool            = "helix_foundry_http_ask"
+	HTTPListQuestionsTool  = "helix_foundry_http_list_questions"
+	HTTPGetQuestionTool    = "helix_foundry_http_get_question"
+)
 
+const (
 	// HTTPClientDisconnected is an outcome's code when the client's hang-up is what ended the
 	// request, rather than a refusal it would have had anyway.
 	HTTPClientDisconnected = "client_disconnected"
 
 	httpRequestTimeout = 30 * time.Second
-	// httpBodyTimeout is how long a client has to send a question's body, once the request is
+	// httpBodyTimeout is how long a client has to send a request's body, once the request is
 	// resolved. It leaves most of the request's deadline for asking and waiting, so a slow client
 	// is told so and never looks like a slow backend.
 	httpBodyTimeout = 10 * time.Second
 	httpMaxBody     = 64 << 10
+
+	// httpCallerRate is the requests a second one caller makes on one replica, and
+	// httpCallerBurst how many it may make at once after a pause. A host with one caller (a
+	// local install) has no such limit.
+	httpCallerRate  = 10
+	httpCallerBurst = 20
+	// httpCallerReads is how many graph reads one caller runs at once on one replica: half of
+	// what the workspace may (foundryread.MaxReadsPerWorkspace), so one integration never takes
+	// every read the workspace's own people make.
+	httpCallerReads = 2
+	// httpCallerCapacity bounds the callers tracked on one replica.
+	httpCallerCapacity = 10_000
 )
 
 // HTTPCall is what a host resolved for one request. Context carries trusted backend credentials;
@@ -43,15 +71,16 @@ type HTTPCall struct {
 	Identity    *Identity
 	WorkspaceID string
 	// Caller names who is asking, among the callers of this host, so that one caller's
-	// Idempotency-Key can't meet another's (httpClientToken). A host with one caller leaves it empty.
+	// Idempotency-Key can't meet another's (httpClientToken), and each caller has limits of its
+	// own (httpCallerRate, httpCallerReads). A host with one caller leaves it empty.
 	Caller string
 	// Done, when set, is told how the request ended once its response is written. A host returns
 	// it alongside a refusal too, for one it means to audit.
 	Done func(HTTPOutcome)
 }
 
-// HTTPOutcome is what a host's audit and metrics may keep of a request: never its question or
-// bearer.
+// HTTPOutcome is what a host's audit and metrics may keep of a request: never its question,
+// reads or bearer.
 type HTTPOutcome struct {
 	Tool, RequestID string
 	// Status is the status sent, and Code the stable error code, empty below 400. A Status of 0
@@ -64,9 +93,11 @@ type HTTPOutcome struct {
 	QuestionID string
 }
 
-// ResolveHTTP authenticates the request and resolves the ontology's workspace. It refuses a
-// malformed ontology id (ValidIDs) once it has authenticated and before it looks anything up: a
-// host's lookup may not be able to take one.
+// ResolveHTTP authenticates the request and resolves the workspace it reads. The string is the
+// ontology a route names, and empty for a route of the caller's workspace (GET /v1/ontologies),
+// which a host resolves to the caller's one workspace. It refuses a malformed ontology id
+// (ValidIDs) once it has authenticated and before it looks anything up: a host's lookup may not
+// be able to take one.
 type ResolveHTTP func(*http.Request, string) (HTTPCall, error)
 
 type httpRequestIDKey struct{}
@@ -77,21 +108,166 @@ func HTTPRequestID(ctx context.Context) string {
 	return value
 }
 
+// httpRoute is one route of the API: its name in audit and metrics, the query parameters it
+// takes (any other is refused, so a misspelt one is never silently ignored), and how it answers
+// a resolved request. serve returns the body and, for a question still being answered, where to
+// read it again (a 202).
+type httpRoute struct {
+	method, pattern, tool string
+	query                 []string
+	serve                 func(httpRequest) (body any, pending string, err error)
+}
+
+// httpRoutes is the API: every route reads, except ask, which asks. Each calls the Service
+// method its MCP tool calls, with the same authorization, and answers with the same JSON.
+var httpRoutes = []httpRoute{
+	{method: http.MethodGet, pattern: "/v1/ontologies", tool: HTTPListOntologiesTool, query: []string{"page_token"},
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.ListFoundryOntologies(q.Context, q.Identity, q.call, ListFoundryOntologiesInput{
+				WorkspaceID: q.WorkspaceID, PageToken: q.r.URL.Query().Get("page_token"),
+			})
+			return out, "", err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}", tool: HTTPGetOntologyTool,
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.GetFoundryOntology(q.Context, q.Identity, q.call, q.ontology())
+			return out, "", err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/schema", tool: HTTPGetSchemaTool,
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.GetFoundryContext(q.Context, q.Identity, q.call, q.ontology())
+			return out, "", err
+		}},
+	{method: http.MethodPost, pattern: "/v1/ontologies/{ontologyId}/reads", tool: HTTPReadTool,
+		serve: func(q httpRequest) (any, string, error) {
+			var body httpReads
+			if err := q.body(&body, "expected a JSON object containing reads"); err != nil {
+				return nil, "", err
+			}
+			if len(body.Reads) == 0 {
+				return nil, "", invalidHTTPRequest("reads must hold 1 to 20 reads")
+			}
+			out, _, err := q.Service.ReadFoundryGraph(q.Context, q.Identity, q.call, ReadFoundryGraphInput{
+				OntologyInput: q.ontology(), LoadID: body.LoadID, Reads: body.Reads, ValidAt: body.ValidAt,
+			})
+			return out, "", err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/loads/{loadId}", tool: HTTPGetLoadTool, query: []string{"wait"},
+		serve: func(q httpRequest) (any, string, error) {
+			wait, err := q.bool("wait")
+			if err != nil {
+				return nil, "", err
+			}
+			out, _, err := q.Service.GetFoundryLoad(q.Context, q.Identity, q.call, GetFoundryLoadInput{
+				OntologyInput: q.ontology(), LoadID: q.r.PathValue("loadId"), Wait: wait,
+			})
+			return out, "", err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/documents", tool: HTTPListDocumentsTool, query: []string{"set_id", "page_token"},
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.ListFoundryDocuments(q.Context, q.Identity, q.call, ListFoundryDocumentsInput{
+				OntologyInput: q.ontology(), SetID: q.r.URL.Query().Get("set_id"), PageToken: q.r.URL.Query().Get("page_token"),
+			})
+			return out, "", err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/documents/{documentId}", tool: HTTPGetDocumentTool,
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.GetFoundryDocumentText(q.Context, q.Identity, q.call, GetFoundryDocumentTextInput{
+				OntologyInput: q.ontology(), DocumentID: q.r.PathValue("documentId"),
+			})
+			return out, "", err
+		}},
+	{method: http.MethodPost, pattern: "/v1/ontologies/{ontologyId}/ask", tool: HTTPAskTool,
+		serve: func(q httpRequest) (any, string, error) {
+			var body httpQuestion
+			if err := q.body(&body, "expected a JSON object containing question"); err != nil {
+				return nil, "", err
+			}
+			// gRPC can't marshal a string that isn't UTF-8, and headers may hold any byte above 0x7f.
+			key := q.r.Header.Get("Idempotency-Key")
+			if key == "" || len(key) > 64 || !utf8.ValidString(key) {
+				return nil, "", invalidHTTPRequest("Idempotency-Key is required, at most 64 bytes of UTF-8")
+			}
+			out, _, err := q.Service.AskFoundryQuestion(q.Context, q.Identity, q.call, AskFoundryInput{
+				OntologyInput: q.ontology(), Question: body.Question, ClientToken: httpClientToken(q.Caller, key), ValidAt: body.ValidAt,
+			})
+			return out, q.pending(out), err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/questions", tool: HTTPListQuestionsTool, query: []string{"thread_id", "page_token"},
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.ListFoundryQuestions(q.Context, q.Identity, q.call, ListFoundryQuestionsInput{
+				OntologyInput: q.ontology(), ThreadID: q.r.URL.Query().Get("thread_id"), PageToken: q.r.URL.Query().Get("page_token"),
+			})
+			return out, "", err
+		}},
+	{method: http.MethodGet, pattern: "/v1/ontologies/{ontologyId}/questions/{questionId}", tool: HTTPGetQuestionTool,
+		serve: func(q httpRequest) (any, string, error) {
+			out, _, err := q.Service.GetFoundryQuestion(q.Context, q.Identity, q.call, GetFoundryQuestionInput{
+				OntologyInput: q.ontology(), QuestionID: q.r.PathValue("questionId"),
+			})
+			return out, q.pending(out), err
+		}},
+}
+
+// httpRequest is one resolved request as a route serves it.
+type httpRequest struct {
+	HTTPCall
+	w           http.ResponseWriter
+	r           *http.Request
+	call        *Call
+	bodyTimeout time.Duration
+}
+
+func (q httpRequest) ontology() OntologyInput {
+	return OntologyInput{WorkspaceID: q.WorkspaceID, OntologyID: q.r.PathValue("ontologyId")}
+}
+
+// pending is where a question not yet done is read again; empty once it is.
+func (q httpRequest) pending(out FoundryQuestionOutput) string {
+	if out.Done || out.ID == "" {
+		return ""
+	}
+	return "/v1/ontologies/" + url.PathEscape(q.r.PathValue("ontologyId")) + "/questions/" + url.PathEscape(out.ID)
+}
+
+// bool reads a query parameter that is true, false or absent (false).
+func (q httpRequest) bool(name string) (bool, error) {
+	switch value := q.r.URL.Query().Get(name); value {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	}
+	return false, invalidHTTPRequest(name + " must be true or false")
+}
+
+// httpReads is a read's body: 1 to 20 reads of read_request.json's items, and optionally the
+// load to read (else the current one) and the day to read as of.
+type httpReads struct {
+	Reads   []map[string]any `json:"reads"`
+	LoadID  string           `json:"load_id"`
+	ValidAt string           `json:"valid_at"`
+}
+
 func NewHTTPHandler(resolve ResolveHTTP) http.Handler {
 	return newHTTPHandler(resolve, httpBodyTimeout)
 }
 
 func newHTTPHandler(resolve ResolveHTTP, bodyTimeout time.Duration) http.Handler {
 	mux := http.NewServeMux()
-	route := func(tool string) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) { serveHTTP(w, r, tool, resolve, bodyTimeout) }
+	limits := newHTTPCallerLimits()
+	allowed := map[string][]string{}
+	for _, route := range httpRoutes {
+		mux.HandleFunc(route.method+" "+route.pattern, func(w http.ResponseWriter, r *http.Request) {
+			serveHTTP(w, r, route, resolve, limits, bodyTimeout)
+		})
+		allowed[route.pattern] = append(allowed[route.pattern], route.method)
 	}
-	mux.HandleFunc("POST /v1/ontologies/{ontologyId}/ask", route(HTTPAskTool))
-	mux.HandleFunc("GET /v1/ontologies/{ontologyId}/questions/{questionId}", route(HTTPGetQuestionTool))
 	// The same paths by any other method, and whatever else reaches this handler, answer in the
 	// contract's error shape, as net/http's own plain text wouldn't.
-	mux.HandleFunc("/v1/ontologies/{ontologyId}/ask", httpMethodNotAllowed(http.MethodPost))
-	mux.HandleFunc("/v1/ontologies/{ontologyId}/questions/{questionId}", httpMethodNotAllowed(http.MethodGet))
+	for pattern, methods := range allowed {
+		mux.HandleFunc(pattern, httpMethodNotAllowed(strings.Join(methods, ", ")))
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		refuseHTTPRoute(w, http.StatusNotFound, "not_found", "resource not found")
 	})
@@ -112,10 +288,10 @@ func refuseHTTPRoute(w http.ResponseWriter, statusCode int, code, message string
 	WriteHTTPRefusal(w, statusCode, code, message, requestID)
 }
 
-func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve ResolveHTTP, bodyTimeout time.Duration) {
-	// The GET route also matches HEAD, which would read no question and look pending.
+func serveHTTP(w http.ResponseWriter, r *http.Request, route httpRoute, resolve ResolveHTTP, limits *httpCallerLimits, bodyTimeout time.Duration) {
+	// A GET route also matches HEAD, which would read nothing and look pending.
 	if r.Method == http.MethodHead {
-		httpMethodNotAllowed(http.MethodGet)(w, r)
+		httpMethodNotAllowed(route.method)(w, r)
 		return
 	}
 	client := r.Context()
@@ -126,10 +302,10 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 	w.Header().Set("X-Request-ID", requestID)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	outcome := HTTPOutcome{Tool: tool, RequestID: requestID}
-	// See readHTTPQuestion: a refusal must not wait on the body it never reads either. Without a
+	outcome := HTTPOutcome{Tool: route.tool, RequestID: requestID}
+	// See httpRequest.body: a refusal must not wait on the body it never reads either. Without a
 	// body, net/http is already watching for a hang-up, a read this deadline would fail.
-	if tool == HTTPAskTool && r.ContentLength != 0 {
+	if route.method == http.MethodPost && r.ContentLength != 0 {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyTimeout))
 	}
 	call := &Call{}
@@ -141,53 +317,110 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 			resolved.Done(outcome)
 		}()
 	}
+	if err == nil {
+		err = httpQuery(r, route.query)
+	}
+	if err == nil {
+		var release func()
+		release, err = limits.admit(resolved.Caller, route.tool == HTTPReadTool)
+		if release != nil {
+			defer release()
+		}
+	}
 	if err != nil {
 		outcome.Status, outcome.Code = writeHTTPError(w, err, requestID, client)
 		return
 	}
 	started := time.Now()
-	var out FoundryQuestionOutput
-	if tool == HTTPAskTool {
-		out, err = askHTTP(w, r, resolved, call, bodyTimeout)
-	} else {
-		out, _, err = resolved.Service.GetFoundryQuestion(resolved.Context, resolved.Identity, call, GetFoundryQuestionInput{
-			OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, QuestionID: r.PathValue("questionId"),
-		})
-	}
-	if err != nil {
+	body, pending, err := route.serve(httpRequest{HTTPCall: resolved, w: w, r: r, call: call, bodyTimeout: bodyTimeout})
+	switch {
+	case err != nil:
 		outcome.Status, outcome.Code = writeHTTPError(w, err, requestID, client)
-	} else if out.Done {
-		outcome.Status = http.StatusOK
-	} else {
+	case pending != "":
 		outcome.Status = http.StatusAccepted
-		w.Header().Set("Location", "/v1/ontologies/"+url.PathEscape(r.PathValue("ontologyId"))+"/questions/"+url.PathEscape(out.ID))
+		w.Header().Set("Location", pending)
 		w.Header().Set("Retry-After", "1")
+	default:
+		outcome.Status = http.StatusOK
 	}
 	if resolved.Service.Logger != nil {
-		resolved.Service.Logger.Info("Foundry HTTP Ask", "request_id", requestID, "method", r.Method,
-			"duration_ms", time.Since(started).Milliseconds(), "status", out.Status, "error_code", outcome.Code)
+		resolved.Service.Logger.Info("Foundry HTTP", "request_id", requestID, "tool", route.tool, "method", r.Method,
+			"duration_ms", time.Since(started).Milliseconds(), "status", outcome.Status, "error_code", outcome.Code)
 	}
 	if err == nil {
 		w.WriteHeader(outcome.Status)
-		_ = json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(body)
 	}
 }
 
-func askHTTP(w http.ResponseWriter, r *http.Request, resolved HTTPCall, call *Call, bodyTimeout time.Duration) (FoundryQuestionOutput, error) {
-	body, err := readHTTPQuestion(w, r, bodyTimeout)
-	if err != nil {
-		return FoundryQuestionOutput{}, err
+// httpQuery refuses a query parameter the route doesn't take, or one given twice.
+func httpQuery(r *http.Request, names []string) error {
+	for name, values := range r.URL.Query() {
+		if !slices.Contains(names, name) {
+			return invalidHTTPRequest("unknown query parameter " + strconv.Quote(name))
+		}
+		if len(values) > 1 {
+			return invalidHTTPRequest("query parameter " + strconv.Quote(name) + " is given more than once")
+		}
 	}
-	// gRPC can't marshal a string that isn't UTF-8, and headers may hold any byte above 0x7f.
-	key := r.Header.Get("Idempotency-Key")
-	if key == "" || len(key) > 64 || !utf8.ValidString(key) {
-		return FoundryQuestionOutput{}, invalidHTTPRequest("Idempotency-Key is required, at most 64 bytes of UTF-8")
+	return nil
+}
+
+// httpCallerLimits are each caller's limits on one replica: httpCallerRate requests a second, and
+// httpCallerReads graph reads at once. They are kept in memory, per replica, and stored nowhere;
+// a replica tracks at most httpCallerCapacity callers, forgetting idle ones first.
+type httpCallerLimits struct {
+	mu      sync.Mutex
+	callers map[string]*httpCallerLimit
+}
+
+type httpCallerLimit struct {
+	requests *rate.Limiter
+	reads    int
+}
+
+func newHTTPCallerLimits() *httpCallerLimits {
+	return &httpCallerLimits{callers: map[string]*httpCallerLimit{}}
+}
+
+// admit takes one of the caller's requests, and one of its reads when read is true. It returns
+// what gives the read back; nil when it took none.
+func (l *httpCallerLimits) admit(caller string, read bool) (func(), error) {
+	if caller == "" {
+		return nil, nil
 	}
-	out, _, err := resolved.Service.AskFoundryQuestion(resolved.Context, resolved.Identity, call, AskFoundryInput{
-		OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, Question: body.Question,
-		ClientToken: httpClientToken(resolved.Caller, key), ValidAt: body.ValidAt,
-	})
-	return out, err
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	limit, known := l.callers[caller]
+	if !known {
+		if len(l.callers) >= httpCallerCapacity {
+			// An idle caller with every request back is forgotten as if it was never seen.
+			maps.DeleteFunc(l.callers, func(_ string, c *httpCallerLimit) bool {
+				return c.reads == 0 && c.requests.Tokens() >= httpCallerBurst
+			})
+		}
+		limit = &httpCallerLimit{requests: rate.NewLimiter(httpCallerRate, httpCallerBurst)}
+		if len(l.callers) < httpCallerCapacity {
+			l.callers[caller] = limit
+		}
+	}
+	if !limit.requests.Allow() {
+		return nil, detailedToolError{code: errCodeResourceExhausted,
+			message: "this credential is making more than " + strconv.Itoa(httpCallerRate) + " requests a second; slow down and retry"}
+	}
+	if !read {
+		return nil, nil
+	}
+	if limit.reads >= httpCallerReads {
+		return nil, detailedToolError{code: errCodeResourceExhausted,
+			message: "this credential already runs " + strconv.Itoa(httpCallerReads) + " reads at once; wait for one to finish"}
+	}
+	limit.reads++
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		limit.reads--
+	}, nil
 }
 
 // httpClientToken is the client token of a caller's Idempotency-Key. A client token is unique per
@@ -205,35 +438,35 @@ func invalidHTTPRequest(message string) error {
 	return detailedToolError{code: errCodeInvalidArguments, message: message}
 }
 
-// readHTTPQuestion reads the body under a read deadline: a request's context doesn't bound reading
-// its body, and a server's ReadHeaderTimeout stops at the headers, so a client could otherwise
-// hold the request by sending a byte now and then. Nothing here clears the deadline: net/http does
-// once the body ends, and until then the deadline also bounds the read of what a handler left
-// of the body, which net/http makes before it writes the response, with no end of its own if
-// the client stalls. A host whose writer has no read deadlines leaves all of this to its server's
-// own timeouts.
-func readHTTPQuestion(w http.ResponseWriter, r *http.Request, bodyTimeout time.Duration) (httpQuestion, error) {
+// body reads the request's body, one JSON object with no field into doesn't name, under a read
+// deadline: a request's context doesn't bound reading its body, and a server's ReadHeaderTimeout
+// stops at the headers, so a client could otherwise hold the request by sending a byte now and
+// then. Nothing here clears the deadline: net/http does once the body ends, and until then the
+// deadline also bounds the read of what a handler left of the body, which net/http makes before
+// it writes the response, with no end of its own if the client stalls. A host whose writer has
+// no read deadlines leaves all of this to its server's own timeouts.
+func (q httpRequest) body(into any, invalid string) error {
+	r := q.r
 	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/json" {
-		return httpQuestion{}, invalidHTTPRequest("Content-Type must be application/json")
+		return invalidHTTPRequest("Content-Type must be application/json")
 	}
 	// Resolving took some of what was first set, and the time was no fault of the client's.
-	deadline := time.Now().Add(bodyTimeout)
+	deadline := time.Now().Add(q.bodyTimeout)
 	if end, ok := r.Context().Deadline(); ok && end.Before(deadline) {
 		deadline = end
 	}
-	_ = http.NewResponseController(w).SetReadDeadline(deadline)
-	var input httpQuestion
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, httpMaxBody))
+	_ = http.NewResponseController(q.w).SetReadDeadline(deadline)
+	decoder := json.NewDecoder(http.MaxBytesReader(q.w, r.Body, httpMaxBody))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		return httpQuestion{}, httpBodyError(r, err, "expected a JSON object containing question")
+	if err := decoder.Decode(into); err != nil {
+		return httpBodyError(r, err, invalid)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return httpQuestion{}, httpBodyError(r, err, "expected exactly one JSON object")
+		return httpBodyError(r, err, "expected exactly one JSON object")
 	}
-	return input, nil
+	return nil
 }
 
 // httpQuestion is an HTTP Ask's body: the question and, optionally, the day to answer it as of

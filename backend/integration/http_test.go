@@ -535,7 +535,7 @@ func TestHTTPBodyDeadline(t *testing.T) {
 	})
 	// net/http watches for a hang-up with a read of its own once the body ends, clearing the
 	// deadline first. Should it ever not, that read would fail at the deadline and cancel the
-	// request during the wait: this holds the assumption readHTTPQuestion rests on.
+	// request during the wait: this holds the assumption httpRequest.body rests on.
 	t.Run("the deadline ends with the body, so the wait can outlast it", func(t *testing.T) {
 		o := httpObservedFixture(t, "running", 20*time.Millisecond)
 		o.service.Wait = 300 * time.Millisecond
