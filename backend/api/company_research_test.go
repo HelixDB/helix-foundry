@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,15 +27,23 @@ import (
 )
 
 // researchStore keeps company research's rows in memory, with the
-// workspace's AI setting; startErr refuses a start, finishErr a finish.
+// workspace's AI setting; hourErr refuses an hour's check, startErr a
+// start, finishErr a finish. A start reserves its worst case, as the
+// store's does; spends are the finishes' charges.
 type researchStore struct {
 	foundrystore.Unimplemented
 	mu        sync.Mutex
 	rows      map[string]*foundrymodel.FoundryCompanyResearch
 	limits    []foundrymodel.FoundryCompanyResearchLimits
+	spends    []foundrymodel.FoundryCompanyResearchSpend
+	hourErr   error
 	startErr  error
 	finishErr error
 	active    *foundrymodel.FoundryAIConfig
+}
+
+func (s *researchStore) CheckFoundryCompanyResearchHour(context.Context, string, int) error {
+	return s.hourErr
 }
 
 func (s *researchStore) GetActiveFoundryAIConfig(context.Context, string) (*foundrymodel.FoundryAIConfig, error) {
@@ -52,19 +61,27 @@ func (s *researchStore) StartFoundryCompanyResearch(_ context.Context, r *foundr
 		return s.startErr
 	}
 	row := *r
+	row.USDMicros = limits.WorstUSDMicros
 	s.rows[r.ID] = &row
 	return nil
 }
 
-func (s *researchStore) FinishFoundryCompanyResearch(_ context.Context, ws, id string, result json.RawMessage, usdMicros int64) error {
+func (s *researchStore) FinishFoundryCompanyResearch(_ context.Context, ws, id string, result json.RawMessage, spend foundrymodel.FoundryCompanyResearchSpend) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.spends = append(s.spends, spend)
 	row, ok := s.rows[id]
-	if !ok || row.WorkspaceID != ws {
+	switch {
+	case !ok || row.WorkspaceID != ws:
 		return foundrystore.ErrNotFound
+	case s.finishErr != nil:
+		return s.finishErr
+	case spend.CutShort:
+		row.Result, row.USDMicros = result, max(row.USDMicros, spend.USDMicros)
+	default:
+		row.Result, row.USDMicros = result, spend.USDMicros
 	}
-	row.Result, row.USDMicros = result, usdMicros
-	return s.finishErr
+	return nil
 }
 
 func (s *researchStore) GetFoundryCompanyResearch(_ context.Context, ws, id string) (*foundrymodel.FoundryCompanyResearch, error) {
@@ -89,21 +106,28 @@ func (s *researchStore) ofKind(kind foundrymodel.FoundryCompanyResearchKind) []*
 	return out
 }
 
-// fakeSites reads one page of any domain it holds.
-type fakeSites map[string]companyresearch.Site
+// fakeSites reads one page of any domain it holds; fetched are the domains
+// read.
+type fakeSites struct {
+	sites   map[string]companyresearch.Site
+	fetched []string
+}
 
-func (f fakeSites) Fetch(_ context.Context, domain string) companyresearch.Site {
-	if site, ok := f[domain]; ok {
+func (f *fakeSites) Fetch(_ context.Context, domain string) companyresearch.Site {
+	f.fetched = append(f.fetched, domain)
+	if site, ok := f.sites[domain]; ok {
 		return site
 	}
 	return companyresearch.Site{Pages: []companyresearch.Page{}}
 }
 
-// researchAnswer is one model call's: a tool call with its input, or an
-// error.
+// researchAnswer is one model call's: a tool call with its input, an
+// error, or (hang) the input's usage and then nothing until its context
+// ends.
 type researchAnswer struct {
 	tool, input string
 	err         error
+	hang        bool
 }
 
 // researchModelFake answers its calls in order, the last again once they
@@ -114,12 +138,19 @@ type researchModelFake struct {
 	requests []llm.Request
 }
 
-func (m *researchModelFake) Stream(_ context.Context, r llm.Request) iter.Seq2[llm.Chunk, error] {
+func (m *researchModelFake) Stream(ctx context.Context, r llm.Request) iter.Seq2[llm.Chunk, error] {
 	m.mu.Lock()
 	a := m.answers[min(len(m.requests), len(m.answers)-1)]
 	m.requests = append(m.requests, r)
 	m.mu.Unlock()
 	return func(yield func(llm.Chunk, error) bool) {
+		if a.hang {
+			if yield(llm.Usage{In: 1000}, nil) {
+				<-ctx.Done()
+				yield(nil, ctx.Err())
+			}
+			return
+		}
 		if a.err != nil {
 			yield(llm.Usage{In: 1000}, nil)
 			yield(nil, a.err)
@@ -151,7 +182,7 @@ func researchService(t *testing.T, answers ...researchAnswer) (*Service, *resear
 	roles := &[]ai.Role{}
 	s := &Service{deps: &runtimeDeps{Cfg: &cfg, DB: store, AI: hostedAI(t),
 		People: dashboardPeople{"user-ada": ports.RoleAdmin, "user-owner": ports.RoleOwner, "user-alan": ports.RoleMember},
-		Sites:  fakeSites{"acme.com": {Pages: []companyresearch.Page{{URL: "https://acme.com/", Text: "Acme sells anvils."}}}},
+		Sites:  &fakeSites{sites: map[string]companyresearch.Site{"acme.com": {Pages: []companyresearch.Page{{URL: "https://acme.com/", Text: "Acme sells anvils."}}}}},
 		ResearchModels: func(_ ai.Resolved, _ *ai.Catalog, role ai.Role) (llm.Binding, error) {
 			*roles = append(*roles, role)
 			return llm.Binding{Model: model, Pricer: llm.Pricer{Input: 1000, Output: 2000}}, nil
@@ -187,7 +218,7 @@ func TestResearchFoundryCompany(t *testing.T) {
 	row := store.rows[got.GetId()]
 	require.NotNil(t, row, "the research is stored under the id answered")
 	assert.Equal(t, "user-ada", row.UserID)
-	assert.EqualValues(t, 2000, row.USDMicros, "its call is charged: 1,000 in, 500 out")
+	assert.EqualValues(t, 2000, row.USDMicros, "its call is charged, its reservation replaced: 1,000 in, 500 out")
 	var stored companyresearch.Research
 	require.NoError(t, json.Unmarshal(row.Result, &stored))
 	assert.Equal(t, "Acme", stored.CompanyName)
@@ -196,8 +227,10 @@ func TestResearchFoundryCompany(t *testing.T) {
 	assert.Equal(t, 20, limits.PerUserPerHour)
 	assert.EqualValues(t, 2_000_000, limits.MonthlyMicros)
 	assert.Equal(t, 1, limits.Since.Day())
-	worst := 2 * (int64(companyresearch.ResearchPromptBytes/3+1)*1000 + companyresearch.ResearchMaxOutput*2000) / 1000
-	assert.Equal(t, worst, limits.WorstUSDMicros, "two calls at the largest prompt and output")
+	prompt := len(req.System) + len(req.Messages[0].Content[0].(llm.Text).Text) + len(companyresearch.ResearchSchema)
+	worst := 2 * llm.Pricer{Input: 1000, Output: 2000}.Micros(llm.Usage{In: int64(prompt/3 + 1), Out: companyresearch.ResearchMaxOutput})
+	assert.Equal(t, worst, limits.WorstUSDMicros, "two calls at the prompt read and the largest output")
+	assert.Equal(t, []foundrymodel.FoundryCompanyResearchSpend{{USDMicros: 2000}}, store.spends)
 
 	// A site that can't be read is researched from the domain alone.
 	unread, err := research(s, site("user-owner"), "initech.com")
@@ -218,6 +251,10 @@ func TestResearchFoundryCompanyRefusals(t *testing.T) {
 	} {
 		_, err := research(s, ctx, "acme.com")
 		assert.Equal(t, codes.PermissionDenied, status.Code(err), name)
+		if name != "a member" {
+			assert.Equal(t, "company research is for the workspace's owners and admins, signed in to Foundry as themselves",
+				status.Convert(err).Message(), name)
+		}
 	}
 	_, err := research(s, throughMCP("user-ada"), "acme.com")
 	require.NoError(t, err, "an admin's agent, as them")
@@ -229,7 +266,19 @@ func TestResearchFoundryCompanyRefusals(t *testing.T) {
 	_, err = s.ResearchFoundryCompany(site("user-ada"), &foundryv1.ResearchFoundryCompanyRequest{Domain: "acme.com"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "no workspace")
 
-	// The hour, then the month, are the store's to count.
+	// The hour is checked before the site is read, and again, with the
+	// month, as the call starts: the store's to count.
+	sites := s.deps.Sites.(*fakeSites)
+	read, started := len(sites.fetched), len(store.limits)
+	store.hourErr = foundrystore.ErrLimitExceeded
+	_, err = research(s, site("user-ada"), "acme.com")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	assert.Len(t, sites.fetched, read, "a caller out of calls reads no site")
+	assert.Len(t, store.limits, started, "nor starts a call")
+	store.hourErr = errors.New("down")
+	_, err = research(s, site("user-ada"), "acme.com")
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	store.hourErr = nil
 	store.startErr = foundrystore.ErrLimitExceeded
 	_, err = research(s, site("user-ada"), "acme.com")
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
@@ -281,6 +330,49 @@ func TestResearchFoundryCompanyModelFailure(t *testing.T) {
 	store.finishErr = errors.New("down")
 	_, err := research(s, site("user-ada"), "acme.com")
 	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+// A model that runs out of time, or whose caller goes, is UNAVAILABLE,
+// saying how long it had; its call is recorded cut short, so its row keeps
+// the reservation over the input it reported.
+func TestResearchFoundryCompanyCutShort(t *testing.T) {
+	for name, cut := range map[string]func(context.Context) (context.Context, context.CancelFunc){
+		"its deadline": func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(ctx, 50*time.Millisecond)
+		},
+		"its caller gone": func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(ctx)
+			time.AfterFunc(50*time.Millisecond, cancel)
+			return ctx, cancel
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, store, _, _ := researchService(t, researchAnswer{hang: true})
+			ctx, cancel := cut(site("user-ada"))
+			defer cancel()
+			_, err := research(s, ctx, "acme.com")
+			assert.Equal(t, codes.Unavailable, status.Code(err))
+			assert.Equal(t, "FOUNDRY_RESEARCH_FAILED", reasonOf(err))
+			assert.Contains(t, status.Convert(err).Message(), "didn’t answer within 55 seconds")
+			assert.Equal(t, []foundrymodel.FoundryCompanyResearchSpend{{USDMicros: 1000, CutShort: true}}, store.spends, "what it reported, cut short")
+			rows := store.ofKind(foundrymodel.FoundryCompanyResearchOfSite)
+			require.Len(t, rows, 1)
+			assert.Equal(t, store.limits[0].WorstUSDMicros, rows[0].USDMicros, "the reservation, larger than the input reported")
+			assert.Nil(t, rows[0].Result)
+		})
+	}
+
+	// A goal cut short is charged as one.
+	s, store, model, _ := researchService(t, researchAnswer{tool: companyresearch.ResearchTool, input: acmeResearch})
+	r, err := research(s, site("user-ada"), "acme.com")
+	require.NoError(t, err)
+	model.answers = append(model.answers, researchAnswer{hang: true})
+	ctx, cancel := context.WithTimeout(site("user-ada"), 50*time.Millisecond)
+	defer cancel()
+	_, err = draft(s, ctx, r.GetId(), nil, "")
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "Foundry couldn’t write a goal: the model")
+	assert.Equal(t, foundrymodel.FoundryCompanyResearchSpend{USDMicros: 1000, CutShort: true}, store.spends[1])
 }
 
 func draft(s *Service, ctx context.Context, researchID string, answers map[string]string, data string) (*foundryv1.DraftFoundryGoalResponse, error) {
@@ -339,10 +431,19 @@ func TestDraftFoundryGoal(t *testing.T) {
 	store.startErr = nil
 	assert.Len(t, model.requests, 2, "no refused draft reached the model")
 
+	// A goal whose spend can't be recorded is still answered: it was paid
+	// for, and its reservation stays charged.
+	store.finishErr = errors.New("down")
+	model.answers = append(model.answers, researchAnswer{tool: companyresearch.GoalTool, input: acmeGoal})
+	paid, err := draft(s, site("user-ada"), r.GetId(), nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Acme orders", paid.GetName())
+	store.finishErr = nil
+
 	// A draft the model fails is charged, and UNAVAILABLE.
 	model.answers = append(model.answers, researchAnswer{tool: companyresearch.GoalTool, input: `{"goal":" ","name":"x"}`})
 	_, err = draft(s, site("user-ada"), r.GetId(), nil, "")
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	assert.Equal(t, "FOUNDRY_RESEARCH_FAILED", reasonOf(err))
-	assert.Len(t, store.ofKind(foundrymodel.FoundryCompanyResearchGoal), 2)
+	assert.Len(t, store.ofKind(foundrymodel.FoundryCompanyResearchGoal), 3)
 }

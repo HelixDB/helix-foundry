@@ -13,15 +13,33 @@ import (
 // Company research for a new ontology's goal
 // (migrations/20261224000000_foundry_company_research.sql): a row per model
 // call, started before it under the caller's hourly cap and the workspace's
-// monthly budget, and finished with what it spent.
+// monthly budget holding the call's worst case, and finished with what it
+// spent.
 
 // ErrBudgetSpent means a call's worst case would take a workspace past its
 // monthly budget.
 var ErrBudgetSpent = errors.New("store: the month's budget would be spent")
 
+// CheckFoundryCompanyResearchHour is ErrLimitExceeded when userID made
+// perUserPerHour calls of either kind in the past hour: a check before a
+// research reads a site, which StartFoundryCompanyResearch makes again
+// under the workspace's lock.
+func (s *mysqlDB) CheckFoundryCompanyResearchHour(ctx context.Context, userID string, perUserPerHour int) error {
+	var lastHour int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_company_research
+WHERE user_id=? AND created_at >= NOW(6) - INTERVAL 1 HOUR`, userID).Scan(&lastHour); err != nil {
+		return err
+	}
+	if lastHour >= perUserPerHour {
+		return ErrLimitExceeded
+	}
+	return nil
+}
+
 // StartFoundryCompanyResearch records a call about to be made, its result
-// none and its spend nothing yet, in one transaction holding the
-// workspace's lock, so concurrent calls count each other: ErrLimitExceeded
+// none and its spend its worst case (limits.WorstUSDMicros) until it ends,
+// in one transaction holding the workspace's lock, so concurrent calls
+// count each other, those still running at their worst: ErrLimitExceeded
 // when the caller made limits.PerUserPerHour calls of either kind in the
 // past hour, else ErrBudgetSpent when the workspace's spend since
 // limits.Since and limits.WorstUSDMicros would pass limits.MonthlyMicros;
@@ -56,27 +74,33 @@ WHERE workspace_id=? AND created_at >= ?`, r.WorkspaceID, limits.Since.UTC()).Sc
 		if spent+limits.WorstUSDMicros > limits.MonthlyMicros {
 			return ErrBudgetSpent
 		}
-		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_company_research (id, workspace_id, user_id, kind, domain)
-VALUES (?, ?, ?, ?, ?)`, r.ID, r.WorkspaceID, r.UserID, string(r.Kind), r.Domain); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_company_research (id, workspace_id, user_id, kind, domain, usd_micros)
+VALUES (?, ?, ?, ?, ?, ?)`, r.ID, r.WorkspaceID, r.UserID, string(r.Kind), r.Domain, limits.WorstUSDMicros); err != nil {
 			return err
 		}
+		r.USDMicros = limits.WorstUSDMicros
 		return tx.db.QueryRowContext(ctx, `SELECT created_at FROM foundry_company_research WHERE id=?`, r.ID).Scan(&r.CreatedAt)
 	})
 }
 
-// FinishFoundryCompanyResearch records what a started call spent and, for
-// a research that ended with one, its result (nil for a goal or a
+// FinishFoundryCompanyResearch records what a started call spent, in place
+// of its reservation, or the larger of the two for a call cut short, and,
+// for a research that ended with one, its result (nil for a goal or a
 // failure). ErrNotFound means no started call of the workspace has the id.
-func (s *mysqlDB) FinishFoundryCompanyResearch(ctx context.Context, workspaceID, id string, result json.RawMessage, usdMicros int64) error {
-	if usdMicros < 0 {
+func (s *mysqlDB) FinishFoundryCompanyResearch(ctx context.Context, workspaceID, id string, result json.RawMessage, spend model.FoundryCompanyResearchSpend) error {
+	if spend.USDMicros < 0 {
 		return fmt.Errorf("a company research spends nothing or more")
 	}
 	var stored any
 	if result != nil {
 		stored = string(result)
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE foundry_company_research SET result=CAST(? AS JSON), usd_micros=?
-WHERE workspace_id=? AND id=?`, stored, usdMicros, workspaceID, id)
+	charged := "?"
+	if spend.CutShort {
+		charged = "GREATEST(usd_micros, ?)"
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE foundry_company_research SET result=CAST(? AS JSON), usd_micros=`+charged+`
+WHERE workspace_id=? AND id=?`, stored, spend.USDMicros, workspaceID, id)
 	if err != nil {
 		return err
 	}

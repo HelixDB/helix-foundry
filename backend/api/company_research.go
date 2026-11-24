@@ -16,6 +16,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/agent/llm"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/companyresearch"
+	"github.com/helixdb/helix-foundry/backend/config"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
@@ -30,8 +31,8 @@ import (
 // upstream timeout (60 s).
 const (
 	// researchDeadline bounds a call, the site's read and the model's
-	// calls included.
-	researchDeadline = 45 * time.Second
+	// calls included: room for a slow or local model.
+	researchDeadline = 55 * time.Second
 	// researchCalls is the most model calls one answer makes: one, and one
 	// more for an answer that doesn't read or a passing refusal.
 	researchCalls = 2
@@ -55,10 +56,11 @@ type researchModel struct {
 // workspace's model research it (companyresearch.ParseResearch): an owner
 // or admin's, checked in this order: the caller; the domain
 // (companyresearch.NormalizeDomain, INVALID_ARGUMENT in its words); a model
-// (requireAI); the caller's hour and the workspace's month
-// (StartFoundryCompanyResearch); then the site's read and the model's call,
-// whose spend is recorded whatever came of it, with the research when one
-// was made.
+// (requireAI); the caller's hour (CheckFoundryCompanyResearchHour); the
+// site's read; the caller's hour again and the workspace's month with the
+// prompt read (StartFoundryCompanyResearch); then the model's call, whose
+// spend is recorded whatever came of it, with the research when one was
+// made.
 func (s *Service) ResearchFoundryCompany(ctx context.Context, req *foundryv1.ResearchFoundryCompanyRequest) (*foundryv1.ResearchFoundryCompanyResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, researchDeadline)
 	defer cancel()
@@ -75,12 +77,16 @@ func (s *Service) ResearchFoundryCompany(ctx context.Context, req *foundryv1.Res
 	if err != nil {
 		return nil, err
 	}
-	row := &foundrymodel.FoundryCompanyResearch{ID: id.New(), WorkspaceID: ws, UserID: userID, Kind: foundrymodel.FoundryCompanyResearchOfSite, Domain: domain}
-	if err := s.startResearch(ctx, row, m, companyresearch.ResearchPromptBytes, companyresearch.ResearchMaxOutput); err != nil {
+	cfg := s.deps.Cfg.Foundry.Onboarding.Research
+	if err := researchRefusal(ws, cfg, s.deps.DB.CheckFoundryCompanyResearchHour(ctx, userID, cfg.PerUserPerHour)); err != nil {
 		return nil, err
 	}
 	site := s.deps.Sites.Fetch(ctx, domain)
 	system, user := companyresearch.ResearchPrompt(domain, site)
+	row := &foundrymodel.FoundryCompanyResearch{ID: id.New(), WorkspaceID: ws, UserID: userID, Kind: foundrymodel.FoundryCompanyResearchOfSite, Domain: domain}
+	if err := s.startResearch(ctx, row, m, len(system)+len(user)+len(companyresearch.ResearchSchema), companyresearch.ResearchMaxOutput); err != nil {
+		return nil, err
+	}
 	research, cost, failure := llm.CallTool(ctx, m.binding, researchRequest(system, user, companyresearch.ResearchTool,
 		companyresearch.ResearchToolDescription, companyresearch.ResearchSchema, companyresearch.ResearchMaxOutput), companyresearch.ResearchTool,
 		researchCalls, researchRetryWait, func(raw json.RawMessage) (companyresearch.Research, error) {
@@ -92,7 +98,8 @@ func (s *Service) ResearchFoundryCompany(ctx context.Context, req *foundryv1.Res
 			failure = "the research couldn't be stored"
 		}
 	}
-	if err := s.finishResearch(ctx, row, result, cost); err != nil && failure == "" {
+	// The row holds the research a goal reads: one it couldn't keep fails.
+	if err := s.finishResearch(ctx, row, result, cost, failure); err != nil && failure == "" {
 		return nil, status.Errorf(codes.Unavailable, "store the research: %v", err)
 	}
 	if failure != "" {
@@ -112,8 +119,9 @@ func (s *Service) ResearchFoundryCompany(ctx context.Context, req *foundryv1.Res
 // workspace's, the person's answers and their data: an owner or admin's,
 // checked in this order: the caller; the research (NOT_FOUND unless the
 // workspace's and ended with one); the answers and the data
-// (INVALID_ARGUMENT); a model; the caller's hour and the workspace's month;
-// then the model's call, whose spend is recorded whatever came of it.
+// (INVALID_ARGUMENT); a model; the caller's hour and the workspace's month
+// with the prompt; then the model's call, whose spend is recorded whatever
+// came of it.
 func (s *Service) DraftFoundryGoal(ctx context.Context, req *foundryv1.DraftFoundryGoalRequest) (*foundryv1.DraftFoundryGoalResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, researchDeadline)
 	defer cancel()
@@ -151,19 +159,19 @@ func (s *Service) DraftFoundryGoal(ctx context.Context, req *foundryv1.DraftFoun
 	if err != nil {
 		return nil, err
 	}
+	system, user := companyresearch.GoalPrompt(stored.Domain, research, answers, req.GetData())
 	row := &foundrymodel.FoundryCompanyResearch{ID: id.New(), WorkspaceID: ws, UserID: userID, Kind: foundrymodel.FoundryCompanyResearchGoal, Domain: stored.Domain}
-	if err := s.startResearch(ctx, row, m, companyresearch.GoalPromptBytes, companyresearch.GoalMaxOutput); err != nil {
+	if err := s.startResearch(ctx, row, m, len(system)+len(user)+len(companyresearch.GoalSchema), companyresearch.GoalMaxOutput); err != nil {
 		return nil, err
 	}
-	system, user := companyresearch.GoalPrompt(stored.Domain, research, answers, req.GetData())
 	goal, cost, failure := llm.CallTool(ctx, m.binding, researchRequest(system, user, companyresearch.GoalTool, companyresearch.GoalToolDescription,
 		companyresearch.GoalSchema, companyresearch.GoalMaxOutput), companyresearch.GoalTool, researchCalls, researchRetryWait,
 		func(raw json.RawMessage) (companyresearch.Goal, error) {
 			return companyresearch.ParseGoal(raw, research.SuggestedName)
 		})
-	if err := s.finishResearch(ctx, row, nil, cost); err != nil && failure == "" {
-		return nil, status.Errorf(codes.Unavailable, "record the goal's spend: %v", err)
-	}
+	// A goal's row holds its spend alone: one that couldn't be recorded is
+	// logged, its reservation still charged, and the goal paid for answered.
+	_ = s.finishResearch(ctx, row, nil, cost, failure)
 	if failure != "" {
 		return nil, researchFailed(ws, m.resolved, "Foundry couldn’t write a goal", failure)
 	}
@@ -177,6 +185,10 @@ func (s *Service) DraftFoundryGoal(ctx context.Context, req *foundryv1.DraftFoun
 func (s *Service) researchCallerOf(ctx context.Context, workspaceID string) (string, error) {
 	c, err := s.personCallerOf(ctx, workspaceID)
 	switch {
+	case status.Code(err) == codes.PermissionDenied:
+		// personCallerOf refuses anyone but a person as themselves: a
+		// grantee or a service key.
+		return "", status.Error(codes.PermissionDenied, "company research is for the workspace's owners and admins, signed in to Foundry as themselves")
 	case err != nil:
 		return "", err
 	case s.deps.People != nil && !c.manager:
@@ -206,40 +218,48 @@ func (s *Service) researchModelOf(ctx context.Context, workspaceID string) (rese
 	return researchModel{binding: binding, resolved: resolved}, nil
 }
 
-// startResearch records row's call before it is made, under the caller's
-// hour (RESOURCE_EXHAUSTED) and the workspace's month with the call's worst
-// case: every call at a prompt of promptBytes and maxOutput tokens
-// (FAILED_PRECONDITION, reason FOUNDRY_RESEARCH_BUDGET).
+// startResearch records row's call before it is made, reserving its worst
+// case: every call at a prompt of promptBytes, as review advice estimates
+// one, and maxOutput tokens. It is refused as researchRefusal says.
 func (s *Service) startResearch(ctx context.Context, row *foundrymodel.FoundryCompanyResearch, m researchModel, promptBytes, maxOutput int) error {
 	cfg := s.deps.Cfg.Foundry.Onboarding.Research
 	now := time.Now().UTC()
 	worst := researchCalls * m.binding.Pricer.Micros(llm.Usage{In: int64(promptBytes/researchCharsPerToken + 1), Out: int64(maxOutput)})
-	err := s.deps.DB.StartFoundryCompanyResearch(ctx, row, foundrymodel.FoundryCompanyResearchLimits{
+	return researchRefusal(row.WorkspaceID, cfg, s.deps.DB.StartFoundryCompanyResearch(ctx, row, foundrymodel.FoundryCompanyResearchLimits{
 		PerUserPerHour: cfg.PerUserPerHour, Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC),
 		WorstUSDMicros: worst, MonthlyMicros: cfg.MonthlyMicros(),
-	})
+	}))
+}
+
+// researchRefusal is the API's answer to a refusal of the store's, nil for
+// none: the caller's hour is RESOURCE_EXHAUSTED, the workspace's month
+// FAILED_PRECONDITION, reason FOUNDRY_RESEARCH_BUDGET.
+func researchRefusal(workspaceID string, cfg config.CompanyResearchConfig, err error) error {
 	switch {
+	case err == nil:
+		return nil
 	case errors.Is(err, foundrystore.ErrLimitExceeded):
 		return status.Errorf(codes.ResourceExhausted, "you can research and draft %d times an hour: try again later, or write the goal yourself", cfg.PerUserPerHour)
 	case errors.Is(err, foundrystore.ErrBudgetSpent):
-		return foundryPrecondition(row.WorkspaceID, "FOUNDRY_RESEARCH_BUDGET",
+		return foundryPrecondition(workspaceID, "FOUNDRY_RESEARCH_BUDGET",
 			"this workspace has used this month’s allowance for company research: write the goal yourself, or try again next month")
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return status.Error(codes.NotFound, "workspace not found")
-	case err != nil:
-		return status.Errorf(codes.Unavailable, "record the research: %v", err)
 	}
-	return nil
+	return status.Errorf(codes.Unavailable, "record the research: %v", err)
 }
 
 // finishResearch records what row's call spent, and its result, with a
-// bound of its own, so a call cut short by its caller still counts.
-func (s *Service) finishResearch(ctx context.Context, row *foundrymodel.FoundryCompanyResearch, result json.RawMessage, cost int64) error {
+// bound of its own, so a call cut short by its caller still counts: a call
+// out of time (failure llm.FailureTimeout) keeps its reservation unless it
+// reported more. A record that fails is logged, the reservation charged.
+func (s *Service) finishResearch(ctx context.Context, row *foundrymodel.FoundryCompanyResearch, result json.RawMessage, cost int64, failure string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishResearchTimeout)
 	defer cancel()
-	err := s.deps.DB.FinishFoundryCompanyResearch(ctx, row.WorkspaceID, row.ID, result, cost)
+	err := s.deps.DB.FinishFoundryCompanyResearch(ctx, row.WorkspaceID, row.ID, result,
+		foundrymodel.FoundryCompanyResearchSpend{USDMicros: cost, CutShort: failure == llm.FailureTimeout})
 	if err != nil {
-		log.From(ctx).Error("record company research failed: the budget misses what it spent", "err", err, "usd_micros", cost, "kind", row.Kind)
+		log.From(ctx).Error("record company research failed: the budget keeps its reservation", "err", err, "usd_micros", cost, "kind", row.Kind)
 	}
 	return err
 }
@@ -251,9 +271,15 @@ func researchRequest(system, user, tool, description string, schema json.RawMess
 }
 
 // researchFailed is a model's failure (llm.CallTool's): UNAVAILABLE, reason
-// FOUNDRY_RESEARCH_FAILED, naming the provider.
+// FOUNDRY_RESEARCH_FAILED, naming the provider, and for one out of time
+// how long it had.
 func researchFailed(workspaceID string, r ai.Resolved, what, failure string) error {
-	st := status.New(codes.Unavailable, fmt.Sprintf("%s: %s (%s). Try again, or skip this step.", what, failure, r.Label()))
+	msg := fmt.Sprintf("%s: %s (%s). Try again, or skip this step.", what, failure, r.Label())
+	if failure == llm.FailureTimeout {
+		msg = fmt.Sprintf("%s: the model (%s) didn’t answer within %d seconds, which a slow or local model can need more than. Try again, or skip this step.",
+			what, r.Label(), int(researchDeadline/time.Second))
+	}
+	st := status.New(codes.Unavailable, msg)
 	detail, err := st.WithDetails(&errdetails.ErrorInfo{
 		Reason: "FOUNDRY_RESEARCH_FAILED", Domain: foundryDomain, Metadata: map[string]string{"workspace_id": workspaceID},
 	})

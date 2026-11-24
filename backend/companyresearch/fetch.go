@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+	"golang.org/x/net/html/charset"
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/helixdb/helix-foundry/backend/connector"
@@ -25,7 +26,7 @@ const (
 	// PageTimeout bounds one page, its redirects included; Timeout the
 	// whole read.
 	PageTimeout = 5 * time.Second
-	Timeout     = 8 * time.Second
+	Timeout     = 6 * time.Second
 	// MaxPageBytes is the most of a page's body read.
 	MaxPageBytes = 512 << 10
 	// MaxPageChars and MaxSiteChars bound the text kept of a page and of
@@ -44,6 +45,9 @@ const (
 
 // aboutLink is a link whose path or text says it is about the company.
 var aboutLink = regexp.MustCompile(`(?i)about|company|product|platform|solutions|pricing|customers`)
+
+// pageTypes are the media types a page is read as, true for HTML.
+var pageTypes = map[string]bool{"text/html": true, "application/xhtml+xml": true, "text/plain": false, "text/markdown": false}
 
 // Page is what was read of one page: its address after redirects, and its
 // text, at most MaxPageChars, one block (a title, a heading, a paragraph,
@@ -87,11 +91,12 @@ func NewFetcher() *Fetcher {
 // then up to MaxLinked pages of the same registrable domain it links whose
 // path or text says they are about the company (aboutLink), at once. A page
 // is read only over https, within maxRedirects redirects that stay on https
-// and on domain, as text/html, text/plain or text/markdown, at most
-// MaxPageBytes; its text is cut to MaxPageChars, and the pages' together to
-// MaxSiteChars, a page kept only while minRoom of it is left. A page that
-// can't be read is left out: Fetch never fails, and a site nothing of which
-// could be read has no pages.
+// and on domain, each with a Location, as one of pageTypes, at most
+// MaxPageBytes, decoded from the charset it names (else UTF-8 when it is,
+// else Windows-1252: charset.DetermineEncoding); its text is cut to
+// MaxPageChars, and the pages' together to MaxSiteChars, a page kept only
+// while minRoom of it is left. A page that can't be read is left out: Fetch
+// never fails, and a site nothing of which could be read has no pages.
 func (f *Fetcher) Fetch(ctx context.Context, domain string) Site {
 	ctx, cancel := context.WithTimeout(ctx, f.Timeout)
 	defer cancel()
@@ -146,40 +151,56 @@ func (f *Fetcher) page(ctx context.Context, client *http.Client, domain, address
 			return nil
 		}
 		req.Header.Set("User-Agent", UserAgent)
-		req.Header.Set("Accept", "text/html, text/plain;q=0.9, text/markdown;q=0.9")
+		req.Header.Set("Accept", "text/html, application/xhtml+xml, text/plain;q=0.9, text/markdown;q=0.9")
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil
 		}
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			next, err := u.Parse(resp.Header.Get("Location"))
+			location := resp.Header.Get("Location")
 			resp.Body.Close()
+			// Without a Location the redirect would name the page itself.
+			if location == "" {
+				return nil
+			}
+			next, err := u.Parse(location)
 			if err != nil {
 				return nil
 			}
 			address = next.String()
 			continue
 		}
-		mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		contentType := resp.Header.Get("Content-Type")
+		mediaType, _, _ := mime.ParseMediaType(contentType)
+		isHTML, readable := pageTypes[mediaType]
 		var body []byte
-		if resp.StatusCode == http.StatusOK && (mediaType == "text/html" || mediaType == "text/plain" || mediaType == "text/markdown") {
+		if resp.StatusCode == http.StatusOK && readable {
 			// A body cut short by the page's time is read as far as it came.
 			body, _ = io.ReadAll(io.LimitReader(resp.Body, MaxPageBytes))
 		}
 		resp.Body.Close()
-		return readOf(u, mediaType, body)
+		return readOf(u, isHTML, contentType, body)
 	}
 	return nil
 }
 
-// readOf is a page's read from its body; nil when it holds no text.
-func readOf(u *url.URL, mediaType string, body []byte) *read {
-	if len(body) == 0 {
+// readOf is a page's read from its body, decoded from the charset
+// contentType or the page names; nil when it holds no text.
+func readOf(u *url.URL, isHTML bool, contentType string, raw []byte) *read {
+	if len(raw) == 0 {
+		return nil
+	}
+	decoder, err := charset.NewReader(bytes.NewReader(raw), contentType)
+	if err != nil {
+		return nil
+	}
+	body, err := io.ReadAll(decoder)
+	if err != nil {
 		return nil
 	}
 	u.Fragment = ""
 	r := &read{url: u}
-	if mediaType == "text/html" {
+	if isHTML {
 		doc, err := html.Parse(bytes.NewReader(body))
 		if err != nil {
 			return nil

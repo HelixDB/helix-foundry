@@ -120,10 +120,6 @@ func ResearchPrompt(domain string, site Site) (string, string) {
 	return researchSystem, b.String()
 }
 
-// ResearchPromptBytes bounds a research's prompt, system and tool schema
-// included, in bytes: for its worst case against a budget.
-var ResearchPromptBytes = len(researchSystem) + len(ResearchSchema) + 4*(MaxSiteChars+(MaxLinked+1)*(maxURL+16)+maxDomainASCII+256)
-
 // GoalPrompt is a goal's system prompt and its one user message: the
 // company (its domain, name and summary), each answered question with its
 // answer, and the data, each in its block, with < and > replaced so no
@@ -149,10 +145,6 @@ func GoalPrompt(domain string, r Research, answers map[string]string, inventory 
 	}
 	return goalSystem, strings.TrimRight(b.String(), "\n")
 }
-
-// GoalPromptBytes bounds a goal's prompt, system and tool schema included,
-// in bytes.
-var GoalPromptBytes = len(goalSystem) + len(GoalSchema) + 4*(MaxData+MaxQuestions*(MaxQuestion+MaxAnswer+16)+MaxCompanyName+MaxSummary+maxDomainASCII+256)
 
 // data is a value on one line, < and > replaced, at most limit characters.
 func data(s string, limit int) string {

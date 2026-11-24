@@ -777,8 +777,9 @@ type Store interface {
 
 	// Company research for a new ontology's goal (foundry_company_research.go):
 	// each model call started under its limits, then finished with its spend.
+	CheckFoundryCompanyResearchHour(ctx context.Context, userID string, perUserPerHour int) error
 	StartFoundryCompanyResearch(ctx context.Context, r *model.FoundryCompanyResearch, limits model.FoundryCompanyResearchLimits) error
-	FinishFoundryCompanyResearch(ctx context.Context, workspaceID, id string, result json.RawMessage, usdMicros int64) error
+	FinishFoundryCompanyResearch(ctx context.Context, workspaceID, id string, result json.RawMessage, spend model.FoundryCompanyResearchSpend) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

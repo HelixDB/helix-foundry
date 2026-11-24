@@ -35,10 +35,21 @@ type FoundryCompanyResearch struct {
 
 // FoundryCompanyResearchLimits bound a call before it is made: the caller's
 // calls in the past hour, of both kinds, and the workspace's spend since
-// Since (the month's start) with the call's worst case.
+// Since (the month's start) with the call's worst case, which its row holds
+// until it ends.
 type FoundryCompanyResearchLimits struct {
 	PerUserPerHour int
 	Since          time.Time
 	WorstUSDMicros int64
 	MonthlyMicros  int64
+}
+
+// FoundryCompanyResearchSpend is what an ended call is charged.
+type FoundryCompanyResearchSpend struct {
+	// USDMicros is what the provider reported.
+	USDMicros int64
+	// CutShort is a call its deadline or its caller ended: the provider may
+	// have billed output it never reported, so the row keeps the larger of
+	// its reservation and USDMicros.
+	CutShort bool
 }
