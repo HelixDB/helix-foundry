@@ -222,11 +222,26 @@ describe("a fill of the documents behind a finding", () => {
     });
     expect(
       cardState({ stopped: { ...fill, stopReason: "cap_reached" } }),
-    ).toEqual({ kind: "stopped", version: 8, ...counted, stopReason: "cap_reached" });
-    const broken = cardState({
-      applying: { docsOwed: "-3", docsDone: "x", spentUsd: -1, pausedUntil: "soon" },
+    ).toEqual({
+      kind: "stopped",
+      version: 8,
+      ...counted,
+      stopReason: "cap_reached",
     });
-    expect(broken).toMatchObject({ owed: 0, done: 0, spent: 0, pausedUntil: undefined });
+    const broken = cardState({
+      applying: {
+        docsOwed: "-3",
+        docsDone: "x",
+        spentUsd: -1,
+        pausedUntil: "soon",
+      },
+    });
+    expect(broken).toMatchObject({
+      owed: 0,
+      done: 0,
+      spent: 0,
+      pausedUntil: undefined,
+    });
   });
 
   it("says how far it got, what it spent and what it did", () => {
@@ -248,18 +263,34 @@ describe("a fill of the documents behind a finding", () => {
       }),
     ).toMatch(/ Paused until 14:00 UTC\.$/);
     expect(
-      stateText({ kind: "fixed", version: 8, ...counted, resolved: 1, facts: 1 }),
+      stateText({
+        kind: "fixed",
+        version: 8,
+        ...counted,
+        resolved: 1,
+        facts: 1,
+      }),
     ).toBe("1 review resolved, 1 fact added in the current load (version 8).");
     expect(stateText({ kind: "fixed", version: 8, ...counted, left: 3 })).toBe(
       "3 reviews resolved, 2 facts added in the current load (version 8). 3 more documents state it: a new load asks them.",
     );
     expect(
-      stateText({ kind: "stopped", version: 8, ...counted, stopReason: "dismissed" }),
+      stateText({
+        kind: "stopped",
+        version: 8,
+        ...counted,
+        stopReason: "dismissed",
+      }),
     ).toBe(
       "Filling stopped after 1 of 2 documents: the suggestion was dismissed. 3 reviews resolved, 2 facts added.",
     );
     expect(
-      stateText({ kind: "stopped", version: 8, ...counted, stopReason: "a_later_reason" }),
+      stateText({
+        kind: "stopped",
+        version: 8,
+        ...counted,
+        stopReason: "a_later_reason",
+      }),
     ).toMatch(/: a later reason\./);
   });
 });

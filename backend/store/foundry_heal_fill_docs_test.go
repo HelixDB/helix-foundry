@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -67,7 +68,13 @@ func TestFoundryFillCollectsSendsAndEnds(t *testing.T) {
 	assert.False(t, due[0].Resume)
 	assert.Equal(t, fill.ID, due[0].Fill.ID)
 	assert.Equal(t, f.load, due[0].Due.Load.ID)
-	assert.Contains(t, string(due[0].Finding), `"spellings":["mentors"]`)
+	var finding struct {
+		Signal struct {
+			Spellings []string `json:"spellings"`
+		} `json:"signal"`
+	}
+	require.NoError(t, json.Unmarshal(due[0].Finding, &finding))
+	assert.Equal(t, []string{"mentors"}, finding.Signal.Spellings)
 	ok, err := f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, []string{f.a, f.b})
 	require.NoError(t, err)
 	assert.True(t, ok)

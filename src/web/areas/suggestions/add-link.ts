@@ -140,8 +140,7 @@ function fillOf(f: wfe.FoundryHealFill): Fill {
     facts: whole(f.factsAdded),
     spent: usd(f.spentUsd),
     cap: usd(f.capUsd),
-    pausedUntil:
-      paused && !Number.isNaN(paused.getTime()) ? paused : undefined,
+    pausedUntil: paused && !Number.isNaN(paused.getTime()) ? paused : undefined,
     stopReason: f.stopReason || "",
   };
 }
