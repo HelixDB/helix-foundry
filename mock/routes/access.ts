@@ -27,7 +27,7 @@ import type {
   WorkspaceDirectory,
 } from "../../src/shared/wfe";
 import { parseAgentEnrichments } from "../../src/web/areas/ontology/model";
-import type { Visibility } from "../graph/view";
+import type { HeldRows, Visibility } from "../graph/view";
 import { escape, page, send } from "../pages";
 import {
   fail,
@@ -605,11 +605,12 @@ function holdsAll(
 // has an account for them by that email that isn't a guest's, a private one
 // when it lists them. A member Slack has no account for reads none of its
 // channels; a key or a team is no one in any source, and reads public
-// channels only. Its Conversations documents are read per channel, so a
-// load holding any is always read in part, its tables by full readers only,
-// and a connector whose channels were never read, or were read over 7 days
-// ago (a day, once a read since failed), reads as unknown: only full
-// readers (anyone not a grantee) read any of it.
+// channels only. Its Conversations documents are read per channel and its
+// tables' rows by the channel in their key (SLACK_ROWS), so a load holding
+// any is always read in part; Slack's users go to a person Slack has an
+// account for that isn't a guest's. A connector whose channels were never
+// read, or were read over 7 days ago (a day, once a read since failed),
+// reads as unknown: only full readers (anyone not a grantee) read any of it.
 
 /** How old a read of a source's audiences may be and still count (access.MaxAudienceAge). */
 const MAX_AUDIENCE_AGE_MS = 7 * 86_400_000;
@@ -629,9 +630,32 @@ function audiencesFresh(a: ReturnType<typeof connectorAudiences>) {
 
 /**
  * What one reader reads of one audienced connector (access.SourceReach):
- * its items are unknown, or the items the source shares with the reader.
+ * its items are unknown, or the items the source shares with the reader,
+ * and whether the source has an account for them that isn't a guest's
+ * (`member`: its directory is theirs).
  */
-type Reach = { known: false } | { known: true; items: ReadonlySet<string> };
+type Reach =
+  | { known: false }
+  | { known: true; items: ReadonlySet<string>; member: boolean };
+
+/**
+ * How a Slack table tells its rows' channel (slack.go's slackTableRows,
+ * access.RowRule): by a row-key field that is the channel, or starts with
+ * it and a separator; users is Slack's directory.
+ */
+type RowRule =
+  | { match: "item"; field: string }
+  | { match: "prefix"; field: string; separator: string }
+  | { match: "directory" };
+const SLACK_ROWS: Record<string, RowRule> = {
+  users: { match: "directory" },
+  channels: { match: "item", field: "channel_id" },
+  channel_members: { match: "item", field: "channel_id" },
+  messages: { match: "prefix", field: "message_id", separator: ":" },
+  channel_days: { match: "prefix", field: "channel_day_id", separator: ":" },
+};
+/** The most channels whose rows a reader may hold (access.MaxHeldItems). */
+const MAX_HELD_ITEMS = 10_000;
 
 /** An item of an audienced source the reader read (access.ItemRef). */
 type Item = { connectorId: string; item: string };
@@ -677,7 +701,8 @@ function readerOf(
     const account = email
         ? a?.people?.find((p) => p.email === email)
         : undefined,
-      public_ = person ? !!account && !account.guest : true,
+      member = person && !!account && !account.guest,
+      public_ = person ? member : true,
       items = new Set(
         (a?.items || [])
           .filter((i) =>
@@ -687,7 +712,7 @@ function readerOf(
           )
           .map((i) => i.key),
       );
-    sharing.set(c.id, { known: true, items });
+    sharing.set(c.id, { known: true, items, member });
   }
   return { targets, sharing };
 }
@@ -711,11 +736,39 @@ const reachesSet = (r: Reader, set: { setId: string; connectorId: string }) =>
   givesSet(r.targets, set) && some(r, set.connectorId);
 
 /**
- * Whether the reader's grants cover a table (Grants.CoversTable): its rows
- * aren't told apart by item, so never an audienced connector's.
+ * Whether the reader's grants cover a table (Grants.CoversTable): never an
+ * audienced connector's whole, whose rows may be of channels the last read
+ * didn't list.
  */
 const coversTable = (r: Reader, x: { connectorId: string; table: string }) =>
   givesTable(r.targets, x) && !r.sharing.has(x.connectorId);
+
+/**
+ * What the reader holds of a table (Grants.table): all of it (covered, or
+ * Slack's directory for one of its people), the rows of the channels Slack
+ * shares with it (1 to MAX_HELD_ITEMS of them, sorted), or nothing.
+ */
+function tableHold(
+  r: Reader,
+  x: { connectorId: string; table: string },
+):
+  | { kind: "none" }
+  | { kind: "whole" }
+  | { kind: "rows"; rule: Exclude<RowRule, { match: "directory" }>; items: string[] } {
+  if (!givesTable(r.targets, x)) return { kind: "none" };
+  const reach = r.sharing.get(x.connectorId),
+    rule = SLACK_ROWS[x.table];
+  if (!reach) return { kind: "whole" };
+  if (!reach.known || !rule) return { kind: "none" };
+  if (rule.match === "directory")
+    return reach.member ? { kind: "whole" } : { kind: "none" };
+  return reach.items.size > 0 && reach.items.size <= MAX_HELD_ITEMS
+    ? { kind: "rows", rule, items: [...reach.items].sort() }
+    : { kind: "none" };
+}
+/** Whether the reader reads anything of a table (Grants.ReadsTable). */
+const readsTable = (r: Reader, x: { connectorId: string; table: string }) =>
+  tableHold(r, x).kind !== "none";
 
 /** The channel of an audienced connector's document (Sharing.item), if any. */
 function itemOf(r: Reader, documentId: string): Item | undefined {
@@ -783,7 +836,7 @@ function reaches(r: Reader, inputs: Inputs) {
     !inputs.uncoverable &&
     ((inputs.enrichment &&
       r.targets.some((t) => t.kind === "KIND_ENRICHMENT")) ||
-      inputs.tables.some((x) => coversTable(r, x)) ||
+      inputs.tables.some((x) => readsTable(r, x)) ||
       inputs.sets.some((s) => reachesSet(r, s)))
   );
 }
@@ -797,7 +850,7 @@ function keeps(r: Reader, seen: MockSeen) {
   return (
     (seen.tables.length + seen.sets.length > 0 || seen.enrichment) &&
     seen.sets.every((s) => reachesSet(r, s)) &&
-    seen.tables.every((t) => coversTable(r, t)) &&
+    seen.tables.every((t) => readsTable(r, t)) &&
     (!seen.enrichment || r.targets.some((t) => t.kind === "KIND_ENRICHMENT")) &&
     !seen.uncoverable &&
     seen.items.every((i) => sees(r, i))
@@ -963,9 +1016,10 @@ function heldLoads(workspaceId: string, r: Reader) {
 
 /**
  * What a reader holds of an ontology's current load, as the agent is told it
- * (Grants.Part and ontologyagent.VisibilityOf): its tables and table files,
- * the documents it reads (by the set each is in now, and the item its
- * source shares), and the properties decided while it doesn't hold them all.
+ * (Grants.Part and ontologyagent.VisibilityOf): its tables, whole or by the
+ * rows of the channels it reads, and table files, the documents it reads (by
+ * the set each is in now, and the item its source shares), and the
+ * properties decided while it doesn't hold them all.
  */
 function visibilityOf(ontologyId: string, r: Reader): Visibility {
   const load = servableLoad(ontologyId);
@@ -974,18 +1028,31 @@ function visibilityOf(ontologyId: string, r: Reader): Visibility {
   const held = documents.filter((d) => readsDocument(r, d)),
     files = (drafted?.documents || []).filter((d) => readsDocument(r, d));
   const all = held.length === documents.length;
+  const tables = (drafted?.tables || []).map((t) => {
+    const x = { connectorId: t.connectorId || "", table: t.table || "" };
+    return { source: sourceId(x.connectorId, x.table), hold: tableHold(r, x) };
+  });
+  const rows = tables.flatMap(({ source, hold }): HeldRows[] => {
+    if (hold.kind !== "rows") return [];
+    const { rule, items } = hold,
+      separator = rule.match === "prefix" ? rule.separator : undefined;
+    return separator === undefined
+      ? [{ source, field: rule.field, values: items }]
+      : [
+          {
+            source,
+            field: rule.field,
+            prefixes: items.map((i) => i + separator),
+          },
+        ];
+  });
   return {
     sources: [
-      ...(drafted?.tables || [])
-        .filter((t) =>
-          coversTable(r, {
-            connectorId: t.connectorId || "",
-            table: t.table || "",
-          }),
-        )
-        .map((t) => sourceId(t.connectorId || "", t.table || "")),
+      ...tables.filter((t) => t.hold.kind === "whole").map((t) => t.source),
       ...files,
     ],
+    // An engine before 4.32.0 refuses rows: none are sent while none are held.
+    ...(rows.length ? { rows } : {}),
     documents: all ? "all" : { only: held },
     sets: [...new Set([...held, ...files].map((d) => documentSet(d).setId))],
     enrichment:
@@ -1184,8 +1251,18 @@ export function guarded(route: MockRoute): MockRoute {
                   : [];
               }),
             );
+          // The channels whose rows of its tables it reads, too.
+          for (const t of l.tables) {
+            const hold = tableHold(reader, t);
+            if (hold.kind === "rows")
+              for (const item of hold.items)
+                items.set(`${t.connectorId}\u001f${item}`, {
+                  connectorId: t.connectorId,
+                  item,
+                });
+          }
           return {
-            tables: l.tables.filter((t) => coversTable(reader, t)),
+            tables: l.tables.filter((t) => readsTable(reader, t)),
             sets: l.sets.filter((s) => reachesSet(reader, s)),
             enrichment:
               l.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT"),

@@ -1789,6 +1789,62 @@ function slackDays(src: Source, syncedAt: string) {
     );
 }
 
+/**
+ * The rows a Slack sync at `syncedAt` writes of each of its tables, as
+ * slack.go writes them (keyed as `slackObjects` says): the people, the
+ * channels, the members of each channel the app is in, each day a channel
+ * has messages on, and each message history lists, keyed "<channel>:<ts>"
+ * (a day "<channel>:<day>"), its author the user of that name.
+ */
+export function slackTableRows(
+  src: Source,
+  syncedAt: string,
+): Record<string, Record<string, unknown>[]> {
+  const userOf = (name: string) => slackUsers.find((u) => u.name === name)?.id;
+  const days = slackDays(src, syncedAt);
+  return {
+    users: slackUsers.map((u) => ({
+      user_id: u.id,
+      team_id: SLACK_TEAM,
+      name: u.name.split(" ")[0]!.toLowerCase(),
+      real_name: u.name,
+      email: u.email ?? null,
+      is_bot: u.id === SLACK_BOT_ID,
+      is_restricted: !!u.guest,
+    })),
+    channels: slackChannels.map((c) => ({
+      channel_id: c.id,
+      name: c.name,
+      is_private: !!c.private,
+      is_member: c.members.includes(SLACK_BOT_ID),
+    })),
+    channel_members: slackChannelsIn(src).flatMap((c) =>
+      c.members.map((user_id) => ({ channel_id: c.id, user_id })),
+    ),
+    channel_days: days.map((d) => ({
+      channel_day_id: `${d.channel.id}:${d.day}`,
+      channel_id: d.channel.id,
+      day: d.day,
+      message_count: d.messages.length,
+    })),
+    messages: days.flatMap((d) =>
+      d.messages.map((m) => {
+        const ts = (m.at / 1000).toFixed(6);
+        return {
+          message_id: `${d.channel.id}:${ts}`,
+          channel_id: d.channel.id,
+          day: d.day,
+          channel_day_id: `${d.channel.id}:${d.day}`,
+          ts,
+          user_id: userOf(m.who) ?? null,
+          text: m.text,
+          sent_at: new Date(m.at).toISOString(),
+        };
+      }),
+    ),
+  };
+}
+
 // Messages Slack sent Helix's Slack app, by Foundry workspace
 // (POST /__mock/slack/feed): a Slack connection through the app reads
 // them at its next sync, as the feed's change read does.
