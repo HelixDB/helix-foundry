@@ -131,15 +131,15 @@ func (u Unimplemented) SpendFoundryFillDocument(context.Context, string, string,
 	u.unimplemented("SpendFoundryFillDocument")
 	return nil
 }
-func (u Unimplemented) EndFoundryFillDocument(context.Context, string, string, string, int, string) error {
+func (u Unimplemented) EndFoundryFillDocument(context.Context, string, string, string, string, int, string) error {
 	u.unimplemented("EndFoundryFillDocument")
 	return nil
 }
-func (u Unimplemented) StopFoundryFill(context.Context, string, string, string, string) error {
+func (u Unimplemented) StopFoundryFill(context.Context, string, string, string, string, string) error {
 	u.unimplemented("StopFoundryFill")
 	return nil
 }
-func (u Unimplemented) PauseFoundryFill(context.Context, string, string, string, time.Time) error {
+func (u Unimplemented) PauseFoundryFill(context.Context, string, string, string, string, time.Time) error {
 	u.unimplemented("PauseFoundryFill")
 	return nil
 }
@@ -150,6 +150,14 @@ func (u Unimplemented) SumFoundryFillSpend(context.Context, string, time.Time) (
 func (u Unimplemented) DueFoundryHealFills(context.Context, int) ([]model.FoundryFillDue, error) {
 	u.unimplemented("DueFoundryHealFills")
 	return nil, nil
+}
+func (u Unimplemented) ClaimFoundryFillCollect(context.Context, *model.FoundryHealFill, time.Duration) (bool, error) {
+	u.unimplemented("ClaimFoundryFillCollect")
+	return false, nil
+}
+func (u Unimplemented) ReleaseFoundryFillCollect(context.Context, *model.FoundryHealFill) error {
+	u.unimplemented("ReleaseFoundryFillCollect")
+	return nil
 }
 func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string, bool) (bool, error) {
 	u.unimplemented("OweFoundryFillDocuments")

@@ -547,7 +547,7 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 		if outcome.Error != "" {
 			job.Error = &outcome.Error
 		}
-		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets, outcome.ModelUnread); err != nil {
+		if err := tx.endFoundryLoadWork(ctx, o, job, outcome); err != nil {
 			return err
 		}
 		// A resend sends only what its load holds: uploads that came during
@@ -598,16 +598,17 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 	return finish, err
 }
 
-// endFoundryLoadWork records on its load what an ended job did, and keeps o
-// in step. A load job's load leaves writing once, at its first end: a later
-// end of the same job, merged meanwhile, changes nothing; its People
-// enrichment step, if still preparing or queued, ends with it. held are the
-// sets with an allowance the job's budget stop left unfinished
-// (FoundryGraphJobOutcome.HeldSets); modelUnread says the model, not a
-// budget, left documents unread (FoundryGraphJobOutcome.ModelUnread). The
-// caller holds the ontology's lock.
-func (s *mysqlDB) endFoundryLoadWork(ctx context.Context, o *model.FoundryOntology, job *model.FoundryGraphJob, status model.FoundryGraphJobStatus,
-	ingestDone bool, held []string, modelUnread bool) error {
+// endFoundryLoadWork records on its load what an ended job did, as outcome
+// says, and keeps o in step. A load job's load leaves writing once, at its
+// first end: a later end of the same job, merged meanwhile, changes nothing;
+// its People enrichment step, if still preparing or queued, ends with it.
+// The caller holds the ontology's lock.
+func (s *mysqlDB) endFoundryLoadWork(ctx context.Context, o *model.FoundryOntology, job *model.FoundryGraphJob,
+	outcome model.FoundryGraphJobOutcome) error {
+	// held are the sets with an allowance the job's budget stop left
+	// unfinished; modelUnread says the model, not a budget, left documents
+	// unread.
+	status, ingestDone, held, modelUnread := outcome.Status, outcome.IngestDone, outcome.HeldSets, outcome.ModelUnread
 	switch job.Kind {
 	case model.FoundryGraphJobExtract:
 		return s.completeFoundryLoad(ctx, job.LoadID, status)
@@ -735,7 +736,7 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 	case model.FoundryGraphJobResend:
 		// One that didn't succeed leaves no approval waiting for it.
 		if status != model.FoundryGraphJobSucceeded {
-			return s.failFoundryResends(ctx, job)
+			return s.failFoundryResends(ctx, job, outcome.MoveSent)
 		}
 	case model.FoundryGraphJobDelete:
 		if status == model.FoundryGraphJobFailed {

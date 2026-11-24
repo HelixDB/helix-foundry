@@ -1046,6 +1046,10 @@ type FoundryGraphJobOutcome struct {
 	// recorded, those deleted since included, and is deleted otherwise
 	// (FinishFoundryGraphJob). Any other job ignores them.
 	HeldSets []string
+	// MoveSent means the attempt sent its load's move in place (a resend
+	// job's fold): only such an attempt's failure counts against the move
+	// (store failFoundryLoadMove), not one that failed before it.
+	MoveSent bool
 	// ModelUnread, only with Status budget_exhausted, means the model left
 	// documents unread, not a budget: a workspace's own provider refused its
 	// key or quota, or the model failed documents the run sent. A load job's

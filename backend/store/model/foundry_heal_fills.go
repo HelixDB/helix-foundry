@@ -69,6 +69,12 @@ const (
 // in a row; one more failure stops it (FoundryFillModelUnavailable).
 var FoundryFillBackoff = []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour}
 
+// FoundryFillOffPause is how long a resend job pauses an applying fill it
+// finds while foundry.heal.add_in_place is off: its rows then queue no job,
+// so a fill left applying never sends job after job that fill nothing; the
+// heal worker, once the flag is on again, resumes it when the pause ends.
+const FoundryFillOffPause = time.Hour
+
 // Foundry's own kinds of why a fill row needs a load, beside the engine's
 // (FoundryFoldWhy): its documents couldn't be listed, after
 // len(FoundryFillBackoff)+1 tries (FoundryWhyCollectFailed, item the last
@@ -109,6 +115,9 @@ type FoundryHealFill struct {
 	// SpentUSD and CapUSD are what it spent and may spend.
 	SpentUSD, CapUSD float64
 	// PausedUntil is when a paused fill resumes; nil when it isn't paused.
+	// On a moved fill it is when its collect's backoff ends, or, while a
+	// heal worker collects it, its lease (ClaimFoundryFillCollect), which
+	// every write of the collect names.
 	PausedUntil *time.Time
 	Failures    int
 	// Link and Spellings are the suggestion's link (its finding's canonical)
@@ -133,6 +142,9 @@ func (c FoundryFillCounts) Done() int64 { return c.Filled + c.Nothing + c.Refuse
 // sent to be filled (contract 4.33.0's filled event), with what it spent.
 // Requests is the row's, as the job read it: only that request ends.
 type FoundryFillDocument struct {
+	// FillID is the fill the job sent it for: only that fill counts it and
+	// is booked its spend, whichever fill of the load applies now.
+	FillID     string
 	DocumentID string
 	Requests   int
 	// Outcome is written, nothing, native, or refused (Reason).

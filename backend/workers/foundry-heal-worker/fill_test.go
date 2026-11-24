@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 )
@@ -166,5 +167,47 @@ func TestHealFillOfALinkTheMoveDidntAdd(t *testing.T) {
 	}
 	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND status='owed'`, load); n != 0 {
 		t.Fatalf("%d rows still owed", n)
+	}
+}
+
+// A fill another worker collects, its lease held, is left alone: nothing
+// listed, owed or counted against it.
+func TestHealFillCollectLeasedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(4)
+	w.movedFor(load, "fz")
+	exec(t, `UPDATE foundry_heal_fills SET paused_until=NOW(6) + INTERVAL 1 HOUR WHERE load_id=?`, load)
+	agent := &fakeAgent{t: t, respond: listing}
+	w.runnerOf(agent, 2).fills(ctx)
+	if len(agent.sent()) != 0 {
+		t.Fatal("collected under another worker's lease")
+	}
+	if n := count(t, `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id=? AND state='moved' AND failures=0`, load); n != 1 {
+		t.Fatal("the fill changed")
+	}
+}
+
+// A tick spends its poll interval on fills at most, one at least: past it,
+// the fills left wait for the next tick, and the audits due run between.
+func TestHealFillsBoundedByTheTick(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	a := w.load(2)
+	w.movedFor(a, "fa")
+	other := w.another("O3")
+	b := other.load(2)
+	other.movedFor(b, "fb")
+	agent := &fakeAgent{t: t, respond: listing}
+	r := w.runnerOf(agent, 10)
+	r.cfg.PollInterval = time.Nanosecond
+	r.fills(ctx)
+	started := `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id IN (?, ?) AND state='applying'`
+	if n := count(t, started, a, b); n != 1 {
+		t.Fatalf("%d fills started in one tick, want 1", n)
+	}
+	r.fills(ctx)
+	if n := count(t, started, a, b); n != 2 {
+		t.Fatalf("%d fills started after the next tick, want 2", n)
 	}
 }

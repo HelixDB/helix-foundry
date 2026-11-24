@@ -353,8 +353,9 @@ AND NOT EXISTS (SELECT 1 FROM foundry_load_resends WHERE load_id=? AND document_
 }
 
 // makeFoundryLoadCurrent makes loadID the ontology's current load, the load
-// reads go to, and, when it was not, asks for a full pass of its review
-// cards and brings it the resolves its list lacks
+// reads go to, and, when it was not, stops the fill the load it replaces
+// had under way (model.FoundryFillLoadReplaced), asks for a full pass of its
+// review cards and brings it the resolves its list lacks
 // (carryFoundryResolves): every path that makes a load current comes here (a
 // load job's end, SetCurrentFoundryLoad, an enrichment purge). The caller
 // holds the ontology's lock, and has locked the live job's row, if any,
@@ -368,6 +369,13 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 	o.CurrentLoadID = &loadID
 	if was != nil && *was == loadID {
 		return nil
+	}
+	// A fill applies to the current load only: the one it replaces stops
+	// filling, ending what it owes, so it never resumes if made current again.
+	if was != nil {
+		if err := s.stopFoundryFill(ctx, *was, "", model.FoundryFillLoadReplaced, ""); err != nil {
+			return err
+		}
 	}
 	// The decisions and stored values its review cards were built against
 	// may have changed while it was not current.
@@ -571,7 +579,7 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 	}
 	var owed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=? AND w.status='owed' AND `+
-		foundryResendIn("w.reason", model.FoundryResendKnown)+held+` AND `+foundryLinkLive+`)`,
+		foundryResendIn("w.reason", model.FoundryResendKnown)+held+` AND `+foundryResendLive+`)`,
 		loadID).Scan(&owed); err != nil || !owed {
 		return false, err
 	}
@@ -847,8 +855,8 @@ WHERE load_id=? AND kind IN (`+kinds+`) AND doc_id=? AND applied_status IN ('pen
 // its load (FinishFoundryGraphJob), so a failure never follows itself, and
 // the next resend any later job's end or settle queues reads it. The caller
 // holds the ontology's lock.
-func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob) error {
-	if err := s.failFoundryLoadMove(ctx, job); err != nil {
+func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob, moveSent bool) error {
+	if err := s.failFoundryLoadMove(ctx, job, moveSent); err != nil {
 		return err
 	}
 	if err := s.failFoundryFill(ctx, job); err != nil {

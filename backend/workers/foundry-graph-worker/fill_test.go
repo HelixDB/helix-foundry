@@ -218,7 +218,8 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 		if outcome.Status == model.FoundryGraphJobSucceeded {
 			t.Fatalf("%+v", outcome)
 		}
-		if len(h.store.fillSpent) != 1 || h.store.fillSpent[0].USDMicros != 1500 || h.store.fill.SpentUSD == 0 {
+		if len(h.store.fillSpent) != 1 || h.store.fillSpent[0].USDMicros != 1500 || h.store.fillSpent[0].FillID != "fill-1" ||
+			h.store.fill.SpentUSD == 0 {
 			t.Fatalf("spent %+v, fill %v", h.store.fillSpent, h.store.fill.SpentUSD)
 		}
 		if len(h.store.fillEnded) != 0 || len(h.store.links) != 1 {
@@ -238,7 +239,9 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 			t.Fatalf("%d extracts, stopped %q", len(calls), h.store.fillStop)
 		}
 	})
-	// Off, the binary is the rollback floor: it sends no fill.
+	// Off, the binary is the rollback floor: it sends no fill, and pauses
+	// the fill, so its owed rows queue no job after this one (an applying
+	// fill left unpaused would have each job's end queue another).
 	t.Run("add in place off", func(t *testing.T) {
 		h := newHarness(t)
 		filling(h, "doc-a")
@@ -249,6 +252,53 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 		}
 		if _, calls := h.agent.calls(); len(calls) != 0 || len(h.store.links) != 1 {
 			t.Fatalf("%d extracts, owed %v", len(calls), h.store.links)
+		}
+		if h.store.fillPause == nil || h.store.fillPause.Before(time.Now().Add(model.FoundryFillOffPause-time.Minute)) {
+			t.Fatalf("paused %v, want for %v", h.store.fillPause, model.FoundryFillOffPause)
+		}
+		if h.store.fill.State != model.FoundryFillApplying || h.store.fillStop != "" {
+			t.Fatalf("fill %s stopped %q: off only pauses it", h.store.fill.State, h.store.fillStop)
+		}
+	})
+	// A fill dismissed while a job runs, another of the load applying since:
+	// the job sends nothing more of the first, stops or pauses neither, and
+	// books nothing to the second.
+	t.Run("another fill applies since the job read its own", func(t *testing.T) {
+		h := newHarness(t)
+		filling(h, "doc-a")
+		next := *h.store.fill
+		next.ID, next.Link = "fill-2", "advises"
+		h.store.fillNext = &next
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if _, calls := h.agent.calls(); len(calls) != 0 {
+			t.Fatalf("%d extracts: the first fill's documents went on", len(calls))
+		}
+		if h.store.fillStop != "" || h.store.fillPause != nil || len(h.store.fillEnded) != 0 {
+			t.Fatalf("stopped %q, paused %v, ended %+v", h.store.fillStop, h.store.fillPause, h.store.fillEnded)
+		}
+	})
+	// What a document spent is booked to the fill it was sent for, by id.
+	t.Run("each word names its fill", func(t *testing.T) {
+		h := newHarness(t)
+		filling(h, "doc-a", "doc-gone")
+		h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{filledEvent("doc-a", `{"kind":"written"}`, 1, 0, 1), held("doc-a"),
+				`{"event":"extract_finished"}`}, `{"status":"done","totals":`+totals+`}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.fillEnded) != 2 {
+			t.Fatalf("ended %+v", h.store.fillEnded)
+		}
+		for _, d := range h.store.fillEnded {
+			if d.FillID != "fill-1" {
+				t.Fatalf("%s recorded for fill %q", d.DocumentID, d.FillID)
+			}
 		}
 	})
 	// No fill applies: nothing is sent for one.

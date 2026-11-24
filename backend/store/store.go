@@ -449,11 +449,13 @@ type Store interface {
 	ListFoundryLinkResends(ctx context.Context, loadID string, limit int) ([]*model.FoundryLoadResend, error)
 	RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error
 	SpendFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error
-	EndFoundryFillDocument(ctx context.Context, jobID, workerID, docID string, requests int, reason string) error
-	StopFoundryFill(ctx context.Context, jobID, workerID, loadID, reason string) error
-	PauseFoundryFill(ctx context.Context, jobID, workerID, loadID string, until time.Time) error
+	EndFoundryFillDocument(ctx context.Context, jobID, workerID, fillID, docID string, requests int, reason string) error
+	StopFoundryFill(ctx context.Context, jobID, workerID, loadID, fillID, reason string) error
+	PauseFoundryFill(ctx context.Context, jobID, workerID, loadID, fillID string, until time.Time) error
 	SumFoundryFillSpend(ctx context.Context, ontologyID string, since time.Time) (int64, error)
 	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
+	ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (bool, error)
+	ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error
 	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
 	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
 	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error

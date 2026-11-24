@@ -99,6 +99,8 @@ type healStore interface {
 	GetFoundryGraphJob(ctx context.Context, ontologyID, id string) (*model.FoundryGraphJob, error)
 	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
+	ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (bool, error)
+	ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error
 	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
 	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
 	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error
@@ -215,10 +217,11 @@ func (t *Task) Stop(ctx context.Context) error {
 	return errors.Join(t.worker.Stop(ctx), t.closeAgent())
 }
 
-// tick acts on the fills due first (fills), then audits the loads due, one
-// at a time, the stalest first, until its list is older than the poll
-// interval: the next tick lists them again, so a load just made current
-// waits for one run at most, not every one queued.
+// tick acts on the fills due first (fills, for a poll interval at most),
+// then audits the loads due, one at a time, the stalest first, until its
+// list is older than the poll interval: the next tick lists them again, so a
+// load just made current waits for one run at most, not every one queued,
+// and collects never keep every audit waiting.
 func (r *runner) tick(ctx context.Context) {
 	// Off, the binary is the rollback floor: no fill runs, as none shows.
 	if r.cfg.AddInPlace {

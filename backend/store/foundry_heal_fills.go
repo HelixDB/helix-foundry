@@ -52,15 +52,20 @@ func (s *mysqlDB) moveFoundryLoadVersion(ctx context.Context, loadID, from, to s
 // before the move is given up as needing a load (failFoundryLoadMove).
 const foundryMoveFailures = 3
 
-// failFoundryLoadMove counts a failed resend job against the move its load
-// owes, if any: the move stays owed and backs off (paused_until, by
+// failFoundryLoadMove counts a failed resend job that sent its load's move
+// (moveSent, model.FoundryGraphJobOutcome.MoveSent) against that move, if
+// still owed: one that failed before it reached the move counts nothing. The
+// move stays owed and backs off (paused_until, by
 // model.FoundryFillBackoff), after which the heal worker queues a resend for
 // it (DueFoundryHealFills, ResumeFoundryFill), as a job's end queues none for
 // a move alone; the fold is idempotent at its version. Once
 // foundryMoveFailures jobs have failed with it, its fill row reads needs_load
 // (why move_failed, the job's error) and the request ends. The caller holds
 // the ontology's lock.
-func (s *mysqlDB) failFoundryLoadMove(ctx context.Context, job *model.FoundryGraphJob) error {
+func (s *mysqlDB) failFoundryLoadMove(ctx context.Context, job *model.FoundryGraphJob, moveSent bool) error {
+	if !moveSent {
+		return nil
+	}
 	var owed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends
 WHERE load_id=? AND document_id='' AND reason=? AND status='owed')`, job.LoadID, string(model.FoundryResendMove)).Scan(&owed); err != nil || !owed {
@@ -174,8 +179,9 @@ func (r *FillRefusal) Error() string { return r.Why }
 // fingerprint ("Add this link"): a fill row in state moving, a 'move' resend
 // row, and a resend job (resend's id) queued behind the live job. A version
 // already current is made current again, and the move owed. The load moves
-// only if it is an agent draft's, ready or partial, and not at the version
-// already; then Foundry's own checks: the version reads the same document
+// only if it is an agent draft's, ready or partial; one at the version
+// already moved there for another suggestion, and this one joins that move,
+// moved (joinFoundryLoadMove). Otherwise Foundry's own checks: the version reads the same document
 // sets and the same tables as the load's. One that fails them is recorded
 // needs_load, why saying what, and nothing is owed; the engine judges the
 // rest when the move is sent (FoundryFoldWhy). The same suggestion pressed
@@ -218,7 +224,18 @@ func (s *mysqlDB) SetCurrentOntologyVersionFilling(ctx context.Context, workspac
 		if err != nil {
 			return err
 		}
-		if load.Status != model.FoundryLoadReady && load.Status != model.FoundryLoadPartial || load.VersionID == versionID {
+		if load.Status != model.FoundryLoadReady && load.Status != model.FoundryLoadPartial {
+			return nil
+		}
+		var held string
+		var failures int
+		switch err := tx.db.QueryRowContext(ctx, `SELECT state, failures FROM foundry_heal_fills WHERE load_id=? AND fingerprint=?`, load.ID, fingerprint).
+			Scan(&held, &failures); {
+		case err == sql.ErrNoRows:
+		case err != nil:
+			return err
+		case load.VersionID == versionID && (held != string(model.FoundryFillNeedsLoad) || failures > 0):
+			// Pressed again at the version its row records: nothing changes.
 			return nil
 		}
 		// A move under way, or one that may have moved the marker unrecorded,
@@ -231,17 +248,16 @@ func (s *mysqlDB) SetCurrentOntologyVersionFilling(ctx context.Context, workspac
 		if moving {
 			return &FillRefusal{Why: "the current load is moving to another version; try again once it has"}
 		}
-		var held string
-		var failures int
-		switch err := tx.db.QueryRowContext(ctx, `SELECT state, failures FROM foundry_heal_fills WHERE load_id=? AND fingerprint=?`, load.ID, fingerprint).
-			Scan(&held, &failures); {
-		case err == sql.ErrNoRows:
-		case err != nil:
-			return err
+		switch {
+		case held == "":
 		case held != string(model.FoundryFillNeedsLoad):
 			return &FillRefusal{Why: "the current load holds this suggestion's link already"}
 		case failures > 0:
 			return &FillRefusal{Why: "the current load's last move to add this link failed; start a new load"}
+		}
+		if load.VersionID == versionID {
+			fill, err = tx.joinFoundryLoadMove(ctx, ontologyID, load.ID, fingerprint)
+			return err
 		}
 		why, err := tx.foundryMoveRefusals(ctx, ontologyID, load.VersionID, versionID)
 		if err != nil {
@@ -276,6 +292,39 @@ ON DUPLICATE KEY UPDATE from_version_id=VALUES(from_version_id), to_version_id=V
 		return err
 	})
 	return fill, err
+}
+
+// joinFoundryLoadMove records suggestion fingerprint's "Add this link" on
+// load loadID that is at the version pressed already: moved, as the load's
+// move that gained the suggestion's link (its finding's canonical) is, so
+// the heal worker fills the suggestion's documents next. Of several such
+// moves, the newest. A load at that version that no move of it brought the
+// link was made with it, its documents asked it already: FillRefusal. The
+// caller holds the ontology's lock.
+func (s *mysqlDB) joinFoundryLoadMove(ctx context.Context, ontologyID, loadID, fingerprint string) (*model.FoundryHealFill, error) {
+	var canonical sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT JSON_UNQUOTE(JSON_EXTRACT(finding, '$.signal.canonical')) FROM foundry_heal_findings
+WHERE ontology_id=? AND fingerprint=?`, ontologyID, fingerprint).Scan(&canonical); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	var from, to, links string
+	err := s.db.QueryRowContext(ctx, `SELECT from_version_id, to_version_id, links_added FROM foundry_heal_fills
+WHERE load_id=? AND fingerprint<>? AND links_added IS NOT NULL AND JSON_CONTAINS(links_added, JSON_QUOTE(?))
+ORDER BY created_at DESC, id DESC LIMIT 1`, loadID, fingerprint, canonical.String).Scan(&from, &to, &links)
+	if err == sql.ErrNoRows || !canonical.Valid {
+		return nil, &FillRefusal{Why: "the current load is at this version already and was made with this link: its documents were asked it"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_heal_fills (id, ontology_id, load_id, fingerprint, from_version_id, to_version_id, state,
+  links_added) VALUES (?, ?, ?, ?, ?, ?, 'moved', ?)
+ON DUPLICATE KEY UPDATE from_version_id=VALUES(from_version_id), to_version_id=VALUES(to_version_id), state='moved', why=NULL,
+  links_added=VALUES(links_added), stop_reason=NULL, active_key=NULL, last_error=NULL, failures=0, paused_until=NULL`,
+		newID(), ontologyID, loadID, fingerprint, from, to, links); err != nil {
+		return nil, err
+	}
+	return s.foundryHealFill(ctx, loadID, fingerprint)
 }
 
 // sameVersion reports whether the ontology's current version is the one
@@ -360,14 +409,16 @@ WHERE f.load_id=? AND f.fingerprint=?`, loadID, fingerprint))
 }
 
 // FoundryLoadMoveOwed is the move a load owes (a 'move' resend row) and the
-// fill row it is of: nil when none is owed. Of several, first one to the
-// version the load records now (moved already, as a reconcile leaves it, so
-// recording it costs nothing), then one from it, then the newest.
+// fill row it is of: nil when none is owed, or while it backs off after a
+// failed job (failFoundryLoadMove), so a job that runs meanwhile for
+// something else doesn't send it. Of several, first one to the version the
+// load records now (moved already, as a reconcile leaves it, so recording it
+// costs nothing), then one from it, then the newest.
 func (s *mysqlDB) FoundryLoadMoveOwed(ctx context.Context, loadID string) (*model.FoundryHealFill, error) {
 	fill, err := scanFoundryHealFill(s.db.QueryRowContext(ctx, `SELECT `+foundryHealFillColumns+foundryHealFillFrom+`
 JOIN foundry_load_resends w ON w.load_id=f.load_id AND w.document_id='' AND w.reason=? AND w.status='owed'
 JOIN foundry_loads l ON l.id=f.load_id
-WHERE f.load_id=? AND f.state=?
+WHERE f.load_id=? AND f.state=? AND (f.paused_until IS NULL OR f.paused_until<=NOW(6))
 ORDER BY f.to_version_id=l.version_id DESC, f.from_version_id=l.version_id DESC, f.updated_at DESC, f.id DESC LIMIT 1`,
 		string(model.FoundryResendMove), loadID, string(model.FoundryFillMoving)))
 	if err == ErrNotFound {
@@ -421,7 +472,10 @@ func (s *mysqlDB) RecordFoundryLoadMove(ctx context.Context, jobID, workerID str
 			if err != nil {
 				return err
 			}
-			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='moved', links_added=?, why=NULL
+			// A move's failures and backoff are its own: its collect starts
+			// with none (FailFoundryFillCollect counts its own).
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='moved', links_added=?, why=NULL, failures=0,
+  paused_until=NULL, last_error=NULL
 WHERE load_id=? AND from_version_id=? AND to_version_id=? AND state='moving'`, string(links), loadID, fill.FromVersionID, fill.ToVersionID); err != nil {
 				return err
 			}
@@ -462,7 +516,8 @@ WHERE load_id=? AND document_id='' AND reason=? AND status='owed'`, jobID, loadI
 
 // FoundryAskedApart is what every Extract of load loadID asks apart
 // (contract 4.33.0's asked_apart): the links the load's own moves in place
-// added, and, for a refresh or rebuild of another load, that load's too, and
+// added (every fill row that records links_added, whatever its fill came to:
+// a collect given up on leaves the load at the version its move reached), and, for a refresh or rebuild of another load, that load's too, and
 // so on back: a rebuild replays what each document was asked, at no cost.
 // None for a load a person made at a version (a load in full asks every link
 // of each document), even one another load moved to: its documents' saved
@@ -474,7 +529,7 @@ func (s *mysqlDB) FoundryAskedApart(ctx context.Context, loadID string) ([]strin
 	for at := loadID; at != "" && !seen[at]; {
 		seen[at] = true
 		rows, err := s.db.QueryContext(ctx, `SELECT links_added FROM foundry_heal_fills
-WHERE load_id=? AND links_added IS NOT NULL AND state IN ('moved', 'applying', 'filled', 'stopped')`, at)
+WHERE load_id=? AND links_added IS NOT NULL`, at)
 		if err != nil {
 			return nil, err
 		}
