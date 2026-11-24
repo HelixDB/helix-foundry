@@ -499,11 +499,17 @@ export function validateEdit(
         return canonical(value) === canonical(original[name])
           ? undefined
           : "EditNotAllowed: a link can't change.";
-      const enrichment = Object.values(resulting(bundle, batch).enrichments)
+      const after = resulting(bundle, batch);
+      const enrichment = Object.values(after.enrichments)
         .filter(object)
         .find((e) => object(e.work_history) && e.work_history.link === name);
-      if (!enrichment || value.from !== enrichment.type)
-        return "EditNotAllowed: a new link must be the one People enrichment's work history adds.";
+      // Or one a route of the batch reads, as a finding's Add this link adds
+      // it beside the route that asks it (contract 4.33.0).
+      const routed = Object.values(after.routes)
+        .filter(object)
+        .some((r) => Array.isArray(r.links) && r.links.includes(name));
+      if (!routed && (!enrichment || value.from !== enrichment.type))
+        return "EditNotAllowed: a new link must be the one People enrichment's work history adds, or one a route reads.";
       if (
         Object.keys(value).some(
           (k) => !["from", "to", "description", "props"].includes(k),
@@ -555,11 +561,19 @@ export function validateEdit(
         )
           return `UnknownProp in ${name}.`;
       }
+      // A link the batch adds counts, as Revise reads the draft the batch
+      // leaves (a finding's Add this link puts it beside this route).
+      const added = resulting(bundle, batch).links;
       if (
         value.links !== undefined &&
         (!Array.isArray(value.links) ||
           value.links.some((name: unknown) => {
-            const link = ontology?.links.find((l) => l.name === name);
+            const put = added[String(name)];
+            const link =
+              ontology?.links.find((l) => l.name === name) ??
+              (object(put)
+                ? { from: String(put.from), to: String(put.to) }
+                : undefined);
             return (
               !link ||
               !Object.hasOwn(value.types, link.from) ||

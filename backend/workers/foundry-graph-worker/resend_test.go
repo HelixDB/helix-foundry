@@ -1218,3 +1218,158 @@ func TestResendOwesWhatACarriedAliasAsks(t *testing.T) {
 		}
 	})
 }
+
+// moving makes load-0 owe a move in place from the harness's version 3 to
+// version 4, which adds ceo_of, and returns version 4.
+func moving(h *harness) *model.OntologyVersion {
+	def, _ := json.Marshal(ontologyagent.Definition{
+		Format: "agent_bundle", Status: ontologyagent.StatusDone, OntologyTOML: "version = \"draft-4\"\n", MappingsTOML: "ontology = \"draft-4\"\n",
+		Draft: json.RawMessage(`{}`), Questions: json.RawMessage(`[]`),
+	})
+	v4 := &model.OntologyVersion{ID: "ver-4", OntologyID: "ont-1", Version: 4, Format: model.OntologyFormatAgentBundle,
+		GenerationID: h.store.version.GenerationID, Definition: def}
+	h.store.versions = map[string]*model.OntologyVersion{"ver-4": v4}
+	h.store.moveOwed = &model.FoundryHealFill{ID: "fill-1", OntologyID: "ont-1", LoadID: "load-0", FromVersionID: "ver-3", ToVersionID: "ver-4",
+		State: model.FoundryFillMoving, ToVersion: 4}
+	h.store.askedApart = map[string][]string{"load-0": {"ceo_of"}}
+	return v4
+}
+
+// foldEvent is the Extract's word on a move in place.
+func foldEvent(outcome string) string { return `{"event":"fold","outcome":` + outcome + `}` }
+
+func TestResendMovesTheLoadInPlace(t *testing.T) {
+	// A move goes first, as an Extract of no documents with nothing to
+	// spend, from the load's version to the new one; recorded, the job sends
+	// what else is owed at the new version, asking its new link apart.
+	t.Run("moves first, then sends what is owed at the new version", func(t *testing.T) {
+		h := newHarness(t)
+		moving(h)
+		owes(h, "doc-a")
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA)}
+		h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+			req := decodeExtract(t, raw)
+			if req.Fold != nil {
+				return extractEvents(stream, []string{foldEvent(`{"kind":"moved","links_added":["ceo_of"]}`), `{"event":"extract_finished"}`},
+					`{"status":"done","totals":`+totals+`}`)
+			}
+			return extractEvents(stream, []string{resent("doc-a", 1, `[{"decision_id":"1","outcome":{"kind":"written"}}]`),
+				`{"event":"extract_finished"}`}, `{"status":"done","totals":`+totals+`}`)
+		}
+		job := resendJob()
+		outcome := h.run(t, job)
+		if outcome.Status != model.FoundryGraphJobSucceeded || outcome.Error != "" {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 2 {
+			t.Fatalf("%d extracts, want the move and the resend", len(calls))
+		}
+		move, rest := decodeExtract(t, calls[0]), decodeExtract(t, calls[1])
+		if move.Fold == nil || move.Fold.FromVersion != "foundry-v3" || move.OntologyVersion != "foundry-v4" || len(move.Documents) != 0 ||
+			move.Limits.MaxUSD != 0 || move.Fold.FromOntologyTOML != "version = \"draft\"\n" || move.OntologyTOML != "version = \"draft-4\"\n" {
+			t.Fatalf("move sent %+v", move)
+		}
+		if move.Documents == nil {
+			t.Fatal("a move sends documents as [], not null")
+		}
+		if len(move.Decisions) != 0 || len(rest.Decisions) != 1 {
+			t.Fatalf("decisions: the move sent %d, the rest %d", len(move.Decisions), len(rest.Decisions))
+		}
+		if rest.Fold != nil || rest.OntologyVersion != "foundry-v4" || !slices.Equal(rest.AskedApart, []string{"ceo_of"}) {
+			t.Fatalf("the rest sent at %s, fold %v, asked apart %v", rest.OntologyVersion, rest.Fold, rest.AskedApart)
+		}
+		if len(h.store.moves) != 1 || h.store.moves[0].State != model.FoundryFillMoved || !slices.Equal(h.store.moves[0].LinksAdded, []string{"ceo_of"}) {
+			t.Fatalf("recorded %+v", h.store.moves)
+		}
+		if job.VersionID != "ver-4" {
+			t.Fatalf("the job runs at %s", job.VersionID)
+		}
+	})
+	// The engine's word that the version adds more, or that the load is at
+	// another version: recorded as needing a load, and the rest goes at the
+	// load's own version.
+	for name, c := range map[string]struct {
+		fold string
+		why  []model.FoundryFoldWhy
+	}{
+		"not additive": {`{"kind":"not_additive","why":[{"kind":"type_added","item":"types.Deal"}]}`,
+			[]model.FoundryFoldWhy{{Kind: "type_added", Item: "types.Deal"}}},
+		"a marker elsewhere": {`{"kind":"marker_elsewhere","version":"foundry-v9"}`,
+			[]model.FoundryFoldWhy{{Kind: "marker_elsewhere", Item: "foundry-v9"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			moving(h)
+			h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+				result := `{"status":"done","totals":` + totals + `}`
+				if strings.Contains(c.fold, "marker_elsewhere") {
+					result = `{"status":"load_mismatch","stored_version":"foundry-v9"}`
+				}
+				return extractEvents(stream, []string{foldEvent(c.fold), `{"event":"extract_finished"}`}, result)
+			}
+			job := resendJob()
+			outcome := h.run(t, job)
+			if outcome.Status != model.FoundryGraphJobSucceeded {
+				t.Fatalf("%+v", outcome)
+			}
+			if len(h.store.moves) != 1 || h.store.moves[0].State != model.FoundryFillNeedsLoad || !reflect.DeepEqual(h.store.moves[0].Why, c.why) {
+				t.Fatalf("recorded %+v", h.store.moves)
+			}
+			if job.VersionID != "ver-3" {
+				t.Fatalf("the job runs at %s", job.VersionID)
+			}
+		})
+	}
+	// The engine's marker at a version a move of Foundry's recorded, whose
+	// row never followed: put right, and the job tries again at it.
+	t.Run("a marker elsewhere a recorded move put there", func(t *testing.T) {
+		h := newHarness(t)
+		moving(h)
+		h.store.reconciles = map[string]bool{"foundry-v9": true}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{foldEvent(`{"kind":"marker_elsewhere","version":"foundry-v9"}`), `{"event":"extract_finished"}`},
+				`{"status":"load_mismatch","stored_version":"foundry-v9"}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || !strings.Contains(outcome.Error, "moved to foundry-v9 in place") {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.moves) != 0 {
+			t.Fatalf("recorded %+v", h.store.moves)
+		}
+	})
+	// The lease lost after the engine moved the marker: nothing recorded, the
+	// job tries again, and the move sent again finds the marker moved.
+	t.Run("a lease lost after the fold", func(t *testing.T) {
+		h := newHarness(t)
+		moving(h)
+		h.store.moveErr = foundrystore.ErrNotFound
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{foldEvent(`{"kind":"moved","links_added":["ceo_of"]}`), `{"event":"extract_finished"}`},
+				`{"status":"done","totals":`+totals+`}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || !strings.Contains(outcome.Error, "lease was lost") {
+			t.Fatalf("%+v", outcome)
+		}
+		if h.store.moveOwed == nil {
+			t.Fatal("the move is owed still")
+		}
+	})
+	// No word on the move: the job tries again, and records nothing.
+	t.Run("an agent that says nothing of the move", func(t *testing.T) {
+		h := newHarness(t)
+		moving(h)
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{`{"event":"extract_finished"}`}, `{"status":"store_failed","error":"x"}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || !strings.Contains(outcome.Error, "said nothing of the load's move") {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.moves) != 0 {
+			t.Fatalf("recorded %+v", h.store.moves)
+		}
+	})
+}

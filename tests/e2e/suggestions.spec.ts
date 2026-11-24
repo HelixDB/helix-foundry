@@ -140,7 +140,7 @@ test("lists the current load's suggestions and dismisses one", async ({
   await expect(cards(page)).toHaveCount(3);
 });
 
-test("adds a link a suggestion says documents state, on Generate", async ({
+test("drafts a link a suggestion says documents state, on Generate", async ({
   page,
 }) => {
   await mock.configure({ loadStepMs: 200 });
@@ -170,13 +170,20 @@ test("adds a link a suggestion says documents state, on Generate", async ({
     await expect(card).not.toContainText("Adding this link");
   }
   // Named Add this link alone, described by its card's title: an accessible
-  // name may reach analytics.
+  // name may reach analytics. Beside it, the agent drafts the link.
   const add = none.getByRole("link", { name: "Add this link", exact: true });
   await expect(add).not.toHaveAttribute("aria-label");
   await expect(add).toHaveAccessibleDescription(
     "Documents state “subsidiary of”, which no link covers",
   );
-  await add.click();
+  const draft = none.getByRole("link", {
+    name: "Draft with the agent",
+    exact: true,
+  });
+  await expect(draft).toHaveAccessibleDescription(
+    "Documents state “subsidiary of”, which no link covers",
+  );
+  await draft.click();
   await expect(page).toHaveURL(new RegExp(`${O}/generate\\?goal=`));
   await expect(page.getByLabel("Goal")).toHaveValue(
     [
@@ -201,6 +208,134 @@ test("adds a link a suggestion says documents state, on Generate", async ({
   await expect(page.getByLabel("Goal")).toHaveValue(
     /^Let documents of “General” state “supplies”: documents state “supplier of”, also reported as “supplier of packaging”\.\nFor example:\n“Globex supplies Acme with steel under this agreement\.”\n/,
   );
+});
+
+// Add this link in place: the current version's Edit tab saves a version
+// with the link and the route reading its set, and making that version
+// current with the finding moves the current load to it, which the card
+// then says, with no new load.
+test("adds a link in place, and the current load moves to it", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await loaded(page);
+  const none = () =>
+    cards(page).filter({ hasText: "Documents state “subsidiary of”" });
+  await none()
+    .getByRole("link", { name: "Add this link", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    /\/versions\/[^?]+\?tab=edit&fill=d{64}&link=subsidiary_of&set=set_acme_general&describe=/,
+  );
+  const form = page.getByRole("region", { name: "Add this link" });
+  await expect(form.getByRole("heading")).toHaveText(
+    "Add the link “subsidiary_of”",
+  );
+  await expect(form.getByLabel("Description")).toHaveValue(
+    "Subsidiary of, as documents state it: “Globex Freight, a subsidiary of Globex, handles delivery.”",
+  );
+  // Its ends are the person's to choose: none chosen is refused.
+  await form.getByRole("button", { name: "Save as a new version" }).click();
+  await expect(form.getByRole("alert")).toHaveText(
+    "Choose the types the link joins.",
+  );
+  for (const end of ["From", "To"]) {
+    await form.getByLabel(end).click();
+    await page.getByRole("option", { name: "Customer", exact: true }).click();
+  }
+  await form.getByRole("button", { name: "Save as a new version" }).click();
+  await expect(
+    page.getByText(/^Version \d+ saved with the link\.$/),
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+  await page
+    .getByRole("button", { name: "Make current and update the load" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`${O}/review\\?tab=ontology$`));
+  await expect(none().getByRole("status")).toHaveText(
+    /^Updating the current load to version \d+…$/,
+  );
+  await page.clock.runFor(2_500);
+  await expect(none().getByRole("status")).toHaveText(
+    /^The current load is on version \d+ now: documents read from now on state this link\. Self-healing reads the documents behind these reviews for it next\.$/,
+  );
+  // Done in place: no Add this link, no new load to start.
+  await expect(none().getByRole("link", { name: "Add this link" })).toHaveCount(
+    0,
+  );
+  await expect(
+    none().getByRole("button", { name: "Start a new load" }),
+  ).toHaveCount(0);
+});
+
+// Once the load moved, self-healing fills the documents behind the finding
+// with the link: the card counts them as they go, then what the fill did.
+test("shows the fill of the documents behind the finding", async ({ page }) => {
+  await mock.configure({ loadStepMs: 200, healFill: true });
+  await loaded(page);
+  const none = () =>
+    cards(page).filter({ hasText: "Documents state “subsidiary of”" });
+  await none()
+    .getByRole("link", { name: "Add this link", exact: true })
+    .click();
+  const form = page.getByRole("region", { name: "Add this link" });
+  for (const end of ["From", "To"]) {
+    await form.getByLabel(end).click();
+    await page.getByRole("option", { name: "Customer", exact: true }).click();
+  }
+  await form.getByRole("button", { name: "Save as a new version" }).click();
+  await expect(
+    page.getByText(/^Version \d+ saved with the link\.$/),
+  ).toBeVisible({ timeout: 15_000 });
+  await page
+    .getByRole("button", { name: "Make current and update the load" })
+    .click();
+  await expect(none().getByRole("status")).toHaveText(
+    /^Updating the current load to version \d+…$/,
+  );
+  await page.clock.runFor(2_500);
+  await expect(none().getByRole("status")).toHaveText(
+    /^The current load is on version \d+ now/,
+  );
+  await page.reload();
+  await expect(none().getByRole("status")).toHaveText(
+    /^Filling the current load \(version \d+\) with this link: 1 of 2 documents, \$0\.01 of \$5\.00\.$/,
+  );
+  await page.clock.runFor(2_500);
+  await expect(none().getByRole("status")).toHaveText(
+    /^5 reviews resolved, 4 facts added in the current load \(version \d+\)\.$/,
+  );
+  await expect(none().getByRole("link", { name: "Add this link" })).toHaveCount(
+    0,
+  );
+});
+
+// A version that changes more than a link needs a new load, which the card
+// says, offering one.
+test("says when the version needs a new load", async ({ page }) => {
+  await mock.configure({ loadStepMs: 200, healMove: "needs_load" });
+  await loaded(page);
+  const none = () =>
+    cards(page).filter({ hasText: "Documents state “subsidiary of”" });
+  await none()
+    .getByRole("link", { name: "Add this link", exact: true })
+    .click();
+  const form = page.getByRole("region", { name: "Add this link" });
+  for (const end of ["From", "To"]) {
+    await form.getByLabel(end).click();
+    await page.getByRole("option", { name: "Customer", exact: true }).click();
+  }
+  await form.getByRole("button", { name: "Save as a new version" }).click();
+  await page
+    .getByRole("button", { name: "Make current and update the load" })
+    .click({ timeout: 15_000 });
+  await expect(none().getByRole("status")).toHaveText(
+    /^Needs a new load: version \d+ changes more than a link: it adds types\.Deal\.$/,
+  );
+  await expect(
+    none().getByRole("button", { name: "Start a new load" }),
+  ).toBeVisible();
 });
 
 test("offers Add this link to managers only", async ({ page }) => {

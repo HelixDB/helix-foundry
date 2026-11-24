@@ -231,6 +231,10 @@ export const mock = {
     healEnabled?: boolean;
     healRun?: "running" | "failed" | "incomplete" | null;
     healDismiss?: "superseded" | "fails";
+    // A finding's Add this link needs a new load rather than moving the load.
+    healMove?: "needs_load";
+    // A moved load then fills the documents behind the finding.
+    healFill?: boolean;
     // The current load's complete audit didn't check its rows.
     healRowsMeasured?: boolean;
     // Workflow runs' assessments: off (finishing queues none), how long one

@@ -6,6 +6,7 @@ import type {
 import { fail, now, ok, type MockRoute } from "../http";
 import { config, onReset } from "../state";
 import { ACME_GENERAL } from "./documents";
+import { withState } from "./heal-fills";
 import { currentLoadId, currentLoadVersionId } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
 
@@ -19,6 +20,9 @@ import { isScope, ontologyOf } from "./ontologies";
 // (one an existing link would, so it proposes a route; one no link would,
 // so it proposes nothing), a name that resolved to no one, and rows that
 // didn't load.
+//
+// Each relationship no link covers carries the state of its Add this link
+// (./heal-fills.ts).
 //
 // Knobs, through POST /__mock/config: `healEnabled: false` (a Foundry
 // whose foundry.heal.enabled is off: no audit runs), `healRun: "running" |
@@ -279,7 +283,7 @@ export const suggestionRoutes: MockRoute[] = [
       };
       return ok({
         enabled,
-        findings: open,
+        findings: open.map((f) => withState(s.o.id, f)),
         lastRun: held || complete,
         lastCompleteRun: complete,
       } satisfies ListHealFindingsResponse);

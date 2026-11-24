@@ -28,3 +28,8 @@ var findings = promauto.NewHistogram(prometheus.HistogramOpts{
 	Help:    "Findings a complete audit stores: those backed by two documents or more, and by rows.",
 	Buckets: []float64{0, 10, 100, 1000, 10_000, 100_000, 1_000_000},
 })
+
+var fillRuns = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_heal_fills_total",
+	Help: "Fills the heal worker acted on, by outcome: started, resumed, changed (the fill or its load changed meanwhile), or failed.",
+}, []string{"outcome"})

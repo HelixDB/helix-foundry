@@ -34,6 +34,17 @@ type AuditRequest struct {
 	// drift, sent with one call of a run, so each row finding is counted
 	// once; nil for none, and the row kinds go unmeasured.
 	Rows *AuditRows `json:"rows,omitempty"`
+	// DocumentsFor are relationships no link covers whose documents a page
+	// lists (contract 4.33.0): each by its set and its suggestions'
+	// spellings, a finding's. The result's DocumentsOf answers them in order.
+	DocumentsFor []AuditDocumentsFor `json:"documents_for,omitempty"`
+}
+
+// AuditDocumentsFor is a relationship no link covers whose documents an
+// Audit lists (AuditRequest.DocumentsFor).
+type AuditDocumentsFor struct {
+	Set       string   `json:"set"`
+	Spellings []string `json:"spellings"`
 }
 
 // AuditRows is what a run sends of a load's rows (RowsReported).
@@ -135,6 +146,9 @@ type AuditResult struct {
 	RowsMeasured bool
 	// StoredVersion, for load_mismatch, is the version the load holds.
 	StoredVersion string
+	// DocumentsOf, for done, are the page's documents of each of the
+	// request's DocumentsFor, in its order: none of a page cut short.
+	DocumentsOf [][]string
 }
 
 // AuditFinding is one finding of a page, kept as the agent wrote it.
@@ -180,6 +194,9 @@ func DecodeAuditResult(data []byte) (AuditResult, error) {
 		} `json:"mined"`
 		Rows          string  `json:"rows"`
 		StoredVersion *string `json:"stored_version"`
+		DocumentsOf   []struct {
+			DocIDs []string `json:"doc_ids"`
+		} `json:"documents_of"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return AuditResult{}, fmt.Errorf("read audit result: %w", err)
@@ -213,6 +230,9 @@ func DecodeAuditResult(data []byte) (AuditResult, error) {
 	}
 	// An unknown rows is read as unmeasured: nothing is superseded on it.
 	r.RowsMeasured = raw.Rows == "measured"
+	for _, of := range raw.DocumentsOf {
+		r.DocumentsOf = append(r.DocumentsOf, of.DocIDs)
+	}
 	for i, f := range *raw.Findings {
 		finding, err := decodeAuditFinding(f)
 		if err != nil {

@@ -305,6 +305,31 @@ func startAgent(t *testing.T, agent *fakeAgent) *ontologyagent.Client {
 // its tenant on a shared cluster, the synced customers table and the
 // ontology's documents; it records the job's progress and extractions.
 type memStore struct {
+	// reconciles are the versions a move of the load in place records, which
+	// ReconcileFoundryLoadMarker puts the load at.
+	reconciles map[string]bool
+	// versions are versions beside version, by id.
+	versions map[string]*model.OntologyVersion
+	// moveOwed is the move in place the load owes, and moves what the jobs
+	// recorded of moves.
+	moveOwed *model.FoundryHealFill
+	moves    []model.FoundryFoldOutcome
+	// moveErr is what recording a move returns: a lost lease, say.
+	moveErr error
+	// fill is the load's applying fill, links the documents it owes, and
+	// fillEnded what jobs recorded of each document they sent it; fillStop
+	// and fillPause what they stopped or paused it for, fillSpend the
+	// ontology's fills' spend today.
+	fill      *model.FoundryHealFill
+	links     []*model.FoundryLoadResend
+	fillEnded []model.FoundryFillDocument
+	// fillSpent is what documents whose fill ended in no word spent.
+	fillSpent []model.FoundryFillDocument
+	fillStop  string
+	fillPause *time.Time
+	fillSpend int64
+	// askedApart are the links each version asks apart, by its id.
+	askedApart map[string][]string
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
 	aiConfig *model.FoundryAIConfig
 	mu       sync.Mutex
@@ -457,6 +482,12 @@ func (s *memStore) OweFoundryAskingResends(_ context.Context, job *model.Foundry
 			Document: s.held[doc]})
 	}
 	return true, nil
+}
+
+func (s *memStore) ReconcileFoundryLoadMarker(_ context.Context, _, storedVersion string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reconciles[storedVersion], nil
 }
 
 func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end model.FoundryResendEnd) error {
@@ -616,7 +647,100 @@ func (s *memStore) Endpoint(_ context.Context, id, path string) (string, error) 
 	return "https://abc.cluster.example.com" + path, nil
 }
 
+func (s *memStore) FoundryLoadMoveOwed(context.Context, string) (*model.FoundryHealFill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.moveOwed, nil
+}
+
+func (s *memStore) RecordFoundryLoadMove(_ context.Context, _, _ string, _ *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.moveErr != nil {
+		return s.moveErr
+	}
+	s.moves, s.moveOwed = append(s.moves, outcome), nil
+	return nil
+}
+
+func (s *memStore) FoundryAskedApart(_ context.Context, loadID string) ([]string, error) {
+	return s.askedApart[loadID], nil
+}
+
+func (s *memStore) FoundryFillApplying(context.Context, string) (*model.FoundryHealFill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fill == nil || s.fill.State != model.FoundryFillApplying {
+		return nil, nil
+	}
+	fill := *s.fill
+	return &fill, nil
+}
+
+func (s *memStore) ListFoundryLinkResends(_ context.Context, _ string, limit int) ([]*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fill == nil || s.fill.State != model.FoundryFillApplying || s.fill.PausedUntil != nil {
+		return nil, nil
+	}
+	return s.links[:min(limit, len(s.links))], nil
+}
+
+func (s *memStore) RecordFoundryFillDocument(_ context.Context, _, _ string, d model.FoundryFillDocument) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, o := range s.links {
+		if o.DocumentID != d.DocumentID || o.Requests != d.Requests {
+			continue
+		}
+		s.links = append(s.links[:i:i], s.links[i+1:]...)
+		s.fillEnded = append(s.fillEnded, d)
+		s.fill.SpentUSD += float64(d.USDMicros) / 1e6
+		if len(s.links) == 0 {
+			s.fill.State = model.FoundryFillFilled
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *memStore) SpendFoundryFillDocument(_ context.Context, _, _ string, d model.FoundryFillDocument) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fillSpent = append(s.fillSpent, d)
+	s.fill.SpentUSD += float64(d.USDMicros) / 1e6
+	return nil
+}
+
+func (s *memStore) EndFoundryFillDocument(ctx context.Context, jobID, workerID, docID string, requests int, reason string) error {
+	return s.RecordFoundryFillDocument(ctx, jobID, workerID, model.FoundryFillDocument{DocumentID: docID, Requests: requests,
+		Outcome: "refused", Reason: reason})
+}
+
+func (s *memStore) StopFoundryFill(_ context.Context, _, _, _, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fillStop, s.fill.State, s.links = reason, model.FoundryFillStopped, nil
+	return nil
+}
+
+func (s *memStore) PauseFoundryFill(_ context.Context, _, _, _ string, until time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fillPause, s.fill.PausedUntil = &until, &until
+	return nil
+}
+
+func (s *memStore) SumFoundryFillSpend(context.Context, string, time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fillSpend, nil
+}
+
 func (s *memStore) GetOntologyVersion(_ context.Context, ontologyID, id string) (*model.OntologyVersion, error) {
+	if v, ok := s.versions[id]; ok && v.OntologyID == ontologyID {
+		return v, nil
+	}
 	if s.version == nil || s.version.ID != id || s.version.OntologyID != ontologyID {
 		return nil, foundrystore.ErrNotFound
 	}
@@ -999,6 +1123,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Foundry.Sync.DataBucket = "foundry-data"
+	cfg.Foundry.Heal.Enabled, cfg.Foundry.Heal.AddInPlace = true, true
 	cfg.Foundry.Graph.Agent.WorkDir = t.TempDir()
 	cfg.Foundry.AI.Default = config.AIDefault{Provider: "anthropic", APIKey: houseKey, Models: config.AIModels{
 		Draft: "claude-opus-5-5", Ask: "claude-sonnet-5-5", Extract: "claude-haiku-5-5", Verify: "claude-sonnet-5-5",
@@ -1762,6 +1887,15 @@ func TestLoadOutcomes(t *testing.T) {
 		"an extract into a load of another version": {func(h *harness) {
 			h.agent.extract = extractResult(`{"status":"load_mismatch","stored_version":"foundry-v2"}`)
 		}, failed, "foundry-v2"},
+		// A move in place whose marker went first: put right, and retried there.
+		"a load moved in place": {func(h *harness) {
+			h.store.reconciles = map[string]bool{"foundry-v2": true}
+			h.agent.ingest = ingestResult(`{"status":"load_mismatch","stored_version":"foundry-v2"}`)
+		}, retried, "moved to foundry-v2 in place"},
+		"an extract into a load moved in place": {func(h *harness) {
+			h.store.reconciles = map[string]bool{"foundry-v2": true}
+			h.agent.extract = extractResult(`{"status":"load_mismatch","stored_version":"foundry-v2"}`)
+		}, retried, "moved to foundry-v2 in place"},
 		"an extract into a load the database lacks": {func(h *harness) {
 			h.agent.extract = extractResult(`{"status":"load_unknown"}`)
 		}, failed, "does not hold this load"},

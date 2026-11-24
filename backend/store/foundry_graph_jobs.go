@@ -543,6 +543,10 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 				return err
 			}
 		}
+		// What this attempt ended with, which the job's row read before it lacks.
+		if outcome.Error != "" {
+			job.Error = &outcome.Error
+		}
 		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets, outcome.ModelUnread); err != nil {
 			return err
 		}
@@ -710,8 +714,16 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 			_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting' WHERE id=?`, job.LoadID)
 			return err
 		}
+		was := o.CurrentLoadID
 		if err := s.makeFoundryLoadCurrent(ctx, o, job.LoadID); err != nil {
 			return err
+		}
+		// A move in place the load it replaces made, or had under way, from
+		// this load's version follows it (a rebuild queued before the move).
+		if was != nil && *was != job.LoadID {
+			if err := s.carryFoundryHealFills(ctx, o.ID, *was, job.LoadID); err != nil {
+				return err
+			}
 		}
 		// A refresh that replaced a refresh deletes it now, so refreshes never crowd out a customer's loads.
 		if refresh && replaced != nil {
@@ -740,11 +752,11 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 }
 
 // dropFoundryLoadRows removes what Foundry keeps of a deleted load beside
-// its row: the decisions, documents, sources, access mark, resends and
-// extractions it was written with.
+// its row: the decisions, documents, sources, access mark, resends,
+// extractions and heal fills it was written with.
 func (s *mysqlDB) dropFoundryLoadRows(ctx context.Context, loadID string) error {
 	for _, table := range []string{"foundry_load_decisions", "foundry_load_documents", "foundry_load_sources", "foundry_load_access",
-		"foundry_load_resends", "foundry_load_extractions"} {
+		"foundry_load_resends", "foundry_load_extractions", "foundry_heal_fills"} {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE load_id=?`, loadID); err != nil {
 			return err
 		}

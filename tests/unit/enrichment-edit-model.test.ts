@@ -441,7 +441,7 @@ describe("the Enrich people form", () => {
       ),
     ).toEqual([
       "EditNotAllowed: current_title is new; a type only gains the props its People enrichment fills.",
-      "EditNotAllowed: a new link must be the one People enrichment's work history adds.",
+      "EditNotAllowed: a new link must be the one People enrichment's work history adds, or one a route reads.",
     ]);
     // Undone, it takes them with it, and the identifiers it declared.
     expect(edit.undoEdit(plain, pending, "enrichment.people")).toEqual([rule]);

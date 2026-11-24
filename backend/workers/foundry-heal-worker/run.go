@@ -296,6 +296,15 @@ func (r *runner) page(ctx context.Context, request ontologyagent.AuditRequest) (
 	case result.Outcome == ontologyagent.AuditLoadUnknown:
 		return result, errors.New("the database holds no such load")
 	case result.Outcome == ontologyagent.AuditLoadMismatch:
+		// A load Foundry moved in place, whose marker moved before its row did:
+		// put right, the next run audits it at its version.
+		reconciled, err := r.db.ReconcileFoundryLoadMarker(ctx, request.Load, result.StoredVersion)
+		if err != nil {
+			return result, fmt.Errorf("the database holds this load of another version (%s); reconciling it failed: %w", result.StoredVersion, err)
+		}
+		if reconciled {
+			return result, fmt.Errorf("the load moved to %s in place; the next run audits it there", result.StoredVersion)
+		}
 		return result, fmt.Errorf("the database holds this load of another version (%s)", result.StoredVersion)
 	}
 	return result, nil

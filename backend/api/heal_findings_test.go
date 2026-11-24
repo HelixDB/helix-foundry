@@ -205,3 +205,173 @@ func TestDismissFoundryHealFinding(t *testing.T) {
 		t.Fatalf("dismissed again = %v, %v", again, err)
 	}
 }
+
+// stateStore is healStore with a current load, its version, the newest and
+// current versions, and its fill rows.
+type stateStore struct {
+	*healStore
+	load     *foundrymodel.FoundryLoad
+	versions map[string]*foundrymodel.OntologyVersion
+	newest   string
+	fills    map[string]*foundrymodel.FoundryHealFill
+}
+
+func (s *stateStore) GetFoundryLoad(context.Context, string, string) (*foundrymodel.FoundryLoad, error) {
+	return s.load, nil
+}
+func (s *stateStore) ListFoundryHealFills(context.Context, string) (map[string]*foundrymodel.FoundryHealFill, error) {
+	return s.fills, nil
+}
+func (s *stateStore) ListOntologyVersions(context.Context, string, int) ([]*foundrymodel.OntologyVersion, error) {
+	return []*foundrymodel.OntologyVersion{s.versions[s.newest]}, nil
+}
+func (s *stateStore) GetOntologyVersion(_ context.Context, _, id string) (*foundrymodel.OntologyVersion, error) {
+	v, ok := s.versions[id]
+	if !ok {
+		return nil, foundrystore.ErrNotFound
+	}
+	return v, nil
+}
+
+// A finding's state: open with no version adding its link, covered by the
+// newest version that does, the fill row's word once pressed, and moved
+// where the load's own version states it; none for a finding that names no
+// link; a superseded finding with a fill row is still listed.
+func TestListFoundryHealFindingsStates(t *testing.T) {
+	bundle := func(n int, links string) *foundrymodel.OntologyVersion {
+		def, _ := json.Marshal(map[string]any{"format": "agent_bundle", "ontology_toml": "[links.mentors]\nfrom = \"P\"\nto = \"P\"",
+			"mappings_toml": "[extractions.notes]\ndocuments = \"all\"\nlinks = " + links})
+		return &foundrymodel.OntologyVersion{ID: "v" + string(rune('0'+n)), Version: n, Definition: def}
+	}
+	finding := func(fp, kind, status string) *foundrymodel.FoundryHealFinding {
+		return &foundrymodel.FoundryHealFinding{Fingerprint: fp, Kind: kind, Status: foundrymodel.FoundryHealStatus(status), Support: 3, Sources: 3,
+			Finding: json.RawMessage(`{"signal":{"kind":"` + kind + `","canonical":"mentors","set":"set_1"}}`)}
+	}
+	on := true
+	states := func(s *stateStore) map[string]string {
+		cfg := &config.Config{}
+		cfg.Foundry.Heal.Enabled, cfg.Foundry.Heal.AddInPlace = true, on
+		svc := &Service{deps: &runtimeDeps{DB: s, Cfg: cfg}}
+		out, err := svc.ListFoundryHealFindings(context.Background(), &foundryv1.ListFoundryHealFindingsRequest{WorkspaceId: "ws-1", OntologyId: "o1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, f := range out.Findings {
+			raw, _ := json.Marshal(f.GetState())
+			got[f.Fingerprint] = string(raw)
+		}
+		return got
+	}
+	_, base := newHealService()
+	load, current := "load-1", "v1"
+	base.ontology.CurrentLoadID, base.ontology.CurrentVersionID = &load, &current
+	base.findings = map[string]*foundrymodel.FoundryHealFinding{
+		"aa": finding("aa", "unmatched", "open"), "bb": finding("bb", "clash", "open"), "cc": finding("cc", "unmatched", "superseded"),
+	}
+	s := &stateStore{healStore: base, load: &foundrymodel.FoundryLoad{ID: load, VersionID: "v1"},
+		versions: map[string]*foundrymodel.OntologyVersion{"v1": bundle(1, `["works_at"]`), "v2": bundle(2, `["works_at", "mentors"]`)},
+		newest:   "v1", fills: map[string]*foundrymodel.FoundryHealFill{}}
+	got := states(s)
+	if got["aa"] != `{"State":{"Open":{}}}` || got["bb"] != "null" || len(got) != 2 {
+		t.Fatalf("before any version adds it: %v", got)
+	}
+	s.newest = "v2"
+	if got := states(s); got["aa"] != `{"State":{"Covered":{"version_id":"v2","version":2}}}` {
+		t.Fatalf("a newer version adds it: %v", got)
+	}
+	s.fills["cc"] = &foundrymodel.FoundryHealFill{Fingerprint: "cc", ToVersionID: "v2", ToVersion: 2, State: foundrymodel.FoundryFillMoving}
+	if got := states(s); got["cc"] != `{"State":{"Moving":{"version_id":"v2","version":2}}}` {
+		t.Fatalf("a superseded finding being filled: %v", got)
+	}
+	// A rebuild at the version that states it, or a load that moved there
+	// for another finding while this one's move was answered needs_load.
+	s.load.VersionID = "v2"
+	s.fills["aa"] = &foundrymodel.FoundryHealFill{Fingerprint: "aa", ToVersionID: "v3", ToVersion: 3, State: foundrymodel.FoundryFillNeedsLoad,
+		Why: []foundrymodel.FoundryFoldWhy{{Kind: "load_moved", Item: "2"}}}
+	if got := states(s); got["aa"] != `{"State":{"Moved":{"version_id":"v2","version":2,"links_added":["mentors"]}}}` {
+		t.Fatalf("a load of a version that states it: %v", got)
+	}
+	// Off, no finding carries a state.
+	on = false
+	if got := states(s); got["aa"] != "null" || got["bb"] != "null" {
+		t.Fatalf("off: %v", got)
+	}
+}
+
+// Off, a press is refused before anything is read or written.
+func TestSetCurrentFillingIsOffUnlessOn(t *testing.T) {
+	_, db := newHealService()
+	for name, heal := range map[string]config.HealConfig{
+		"heal off":         {AddInPlace: true},
+		"add in place off": {Enabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Foundry.Heal = heal
+			svc := &Service{deps: &runtimeDeps{DB: db, Cfg: cfg}}
+			_, err := svc.setCurrentFilling(context.Background(), db.ontology, &foundrymodel.OntologyVersion{ID: "v2"}, nil, "fp1", nil)
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+// pressStore records a press that went through to the store.
+type pressStore struct {
+	*healStore
+	pressed []string
+}
+
+func (s *pressStore) SetCurrentOntologyVersionFilling(_ context.Context, _, _, versionID string, _ *string, fingerprint string,
+	_ *foundrymodel.FoundryGraphJob) (*foundrymodel.FoundryHealFill, error) {
+	s.pressed = append(s.pressed, versionID+"/"+fingerprint)
+	return nil, nil
+}
+
+// A press goes through only for an open finding of a relationship no link
+// covers, to a version that declares and routes its link for its set: it
+// attaches no other version to the finding.
+func TestSetCurrentFillingChecksTheFindingAndTheVersion(t *testing.T) {
+	_, base := newHealService()
+	base.findings["fp3"] = &foundrymodel.FoundryHealFinding{OntologyID: "o1", Fingerprint: "fp3", Kind: "clash", Status: foundrymodel.FoundryHealOpen,
+		Finding: json.RawMessage(`{"signal":{"kind":"clash"}}`)}
+	db := &pressStore{healStore: base}
+	cfg := &config.Config{}
+	cfg.Foundry.Heal.Enabled, cfg.Foundry.Heal.AddInPlace = true, true
+	svc := &Service{deps: &runtimeDeps{DB: db, Cfg: cfg}}
+	version := func(links string) *foundrymodel.OntologyVersion {
+		def, _ := json.Marshal(map[string]any{"format": "agent_bundle", "ontology_toml": "[links.supplier_of]\nfrom = \"P\"\nto = \"C\"",
+			"mappings_toml": "[extractions.notes]\ndocuments = [\"set_1\"]\nlinks = " + links})
+		return &foundrymodel.OntologyVersion{ID: "v2", Version: 2, Definition: def}
+	}
+	stating, other := version(`["supplier_of"]`), version(`["works_at"]`)
+	for name, c := range map[string]struct {
+		version     *foundrymodel.OntologyVersion
+		fingerprint string
+		code        codes.Code
+	}{
+		"not the finding's":  {stating, "nope", codes.NotFound},
+		"a finding not open": {stating, "fp2", codes.FailedPrecondition},
+		"no relationship":    {stating, "fp3", codes.FailedPrecondition},
+		"a version without":  {other, "fp1", codes.FailedPrecondition},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.setCurrentFilling(context.Background(), base.ontology, c.version, nil, c.fingerprint, nil)
+			if status.Code(err) != c.code {
+				t.Fatalf("err = %v, want %s", err, c.code)
+			}
+		})
+	}
+	if len(db.pressed) != 0 {
+		t.Fatalf("refused presses reached the store: %v", db.pressed)
+	}
+	_, err := svc.setCurrentFilling(context.Background(), base.ontology, stating, nil, "fp1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(db.pressed) != 1 || db.pressed[0] != "v2/fp1" {
+		t.Fatalf("pressed %v", db.pressed)
+	}
+}

@@ -115,3 +115,8 @@ var documentsUnread = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_documents_unread_total",
 	Help: "Documents a load job ended with unread because the model failed, by model failure class.",
 }, []string{"model_failure"})
+
+var fillOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_fill_documents_total",
+	Help: "Documents a fill sent ended, by outcome (written, nothing, native, refused) and a refusal's reason.",
+}, []string{"outcome", "reason"})

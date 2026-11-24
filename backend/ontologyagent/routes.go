@@ -173,3 +173,37 @@ func ParseEnrichments(mappingsTOML string) (*Enrichment, error) {
 	}
 	panic("unreachable")
 }
+
+// StatesLink reports whether a version's bundle declares link and routes it
+// for set setID's documents: a [links.<link>] table in ontology.toml, and a
+// route of mappings.toml whose documents are "all" or name the set and
+// whose links list it. What a suggestion's "Add this link" adds (the card's
+// Covered state); a bundle that doesn't read is no such version.
+//
+//	StatesLink("[links.ceo_of]\nfrom = \"P\"\nto = \"C\"", "[extractions.n]\ndocuments = \"all\"\nlinks = [\"ceo_of\"]", "ceo_of", "set_1") // true
+func StatesLink(ontologyTOML, mappingsTOML, link, setID string) bool {
+	var ontology, mappings map[string]any
+	if _, err := toml.Decode(ontologyTOML, &ontology); err != nil {
+		return false
+	}
+	if _, err := toml.Decode(mappingsTOML, &mappings); err != nil {
+		return false
+	}
+	links, _ := ontology["links"].(map[string]any)
+	if _, ok := links[link].(map[string]any); !ok {
+		return false
+	}
+	extractions, _ := mappings["extractions"].(map[string]any)
+	for _, value := range extractions {
+		route, _ := value.(map[string]any)
+		reads := route["documents"] == AllDocuments
+		if sets, ok := route["documents"].([]any); ok {
+			reads = slices.Contains(sets, any(setID))
+		}
+		routed, _ := route["links"].([]any)
+		if reads && slices.Contains(routed, any(link)) {
+			return true
+		}
+	}
+	return false
+}

@@ -162,6 +162,76 @@
       ]
     },
     {
+      "description": "What came of moving the load in place ([`ExtractRequest::fold`]), before anything\nelse of the run.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "fold"
+        },
+        "outcome": {
+          "description": "What came of it.",
+          "$ref": "#/$defs/Folded"
+        }
+      },
+      "required": [
+        "event",
+        "outcome"
+      ]
+    },
+    {
+      "description": "What came of filling a document with links its commit wasn't asked\n([`ExtractDocument::fill`]), just before its `document` event. Its `facts` and `held`\nare what the document states of those links, whatever this run wrote of it, so a fill\nsent again, after its first event was lost, says the same; `reviews_taken` is this run's.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "filled"
+        },
+        "facts": {
+          "description": "Its facts of those links its work accepts.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "held": {
+          "description": "Its claims of those links held for a person.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "links": {
+          "description": "The links filled, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outcome": {
+          "description": "What came of it: `written`, `nothing` (the load holds it all already, or it states\nnothing of them), `native` (its commit was asked them) or refused and why.",
+          "$ref": "#/$defs/FillOutcome"
+        },
+        "reviews_taken": {
+          "description": "Its reviews of a relationship no link covered, of a suggestion of `fill_spellings`,\nthat this run took: none unless `written`, so a fill sent again after its first event\nwas lost says none.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "doc_id",
+        "links",
+        "outcome",
+        "facts",
+        "held",
+        "reviews_taken"
+      ]
+    },
+    {
       "description": "The run ended; the result follows.",
       "type": "object",
       "properties": {
@@ -472,6 +542,152 @@
         "output_tokens",
         "replayed",
         "phases"
+      ]
+    },
+    "FillOutcome": {
+      "description": "How a fill ended ([`Filled`]).",
+      "oneOf": [
+        {
+          "description": "Written, in one transaction of its own (origin `fill`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "written"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The load holds all of it already, as after a fill sent again, or it states nothing of\nthe links.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "nothing"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Its commit was asked the links already: a document committed after the load moved, or\nin this run.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "native"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Nothing was written, for this reason.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "refused"
+            },
+            "reason": {
+              "$ref": "#/$defs/FillRefusal"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "FillRefusal": {
+      "description": "Why a fill wrote nothing ([`FillOutcome::Refused`]).",
+      "oneOf": [
+        {
+          "description": "No saved work of its text replays: its entity pass would be asked again, and could\ndiffer from what its commit wrote.",
+          "type": "string",
+          "const": "not_replayed"
+        },
+        {
+          "description": "What the load holds of its names isn't what its commit, replayed, gives: as after a\nchoice of a name changed since, or a row arrived that a name now reaches.",
+          "type": "string",
+          "const": "differs"
+        },
+        {
+          "description": "It holds more reviews than a read takes, or its write is more than one takes.",
+          "type": "string",
+          "const": "too_large"
+        }
+      ]
+    },
+    "Folded": {
+      "description": "What came of moving a load in place ([`ExtractEvent::Fold`]).",
+      "oneOf": [
+        {
+          "description": "The load records the request's version now, gaining these links, which none of its\ndocuments was asked: by this run, or by an earlier one.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "moved"
+            },
+            "links_added": {
+              "description": "The links added, or newly routed, by name.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "links_added"
+          ]
+        },
+        {
+          "description": "The change adds more than that: nothing was written.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_additive"
+            },
+            "why": {
+              "description": "What needs a new load, in file then table order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Why"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "why"
+          ]
+        },
+        {
+          "description": "The load records neither version, but this one: nothing was written.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "marker_elsewhere"
+            },
+            "version": {
+              "description": "The version it records.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "version"
+          ]
+        }
       ]
     },
     "ModelFailure": {
@@ -1049,6 +1265,125 @@
         "part_name",
         "created",
         "carried"
+      ]
+    },
+    "Why": {
+      "description": "One reason a version needs a new load: its kind, and the item, as a dotted path.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "description": "Where, as a dotted path of its table.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What changed.",
+          "$ref": "#/$defs/WhyKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "item"
+      ]
+    },
+    "WhyKind": {
+      "description": "What a version changes that needs a new load ([`Why`]).",
+      "oneOf": [
+        {
+          "description": "A link the base declares is gone.",
+          "type": "string",
+          "const": "link_removed"
+        },
+        {
+          "description": "A link both declare changed past its description.",
+          "type": "string",
+          "const": "link_changed"
+        },
+        {
+          "description": "A type was added.",
+          "type": "string",
+          "const": "type_added"
+        },
+        {
+          "description": "A type both declare changed past its description and new properties, or a type is gone.",
+          "type": "string",
+          "const": "type_changed"
+        },
+        {
+          "description": "A type gained a property.",
+          "type": "string",
+          "const": "prop_added"
+        },
+        {
+          "description": "The description of a type or link a route reads changed: its calls change.",
+          "type": "string",
+          "const": "routed_description"
+        },
+        {
+          "description": "A route changed past gaining the links added.",
+          "type": "string",
+          "const": "route_changed"
+        },
+        {
+          "description": "A route may now resolve a type it didn't.",
+          "type": "string",
+          "const": "resolve_type_added"
+        },
+        {
+          "description": "A relation was added, removed or changed.",
+          "type": "string",
+          "const": "relation"
+        },
+        {
+          "description": "An enrichment item was added, removed or changed.",
+          "type": "string",
+          "const": "enrichment"
+        },
+        {
+          "description": "A rule was added, removed or changed.",
+          "type": "string",
+          "const": "rule"
+        },
+        {
+          "description": "A constraint was added, removed or changed.",
+          "type": "string",
+          "const": "constraint"
+        },
+        {
+          "description": "A mapping of rows was added, removed or changed.",
+          "type": "string",
+          "const": "mapping"
+        },
+        {
+          "description": "The mappings' header changed: the ontology they name, or a key they lack.",
+          "type": "string",
+          "const": "mapping_header"
+        },
+        {
+          "description": "A link added is required.",
+          "type": "string",
+          "const": "link_required"
+        },
+        {
+          "description": "A link added derives others, or is derived.",
+          "type": "string",
+          "const": "link_derived"
+        },
+        {
+          "description": "A link added is stated by a mapping's rows or an enrichment's work history.",
+          "type": "string",
+          "const": "link_read_by_mapping"
+        },
+        {
+          "description": "A link added, or routed for the first time, is named by a rule, a constraint, a\nrelation or another link's derivation: its facts would feed what the load already holds.",
+          "type": "string",
+          "const": "link_referenced"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
       ]
     }
   }
