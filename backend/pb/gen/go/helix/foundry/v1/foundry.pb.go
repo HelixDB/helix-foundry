@@ -9934,6 +9934,8 @@ type GetMyFoundryAccessResponse struct {
 	// For a grantee, the items of the sources that report their permissions
 	// (a Slack connection's channels) that those sources share with it now,
 	// sorted: what Founder records a restricted member's thread read under.
+	// A source's directory of people (Slack's users) is the item "*directory",
+	// shared with a person the source has a non-guest account for.
 	SourceItems []*FoundrySourceItem `protobuf:"bytes,6,rep,name=source_items,json=sourceItems,proto3" json:"source_items,omitempty"`
 }
 
@@ -10173,7 +10175,7 @@ type FoundrySourceAudience struct {
 	ReadAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=read_at,json=readAt,proto3" json:"read_at,omitempty"`
 	// The items are unknown: never read, last read more than 7 days ago, or
 	// more than a day ago with a failed read since. Its documents then go to
-	// full readers only, as its tables always do.
+	// full readers only, and so do its tables.
 	Stale bool `protobuf:"varint,4,opt,name=stale,proto3" json:"stale,omitempty"`
 	// Why the latest read failed, when no read has worked since; unset
 	// otherwise.

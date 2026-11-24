@@ -2,14 +2,13 @@ package access
 
 import (
 	"cmp"
-	"maps"
 	"slices"
 	"time"
 )
 
 // MaxAudienceAge is how old the last read of a connector's audiences may be
 // and still say what a reader reads of it: past it, every item reads as
-// unknown, and the connector's documents go to full readers only
+// unknown, and the connector's documents and tables go to full readers only
 // (plans/SOURCE_ACLS.md).
 const MaxAudienceAge = 7 * 24 * time.Hour
 
@@ -41,44 +40,79 @@ func AudiencesFresh(readAt, problemAt *time.Time, now time.Time) bool {
 
 // SourceReach is what one reader reads of one connector whose source reports
 // who each of its items is shared with (a Slack connector's channels): the
-// items it reads, when they are known. The zero SourceReach is unknown: the
-// reader reads none of its items.
+// items it reads, when they are known, and whether the source has an account
+// for the reader that isn't a guest's. The zero SourceReach is unknown: the
+// reader reads none of its items, and none of its tables.
 type SourceReach struct {
 	// items are the item keys the reader reads; nil for unknown.
 	items map[string]bool
+	// member says the source has a non-guest account for the reader, who
+	// then reads its directory of people (RowsDirectory).
+	member bool
+}
+
+// DirectoryItem is the item that stands for an audienced source's directory
+// of its people (RowsDirectory, Slack's users) wherever a reader's items are
+// told or recorded: the source shares it with each reader it has a non-guest
+// account for (Shared.Member), so VisibleItems names it and the API tells it
+// (GetMyFoundryAccess's source_items), and a Part that reads the directory
+// is of it, so what that part said stops being the reader's once they stop
+// being one of the source's people (Keeps, SeesItems). No source's own item
+// is it: "*" is in none of their keys.
+const DirectoryItem = "*directory"
+
+// Shared is what a source shares with one reader at its last read: the keys
+// of the items it shares with them, and whether it has an account for them
+// by their email that isn't a guest's (Member), which a person matched to it
+// is and an agent's key, a team or an unmatched person never is. DirectoryItem
+// among Items says Member too, as the API tells it.
+type Shared struct {
+	Items  []string
+	Member bool
 }
 
 // ReachOf is the reach that a connector's audiences, last read at readAt
 // (nil: none has worked) with a failed read at problemAt (nil: none since),
-// give a reader the source shares visible of its items with, as of now:
-// unknown unless AudiencesFresh.
+// give a reader the source shares shared with, as of now: unknown unless
+// AudiencesFresh.
 //
 //	at := time.Now()
-//	access.ReachOf(&at, nil, []string{"C1"}, at).Sees("C1") // true
-func ReachOf(readAt, problemAt *time.Time, visible []string, now time.Time) SourceReach {
+//	access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at).Sees("C1") // true
+func ReachOf(readAt, problemAt *time.Time, shared Shared, now time.Time) SourceReach {
 	if !AudiencesFresh(readAt, problemAt, now) {
 		return SourceReach{}
 	}
-	return SharedReach(visible)
+	return SharedReach(shared)
 }
 
-// SharedReach is the known reach of a connector whose source shares visible
-// of its items with the reader, as the API tells a grantee what it reads now
-// (GetMyFoundryAccess's source_items): Founder's worker reads a call's part
-// of a load with it.
+// SharedReach is the known reach of a connector whose source shares shared
+// with the reader, as the API tells a grantee what it reads now
+// (GetMyFoundryAccess's source_items, Member as DirectoryItem): Founder's
+// worker reads a call's part of a load with it.
 //
-//	access.SharedReach([]string{"C1"}).Sees("C1") // true
-//	access.SharedReach(nil).Known()               // true: it reads none of them
-func SharedReach(visible []string) SourceReach {
-	r := SourceReach{items: make(map[string]bool, len(visible))}
-	for _, key := range visible {
+//	access.SharedReach(access.Shared{Items: []string{"C1"}}).Sees("C1") // true
+//	access.SharedReach(access.Shared{}).Known()                        // true: it reads none of them
+//	access.SharedReach(access.Shared{Items: []string{access.DirectoryItem}}).Sees(access.DirectoryItem) // true: a member
+func SharedReach(shared Shared) SourceReach {
+	r := SourceReach{items: make(map[string]bool, len(shared.Items)), member: shared.Member}
+	for _, key := range shared.Items {
+		if key == DirectoryItem {
+			r.member = true
+			continue
+		}
 		r.items[key] = true
 	}
 	return r
 }
 
-// Sees reports whether the reader reads item key.
-func (r SourceReach) Sees(key string) bool { return r.items[key] }
+// Sees reports whether the reader reads item key: DirectoryItem while the
+// source has a non-guest account for them.
+func (r SourceReach) Sees(key string) bool {
+	if key == DirectoryItem {
+		return r.member
+	}
+	return r.items[key]
+}
 
 // Known reports whether the connector's items are known: a read of them
 // worked recently enough (AudiencesFresh).
@@ -87,25 +121,33 @@ func (r SourceReach) Known() bool { return r.items != nil }
 // ItemRef is one item of an audienced connector's source (a Slack channel).
 type ItemRef struct{ ConnectorID, Item string }
 
-// ItemOf is the item a document of a connector's set belongs to, by the
-// set's stream and the document's external id; ok is false for a document of
-// no item the connector's kind knows.
-type ItemOf func(connectorID, stream, externalID string) (item string, ok bool)
+// SourceKind is what Sharing reads of an audienced connector's kind
+// (connector.Audienced): which item each document of its sets is of, and how
+// each of its tables tells which item its rows are of.
+type SourceKind interface {
+	// ItemOfDocument is the item a document of stream belongs to, by its
+	// external id; ok is false for a document of no item the kind knows.
+	ItemOfDocument(stream, externalID string) (item string, ok bool)
+	// TableRows is how table tells its rows' items; the zero RowRule for a
+	// table whose rows it doesn't tell apart, which full readers only read.
+	TableRows(table string) RowRule
+}
 
 // Sharing is what one reader reads of each of a workspace's connectors whose
 // sources report their permissions, by connector id. A connector it doesn't
 // name is no such connector: grants alone say what of it is read. The zero
 // Sharing names none, so it narrows nothing.
 type Sharing struct {
-	reach  map[string]SourceReach
-	itemOf ItemOf
+	reach map[string]SourceReach
+	kinds map[string]SourceKind
 }
 
-// NewSharing is reach, by audienced connector id, with itemOf telling which
-// item each of their documents is of. A connector of reach whose reach is the
-// zero SourceReach is one whose items are unknown.
-func NewSharing(reach map[string]SourceReach, itemOf ItemOf) Sharing {
-	return Sharing{reach: reach, itemOf: itemOf}
+// NewSharing is reach, by audienced connector id, with kinds telling which
+// item each of their documents and rows is of. A connector of reach whose
+// reach is the zero SourceReach is one whose items are unknown; one kinds
+// doesn't name tells no document's or row's item.
+func NewSharing(reach map[string]SourceReach, kinds map[string]SourceKind) Sharing {
+	return Sharing{reach: reach, kinds: kinds}
 }
 
 // audienced reports whether connectorID's source reports its permissions:
@@ -128,10 +170,11 @@ func (s Sharing) some(connectorID string) bool {
 // false for a document of a set no audienced connector owns, or of no item
 // its kind knows.
 func (s Sharing) item(d DocumentRef) (ItemRef, bool) {
-	if !s.audienced(d.Set.ConnectorID) || s.itemOf == nil {
+	kind, ok := s.kinds[d.Set.ConnectorID]
+	if !s.audienced(d.Set.ConnectorID) || !ok {
 		return ItemRef{}, false
 	}
-	item, ok := s.itemOf(d.Set.ConnectorID, d.Stream, d.ExternalID)
+	item, ok := kind.ItemOfDocument(d.Stream, d.ExternalID)
 	return ItemRef{ConnectorID: d.Set.ConnectorID, Item: item}, ok
 }
 
@@ -152,15 +195,19 @@ func (s Sharing) reads(d DocumentRef) bool {
 func (s Sharing) sees(i ItemRef) bool { return s.reach[i.ConnectorID].Sees(i.Item) }
 
 // visible are the items every audienced source shares with the reader now,
-// sorted.
+// its directory (DirectoryItem) among them while it is one of the source's
+// people, sorted.
 func (s Sharing) visible() []ItemRef {
 	var out []ItemRef
-	for _, id := range slices.Sorted(maps.Keys(s.reach)) {
-		for _, item := range slices.Sorted(maps.Keys(s.reach[id].items)) {
+	for id, reach := range s.reach {
+		if reach.member {
+			out = append(out, ItemRef{ConnectorID: id, Item: DirectoryItem})
+		}
+		for item := range reach.items {
 			out = append(out, ItemRef{ConnectorID: id, Item: item})
 		}
 	}
-	return out
+	return SortItems(out)
 }
 
 // SortItems sorts items by connector, then item, without repeats.

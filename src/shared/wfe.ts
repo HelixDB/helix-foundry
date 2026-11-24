@@ -5848,7 +5848,11 @@ export type GetMyFoundryAccessResponse = {
   ontologyIds?: string[];
   partialOntologyIds?: string[];
   workflows?: boolean;
-  /** A grantee's: the channels its sources share with it now, sorted. */
+  /**
+   * A grantee's: the channels its sources share with it now, sorted, and a
+   * source's directory of people (Slack's users) as the item `*directory`
+   * while it has a non-guest account for them.
+   */
   sourceItems?: FoundrySourceItem[];
 };
 
@@ -5861,9 +5865,10 @@ export type FoundrySourceAudienceProblem = { message?: string; at?: string };
 /**
  * v1FoundrySourceAudience: who one connection's source shares its items
  * with (a Slack connection's channels), as its last sync read it. A grantee
- * reads only the items shared with their verified email, and none of its
- * tables. `stale`: never read, or last read more than 7 days ago (a day, once
- * a read since failed), so its documents go to full readers only. `problem`:
+ * reads only the items shared with their verified email: their documents,
+ * and the rows of its tables that are of them. `stale`: never read, or last
+ * read more than 7 days ago (a day, once a read since failed), so its
+ * documents and tables go to full readers only. `problem`:
  * why the latest read failed, while none has worked since. `everyoneItems`
  * are shared with everyone the source has an account for but guests (public
  * channels), `membersItems` only with the people they list (private

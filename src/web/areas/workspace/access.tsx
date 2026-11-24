@@ -109,7 +109,8 @@ import { slackQuery } from "./slack-api";
 // it see the use cases of what it reads and record their runs: every run of an
 // ontology it reads all of, else only its own. A connection whose source
 // reports its own permissions (Slack's channel membership) gives the
-// restricted only what the source shares with their email; Source
+// restricted only what the source shares with their email, its tables' rows
+// included; Source
 // permissions says, per connection, when those were read and whom they
 // match.
 
@@ -1524,7 +1525,7 @@ function SourcesPanel({ data }: { data: AccessData }) {
   return (
     <Panel
       title="Source permissions"
-      subtitle="Connections that follow their source’s own permissions: someone restricted reads only what the source shares with their email, and none of its tables. Everyone else reads all of it."
+      subtitle="Connections that follow their source’s own permissions: someone restricted reads only what the source shares with their email, in its documents and its tables alike (a Slack channel’s messages, days and members; its users if Slack knows them and not as a guest). Everyone else reads all of it."
       padded={false}
     >
       {sources.isPending || data.members.isPending ? (

@@ -44,6 +44,7 @@ import {
   decideValue,
   extractDocument,
   ingestChunk,
+  joinKey,
   markLoad,
   releaseReview,
   withdrawRelease,
@@ -77,7 +78,8 @@ import { PROD_STAMP, config, onReset } from "../state";
 import { tracked } from "./workflows";
 import { aiModel } from "./ai";
 import { isFoundryPro } from "./billing";
-import { workspaceConnectors } from "./data";
+import { storedConnector, workspaceConnectors } from "./data";
+import { slackTableRows } from "./data-sources";
 import { beforeRead, startingRefuses, tenantGraph } from "./databases";
 import {
   dropExtractions,
@@ -1253,6 +1255,80 @@ function ingest(j: StoredJob) {
       rows,
     );
   }
+  // Slack's tables, through the mappings that read them, the tables others
+  // link to first: each row as its last sync wrote it, its key as the engine
+  // stores it (its mapping's row_key, else the table's primary key).
+  for (const c of workspaceConnectors(j.workspaceId)) {
+    const src = c.kind === "slack" ? storedConnector(c.id)?.source : undefined;
+    if (!src) continue;
+    const parsed = parseAgentMappings(mappings);
+    for (const table of SLACK_TABLE_ORDER) {
+      const synced = c.tables?.find((t) => t.name === table),
+        m = parsed.ok
+          ? parsed.value.find(
+              (x) =>
+                x.rows.kind === "source" &&
+                x.rows.source === sourceId(c.id, table),
+            )
+          : undefined;
+      if (!synced?.syncedAt || !m) continue;
+      const keyFields = m.rowKey.length ? m.rowKey : synced.primaryKey || [];
+      const text = (r: Record<string, unknown>, f: { field: string }) => {
+        const v = r[f.field];
+        return v === null || v === undefined || v === "" ? undefined : v;
+      };
+      const keyOf = (b: AgentBinding, r: Record<string, unknown>) => {
+        if (b.identify.kind !== "key") return undefined;
+        const parts = b.identify.fields.map(([, f]) => text(r, f));
+        return parts.every((p) => p !== undefined)
+          ? parts.map(String).join("/")
+          : undefined;
+      };
+      const rows = slackTableRows(src, synced.syncedAt)[table]!.flatMap(
+        (r): Row[] =>
+          m.bindings
+            .filter((b) => b.missing === "create")
+            .flatMap((b) => {
+              const key = keyOf(b, r);
+              if (key === undefined || b.identify.kind !== "key") return [];
+              const props = Object.fromEntries(
+                [...b.identify.fields, ...b.props].flatMap(([prop, f]) => {
+                  const v = text(r, f);
+                  return v === undefined ? [] : [[prop, v as Value]];
+                }),
+              );
+              return [
+                {
+                  type: b.type,
+                  key,
+                  rowKey: joinKey(
+                    keyFields.map((f) => String(r[f] ?? "").trim()),
+                  ),
+                  name: key,
+                  props,
+                  links: m.links
+                    .filter((l) => l.from === b.alias)
+                    .flatMap((l) => {
+                      const to = m.bindings.find((t) => t.alias === l.to),
+                        toKey = to && keyOf(to, r);
+                      return !to || toKey === undefined
+                        ? []
+                        : [{ link: l.link, toType: to.type, toKey }];
+                    }),
+                },
+              ];
+            }),
+      );
+      chunk(
+        {
+          source: sourceId(c.id, table),
+          snapshot: synced.syncedAt,
+        },
+        m.name,
+        rows,
+      );
+    }
+  }
   // The profiles its enrichment step published, beside the tables.
   const e = loadById(j.loadId)?.enrichment;
   if (e?.profiles.length) {
@@ -1269,6 +1345,14 @@ function ingest(j: StoredJob) {
 // ---------------------------------------------------------------- People enrichment
 
 const SHOP = "conn_acme_shop";
+/** Slack's tables in the order a load ingests them: those others link to first. */
+const SLACK_TABLE_ORDER = [
+  "users",
+  "channels",
+  "channel_days",
+  "messages",
+  "channel_members",
+];
 
 /** The version's mapping of public.people, if it has one. */
 function peopleMapping(mappingsToml: string) {

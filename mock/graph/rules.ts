@@ -753,11 +753,20 @@ function entityVisible(m: Model, view: View, n: MockNode) {
   const reach = view.types.get(n.label);
   if (reach === "full") return true;
   if (!reach) return false;
-  const sources = aboutOf(m, n.id).flatMap((x) =>
-    typeof x.props.source === "string" ? [String(x.props.source)] : [],
+  const rows = aboutOf(m, n.id).filter(
+    (x) => typeof x.props.source === "string",
   );
-  if (sources.some(view.holdsSource)) return true;
-  if (view.keyed.has(n.label) && sources.length) return false;
+  if (
+    rows.some((x) =>
+      view.holdsRow(
+        String(x.props.source),
+        String(x.props.mapping),
+        String(x.props.row_key),
+      ),
+    )
+  )
+    return true;
+  if (view.keyed.has(n.label) && rows.length) return false;
   return [...m.g.nodes()].some(
     (x) =>
       x.label === N.Mention &&
@@ -784,7 +793,11 @@ function factVisible(m: Model, view: View, link: string, s: number, o: number) {
         x.label === N.Evidence &&
         x.props.fact_key === edge.props.fact_key &&
         (typeof x.props.source === "string"
-          ? view.holdsSource(String(x.props.source))
+          ? view.holdsRow(
+              String(x.props.source),
+              String(x.props.mapping),
+              String(x.props.row_key),
+            )
           : view.holdsDocument(String(x.props.doc_id))),
     )
   );
@@ -795,6 +808,7 @@ function settle(m: Model, view: View, n: MockNode, prop: string): unknown {
   const about = aboutOf(m, n.id);
   const s = settled(
     view,
+    engineValue(n.props[prop]),
     about
       .filter(
         (x) =>
@@ -802,7 +816,20 @@ function settle(m: Model, view: View, n: MockNode, prop: string): unknown {
           Array.isArray(x.props.props) &&
           x.props.props.includes(prop),
       )
-      .map((x) => String(x.props.source)),
+      .map((x) => {
+        // What the row gave each property, as the engine keeps it: JSON of
+        // {prop: {value, valid}}; none on a row written before rows kept them.
+        const values =
+          typeof x.props.values === "string"
+            ? (JSON.parse(x.props.values) as Record<string, { value: unknown }>)
+            : {};
+        return {
+          source: String(x.props.source),
+          mapping: String(x.props.mapping),
+          rowKey: String(x.props.row_key),
+          ...(prop in values ? { value: values[prop]!.value } : {}),
+        };
+      }),
     about
       .filter((x) => typeof x.props.quote === "string" && x.props.prop === prop)
       .map((x) => ({
@@ -812,9 +839,9 @@ function settle(m: Model, view: View, n: MockNode, prop: string): unknown {
   );
   return s.from === "stored"
     ? engineValue(n.props[prop])
-    : s.from === "quoted"
-      ? s.value
-      : null;
+    : s.from === "none"
+      ? null
+      : s.value;
 }
 
 /**
@@ -1117,10 +1144,16 @@ export function answer(
 /** Whether the reader holds what a piece of evidence comes from. */
 const heldEvidence = (
   view: View,
-  i: { kind: string; source?: string; doc_id?: string },
+  i: {
+    kind: string;
+    source?: string;
+    mapping?: string;
+    row_key?: string;
+    doc_id?: string;
+  },
 ) =>
   i.kind === "row"
-    ? view.holdsSource(String(i.source))
+    ? view.holdsRow(String(i.source), String(i.mapping), String(i.row_key))
     : view.holdsDocument(String(i.doc_id));
 
 type Query = Extract<Read, { query: unknown }>["query"];

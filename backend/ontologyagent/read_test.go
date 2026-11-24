@@ -381,11 +381,19 @@ func TestClientRead(t *testing.T) {
 func TestVisibility(t *testing.T) {
 	part := access.Part{
 		Tables: []access.TableRef{{ConnectorID: "c", Table: "t"}}, Files: []string{"file"}, Documents: []string{"d"},
+		Rows: []access.TableRows{
+			{Table: access.TableRef{ConnectorID: "slack", Table: "channels"}, Rule: access.ItemRows("channel_id"), Items: []string{"C1", "C2"}},
+			{Table: access.TableRef{ConnectorID: "slack", Table: "messages"}, Rule: access.ItemPrefixRows("message_id", ":"), Items: []string{"C1"}},
+		},
 		Sets: []access.SetRef{{SetID: "s", ConnectorID: "c"}}, Enrichment: true, Withheld: []access.PropRef{{Type: "A", Prop: "p"}},
 	}
 	got := VisibilityOf(part)
 	want := Visibility{
 		Sources: []string{TableSourceID("c", "t"), "file"}, Documents: VisibleDocuments{Only: []string{"d"}}, Sets: []string{"s"}, Enrichment: true,
+		Rows: []HeldRows{
+			{Source: TableSourceID("slack", "channels"), Field: "channel_id", Items: []string{"C1", "C2"}},
+			{Source: TableSourceID("slack", "messages"), Field: "message_id", Prefix: true, Items: []string{"C1:"}},
+		},
 		Withheld: []WithheldProp{{Type: "A", Prop: "p"}},
 	}
 	if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
@@ -411,13 +419,28 @@ func TestVisibility(t *testing.T) {
 		if err := contracttest.Validate(t, schema, body); err != nil {
 			t.Fatalf("%s: %v\n%s", name, err, body)
 		}
+		raw := mustField(t, body, "visibility")
 		var back Visibility
-		if err := json.Unmarshal(mustField(t, body, "visibility"), &back); err != nil {
+		if err := json.Unmarshal(raw, &back); err != nil {
 			t.Fatal(err)
 		}
-		if back.Documents.All != visibility.Documents.All {
+		if back.Documents.All != visibility.Documents.All || fmt.Sprint(back.Rows) != fmt.Sprint(visibility.Rows) {
 			t.Fatalf("%s: %+v", name, back)
 		}
+		// An engine before 4.32.0 refuses rows: a reader holding none sends none.
+		if _, sent := mustFields(t, raw)["rows"]; sent != (len(visibility.Rows) > 0) {
+			t.Fatalf("%s: rows sent = %v\n%s", name, sent, raw)
+		}
+	}
+	for _, bad := range []string{`{"source":"s","field":"f"}`, `{"source":"s","field":"f","values":[],"prefixes":[]}`, `[]`} {
+		var h HeldRows
+		if err := json.Unmarshal([]byte(bad), &h); err == nil {
+			t.Fatalf("%s read as %+v", bad, h)
+		}
+	}
+	empty, err := json.Marshal(HeldRows{Source: "s", Field: "f"})
+	if err != nil || string(empty) != `{"field":"f","source":"s","values":[]}` {
+		t.Fatalf("no items = %s, %v", empty, err)
 	}
 	for _, bad := range []string{`"some"`, `{"only":"x"}`} {
 		var d VisibleDocuments
@@ -429,11 +452,24 @@ func TestVisibility(t *testing.T) {
 
 func mustField(t *testing.T, body []byte, field string) json.RawMessage {
 	t.Helper()
+	return mustFields(t, body)[field]
+}
+
+func mustFields(t *testing.T, body []byte) map[string]json.RawMessage {
+	t.Helper()
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		t.Fatal(err)
 	}
-	return fields[field]
+	return fields
+}
+
+func ExampleVisibilityOf() {
+	v := VisibilityOf(access.Part{Rows: []access.TableRows{{Table: access.TableRef{ConnectorID: "c", Table: "messages"},
+		Rule: access.ItemPrefixRows("message_id", ":"), Items: []string{"C1"}}}})
+	raw, _ := json.Marshal(v.Rows)
+	fmt.Println(strings.Replace(string(raw), TableSourceID("c", "messages"), "src", 1))
+	// Output: [{"field":"message_id","prefixes":["C1:"],"source":"src"}]
 }
 
 func TestParseReadView(t *testing.T) {

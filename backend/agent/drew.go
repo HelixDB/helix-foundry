@@ -73,20 +73,19 @@ func holdingBefore(ctx context.Context, db Store, workspaceID, name string, inpu
 // member's or a bot's call of name, with input, which returned output, drew
 // on, read under targets (their grants) with visible shared with them, as the
 // API told them on either side of the call:
-//   - a graph read's: the items of the documents and table files of its load
-//     that they read (sourceaccess.Told, as the API narrows the read), as the
-//     load held them before it ran (before, when it is that load) and after.
-//     A result names the documents of its quotes alone, not those its rows,
-//     entities, counts and derived facts came from, so a read draws on every
-//     one it could read; one whose load can't be told, on every item visible;
+//   - a graph read's: the items of the documents, table files and table rows
+//     of its load that they read, and the directory (access.DirectoryItem) of
+//     each source whose directory they read (sourceaccess.Told, as the API
+//     narrows the read, told the directory with the items), as the load held
+//     them before it ran (before, when it is that load) and after. A result
+//     names the documents of its quotes alone, not those its rows, entities,
+//     counts and derived facts came from, so a read draws on every one it
+//     could read; one whose load can't be told, on every item visible;
 //   - an ask's or a get_question's: its question's (SeenItems), which its
 //     answer stays the reader's with; a list_questions', every listed one's,
 //     whose text may say what its answer read;
 //   - none for any other call: no other tool a grantee has returns what a
 //     document says.
-//
-// A table of an audienced source is never theirs (access.Grants.CoversTable),
-// so no row's item is.
 func drew(ctx context.Context, db Store, workspaceID, name string, input json.RawMessage, output any,
 	targets []access.Target, visible []access.ItemRef, before heldLoad) ([]access.ItemRef, error) {
 	switch name {

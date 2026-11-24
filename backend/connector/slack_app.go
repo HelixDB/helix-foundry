@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -137,6 +138,9 @@ func (k *slackAppKind) Audiences(ctx context.Context, src Source) (Audiences, er
 func (k *slackAppKind) ItemOfDocument(stream, externalID string) (string, bool) {
 	return k.poll.ItemOfDocument(stream, externalID)
 }
+
+// TableRows is a token's: the install syncs the same tables, keyed the same.
+func (k *slackAppKind) TableRows(table string) access.RowRule { return k.poll.TableRows(table) }
 
 // Discover proves the install with auth.test and probes what it lists, as
 // a token's Discover does, but never reads history: whether the app may

@@ -45,9 +45,26 @@ kind only differs in what its adapter can report.
   was joined after the last read), so no grantee covers a set of an
   audienced connector whole: a load holding one is always read in part,
   document by document.
-- **Tables**: until rows can be filtered, a table of a kind that reports
-  audiences is read by full readers only. A grant of the table doesn't widen
-  that.
+- **Tables** are read by their rows (contract 4.32.0 `visibility.rows`):
+  the kind says which row-key field holds a table's item, exactly or as a
+  prefix (`Audienced.TableRows`). Slack: channels and channel_members by
+  `channel_id`, messages and channel_days by `<channel>:`; users is the
+  directory, whole for a matched non-guest person only. A table with no
+  rule, a mapping whose `row_key` lacks the field, unknown audiences, or
+  over 1,000 items (`access.MaxHeldItems`: the engine repeats every held
+  item, per mapping naming the field, in each partial entity's read, which
+  must fit Helix's 2 MiB request): full readers only. Nothing loads write changes.
+  A question or Founder graph read over such a table records every channel
+  the reader holds (up to the cap) and the directory when it read users,
+  since the engine doesn't say which rows an answer drew on: leaving any one
+  of those channels, or becoming a guest, hides that answer or thread.
+  Accepted, as for documents (a read draws on every one it could read); the
+  rows stored are at most about 1,000 per source a question or thread
+  (`foundry_question_source_items`, `foundry_agent_thread_source_items`). Narrowing it to the rows an answer
+  cited needs the engine to report them.
+  Rollout: every agent call checks the agent speaks the contract exactly,
+  so an older engine refuses all calls rather than seeing `rows`; the
+  hosted pin bumps the helixsvc and agent images (one pod) together.
 - **Freshness**: audiences are read from the source at the end of a
   successful sync, in full, whatever tables the connector syncs, at most once
   an hour (`syncer.AudienceEvery`, unless a read since failed), after the
@@ -118,7 +135,9 @@ So effective visibility of a connector's content for a grantee is:
 ## Later layers
 
 1. Drive, GitHub, Linear, Granola, Calendar, Cal.com audiences.
-2. Row filtering (needs the engine's visibility contract to filter rows by
-   item, and possibly what loads write: approval first).
+2. Row filtering for other kinds: GitHub issues and pull requests (prefix
+   `<repoID>#`) and Google (exact) by their keys as they are; GitHub
+   comments and reviews and Linear need composite keys, a new version and a
+   reload.
 3. Narrowing every non-full reader, once the Host-only paths are closed.
 4. Source-centric policies replacing per-principal grants.
