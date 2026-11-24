@@ -141,6 +141,7 @@ type Store interface {
 	ListFoundrySlackFollows(ctx context.Context, installID, channelID, threadTS string) ([]*model.SlackReply, error)
 	CountFoundrySlackFollows(ctx context.Context, installID string) (int, error)
 	HoldFoundrySlackReply(ctx context.Context, r *model.SlackReply) (*model.SlackReply, error)
+	MoveFoundrySlackHold(ctx context.Context, turnID, channelID, threadTS, intakeID, intakeOwner string) error
 	ReleaseFoundrySlackHold(ctx context.Context, turnID string) error
 	StartFoundrySlackReply(ctx context.Context, turnID, messageTS, intakeID, intakeOwner string) error
 	ClaimFoundrySlackReply(ctx context.Context, lease time.Duration) (*model.SlackReply, error)

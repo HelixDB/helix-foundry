@@ -154,9 +154,11 @@ type fakeSlack struct {
 	lastTS  atomic.Int64
 	onCall  func(call)
 	deleted map[string]bool
-	// shared is the channels shared with another organisation;
-	// infoRefusal, when set, is conversations.info's error code.
+	// shared is the channels shared with another organisation, and outside
+	// those the bot isn't in; infoRefusal, when set, is conversations.info's
+	// error code.
 	shared      map[string]bool
+	outside     map[string]bool
 	infoRefusal string
 	// history is each channel's messages, and replies each thread's, by
 	// its root's ts, the root first: what conversations.history and
@@ -167,7 +169,7 @@ type fakeSlack struct {
 
 func newFakeSlack(t *testing.T) *fakeSlack {
 	f := &fakeSlack{queued: map[string][]func(call) (int, http.Header, string){}, users: map[string]map[string]any{}, deleted: map[string]bool{},
-		shared: map[string]bool{}, history: map[string][]map[string]any{}, replies: map[string][]map[string]any{}}
+		shared: map[string]bool{}, outside: map[string]bool{}, history: map[string][]map[string]any{}, replies: map[string][]map[string]any{}}
 	f.lastTS.Store(1_700_000_000_000_000)
 	for _, u := range []string{ada, grace, alan} {
 		f.users[u] = map[string]any{"id": u, "team_id": team, "name": strings.ToLower(u[2:]), "real_name": "Person " + u[2:], "tz": "Europe/London",
@@ -235,12 +237,12 @@ func (f *fakeSlack) answer(c call) string {
 	case "conversations.info":
 		channel := fmt.Sprint(c.args["channel"])
 		f.mu.Lock()
-		shared, refusal := f.shared[channel], f.infoRefusal
+		shared, member, refusal := f.shared[channel], !f.outside[channel], f.infoRefusal
 		f.mu.Unlock()
 		if refusal != "" {
 			return fmt.Sprintf(`{"ok":false,"error":%q}`, refusal)
 		}
-		return fmt.Sprintf(`{"ok":true,"channel":{"id":%q,"is_ext_shared":%t}}`, channel, shared)
+		return fmt.Sprintf(`{"ok":true,"channel":{"id":%q,"is_ext_shared":%t,"is_member":%t}}`, channel, shared, member)
 	case "conversations.history", "conversations.replies":
 		return f.page(c)
 	}
