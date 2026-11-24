@@ -17,7 +17,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 )
+
+// httpReadResult is an engine ReadResult of one read.
+const httpReadResult = `{"asked_at":"2026-11-24T10:00:00Z","results":[{"entity":{"type":"Person"}}],"stats":{"reads":1}}`
 
 // readsBackend answers the read routes' RPCs and keeps the last request each received.
 type readsBackend struct {
@@ -58,7 +62,8 @@ func (b *readsBackend) ListFoundryOntologies(_ context.Context, r *foundryv1.Lis
 func (b *readsBackend) GetFoundryOntology(_ context.Context, r *foundryv1.GetFoundryOntologyRequest, _ ...grpc.CallOption) (*foundryv1.FoundryOntologyResponse, error) {
 	b.saw("GetFoundryOntology", r)
 	return &foundryv1.FoundryOntologyResponse{Ontology: &foundryv1.FoundryOntology{
-		Id: "ontology-1", Name: "Sales", CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: "load-1"},
+		Id: "ontology-1", Name: "Sales", CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: "load-1", Version: "foundry-v2"},
+		LastLoad: &foundryv1.FoundryOntologyLastLoad{JobId: "load-1", Status: "succeeded"},
 	}}, nil
 }
 
@@ -66,12 +71,23 @@ func (b *readsBackend) GetCurrentOntologyVersion(context.Context, *foundryv1.Get
 	return &foundryv1.OntologyVersionResponse{}, nil
 }
 
+func (b *readsBackend) GetOntologyVersion(_ context.Context, r *foundryv1.GetOntologyVersionRequest, _ ...grpc.CallOption) (*foundryv1.OntologyVersionResponse, error) {
+	b.saw("GetOntologyVersion", r)
+	definition, err := structpb.NewStruct(map[string]any{"format": "agent_bundle", "status": "done", "ontology_toml": "[types.Person]\nkey = [\"email\"]"})
+	if err != nil {
+		return nil, err
+	}
+	return &foundryv1.OntologyVersionResponse{Version: &foundryv1.OntologyVersion{
+		Id: r.GetId(), Version: 2, Format: foundryv1.OntologyFormat_ONTOLOGY_FORMAT_AGENT_BUNDLE, Definition: definition,
+	}}, nil
+}
+
 func (b *readsBackend) ListOntologyVersions(context.Context, *foundryv1.ListOntologyVersionsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyVersionsResponse, error) {
 	return &foundryv1.ListOntologyVersionsResponse{}, nil
 }
 
 func (b *readsBackend) ListFoundryLoads(context.Context, *foundryv1.ListFoundryLoadsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryLoadsResponse, error) {
-	return &foundryv1.ListFoundryLoadsResponse{}, nil
+	return &foundryv1.ListFoundryLoadsResponse{Loads: []*foundryv1.FoundryLoad{{Id: "load-1", VersionId: "version-2", Version: "foundry-v2", Status: "ready"}}}, nil
 }
 
 func (b *readsBackend) ListOntologyGenerations(context.Context, *foundryv1.ListOntologyGenerationsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyGenerationsResponse, error) {
@@ -89,7 +105,7 @@ func (b *readsBackend) ListFoundryDocumentSets(_ context.Context, r *foundryv1.L
 
 func (b *readsBackend) GetFoundryLoad(_ context.Context, r *foundryv1.GetFoundryLoadRequest, _ ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
 	b.saw("GetFoundryLoad", r)
-	return &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: r.GetId(), Status: "ready"}}, nil
+	return &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: r.GetId(), VersionId: "version-2", Version: "foundry-v2", Status: "ready"}}, nil
 }
 
 func (b *readsBackend) ReadFoundryGraph(ctx context.Context, r *foundryv1.ReadFoundryGraphRequest, _ ...grpc.CallOption) (*foundryv1.ReadFoundryGraphResponse, error) {
@@ -102,12 +118,12 @@ func (b *readsBackend) ReadFoundryGraph(ctx context.Context, r *foundryv1.ReadFo
 			return nil, ctx.Err()
 		}
 	}
-	return &foundryv1.ReadFoundryGraphResponse{ResultJson: `[{"entity":{"type":"Person"}}]`}, nil
+	return &foundryv1.ReadFoundryGraphResponse{ResultJson: httpReadResult}, nil
 }
 
 func (b *readsBackend) ListFoundryOntologyDocuments(_ context.Context, r *foundryv1.ListFoundryOntologyDocumentsRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error) {
 	b.saw("ListFoundryOntologyDocuments", r)
-	return &foundryv1.ListFoundryDocumentsResponse{Documents: []*foundryv1.FoundryDocument{{Id: "doc-1", Name: "a.md"}}}, nil
+	return &foundryv1.ListFoundryDocumentsResponse{Documents: []*foundryv1.FoundryDocument{{Id: "doc-1", Name: "a.md", Status: "uploaded"}}}, nil
 }
 
 func (b *readsBackend) ListFoundryDocuments(_ context.Context, r *foundryv1.ListFoundryDocumentsRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error) {
@@ -117,7 +133,7 @@ func (b *readsBackend) ListFoundryDocuments(_ context.Context, r *foundryv1.List
 
 func (b *readsBackend) GetFoundryOntologyDocument(_ context.Context, r *foundryv1.GetFoundryOntologyDocumentRequest, _ ...grpc.CallOption) (*foundryv1.FoundryDocumentResponse, error) {
 	b.saw("GetFoundryOntologyDocument", r)
-	return &foundryv1.FoundryDocumentResponse{Document: &foundryv1.FoundryDocument{Id: r.GetId(), Name: "a.md", SetId: b.docSet}}, nil
+	return &foundryv1.FoundryDocumentResponse{Document: &foundryv1.FoundryDocument{Id: r.GetId(), Name: "a.md", Status: "uploaded", SetId: b.docSet}}, nil
 }
 
 func (b *readsBackend) GetFoundryDocumentContent(_ context.Context, r *foundryv1.GetFoundryDocumentContentRequest, _ ...grpc.CallOption) (*foundryv1.GetFoundryDocumentContentResponse, error) {
@@ -230,13 +246,19 @@ func TestHTTPReadRoutes(t *testing.T) {
 		assert.JSONEq(t, `[{"entity":{"type":"Person","name":"Ada"}}]`, req.GetReadsJson())
 		out := decoded(t, w)
 		assert.Equal(t, "load-1", out["load_id"])
-		assert.Equal(t, []any{map[string]any{"entity": map[string]any{"type": "Person"}}}, out["result"])
+		assert.Equal(t, []any{map[string]any{"entity": map[string]any{"type": "Person"}}}, out["result"].(map[string]any)["results"])
 
 		w = h.do(t, "POST", "/v1/ontologies/ontology-1/reads", `{"reads":[{"entity":{"type":"Person","name":"Ada"}}],"load_id":"load-7","valid_at":"2026-01-02"}`)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		req = h.backend.last("ReadFoundryGraph").(*foundryv1.ReadFoundryGraphRequest)
 		assert.Equal(t, "load-7", req.GetLoadId())
 		assert.Equal(t, "2026-01-02", req.GetValidAt())
+	})
+	t.Run("an integer past 2^53 in a read reaches the backend exactly", func(t *testing.T) {
+		h := readsFixture(t, false, false)
+		w := h.do(t, "POST", "/v1/ontologies/ontology-1/reads", `{"reads":[{"entity":{"type":"Order","key":9007199254740993}}]}`)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		assert.Contains(t, h.backend.last("ReadFoundryGraph").(*foundryv1.ReadFoundryGraphRequest).GetReadsJson(), "9007199254740993")
 	})
 	t.Run("a load, waited for or not", func(t *testing.T) {
 		h := readsFixture(t, false, false)
@@ -296,6 +318,8 @@ func TestHTTPReadRoutesRefuseMalformedRequests(t *testing.T) {
 		{"two objects", "POST", "/v1/ontologies/ontology-1/reads", `{"reads":[{"entity":{}}]}{}`, "exactly one JSON object"},
 		{"a malformed read", "POST", "/v1/ontologies/ontology-1/reads", `{"reads":[{"nonsense":{}}]}`, ""},
 		{"too many reads", "POST", "/v1/ontologies/ontology-1/reads", `{"reads":[` + strings.TrimSuffix(strings.Repeat(`{"entity":{"type":"P","name":"a"}},`, 21), ",") + `]}`, ""},
+		{"a semicolon in the query", "GET", "/v1/ontologies/ontology-1/documents?set_id=set-1;x=1", "", "query string is malformed"},
+		{"a bad escape in the query", "GET", "/v1/ontologies/ontology-1/questions?thread_id=%zz", "", "query string is malformed"},
 		{"malformed load", "GET", "/v1/ontologies/ontology-1/loads/bad!id", "", ""},
 		{"malformed document", "GET", "/v1/ontologies/ontology-1/documents/bad!id", "", ""},
 	} {
@@ -458,10 +482,11 @@ func TestHTTPCallerLimits(t *testing.T) {
 			_, err := limits.admit(fmt.Sprintf("idle-%d", i), false)
 			require.NoError(t, err)
 		}
-		// Every caller spent one request a moment ago, so none is idle yet: a new one is still
-		// admitted, untracked.
+		// Every caller spent one request a moment ago, so none is idle yet: a new one is refused,
+		// never let through unlimited.
 		_, err := limits.admit("new", false)
-		require.NoError(t, err)
+		require.Error(t, err)
+		assert.Equal(t, errCodeResourceExhausted, stableErrorCode(err))
 		assert.Len(t, limits.callers, httpCallerCapacity)
 		assert.NotContains(t, limits.callers, "new")
 		for _, c := range limits.callers {

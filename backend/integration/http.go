@@ -55,9 +55,10 @@ const (
 	// local install) has no such limit.
 	httpCallerRate  = 10
 	httpCallerBurst = 20
-	// httpCallerReads is how many graph reads one caller runs at once on one replica: half of
-	// what the workspace may (foundryread.MaxReadsPerWorkspace), so one integration never takes
-	// every read the workspace's own people make.
+	// httpCallerReads is how many graph reads one caller runs at once on one replica of this
+	// handler: half of what a workspace may run on a replica of the reader
+	// (foundryread.MaxReadsPerWorkspace). It bounds what one integration takes of them; with
+	// several replicas of this handler in front of one reader, it bounds it to its share.
 	httpCallerReads = 2
 	// httpCallerCapacity bounds the callers tracked on one replica.
 	httpCallerCapacity = 10_000
@@ -353,9 +354,14 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, route httpRoute, resolve 
 	}
 }
 
-// httpQuery refuses a query parameter the route doesn't take, or one given twice.
+// httpQuery refuses a query that doesn't parse (URL.Query drops such pairs, a semicolon's
+// included, which would read as absent), a parameter the route doesn't take, or one given twice.
 func httpQuery(r *http.Request, names []string) error {
-	for name, values := range r.URL.Query() {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return invalidHTTPRequest("the query string is malformed")
+	}
+	for name, values := range query {
 		if !slices.Contains(names, name) {
 			return invalidHTTPRequest("unknown query parameter " + strconv.Quote(name))
 		}
@@ -367,8 +373,9 @@ func httpQuery(r *http.Request, names []string) error {
 }
 
 // httpCallerLimits are each caller's limits on one replica: httpCallerRate requests a second, and
-// httpCallerReads graph reads at once. They are kept in memory, per replica, and stored nowhere;
-// a replica tracks at most httpCallerCapacity callers, forgetting idle ones first.
+// httpCallerReads graph reads at once. They are kept in memory, per replica, and stored nowhere.
+// A replica tracks at most httpCallerCapacity callers: full, it forgets the idle ones, and while
+// none is idle it refuses a new caller rather than let it through unlimited.
 type httpCallerLimits struct {
 	mu      sync.Mutex
 	callers map[string]*httpCallerLimit
@@ -399,10 +406,11 @@ func (l *httpCallerLimits) admit(caller string, read bool) (func(), error) {
 				return c.reads == 0 && c.requests.Tokens() >= httpCallerBurst
 			})
 		}
-		limit = &httpCallerLimit{requests: rate.NewLimiter(httpCallerRate, httpCallerBurst)}
-		if len(l.callers) < httpCallerCapacity {
-			l.callers[caller] = limit
+		if len(l.callers) >= httpCallerCapacity {
+			return nil, detailedToolError{code: errCodeResourceExhausted, message: "too many credentials are reading at once; retry shortly"}
 		}
+		limit = &httpCallerLimit{requests: rate.NewLimiter(httpCallerRate, httpCallerBurst)}
+		l.callers[caller] = limit
 	}
 	if !limit.requests.Allow() {
 		return nil, detailedToolError{code: errCodeResourceExhausted,
@@ -459,6 +467,8 @@ func (q httpRequest) body(into any, invalid string) error {
 	_ = http.NewResponseController(q.w).SetReadDeadline(deadline)
 	decoder := json.NewDecoder(http.MaxBytesReader(q.w, r.Body, httpMaxBody))
 	decoder.DisallowUnknownFields()
+	// A read's key or condition may be an integer past 2^53, which a float64 would round.
+	decoder.UseNumber()
 	if err := decoder.Decode(into); err != nil {
 		return httpBodyError(r, err, invalid)
 	}

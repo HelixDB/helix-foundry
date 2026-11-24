@@ -241,6 +241,9 @@
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
           },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
           "412": {
             "$ref": "#/components/responses/PreconditionFailed"
           },
@@ -683,7 +686,7 @@
     "/v1/ontologies/{ontologyId}/questions": {
       "get": {
         "operationId": "listFoundryQuestions",
-        "summary": "Questions the credential asked of the ontology, newest first.",
+        "summary": "Questions asked of the ontology, newest first: a grantee's own, or every one for a credential with query-read on its project.",
         "parameters": [
           {
             "name": "ontologyId",
@@ -1036,29 +1039,6 @@
           }
         }
       },
-      "LoadRef": {
-        "type": "object",
-        "required": [
-          "id",
-          "status"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "version_id": {
-            "type": "string"
-          },
-          "finished_at": {
-            "type": "string"
-          }
-        },
-        "description": "A load: one write of a version into the ontology's database.",
-        "additionalProperties": true
-      },
       "Ontology": {
         "type": "object",
         "required": [
@@ -1105,10 +1085,10 @@
             "description": "The credential's source grants cover only part of the current load: answers describe that part."
           },
           "current_load": {
-            "$ref": "#/components/schemas/LoadRef"
+            "$ref": "#/components/schemas/CurrentLoad"
           },
           "last_load": {
-            "$ref": "#/components/schemas/LoadRef"
+            "$ref": "#/components/schemas/LastLoad"
           },
           "documents": {
             "type": "integer"
@@ -1212,7 +1192,8 @@
             "type": "string"
           },
           "version": {
-            "type": "integer"
+            "type": "string",
+            "description": "Its version, foundry-v<n>."
           },
           "status": {
             "type": "string",
@@ -1389,12 +1370,33 @@
             "description": "The load read."
           },
           "result": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            },
-            "description": "One outcome per read, in order, as contract/ontology_agent/read_result.json. An integer past 2^53 comes as a string of its digits."
+            "type": "object",
+            "required": [
+              "asked_at",
+              "results",
+              "stats"
+            ],
+            "additionalProperties": true,
+            "description": "The ontology agent's ReadResult (contract/ontology_agent/read_result.json): results holds one outcome per read, in order, with asked_at, stats and, when asked, valid_at. An integer past 2^53 comes as a string of its digits.",
+            "properties": {
+              "asked_at": {
+                "type": "string"
+              },
+              "valid_at": {
+                "type": "string"
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "stats": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
           }
         },
         "additionalProperties": true
@@ -1579,7 +1581,7 @@
           },
           "text": {
             "type": "string",
-            "description": "Its text as uploaded, at most 1 MiB; a PDF's is its pages' text with a form feed (U+000C) between pages. A table file or other binary type has none: the call is 412."
+            "description": "Its text as uploaded, a table file's (CSV, TSV, JSON, JSONL) included, at most its type's cap (1 MiB of Markdown or plain text, 3 MiB of the others); a PDF's is its pages' text with a form feed (U+000C) between pages, once read. Parquet has none, nor a PDF still being read or that couldn't be: the call is 412."
           }
         },
         "additionalProperties": true
@@ -1603,7 +1605,7 @@
             "items": {
               "$ref": "#/components/schemas/Question"
             },
-            "description": "Newest first, without their results; read one for its result."
+            "description": "Newest first, without their results; read one for its result. A grantee of source grants lists its own questions; a credential with query-read on the ontology's project lists every question asked of it."
           },
           "next_page_token": {
             "type": "string"
@@ -1615,11 +1617,52 @@
           }
         },
         "additionalProperties": true
+      },
+      "CurrentLoad": {
+        "type": "object",
+        "required": [
+          "id",
+          "version"
+        ],
+        "additionalProperties": true,
+        "description": "The load reads and questions read.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "Its version, foundry-v<n>."
+          },
+          "finished_at": {
+            "type": "string"
+          }
+        }
+      },
+      "LastLoad": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "additionalProperties": true,
+        "description": "The newest load job, whatever became of it.",
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": "string"
+          }
+        }
       }
     },
     "responses": {
       "BadRequest": {
-        "description": "Malformed id, query parameter or body.",
+        "description": "Malformed id, query string or body.",
         "content": {
           "application/json": {
             "schema": {
@@ -1707,6 +1750,16 @@
       },
       "Internal": {
         "description": "Internal error.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "The request body was not received within 10 seconds.",
         "content": {
           "application/json": {
             "schema": {

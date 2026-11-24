@@ -68,12 +68,17 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 	api := integration.NewHTTPHandler(func(r *http.Request, ontologyID string) (integration.HTTPCall, error) {
 		if ontologyID == "" {
 			// The routes of the caller's workspace read the install's one workspace.
-			workspaceID := onlyWorkspace(dir)(r.Context())
-			if workspaceID == "" {
+			workspaces, err := dir.ListWorkspaces(r.Context(), "", 2)
+			switch {
+			case err != nil:
+				return integration.HTTPCall{}, err
+			case len(workspaces) == 0:
+				return integration.HTTPCall{}, integration.FoundryError(status.Error(codes.FailedPrecondition, "this install has no workspace yet"))
+			case len(workspaces) > 1:
 				return integration.HTTPCall{}, integration.FoundryError(status.Error(codes.FailedPrecondition,
 					"this install has more than one workspace; read each ontology by its id"))
 			}
-			return integration.HTTPCall{Context: r.Context(), Service: service, Identity: identity, WorkspaceID: workspaceID}, nil
+			return integration.HTTPCall{Context: r.Context(), Service: service, Identity: identity, WorkspaceID: workspaces[0].ID}, nil
 		}
 		if !integration.ValidIDs([]string{ontologyID}) {
 			return integration.HTTPCall{}, integration.FoundryError(status.Error(codes.InvalidArgument, "invalid ontology id"))

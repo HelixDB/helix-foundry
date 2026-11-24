@@ -659,8 +659,9 @@ type ListFoundryDocumentsOutput struct {
 type GetFoundryDocumentTextOutput struct {
 	ContentTrust string                `json:"content_trust"`
 	Document     FoundryDocumentOutput `json:"document"`
-	// Text is its text as uploaded (a PDF's, its pages' text with a form feed between pages), at
-	// most 1 MiB; a table file or another binary type has none, and the call is then refused.
+	// Text is its text as uploaded, a table file's (CSV, TSV, JSON, JSONL) included, at most its
+	// type's cap; a PDF's is its pages' text with a form feed between pages, once read. Parquet
+	// has none, nor a PDF not yet read, and the call is then refused.
 	Text string `json:"text"`
 }
 
