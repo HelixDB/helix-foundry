@@ -108,7 +108,7 @@ import {
 import { aiModel, aiRefusal, draftFailure } from "./ai";
 import { currentLoadVersionId, liveJob, queueLoad } from "./loads";
 import { comparableSchema, reviseDefinition } from "./ontology-revise";
-import { fillFinding } from "./suggestions";
+import { fillFinding } from "./heal-fills";
 import { checkAnswers, type CheckedAnswer } from "../agent-questions";
 import {
   ENGINE_QUESTIONS,
