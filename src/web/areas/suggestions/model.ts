@@ -44,7 +44,8 @@ export type Suggestion = {
   loadId: string;
   // Add this link in place (contract 4.32.0): the link it adds, its set and
   // the description it starts from; none where the finding gathers under a
-  // link the version has (a description draft), or names no relationship.
+  // link the version has (a description draft), names no relationship, or
+  // the backend says nothing of its state (adding in place is off there).
   addLink?: { link: string; setId: string; describe: string };
   // Where that stands in the current load; none from a backend that says
   // nothing of it.
@@ -239,7 +240,7 @@ export function suggestion(
     spellings,
     proposal,
     addLink:
-      canonical && text(signal.set) && addsInPlace(record.proposal)
+      canonical && text(signal.set) && f.state && addsInPlace(record.proposal)
         ? {
             link: canonical,
             setId: text(signal.set),

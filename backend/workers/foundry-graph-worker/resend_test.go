@@ -1231,7 +1231,7 @@ func moving(h *harness) *model.OntologyVersion {
 	h.store.versions = map[string]*model.OntologyVersion{"ver-4": v4}
 	h.store.moveOwed = &model.FoundryHealFill{ID: "fill-1", OntologyID: "ont-1", LoadID: "load-0", FromVersionID: "ver-3", ToVersionID: "ver-4",
 		State: model.FoundryFillMoving, ToVersion: 4}
-	h.store.askedApart = map[string][]string{"ver-4": {"ceo_of"}}
+	h.store.askedApart = map[string][]string{"load-0": {"ceo_of"}}
 	return v4
 }
 
@@ -1272,6 +1272,9 @@ func TestResendMovesTheLoadInPlace(t *testing.T) {
 		}
 		if move.Documents == nil {
 			t.Fatal("a move sends documents as [], not null")
+		}
+		if len(move.Decisions) != 0 || len(rest.Decisions) != 1 {
+			t.Fatalf("decisions: the move sent %d, the rest %d", len(move.Decisions), len(rest.Decisions))
 		}
 		if rest.Fold != nil || rest.OntologyVersion != "foundry-v4" || !slices.Equal(rest.AskedApart, []string{"ceo_of"}) {
 			t.Fatalf("the rest sent at %s, fold %v, asked apart %v", rest.OntologyVersion, rest.Fold, rest.AskedApart)
@@ -1318,6 +1321,42 @@ func TestResendMovesTheLoadInPlace(t *testing.T) {
 			}
 		})
 	}
+	// The engine's marker at a version a move of Foundry's recorded, whose
+	// row never followed: put right, and the job tries again at it.
+	t.Run("a marker elsewhere a recorded move put there", func(t *testing.T) {
+		h := newHarness(t)
+		moving(h)
+		h.store.reconciles = map[string]bool{"foundry-v9": true}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{foldEvent(`{"kind":"marker_elsewhere","version":"foundry-v9"}`), `{"event":"extract_finished"}`},
+				`{"status":"load_mismatch","stored_version":"foundry-v9"}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || !strings.Contains(outcome.Error, "moved to foundry-v9 in place") {
+			t.Fatalf("%+v", outcome)
+		}
+		if len(h.store.moves) != 0 {
+			t.Fatalf("recorded %+v", h.store.moves)
+		}
+	})
+	// The lease lost after the engine moved the marker: nothing recorded, the
+	// job tries again, and the move sent again finds the marker moved.
+	t.Run("a lease lost after the fold", func(t *testing.T) {
+		h := newHarness(t)
+		moving(h)
+		h.store.moveErr = foundrystore.ErrNotFound
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{foldEvent(`{"kind":"moved","links_added":["ceo_of"]}`), `{"event":"extract_finished"}`},
+				`{"status":"done","totals":`+totals+`}`)
+		}
+		outcome := h.run(t, resendJob())
+		if outcome.Status == model.FoundryGraphJobSucceeded || !strings.Contains(outcome.Error, "lease was lost") {
+			t.Fatalf("%+v", outcome)
+		}
+		if h.store.moveOwed == nil {
+			t.Fatal("the move is owed still")
+		}
+	})
 	// No word on the move: the job tries again, and records nothing.
 	t.Run("an agent that says nothing of the move", func(t *testing.T) {
 		h := newHarness(t)

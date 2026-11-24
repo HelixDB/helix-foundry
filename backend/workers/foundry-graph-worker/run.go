@@ -83,7 +83,7 @@ type store interface {
 	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 	FoundryLoadMoveOwed(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
 	RecordFoundryLoadMove(ctx context.Context, jobID, workerID string, fill *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error
-	FoundryAskedApart(ctx context.Context, ontologyID, versionID string) ([]string, error)
+	FoundryAskedApart(ctx context.Context, loadID string) ([]string, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -393,7 +393,7 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 			}
 		}
 	}
-	if a.askedApart, err = r.db.FoundryAskedApart(ctx, job.OntologyID, job.VersionID); err != nil {
+	if a.askedApart, err = r.db.FoundryAskedApart(ctx, job.LoadID); err != nil {
 		return a, retry("could not read the links the version asks apart; Helix will retry", err)
 	}
 	binding, target, stop, err := r.serve(ctx, job, a)
@@ -424,7 +424,7 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 				return a, permanent("the version the load moved to is not an ontology agent draft", err)
 			}
 			ontologyVersion = fmt.Sprintf("foundry-v%d", version.Version)
-			if a.askedApart, err = r.db.FoundryAskedApart(ctx, job.OntologyID, job.VersionID); err != nil {
+			if a.askedApart, err = r.db.FoundryAskedApart(ctx, job.LoadID); err != nil {
 				return a, retry("could not read the links the version asks apart; Helix will retry", err)
 			}
 		}
@@ -1377,7 +1377,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 
 // move sends the move in place the job's load owes, if any
 // (model.FoundryResendMove, a suggestion's "Add this link"): one Extract of
-// no documents with the load's decisions and fold, which spends nothing, at
+// no documents and no decisions, with fold, which spends nothing, at
 // the version the load moves to. The engine moves its marker if the change
 // only adds (contract 4.32.0), and its fold event says what came of it, which
 // RecordFoundryLoadMove records in one transaction with the load's and the
@@ -1415,10 +1415,6 @@ func (r *runner) move(ctx context.Context, job *model.FoundryGraphJob, binding g
 	if err != nil {
 		return false, err
 	}
-	decisions, err := r.decisions(ctx, job, toDef.OntologyTOML, nil, a)
-	if err != nil {
-		return false, err
-	}
 	resolved, err := r.ai.ResolveServed(ctx, job.WorkspaceID, providers)
 	if err != nil {
 		c := ai.ResolveFailure(err).Logged(ctx, err)
@@ -1428,7 +1424,8 @@ func (r *runner) move(ctx context.Context, job *model.FoundryGraphJob, binding g
 	body, err := json.Marshal(ontologyagent.ExtractRequest{
 		RequestID: job.ID + ":move", Database: binding.TenantID, Load: job.LoadID, OntologyTOML: toDef.OntologyTOML,
 		OntologyVersion: label(to), MappingsTOML: toDef.MappingsTOML, Helix: target, Documents: []ontologyagent.ExtractDocument{},
-		Decisions: decisions,
+		// A move in place does nothing else (contract 4.32.0): no decision goes
+		// with it, so none is applied that this call wouldn't record.
 		Limits: ontologyagent.ExtractLimits{
 			MaxUSD: 0, DocumentsInFlight: uint64(r.cfg.Foundry.Graph.DocumentsInFlight), MaxTextBytes: uint64(r.cfg.Foundry.Documents.MaxBytes),
 		},
@@ -1469,6 +1466,14 @@ func (r *runner) move(ctx context.Context, job *model.FoundryGraphJob, binding g
 	case ontologyagent.FoldNotAdditive:
 		outcome = model.FoundryFoldOutcome{State: model.FoundryFillNeedsLoad, Why: folded.Outcome.Why}
 	case ontologyagent.FoldMarkerElsewhere:
+		// A move Foundry recorded and whose row never followed its marker:
+		// put right, the job tries again at that version.
+		switch reconciled, err := r.db.ReconcileFoundryLoadMarker(ctx, job.LoadID, folded.Outcome.Version); {
+		case err != nil:
+			return false, retry("could not read the load's version; Helix will retry", err)
+		case reconciled:
+			return false, retry(fmt.Sprintf("the load moved to %s in place; Helix will retry at it", folded.Outcome.Version), nil)
+		}
 		outcome = model.FoundryFoldOutcome{State: model.FoundryFillNeedsLoad,
 			Why: []model.FoundryFoldWhy{{Kind: ontologyagent.FoldMarkerElsewhere, Item: folded.Outcome.Version}}}
 	default:

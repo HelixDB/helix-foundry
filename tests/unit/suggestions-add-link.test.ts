@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as toml from "smol-toml";
 import { readAgentBundle } from "@/web/areas/ontology/model";
+import { suggestion } from "@/web/areas/suggestions/model";
 import {
   addLinkEdits,
   cardState,
@@ -167,9 +168,50 @@ describe("cardState", () => {
     expect(whyText({ kind: "marker_elsewhere", item: "foundry-v3" })).toBe(
       "the load holds foundry-v3",
     );
+    expect(whyText({ kind: "load_moved", item: "4" })).toBe(
+      "the load moved to version 4 for another suggestion",
+    );
+    expect(whyText({ kind: "move_failed", item: "agent down" })).toBe(
+      "moving the load failed",
+    );
+    expect(whyText({ kind: "link_referenced", item: "links.ceo_of" })).toBe(
+      "rules or other links read links.ceo_of",
+    );
     expect(whyText({ kind: "a_later_kind", item: "x.y" })).toBe(
       "a later kind x.y",
     );
     expect(whyText({})).toBe("");
+  });
+});
+
+describe("a suggestion's Add this link in place", () => {
+  const finding = (state?: object, proposal: object | null = null) => ({
+    fingerprint: "f".repeat(64),
+    kind: "unmatched",
+    status: "open",
+    support: "3",
+    sources: "3",
+    findingJson: JSON.stringify({
+      signal: {
+        kind: "unmatched",
+        canonical: "mentors",
+        set: "set_1",
+        backing: { count: 3, sources: 3, examples: [] },
+      },
+      proposal,
+    }),
+    ...(state && { state }),
+  });
+
+  it("is offered only where the backend says its state", () => {
+    expect(suggestion(finding()).addLink).toBeUndefined();
+    expect(suggestion(finding({ open: {} })).addLink).toEqual({
+      link: "mentors",
+      setId: "set_1",
+      describe: "Mentors, as documents state it.",
+    });
+    // Gathered under a link the version has: Generate drafts it.
+    const route = { proposal: "route", set: "set_1", links: ["works_at"] };
+    expect(suggestion(finding({ open: {} }, route)).addLink).toBeUndefined();
   });
 });

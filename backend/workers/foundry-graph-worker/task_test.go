@@ -314,6 +314,8 @@ type memStore struct {
 	// recorded of moves.
 	moveOwed *model.FoundryHealFill
 	moves    []model.FoundryFoldOutcome
+	// moveErr is what recording a move returns: a lost lease, say.
+	moveErr error
 	// askedApart are the links each version asks apart, by its id.
 	askedApart map[string][]string
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
@@ -642,12 +644,15 @@ func (s *memStore) FoundryLoadMoveOwed(context.Context, string) (*model.FoundryH
 func (s *memStore) RecordFoundryLoadMove(_ context.Context, _, _ string, _ *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.moveErr != nil {
+		return s.moveErr
+	}
 	s.moves, s.moveOwed = append(s.moves, outcome), nil
 	return nil
 }
 
-func (s *memStore) FoundryAskedApart(_ context.Context, _, versionID string) ([]string, error) {
-	return s.askedApart[versionID], nil
+func (s *memStore) FoundryAskedApart(_ context.Context, loadID string) ([]string, error) {
+	return s.askedApart[loadID], nil
 }
 
 func (s *memStore) GetOntologyVersion(_ context.Context, ontologyID, id string) (*model.OntologyVersion, error) {

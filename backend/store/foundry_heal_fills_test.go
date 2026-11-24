@@ -3,9 +3,9 @@ package store_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -224,12 +224,9 @@ func TestFoundryLoadMovesInPlaceForAFinding(t *testing.T) {
 	require.Contains(t, fills, fp)
 	assert.Equal(t, model.FoundryFillMoved, fills[fp].State)
 	assert.Equal(t, []string{"ceo_of"}, fills[fp].LinksAdded)
-	asked, err := f.db.FoundryAskedApart(ctx, f.ontology.ID, to.ID)
+	asked, err := f.db.FoundryAskedApart(ctx, f.load)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ceo_of"}, asked)
-	asked, err = f.db.FoundryAskedApart(ctx, f.ontology.ID, from)
-	require.NoError(t, err)
-	assert.Empty(t, asked)
 	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "moved", model.FoundryGraphJobSucceeded))
 	assert.Nil(t, f.liveJob(t), "nothing more is owed")
 	// Pressed again: the load is at the version, so nothing moves.
@@ -245,7 +242,22 @@ func TestFoundryLoadMovesInPlaceForAFinding(t *testing.T) {
 	job = f.claim(t)
 	require.NoError(t, f.db.RecordFoundryLoadMove(ctx, job.ID, f.worker, fill,
 		model.FoundryFoldOutcome{State: model.FoundryFillMoved, LinksAdded: []string{"cfo_of"}}))
-	asked, err = f.db.FoundryAskedApart(ctx, f.ontology.ID, next.ID)
+	asked, err = f.db.FoundryAskedApart(ctx, f.load)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ceo_of", "cfo_of"}, asked)
+	f.end(t, job, "moved-again", model.FoundryGraphJobSucceeded)
+	// A load a person makes at that version asks no link apart: its
+	// documents' saved work holds no call of them, so it asks them with the
+	// rest. A refresh of the moved load replays what it asked.
+	fresh := loadJob(f.ontology, "MOVE-FRESH")
+	fresh.VersionID = next.ID
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, fresh))
+	asked, err = f.db.FoundryAskedApart(ctx, fresh.LoadID)
+	require.NoError(t, err)
+	assert.Empty(t, asked)
+	_, err = testDB.Exec(`UPDATE foundry_loads SET origin='refresh', refreshes_load_id=? WHERE id=?`, f.load, fresh.LoadID)
+	require.NoError(t, err)
+	asked, err = f.db.FoundryAskedApart(ctx, fresh.LoadID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ceo_of", "cfo_of"}, asked)
 }
@@ -294,8 +306,9 @@ func TestFoundryLoadMoveRefused(t *testing.T) {
 }
 
 // A resend job that fails leaves the move owed, unlike what it ends, and
-// queues no job for it alone: the next job that ends sends it. Past three
-// failed jobs the move is given up as needing a load.
+// queues no job for it alone: the next job that ends sends it. Nothing is
+// pressed meanwhile, whatever the finding: the fold may have moved the
+// marker, and repair reads the versions it was sent with.
 func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "MOVEF")
@@ -303,6 +316,8 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	f.generated(t, from, "customers")
 	to := f.draftVersion(t, "MOVEF-2", customerTOML)
 	f.generated(t, to.ID, "customers")
+	other := f.draftVersion(t, "MOVEF-3", customerTOML)
+	f.generated(t, other.ID, "customers")
 	_, err := f.press(t, "1", to.ID, f.ontologyNow(t).CurrentVersionID, fingerprint("MOVEF"))
 	require.NoError(t, err)
 	job := f.claim(t)
@@ -312,20 +327,115 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
 	require.NoError(t, err)
 	require.NotNil(t, owed)
-	// Pressed again, it is sent again; two more failures give it up.
-	for i := range 2 {
-		_, err := f.press(t, fmt.Sprint("again", i), to.ID, &to.ID, fingerprint("MOVEF"))
-		require.NoError(t, err)
-		f.end(t, f.claim(t), fmt.Sprint("failed", i), model.FoundryGraphJobFailed)
+	// The marker may be ahead now: no press rewrites the versions, of this
+	// finding or another.
+	for _, fp := range []string{fingerprint("MOVEF"), fingerprint("OTHER")} {
+		_, err = f.press(t, "again", other.ID, &to.ID, fp)
+		var refused *store.FillRefusal
+		require.ErrorAs(t, err, &refused)
+		assert.Contains(t, refused.Why, "moving to another version")
 	}
+	fills, err := f.db.ListFoundryHealFills(ctx, f.load)
+	require.NoError(t, err)
+	assert.Equal(t, to.ID, fills[fingerprint("MOVEF")].ToVersionID)
+	assert.Equal(t, to.ID, *f.ontologyNow(t).CurrentVersionID, "a refused press changes nothing")
+}
+
+// Past three failed jobs a move is given up as needing a load, its error kept
+// whole to a character's edge; pressed again it is refused. Should its fold
+// have moved the marker after all, the next mismatch puts the load right from
+// the row it gave up on, and the move is owed again, to record its links.
+func TestFoundryLoadMoveGivenUpThenRepaired(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "MOVEG")
+	from, _ := f.loadVersion(t)
+	f.generated(t, from, "customers")
+	to := f.draftVersion(t, "MOVEG-2", customerTOML)
+	f.generated(t, to.ID, "customers")
+	_, err := f.press(t, "1", to.ID, f.ontologyNow(t).CurrentVersionID, fingerprint("MOVEG"))
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET failures=2 WHERE load_id=?`, f.load)
+	require.NoError(t, err)
+	job := f.claim(t)
+	// Two bytes a character, cut at byte 200 lands between them unless cut on an edge.
+	said := "x" + strings.Repeat("é", 150)
+	_, err = f.db.FinishFoundryGraphJob(ctx, job.ID, f.worker, model.FoundryGraphJobOutcome{
+		Status: model.FoundryGraphJobFailed, Error: said, Next: next("given-up"),
+	})
+	require.NoError(t, err)
 	assert.Zero(t, f.moveOwed(t))
 	fills, err := f.db.ListFoundryHealFills(ctx, f.load)
 	require.NoError(t, err)
-	fill := fills[fingerprint("MOVEF")]
+	fill := fills[fingerprint("MOVEG")]
 	assert.Equal(t, model.FoundryFillNeedsLoad, fill.State)
 	require.Len(t, fill.Why, 1)
 	assert.Equal(t, "move_failed", fill.Why[0].Kind)
-	assert.Nil(t, f.liveJob(t))
+	assert.True(t, utf8.ValidString(fill.Why[0].Item) && len(fill.Why[0].Item) <= 200 && strings.HasPrefix(said, fill.Why[0].Item),
+		"%q", fill.Why[0].Item)
+	_, err = f.press(t, "2", to.ID, &to.ID, fingerprint("MOVEG"))
+	var refused *store.FillRefusal
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Why, "failed")
+	// The marker had moved: repaired from the row, whatever its state.
+	got, err := f.db.GetOntologyVersion(ctx, f.ontology.ID, to.ID)
+	require.NoError(t, err)
+	reconciled, err := f.db.ReconcileFoundryLoadMarker(ctx, f.load, (&model.FoundryLoad{Version: got.Version}).OntologyVersion())
+	require.NoError(t, err)
+	assert.True(t, reconciled)
+	load, _ := f.loadVersion(t)
+	assert.Equal(t, to.ID, load)
+	fills, err = f.db.ListFoundryHealFills(ctx, f.load)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryFillMoving, fills[fingerprint("MOVEG")].State)
+	assert.Equal(t, 1, f.moveOwed(t))
+	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
+	require.NoError(t, err)
+	require.NotNil(t, owed)
+	assert.Equal(t, to.ID, owed.ToVersionID, "the move to the version the load holds first")
+}
+
+// Two findings' moves from one version: the one recorded moved answers the
+// other, moved where it was to the same version, else needing a load as the
+// load moved elsewhere. A move recorded for a load at neither version is
+// refused, for the job to try again.
+func TestFoundryLoadMovesFromOneVersion(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "MOVE2")
+	from, _ := f.loadVersion(t)
+	f.generated(t, from, "customers")
+	to := f.draftVersion(t, "MOVE2-2", customerTOML)
+	f.generated(t, to.ID, "customers")
+	third := f.draftVersion(t, "MOVE2-3", customerTOML)
+	f.generated(t, third.ID, "customers")
+	a, err := f.press(t, "1", to.ID, f.ontologyNow(t).CurrentVersionID, fingerprint("MOVEA"))
+	require.NoError(t, err)
+	// Rows a carry may leave: another to the same version, one to another.
+	for tag, version := range map[string]string{"MOVEB": to.ID, "MOVEC": third.ID} {
+		_, err = testDB.Exec(`INSERT INTO foundry_heal_fills (id, ontology_id, load_id, fingerprint, from_version_id, to_version_id, state)
+VALUES (?, ?, ?, ?, ?, ?, 'moving')`, id26("HF-"+tag), f.ontology.ID, f.load, fingerprint(tag), from, version)
+		require.NoError(t, err)
+	}
+	job := f.claim(t)
+	// A load at neither version records nothing.
+	_, err = testDB.Exec(`UPDATE foundry_loads SET version_id=? WHERE id=?`, third.ID, f.load)
+	require.NoError(t, err)
+	err = f.db.RecordFoundryLoadMove(ctx, job.ID, f.worker, a, model.FoundryFoldOutcome{State: model.FoundryFillMoved, LinksAdded: []string{"ceo_of"}})
+	assert.ErrorIs(t, err, store.ErrConflict)
+	_, err = testDB.Exec(`UPDATE foundry_loads SET version_id=? WHERE id=?`, from, f.load)
+	require.NoError(t, err)
+	require.NoError(t, f.db.RecordFoundryLoadMove(ctx, job.ID, f.worker, a,
+		model.FoundryFoldOutcome{State: model.FoundryFillMoved, LinksAdded: []string{"ceo_of"}}))
+	fills, err := f.db.ListFoundryHealFills(ctx, f.load)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryFillMoved, fills[fingerprint("MOVEA")].State)
+	assert.Equal(t, model.FoundryFillMoved, fills[fingerprint("MOVEB")].State)
+	assert.Equal(t, []string{"ceo_of"}, fills[fingerprint("MOVEB")].LinksAdded)
+	c := fills[fingerprint("MOVEC")]
+	assert.Equal(t, model.FoundryFillNeedsLoad, c.State)
+	require.Len(t, c.Why, 1)
+	assert.Equal(t, "load_moved", c.Why[0].Kind)
+	assert.Equal(t, third.ID, c.ToVersionID, "its versions kept")
+	assert.Zero(t, f.moveOwed(t), "nothing moves now")
 }
 
 // A load that replaces the current one as a job ends, of the version a move

@@ -443,7 +443,7 @@ type Store interface {
 		resend *model.FoundryGraphJob) (*model.FoundryHealFill, error)
 	FoundryLoadMoveOwed(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
 	RecordFoundryLoadMove(ctx context.Context, jobID, workerID string, fill *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error
-	FoundryAskedApart(ctx context.Context, ontologyID, versionID string) ([]string, error)
+	FoundryAskedApart(ctx context.Context, loadID string) ([]string, error)
 	ListFoundryHealFills(ctx context.Context, loadID string) (map[string]*model.FoundryHealFill, error)
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error

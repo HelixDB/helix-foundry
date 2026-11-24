@@ -247,8 +247,11 @@ func TestListFoundryHealFindingsStates(t *testing.T) {
 		return &foundrymodel.FoundryHealFinding{Fingerprint: fp, Kind: kind, Status: foundrymodel.FoundryHealStatus(status), Support: 3, Sources: 3,
 			Finding: json.RawMessage(`{"signal":{"kind":"` + kind + `","canonical":"mentors","set":"set_1"}}`)}
 	}
+	on := true
 	states := func(s *stateStore) map[string]string {
-		svc := &Service{deps: &runtimeDeps{DB: s, Cfg: &config.Config{}}}
+		cfg := &config.Config{}
+		cfg.Foundry.Heal.Enabled, cfg.Foundry.Heal.AddInPlace = true, on
+		svc := &Service{deps: &runtimeDeps{DB: s, Cfg: cfg}}
 		out, err := svc.ListFoundryHealFindings(context.Background(), &foundryv1.ListFoundryHealFindingsRequest{WorkspaceId: "ws-1", OntologyId: "o1"})
 		if err != nil {
 			t.Fatal(err)
@@ -281,9 +284,36 @@ func TestListFoundryHealFindingsStates(t *testing.T) {
 	if got := states(s); got["cc"] != `{"State":{"Moving":{"version_id":"v2","version":2}}}` {
 		t.Fatalf("a superseded finding being filled: %v", got)
 	}
-	// A rebuild at the version that states it.
+	// A rebuild at the version that states it, or a load that moved there
+	// for another finding while this one's move was answered needs_load.
 	s.load.VersionID = "v2"
+	s.fills["aa"] = &foundrymodel.FoundryHealFill{Fingerprint: "aa", ToVersionID: "v3", ToVersion: 3, State: foundrymodel.FoundryFillNeedsLoad,
+		Why: []foundrymodel.FoundryFoldWhy{{Kind: "load_moved", Item: "2"}}}
 	if got := states(s); got["aa"] != `{"State":{"Moved":{"version_id":"v2","version":2,"links_added":["mentors"]}}}` {
 		t.Fatalf("a load of a version that states it: %v", got)
+	}
+	// Off, no finding carries a state.
+	on = false
+	if got := states(s); got["aa"] != "null" || got["bb"] != "null" {
+		t.Fatalf("off: %v", got)
+	}
+}
+
+// Off, a press is refused before anything is read or written.
+func TestSetCurrentFillingIsOffUnlessOn(t *testing.T) {
+	_, db := newHealService()
+	for name, heal := range map[string]config.HealConfig{
+		"heal off":         {AddInPlace: true},
+		"add in place off": {Enabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Foundry.Heal = heal
+			svc := &Service{deps: &runtimeDeps{DB: db, Cfg: cfg}}
+			_, err := svc.setCurrentFilling(context.Background(), db.ontology, &foundrymodel.OntologyVersion{ID: "v2"}, nil, "fp1", nil)
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("err = %v", err)
+			}
+		})
 	}
 }

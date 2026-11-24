@@ -107,7 +107,7 @@ func (u Unimplemented) RecordFoundryLoadMove(context.Context, string, string, *m
 	u.unimplemented("RecordFoundryLoadMove")
 	return nil
 }
-func (u Unimplemented) FoundryAskedApart(context.Context, string, string) ([]string, error) {
+func (u Unimplemented) FoundryAskedApart(context.Context, string) ([]string, error) {
 	u.unimplemented("FoundryAskedApart")
 	return nil, nil
 }

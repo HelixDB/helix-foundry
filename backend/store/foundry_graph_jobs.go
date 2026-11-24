@@ -543,6 +543,10 @@ WHERE load_id=? AND (kind='prop' AND applied_status IN ('pending', 'carried', 'r
 				return err
 			}
 		}
+		// What this attempt ended with, which the job's row read before it lacks.
+		if outcome.Error != "" {
+			job.Error = &outcome.Error
+		}
 		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets, outcome.ModelUnread); err != nil {
 			return err
 		}

@@ -31,9 +31,12 @@ func (s *Service) ListFoundryHealFindings(ctx context.Context, req *foundryv1.Li
 		return nil, status.Errorf(codes.Internal, "list heal findings: %v", err)
 	}
 	out := &foundryv1.ListFoundryHealFindingsResponse{Enabled: s.deps.Cfg.Foundry.Heal.Enabled}
-	states, findings, err := s.healFindingStates(ctx, o, findings)
-	if err != nil {
-		return nil, err
+	// Off, no finding carries a state: its card drafts with the agent.
+	states := map[string]foundrymodel.FoundryFindingState{}
+	if s.deps.Cfg.Foundry.Heal.AddInPlace {
+		if states, findings, err = s.healFindingStates(ctx, o, findings); err != nil {
+			return nil, err
+		}
 	}
 	for _, f := range findings {
 		p := foundryHealFindingProto(f)
@@ -191,7 +194,9 @@ func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.Foundry
 		if !ok {
 			continue
 		}
-		if fills[f.Fingerprint] == nil && ontologyagent.StatesLink(ownDef.OntologyTOML, ownDef.MappingsTOML, canonical, set) {
+		// The load's version states it: moved, whatever a move of it says (one
+		// to another version that states it too answered it).
+		if ontologyagent.StatesLink(ownDef.OntologyTOML, ownDef.MappingsTOML, canonical, set) {
 			states[f.Fingerprint] = foundrymodel.FoundryFindingMoved{
 				Version:    foundrymodel.FoundryVersionRef{ID: own.ID, Version: own.Version},
 				LinksAdded: []string{canonical},

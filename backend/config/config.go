@@ -310,6 +310,12 @@ type HealConfig struct {
 	// Enabled is the deployment's switch, off by default: off, no audit
 	// runs and no finding is stored, even where the worker is a task.
 	Enabled bool `koanf:"enabled"`
+	// AddInPlace lets a finding's "Add this link" move the current load in
+	// place to the version that adds the link (contract 4.32.0's fold), off
+	// by default and only with Enabled. Off, the binary is its rollback
+	// floor: no move is pressed, findings carry no state and the card drafts
+	// with the agent, while moves already made stay as they are and are read.
+	AddInPlace bool `koanf:"add_in_place"`
 	// PollInterval is how often the worker looks for loads due an audit.
 	PollInterval time.Duration `koanf:"poll_interval"`
 	// Every is how long after a load's last complete audit started it is

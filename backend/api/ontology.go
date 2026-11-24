@@ -254,6 +254,9 @@ func (s *Service) SetCurrentOntologyVersion(ctx context.Context, req *foundryv1.
 // The finding must be the ontology's.
 func (s *Service) setCurrentFilling(ctx context.Context, o *foundrymodel.FoundryOntology, v *foundrymodel.OntologyVersion, expected *string,
 	fingerprint string, scope []string) (*foundryv1.OntologyVersionResponse, error) {
+	if heal := s.deps.Cfg.Foundry.Heal; !heal.Enabled || !heal.AddInPlace {
+		return nil, status.Error(codes.FailedPrecondition, "adding a link in place is off in this deployment")
+	}
 	switch _, err := s.deps.DB.GetFoundryHealFinding(ctx, o.ID, fingerprint); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "finding not found")
@@ -265,6 +268,10 @@ func (s *Service) setCurrentFilling(ctx context.Context, o *foundrymodel.Foundry
 		resend.RequestedByUserID = &userID
 	}
 	_, err := s.deps.DB.SetCurrentOntologyVersionFilling(ctx, o.WorkspaceID, o.ID, v.ID, expected, fingerprint, resend)
+	var refused *foundrystore.FillRefusal
+	if errors.As(err, &refused) {
+		return nil, status.Error(codes.FailedPrecondition, refused.Why)
+	}
 	if errors.Is(err, foundrystore.ErrConflict) {
 		return nil, status.Error(codes.FailedPrecondition, "the current ontology changed since you loaded it; reload and try again")
 	}

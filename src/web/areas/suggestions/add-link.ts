@@ -167,6 +167,9 @@ const WHY: Record<string, (item: string) => string> = {
   link_required: (i) => `${i} is required`,
   link_derived: (i) => `${i} derives other links`,
   link_read_by_mapping: (i) => `${i} is stated by a table`,
+  link_referenced: (i) => `rules or other links read ${i}`,
+  load_moved: (i) => `the load moved to version ${i} for another suggestion`,
+  move_failed: () => "moving the load failed",
   document_sets: () => "it reads other document sets",
   sources: (i) =>
     `it reads other ${i === "table_files" ? "table files" : "tables"}`,
