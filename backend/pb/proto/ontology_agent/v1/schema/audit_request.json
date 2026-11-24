@@ -17,7 +17,7 @@
       }
     },
     "documents_for": {
-      "description": "Relationships no link covers whose documents to list, each by its set and the spellings\nof its suggestions (a finding's): every document of the page with a review of one, in\n`documents_of`, in this order, however many back the finding. Foundry fills a link\nadded for a finding with them.",
+      "description": "Relationships no link covers whose documents to list, each by its set and the spellings\nof its suggestions (a finding's): every document of the page with a review of one, in\n`documents_of`, in this order, however many back the finding. Foundry fills a link\nadded for a finding with them. A request that lists documents does only that: it groups\nand resolves nothing, so its findings are none and its page costs one read of its\nreviews.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/DocumentsFor"
