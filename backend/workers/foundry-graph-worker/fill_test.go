@@ -150,25 +150,37 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 			}
 		})
 	}
-	// A budget the run spent leaves the documents it didn't reach owed.
-	t.Run("a budget spent mid-run", func(t *testing.T) {
-		h := newHarness(t)
-		filling(h, "doc-a", "doc-b")
-		h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
-			return extractEvents(stream, []string{filledEvent("doc-a", `{"kind":"written"}`, 1, 0, 1), held("doc-a"), `{"event":"extract_finished"}`},
-				`{"status":"budget_exhausted","totals":`+totals+`}`)
-		}
-		outcome := h.run(t, resendJob())
-		if outcome.Status != model.FoundryGraphJobSucceeded {
-			t.Fatalf("%+v", outcome)
-		}
-		if len(h.store.fillEnded) != 1 || len(h.store.links) != 1 || h.store.links[0].DocumentID != "doc-b" {
-			t.Fatalf("ended %+v, owed %+v", h.store.fillEnded, h.store.links)
-		}
-		if h.store.fill.State != model.FoundryFillApplying {
-			t.Fatalf("fill %s", h.store.fill.State)
-		}
-	})
+	// A run that spends its budget: bound by the fill's own cap, the fill
+	// stops, what it didn't reach no longer owed; bound by the day's, it
+	// pauses, still owed. No job follows one that could afford nothing.
+	for name, c := range map[string]struct {
+		daySpent int64
+		stopped  string
+		owed     int
+	}{
+		"bound by the fill's cap": {stopped: model.FoundryFillCapReached},
+		"bound by the day's":      {daySpent: int64((model.FoundryFillDailyCapUSD - 1) * 1e6), owed: 1},
+	} {
+		t.Run("a budget spent mid-run, "+name, func(t *testing.T) {
+			h := newHarness(t)
+			filling(h, "doc-a", "doc-b")
+			h.store.fillSpend = c.daySpent
+			h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
+				return extractEvents(stream, []string{filledEvent("doc-a", `{"kind":"written"}`, 1, 0, 1), held("doc-a"), `{"event":"extract_finished"}`},
+					`{"status":"budget_exhausted","totals":`+totals+`}`)
+			}
+			outcome := h.run(t, resendJob())
+			if outcome.Status != model.FoundryGraphJobSucceeded {
+				t.Fatalf("%+v", outcome)
+			}
+			if len(h.store.fillEnded) != 1 || len(h.store.links) != c.owed || h.store.fillStop != c.stopped {
+				t.Fatalf("ended %+v, owed %+v, stopped %q", h.store.fillEnded, h.store.links, h.store.fillStop)
+			}
+			if (h.store.fillPause != nil) != (c.owed == 1) {
+				t.Fatalf("paused %v", h.store.fillPause)
+			}
+		})
+	}
 	// The workspace's own provider refusing its key fails the job, the
 	// document still owed, for the fill to back off.
 	t.Run("a model that refuses the workspace's key", func(t *testing.T) {

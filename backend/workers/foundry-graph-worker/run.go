@@ -1440,8 +1440,8 @@ func (r *runner) fill(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	for n, chunk := 1, owed; len(chunk) > 0 && r.now().Sub(started) < model.FoundryFillJobWall; n++ {
 		part := chunk[:min(len(chunk), model.FoundryFillDocsPerExtract)]
 		chunk = chunk[len(part):]
-		maxUSD, stopped, err := r.fillBudget(ctx, job, a)
-		if err != nil || stopped {
+		maxUSD, bound, err := r.fillBudget(ctx, job, a)
+		if err != nil || bound == fillStopped {
 			return err
 		}
 		var docs []*model.FoundryDocument
@@ -1485,66 +1485,98 @@ func (r *runner) fill(ctx context.Context, job *model.FoundryGraphJob, def ontol
 			return err
 		}
 		if exhausted {
-			// A document needed more than the budget left: the next budget
-			// says whether the fill stops or pauses.
-			_, _, err := r.fillBudget(ctx, job, a)
-			return err
+			// A document needed more than the budget left: what bound it
+			// says whether the fill stops (its own cap), pauses (the day's),
+			// or goes on in the next job (the job's), so no job follows
+			// another that can afford nothing.
+			return r.fillSpent(ctx, job, bound)
 		}
 	}
 	return nil
 }
 
-// fillBudget is what the next Extract of the load's fill may spend: the
-// least of what the fill's cap leaves (model.FoundryFillCapUSD), what the
-// ontology's fills may still spend today (model.FoundryFillDailyCapUSD, its
-// resend jobs' spend over 24 hours, this one's so far), and the job's and
-// the workspace's month caps (budget). stopped is a fill that can't go on
-// now: past its cap it stops (model.FoundryFillCapReached), its documents no
-// longer owed; past the day's, or the month's, it pauses until a day later,
-// still owed, and the heal worker resumes it.
-func (r *runner) fillBudget(ctx context.Context, job *model.FoundryGraphJob, a *attempt) (maxUSD float64, stopped bool, err error) {
+// fillBound is which cap bounds a fill's next Extract (fillBudget).
+type fillBound int
+
+const (
+	// fillStopped: none is left; the fill stopped or paused already.
+	fillStopped fillBound = iota
+	// fillOwn: the fill's own cap.
+	fillOwn
+	// fillDay: the ontology's fills' day.
+	fillDay
+	// fillJob: the job's, or the workspace's month, as budget gives it.
+	fillJob
+)
+
+// fillBudget is what the next Extract of the load's fill may spend, and
+// which cap bounds it: the least of what the fill's cap leaves
+// (model.FoundryFillCapUSD), what the ontology's fills may still spend
+// today (model.FoundryFillDailyCapUSD, its resend jobs' spend over 24 hours,
+// this one's so far), and the job's and the workspace's month caps
+// (budget). A fill that can't go on now is fillStopped: past its cap it
+// stops (model.FoundryFillCapReached), its documents no longer owed; past
+// the day's, or the month's, it pauses until a day later, still owed, and
+// the heal worker resumes it.
+func (r *runner) fillBudget(ctx context.Context, job *model.FoundryGraphJob, a *attempt) (maxUSD float64, bound fillBound, err error) {
 	fill, err := r.db.FoundryFillApplying(ctx, job.LoadID)
 	if err != nil {
-		return 0, false, retry("could not read the load's fill; Helix will retry", err)
+		return 0, fillStopped, retry("could not read the load's fill; Helix will retry", err)
 	}
 	if fill == nil {
-		return 0, true, nil
-	}
-	lost := func(err error) error {
-		if errors.Is(err, foundrystore.ErrNotFound) {
-			return retry("the job's lease was lost", err)
-		}
-		return retry("could not record the fill's budget; Helix will retry", err)
+		return 0, fillStopped, nil
 	}
 	fillLeft := fill.CapUSD - fill.SpentUSD
 	if fillLeft <= 0 {
-		if err := r.db.StopFoundryFill(ctx, job.ID, r.workerID, job.LoadID, model.FoundryFillCapReached); err != nil {
-			return 0, false, lost(err)
-		}
-		log.From(ctx).Info("graph job: a fill spent its cap", "job", job.ID, "load", job.LoadID, "spent", fill.SpentUSD)
-		return 0, true, nil
+		return 0, fillStopped, r.fillSpent(ctx, job, fillOwn)
 	}
-	now := r.now()
-	day, err := r.db.SumFoundryFillSpend(ctx, job.OntologyID, now.Add(-24*time.Hour))
+	day, err := r.db.SumFoundryFillSpend(ctx, job.OntologyID, r.now().Add(-24*time.Hour))
 	if err != nil {
-		return 0, false, retry("could not read the day's spend; Helix will retry", err)
+		return 0, fillStopped, retry("could not read the day's spend; Helix will retry", err)
 	}
 	// The job's row counts what its documents spent as each is recorded
 	// (store.RecordFoundryFillDocument), this attempt's included.
 	dayLeft := model.FoundryFillDailyCapUSD - float64(day)/1e6
 	jobLeft, spent, err := r.budget(ctx, job, a)
 	if err != nil {
-		return 0, false, err
+		return 0, fillStopped, err
 	}
 	if dayLeft <= 0 || spent != nil {
-		if err := r.db.PauseFoundryFill(ctx, job.ID, r.workerID, job.LoadID, now.Add(24*time.Hour)); err != nil {
-			return 0, false, lost(err)
-		}
-		log.From(ctx).Info("graph job: a fill paused for a day", "job", job.ID, "load", job.LoadID, "day_left", dayLeft,
-			"cap", spent != nil)
-		return 0, true, nil
+		return 0, fillStopped, r.fillSpent(ctx, job, fillDay)
 	}
-	return min(fillLeft, dayLeft, jobLeft), false, nil
+	switch least := min(fillLeft, dayLeft, jobLeft); least {
+	case fillLeft:
+		return least, fillOwn, nil
+	case dayLeft:
+		return least, fillDay, nil
+	default:
+		return least, fillJob, nil
+	}
+}
+
+// fillSpent ends what the load's fill may do now, bound spent: its own cap
+// stops it (model.FoundryFillCapReached), its documents no longer owed; the
+// day's, or the workspace's month, pauses it a day, still owed; the job's
+// leaves it to the next job, which has its own.
+func (r *runner) fillSpent(ctx context.Context, job *model.FoundryGraphJob, bound fillBound) error {
+	var err error
+	switch bound {
+	case fillOwn:
+		err = r.db.StopFoundryFill(ctx, job.ID, r.workerID, job.LoadID, model.FoundryFillCapReached)
+		log.From(ctx).Info("graph job: a fill spent its cap", "job", job.ID, "load", job.LoadID)
+	case fillDay:
+		err = r.db.PauseFoundryFill(ctx, job.ID, r.workerID, job.LoadID, r.now().Add(24*time.Hour))
+		log.From(ctx).Info("graph job: a fill paused for a day", "job", job.ID, "load", job.LoadID)
+	default:
+		return nil
+	}
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return retry("the job's lease was lost", err)
+	}
+	if err != nil {
+		return retry("could not record the fill's budget; Helix will retry", err)
+	}
+	return nil
 }
 
 // recordFill records what the engine said of a document it was sent to be
