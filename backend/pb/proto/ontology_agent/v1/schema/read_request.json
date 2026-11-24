@@ -647,6 +647,54 @@
         "prop"
       ]
     },
+    "HeldRows": {
+      "description": "Some rows of one source a reader holds: those whose row key's `field` is one of the items.\n\nA row is told by its key as the load stored it, the mapping's `row_key` fields' key texts\nescaped and joined by `|` (a nested mapping's after its parent's and a `/`), so nothing a\nload writes changes for it. The component at `field`'s place in the `row_key` of the mapping\nthat read the row (of its root mapping, for a nested one: the source's row its records come\nfrom) is held when it is one of `values`, each read as the field is read (trimmed), or starts\nwith one of `prefixes`, as given. A mapping whose `row_key` doesn't name `field`, or names\nnone, holds none of the source's rows, and neither does a key of another shape. The\n`row_key` read is the request's `mappings_toml`'s, the load's own version's, which wrote\nevery row of the load.\n\nIn JSON, `{\"source\", \"field\", \"values\": [...]}` or `{\"source\", \"field\", \"prefixes\": [...]}`.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "The row-key field that tells a row's item, as a mapping's `row_key` names it: a row is\nheld by the component of its key at that field's place (for a nested mapping, in its\nroot mapping's part of the key). A mapping of the source whose `row_key` lacks it holds\nnone of its rows.",
+          "type": "string"
+        },
+        "prefixes": {
+          "description": "Rows whose field starts with one of these, as given, each ending with the separator\nthat ends the item (`C1:`); never empty text, which would hold every row. Empty: none.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "source": {
+          "description": "The source, by the id mappings read it by; not in `sources`, and named once among\n`rows`.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Rows whose field is one of these, each trimmed and read as the field is before it is\ncompared. Empty: none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "values"
+          ]
+        },
+        {
+          "required": [
+            "prefixes"
+          ]
+        }
+      ],
+      "required": [
+        "source",
+        "field"
+      ]
+    },
     "HelixTarget": {
       "description": "Where the graph is written: the backend's proxy for one Helix database.",
       "type": "object",
@@ -1247,6 +1295,14 @@
           "description": "Whether it holds People enrichment's profiles.",
           "type": "boolean",
           "default": false
+        },
+        "rows": {
+          "description": "The tables it holds only some rows of, each told by a field of their row key\n([`HeldRows`]). A source is held whole (`sources`) or by its rows, never both, and is\nnamed here once.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/HeldRows"
+          }
         },
         "sets": {
           "description": "The document sets it holds a document of: a route that reads only other sets reads\nnothing it holds.",
