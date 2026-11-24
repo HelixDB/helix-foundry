@@ -162,6 +162,24 @@
       ]
     },
     {
+      "description": "What came of moving the load in place ([`ExtractRequest::fold`]), before anything\nelse of the run.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "fold"
+        },
+        "outcome": {
+          "description": "What came of it.",
+          "$ref": "#/$defs/Folded"
+        }
+      },
+      "required": [
+        "event",
+        "outcome"
+      ]
+    },
+    {
       "description": "The run ended; the result follows.",
       "type": "object",
       "properties": {
@@ -472,6 +490,71 @@
         "output_tokens",
         "replayed",
         "phases"
+      ]
+    },
+    "Folded": {
+      "description": "What came of moving a load in place ([`ExtractEvent::Fold`]).",
+      "oneOf": [
+        {
+          "description": "The load records the request's version now, gaining these links, which none of its\ndocuments was asked: by this run, or by an earlier one.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "moved"
+            },
+            "links_added": {
+              "description": "The links added, or newly routed, by name.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "links_added"
+          ]
+        },
+        {
+          "description": "The change adds more than that: nothing was written.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_additive"
+            },
+            "why": {
+              "description": "What needs a new load, in file then table order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Why"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "why"
+          ]
+        },
+        {
+          "description": "The load records neither version, but this one: nothing was written.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "marker_elsewhere"
+            },
+            "version": {
+              "description": "The version it records.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "version"
+          ]
+        }
       ]
     },
     "ModelFailure": {
@@ -1049,6 +1132,120 @@
         "part_name",
         "created",
         "carried"
+      ]
+    },
+    "Why": {
+      "description": "One reason a version needs a new load: its kind, and the item, as a dotted path.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "description": "Where, as a dotted path of its table.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What changed.",
+          "$ref": "#/$defs/WhyKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "item"
+      ]
+    },
+    "WhyKind": {
+      "description": "What a version changes that needs a new load ([`Why`]).",
+      "oneOf": [
+        {
+          "description": "A link the base declares is gone.",
+          "type": "string",
+          "const": "link_removed"
+        },
+        {
+          "description": "A link both declare changed past its description.",
+          "type": "string",
+          "const": "link_changed"
+        },
+        {
+          "description": "A type was added.",
+          "type": "string",
+          "const": "type_added"
+        },
+        {
+          "description": "A type both declare changed past its description and new properties, or a type is gone.",
+          "type": "string",
+          "const": "type_changed"
+        },
+        {
+          "description": "A type gained a property.",
+          "type": "string",
+          "const": "prop_added"
+        },
+        {
+          "description": "The description of a type or link a route reads changed: its calls change.",
+          "type": "string",
+          "const": "routed_description"
+        },
+        {
+          "description": "A route changed past gaining the links added.",
+          "type": "string",
+          "const": "route_changed"
+        },
+        {
+          "description": "A route may now resolve a type it didn't.",
+          "type": "string",
+          "const": "resolve_type_added"
+        },
+        {
+          "description": "A relation was added, removed or changed.",
+          "type": "string",
+          "const": "relation"
+        },
+        {
+          "description": "An enrichment item was added, removed or changed.",
+          "type": "string",
+          "const": "enrichment"
+        },
+        {
+          "description": "A rule was added, removed or changed.",
+          "type": "string",
+          "const": "rule"
+        },
+        {
+          "description": "A constraint was added, removed or changed.",
+          "type": "string",
+          "const": "constraint"
+        },
+        {
+          "description": "A mapping of rows was added, removed or changed.",
+          "type": "string",
+          "const": "mapping"
+        },
+        {
+          "description": "The mappings' header changed: the ontology they name, or a key they lack.",
+          "type": "string",
+          "const": "mapping_header"
+        },
+        {
+          "description": "A link added is required.",
+          "type": "string",
+          "const": "link_required"
+        },
+        {
+          "description": "A link added derives others, or is derived.",
+          "type": "string",
+          "const": "link_derived"
+        },
+        {
+          "description": "A link added is stated by a mapping's rows or an enrichment's work history.",
+          "type": "string",
+          "const": "link_read_by_mapping"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
       ]
     }
   }

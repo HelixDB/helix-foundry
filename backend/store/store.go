@@ -439,6 +439,12 @@ type Store interface {
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
 	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
+	SetCurrentOntologyVersionFilling(ctx context.Context, workspaceID, ontologyID, versionID string, expected *string, fingerprint string,
+		resend *model.FoundryGraphJob) (*model.FoundryHealFill, error)
+	FoundryLoadMoveOwed(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
+	RecordFoundryLoadMove(ctx context.Context, jobID, workerID string, fill *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error
+	FoundryAskedApart(ctx context.Context, ontologyID, versionID string) ([]string, error)
+	ListFoundryHealFills(ctx context.Context, loadID string) (map[string]*model.FoundryHealFill, error)
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
 	RequestFoundryReviewPasses(ctx context.Context) (int, error)

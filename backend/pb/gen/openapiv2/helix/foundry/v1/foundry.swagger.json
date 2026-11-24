@@ -7878,6 +7878,10 @@
         "expectedCurrentVersionId": {
           "type": "string",
           "description": "The version the caller saw as current; empty for none. A mismatch is FailedPrecondition."
+        },
+        "fillFinding": {
+          "type": "string",
+          "description": "A self-healing finding's fingerprint, from its card's \"Add this link\":\nthe ontology's current load then moves in place to the version, when\nthe version only adds what none of its documents was asked (a link, a\nroute reading it, descriptions no route reads), with no new load and no\nmodel call. The finding's state says how the move goes\n(FoundryHealFinding.state). Empty, the call is as before: a load is\npinned to the version it was created with. A version already current is\naccepted again, owing the move. NOT_FOUND for a fingerprint the ontology\nhas no finding of."
         }
       }
     },
@@ -11567,6 +11571,17 @@
       "default": "FOUNDRY_FILE_READ_STATE_UNSPECIFIED",
       "description": "FoundryFileReadState is what reading a document has come to.\n\n - FOUNDRY_FILE_READ_STATE_READY: Ontologies can read it: text, or a file whose read succeeded (a PDF's\ntext is then on :content).\n - FOUNDRY_FILE_READ_STATE_READING: Being read, or waiting to be (retrying says when after a failure). A\ngeneration started now leaves it out; a load waits for a PDF, and reads\nit once its read ends.\n - FOUNDRY_FILE_READ_STATE_FAILED: It can't be read: error says why, and a load records the PDF failed\nwith the same code. Upload a fixed file, or fix a connection's at its\nsource for its next sync to read again."
     },
+    "v1FoundryFoldWhy": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        }
+      }
+    },
     "v1FoundryGraphJob": {
       "type": "object",
       "properties": {
@@ -11677,6 +11692,10 @@
         "supportAtDismissal": {
           "type": "string",
           "format": "int64"
+        },
+        "state": {
+          "$ref": "#/definitions/v1FoundryHealFindingState",
+          "description": "Where its card's \"Add this link\" stands in the current load; unset for\na finding that names no relationship to add."
         }
       },
       "description": "FoundryHealFinding is one finding, named by its fingerprint, which the\nengine keeps the same across versions, loads and pages."
@@ -11688,6 +11707,74 @@
           "$ref": "#/definitions/v1FoundryHealFinding"
         }
       }
+    },
+    "v1FoundryHealFindingState": {
+      "type": "object",
+      "properties": {
+        "open": {
+          "$ref": "#/definitions/v1FoundryHealOpen",
+          "description": "Nothing done yet: Add this link."
+        },
+        "covered": {
+          "$ref": "#/definitions/v1FoundryHealVersion",
+          "description": "A version that adds the link exists, newer than the current one, and\nisn't current yet: make it current and move the load to it."
+        },
+        "moving": {
+          "$ref": "#/definitions/v1FoundryHealVersion",
+          "description": "The current load is moving to the version (a resend job owes it)."
+        },
+        "moved": {
+          "$ref": "#/definitions/v1FoundryHealMoved",
+          "description": "The current load moved to the version: documents read from now on\nstate the link. Those loaded before keep their reviews."
+        },
+        "needsLoad": {
+          "$ref": "#/definitions/v1FoundryHealNeedsLoad",
+          "description": "The load can't move: a new load of the version is needed, for why."
+        }
+      },
+      "description": "FoundryHealFindingState is where a finding's \"Add this link\" stands in\nthe ontology's current load, derived from the finding and the load's\nmove for it; nothing stores it."
+    },
+    "v1FoundryHealMoved": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        },
+        "linksAdded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The links the load gained."
+        }
+      }
+    },
+    "v1FoundryHealNeedsLoad": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryFoldWhy"
+          },
+          "description": "What needs a new load: the engine's kind and item (contract 4.32.0's\nfold why, such as type_added and types.Deal), or Foundry's own:\ndocument_sets, sources (tables or table_files), not_a_draft, or\nmarker_elsewhere with the version the load holds."
+        }
+      }
+    },
+    "v1FoundryHealOpen": {
+      "type": "object"
     },
     "v1FoundryHealRun": {
       "type": "object",
@@ -11725,6 +11812,19 @@
         }
       },
       "description": "FoundryHealRun is one audit of an ontology's load."
+    },
+    "v1FoundryHealVersion": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryHealVersion names a version, by id and number."
     },
     "v1FoundryLabelFact": {
       "type": "object",

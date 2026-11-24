@@ -710,8 +710,16 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 			_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting' WHERE id=?`, job.LoadID)
 			return err
 		}
+		was := o.CurrentLoadID
 		if err := s.makeFoundryLoadCurrent(ctx, o, job.LoadID); err != nil {
 			return err
+		}
+		// A move in place the load it replaces made, or had under way, from
+		// this load's version follows it (a rebuild queued before the move).
+		if was != nil && *was != job.LoadID {
+			if err := s.carryFoundryHealFills(ctx, o.ID, *was, job.LoadID); err != nil {
+				return err
+			}
 		}
 		// A refresh that replaced a refresh deletes it now, so refreshes never crowd out a customer's loads.
 		if refresh && replaced != nil {

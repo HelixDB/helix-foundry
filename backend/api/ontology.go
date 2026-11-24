@@ -232,10 +232,39 @@ func (s *Service) SetCurrentOntologyVersion(ctx context.Context, req *foundryv1.
 	if err != nil {
 		return nil, err
 	}
+	if fp := req.GetFillFinding(); fp != "" {
+		return s.setCurrentFilling(ctx, o, v, expected, fp, scope)
+	}
 	if expected != nil && *expected == v.ID && o.CurrentVersionID != nil && *o.CurrentVersionID == v.ID {
 		return ontologyResponse(v, true, loadEvidence(ctx, o), scope)
 	}
 	err = s.deps.DB.SetCurrentOntologyVersion(ctx, o.ID, v.ID, expected)
+	if errors.Is(err, foundrystore.ErrConflict) {
+		return nil, status.Error(codes.FailedPrecondition, "the current ontology changed since you loaded it; reload and try again")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "set current ontology: %v", err)
+	}
+	return ontologyResponse(v, true, loadEvidence(ctx, o), scope)
+}
+
+// setCurrentFilling is SetCurrentOntologyVersion for a finding's "Add this
+// link": the version is made current, and the current load owes a move in
+// place to it, which a resend job sends (SetCurrentOntologyVersionFilling).
+// The finding must be the ontology's.
+func (s *Service) setCurrentFilling(ctx context.Context, o *foundrymodel.FoundryOntology, v *foundrymodel.OntologyVersion, expected *string,
+	fingerprint string, scope []string) (*foundryv1.OntologyVersionResponse, error) {
+	switch _, err := s.deps.DB.GetFoundryHealFinding(ctx, o.ID, fingerprint); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return nil, status.Error(codes.NotFound, "finding not found")
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "get heal finding: %v", err)
+	}
+	resend := &foundrymodel.FoundryGraphJob{ID: id.New()}
+	if userID := actor(ctx).UserID; userID != "" {
+		resend.RequestedByUserID = &userID
+	}
+	_, err := s.deps.DB.SetCurrentOntologyVersionFilling(ctx, o.WorkspaceID, o.ID, v.ID, expected, fingerprint, resend)
 	if errors.Is(err, foundrystore.ErrConflict) {
 		return nil, status.Error(codes.FailedPrecondition, "the current ontology changed since you loaded it; reload and try again")
 	}

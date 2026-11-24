@@ -1448,6 +1448,16 @@ message SetCurrentOntologyVersionRequest {
   // The version the caller saw as current; empty for none. A mismatch is FailedPrecondition.
   string expected_current_version_id = 3;
   string ontology_id = 4;
+  // A self-healing finding's fingerprint, from its card's "Add this link":
+  // the ontology's current load then moves in place to the version, when
+  // the version only adds what none of its documents was asked (a link, a
+  // route reading it, descriptions no route reads), with no new load and no
+  // model call. The finding's state says how the move goes
+  // (FoundryHealFinding.state). Empty, the call is as before: a load is
+  // pinned to the version it was created with. A version already current is
+  // accepted again, owing the move. NOT_FOUND for a fingerprint the ontology
+  // has no finding of.
+  string fill_finding = 5;
 }
 message ReviseOntologyVersionRequest {
   string workspace_id = 1;

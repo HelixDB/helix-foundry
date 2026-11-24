@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -29,8 +31,14 @@ func (s *Service) ListFoundryHealFindings(ctx context.Context, req *foundryv1.Li
 		return nil, status.Errorf(codes.Internal, "list heal findings: %v", err)
 	}
 	out := &foundryv1.ListFoundryHealFindingsResponse{Enabled: s.deps.Cfg.Foundry.Heal.Enabled}
+	states, findings, err := s.healFindingStates(ctx, o, findings)
+	if err != nil {
+		return nil, err
+	}
 	for _, f := range findings {
-		out.Findings = append(out.Findings, foundryHealFindingProto(f))
+		p := foundryHealFindingProto(f)
+		p.State = foundryHealStateProto(states[f.Fingerprint])
+		out.Findings = append(out.Findings, p)
 	}
 	for _, latest := range []struct {
 		get func(context.Context, string) (*foundrymodel.FoundryHealRun, error)
@@ -104,4 +112,133 @@ func foundryHealFindingProto(f *foundrymodel.FoundryHealFinding) *foundryv1.Foun
 		out.DismissedByUserId, out.SupportAtDismissal = &f.Dismissal.ByUserID, &f.Dismissal.Support
 	}
 	return out
+}
+
+// healFindingStates is where each finding's "Add this link" stands in the
+// ontology's current load (model.FoundryFindingStateOf), by fingerprint, for
+// the findings that name a relationship to add; and findings, with those
+// the load has a move for that the list lacks (dismissed or superseded
+// since), so a move's word stays shown. A version covers a finding when it
+// is the ontology's current version or its newest, isn't the load's, and
+// declares and routes the finding's link for its set
+// (ontologyagent.StatesLink).
+func (s *Service) healFindingStates(ctx context.Context, o *foundrymodel.FoundryOntology, findings []*foundrymodel.FoundryHealFinding) (
+	map[string]foundrymodel.FoundryFindingState, []*foundrymodel.FoundryHealFinding, error) {
+	states := map[string]foundrymodel.FoundryFindingState{}
+	if o.CurrentLoadID == nil {
+		return states, findings, nil
+	}
+	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, *o.CurrentLoadID)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return states, findings, nil
+	}
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "get current load: %v", err)
+	}
+	fills, err := s.deps.DB.ListFoundryHealFills(ctx, load.ID)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "list heal fills: %v", err)
+	}
+	listed := map[string]bool{}
+	for _, f := range findings {
+		listed[f.Fingerprint] = true
+	}
+	for fp := range fills {
+		if listed[fp] {
+			continue
+		}
+		switch f, err := s.deps.DB.GetFoundryHealFinding(ctx, o.ID, fp); {
+		case errors.Is(err, foundrystore.ErrNotFound):
+		case err != nil:
+			return nil, nil, status.Errorf(codes.Internal, "get heal finding: %v", err)
+		default:
+			findings = append(findings, f)
+		}
+	}
+	// The versions that may cover a finding, read once: the current one and
+	// the newest, of those that aren't the load's.
+	var candidates []*foundrymodel.OntologyVersion
+	newest, err := s.deps.DB.ListOntologyVersions(ctx, o.ID, 1)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "list versions: %v", err)
+	}
+	ids := []string{}
+	if len(newest) > 0 {
+		ids = append(ids, newest[0].ID)
+	}
+	if o.CurrentVersionID != nil && (len(ids) == 0 || ids[0] != *o.CurrentVersionID) {
+		ids = append(ids, *o.CurrentVersionID)
+	}
+	for _, id := range ids {
+		if id == load.VersionID {
+			continue
+		}
+		v, err := s.deps.DB.GetOntologyVersion(ctx, o.ID, id)
+		if err != nil {
+			return nil, nil, status.Errorf(codes.Internal, "get version: %v", err)
+		}
+		candidates = append(candidates, v)
+	}
+	for _, f := range findings {
+		canonical, set, ok := unmatchedLink(f)
+		if !ok {
+			continue
+		}
+		var covered *foundrymodel.FoundryVersionRef
+		for _, v := range candidates {
+			var def ontologyagent.Definition
+			if json.Unmarshal(v.Definition, &def) != nil || !ontologyagent.StatesLink(def.OntologyTOML, def.MappingsTOML, canonical, set) {
+				continue
+			}
+			covered = &foundrymodel.FoundryVersionRef{ID: v.ID, Version: v.Version}
+			break
+		}
+		states[f.Fingerprint] = foundrymodel.FoundryFindingStateOf(fills[f.Fingerprint], covered)
+	}
+	return states, findings, nil
+}
+
+// unmatchedLink is the link a relationship no link covers would be added
+// as, and the set its documents are of, from the engine's Finding: its
+// signal's canonical and set. ok is false for any other finding.
+func unmatchedLink(f *foundrymodel.FoundryHealFinding) (canonical, set string, ok bool) {
+	var finding struct {
+		Signal struct {
+			Kind      string `json:"kind"`
+			Canonical string `json:"canonical"`
+			Set       string `json:"set"`
+		} `json:"signal"`
+	}
+	if json.Unmarshal(f.Finding, &finding) != nil || finding.Signal.Kind != "unmatched" || finding.Signal.Canonical == "" {
+		return "", "", false
+	}
+	return finding.Signal.Canonical, finding.Signal.Set, true
+}
+
+// foundryHealStateProto is st on the wire; nil for none.
+func foundryHealStateProto(st foundrymodel.FoundryFindingState) *foundryv1.FoundryHealFindingState {
+	version := func(v foundrymodel.FoundryVersionRef) *foundryv1.FoundryHealVersion {
+		return &foundryv1.FoundryHealVersion{VersionId: v.ID, Version: int64(v.Version)}
+	}
+	switch st := st.(type) {
+	case foundrymodel.FoundryFindingOpen:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Open{Open: &foundryv1.FoundryHealOpen{}}}
+	case foundrymodel.FoundryFindingCovered:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Covered{Covered: version(st.Version)}}
+	case foundrymodel.FoundryFindingMoving:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Moving{Moving: version(st.Version)}}
+	case foundrymodel.FoundryFindingMoved:
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_Moved{Moved: &foundryv1.FoundryHealMoved{
+			VersionId: st.Version.ID, Version: int64(st.Version.Version), LinksAdded: st.LinksAdded,
+		}}}
+	case foundrymodel.FoundryFindingNeedsLoad:
+		why := make([]*foundryv1.FoundryFoldWhy, len(st.Why))
+		for i, w := range st.Why {
+			why[i] = &foundryv1.FoundryFoldWhy{Kind: w.Kind, Item: w.Item}
+		}
+		return &foundryv1.FoundryHealFindingState{State: &foundryv1.FoundryHealFindingState_NeedsLoad{NeedsLoad: &foundryv1.FoundryHealNeedsLoad{
+			VersionId: st.Version.ID, Version: int64(st.Version.Version), Why: why,
+		}}}
+	}
+	return nil
 }

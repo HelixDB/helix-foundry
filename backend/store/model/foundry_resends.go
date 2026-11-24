@@ -38,11 +38,24 @@ const FoundryResendDecisions FoundryResendReason = "decisions"
 // next load applies it.
 const FoundryResendName FoundryResendReason = "name"
 
+// FoundryResendMove is a move of the load in place to the version a
+// suggestion's "Add this link" made current (foundry_heal_fills, contract
+// 4.32.0's fold): it names no document (FoundryLoadResend.DocumentID is
+// empty), and a resend job sends it first, as one Extract of no documents
+// that spends nothing. Only the job's move ends it: a job that fails leaves
+// it owed (failFoundryResends), and the move sent again finds the load moved.
+const FoundryResendMove FoundryResendReason = "move"
+
 // FoundryResendKnown are the reasons this binary reads. A row of another
-// reason, as a later binary owes ('move', 'link'), is never listed, sent,
-// ended, failed or counted owed here: it stays as it is, for the binary that
-// knows it, so rolling back leaves it untouched.
-var FoundryResendKnown = []FoundryResendReason{FoundryResendApproval, FoundryResendDecisions, FoundryResendName}
+// reason, as a later binary owes ('link'), is never listed, sent, ended,
+// failed or counted owed here: it stays as it is, for the binary that knows
+// it, so rolling back leaves it untouched.
+var FoundryResendKnown = []FoundryResendReason{FoundryResendApproval, FoundryResendDecisions, FoundryResendName, FoundryResendMove}
+
+// FoundryResendFailEnds are the known reasons a failed resend job ends
+// (failFoundryResends): every one but a move, which waits for the job that
+// moves the load.
+var FoundryResendFailEnds = []FoundryResendReason{FoundryResendApproval, FoundryResendDecisions, FoundryResendName}
 
 // FoundryResendDocuments are the known reasons that owe a document: a resend
 // job sends each with its document. FoundryResendDecisions names none.

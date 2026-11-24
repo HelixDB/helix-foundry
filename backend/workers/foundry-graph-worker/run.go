@@ -81,6 +81,9 @@ type store interface {
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
 	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
+	FoundryLoadMoveOwed(ctx context.Context, loadID string) (*model.FoundryHealFill, error)
+	RecordFoundryLoadMove(ctx context.Context, jobID, workerID string, fill *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error
+	FoundryAskedApart(ctx context.Context, ontologyID, versionID string) ([]string, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -176,6 +179,9 @@ func unsupported(reason string) error {
 type attempt struct {
 	// ingestDone means the version's tables are in the load.
 	ingestDone bool
+	// askedApart are the links every Extract of the attempt asks apart: those
+	// moves in place along the version's chain added (FoundryAskedApart).
+	askedApart []string
 	// applied is what an apply's Ingest did to each stream, once it is done.
 	applied []ontologyagent.AppliedStream
 	// sentExtract means the attempt sent the agent an Extract.
@@ -387,6 +393,9 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 			}
 		}
 	}
+	if a.askedApart, err = r.db.FoundryAskedApart(ctx, job.OntologyID, job.VersionID); err != nil {
+		return a, retry("could not read the links the version asks apart; Helix will retry", err)
+	}
 	binding, target, stop, err := r.serve(ctx, job, a)
 	if err != nil {
 		return a, err
@@ -401,6 +410,24 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 	}
 	if job.Kind == model.FoundryGraphJobResend {
 		defer r.timeStep("resend", r.now())
+		// A move in place the load owes goes first: what follows runs at the
+		// version it moved to.
+		moved, err := r.move(ctx, job, binding, target, info.GetProviders(), a)
+		if err != nil {
+			return a, err
+		}
+		if moved {
+			if version, err = r.db.GetOntologyVersion(ctx, job.OntologyID, job.VersionID); err != nil {
+				return a, retry("could not read the version the load moved to; Helix will retry", err)
+			}
+			if err := json.Unmarshal(version.Definition, &def); err != nil {
+				return a, permanent("the version the load moved to is not an ontology agent draft", err)
+			}
+			ontologyVersion = fmt.Sprintf("foundry-v%d", version.Version)
+			if a.askedApart, err = r.db.FoundryAskedApart(ctx, job.OntologyID, job.VersionID); err != nil {
+				return a, retry("could not read the links the version asks apart; Helix will retry", err)
+			}
+		}
 		return a, r.resend(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
 	}
 	extractStart := r.now()
@@ -1348,6 +1375,121 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 	return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
 }
 
+// move sends the move in place the job's load owes, if any
+// (model.FoundryResendMove, a suggestion's "Add this link"): one Extract of
+// no documents with the load's decisions and fold, which spends nothing, at
+// the version the load moves to. The engine moves its marker if the change
+// only adds (contract 4.32.0), and its fold event says what came of it, which
+// RecordFoundryLoadMove records in one transaction with the load's and the
+// job's version. moved reports the load, and job, records the new version
+// now. The engine's move is idempotent: sent again after its event was lost,
+// it finds the marker moved and says so.
+func (r *runner) move(ctx context.Context, job *model.FoundryGraphJob, binding graphproxy.Binding, target ontologyagent.HelixTarget,
+	providers []string, a *attempt) (moved bool, err error) {
+	fill, err := r.db.FoundryLoadMoveOwed(ctx, job.LoadID)
+	if err != nil {
+		return false, retry("could not read the load's move; Helix will retry", err)
+	}
+	if fill == nil {
+		return false, nil
+	}
+	read := func(id string) (*model.OntologyVersion, ontologyagent.Definition, error) {
+		var def ontologyagent.Definition
+		v, err := r.db.GetOntologyVersion(ctx, job.OntologyID, id)
+		if errors.Is(err, foundrystore.ErrNotFound) {
+			return nil, def, permanent("a version of the load's move is gone", err)
+		}
+		if err != nil {
+			return nil, def, retry("could not read the load's move; Helix will retry", err)
+		}
+		if err := json.Unmarshal(v.Definition, &def); err != nil || v.Format != model.OntologyFormatAgentBundle {
+			return nil, def, permanent("a version of the load's move is not an ontology agent draft", err)
+		}
+		return v, def, nil
+	}
+	from, fromDef, err := read(fill.FromVersionID)
+	if err != nil {
+		return false, err
+	}
+	to, toDef, err := read(fill.ToVersionID)
+	if err != nil {
+		return false, err
+	}
+	decisions, err := r.decisions(ctx, job, toDef.OntologyTOML, nil, a)
+	if err != nil {
+		return false, err
+	}
+	resolved, err := r.ai.ResolveServed(ctx, job.WorkspaceID, providers)
+	if err != nil {
+		c := ai.ResolveFailure(err).Logged(ctx, err)
+		return false, &failure{Message: c.Message, Permanent: c.Permanent, Err: err}
+	}
+	label := func(v *model.OntologyVersion) string { return fmt.Sprintf("foundry-v%d", v.Version) }
+	body, err := json.Marshal(ontologyagent.ExtractRequest{
+		RequestID: job.ID + ":move", Database: binding.TenantID, Load: job.LoadID, OntologyTOML: toDef.OntologyTOML,
+		OntologyVersion: label(to), MappingsTOML: toDef.MappingsTOML, Helix: target, Documents: []ontologyagent.ExtractDocument{},
+		Decisions: decisions,
+		Limits: ontologyagent.ExtractLimits{
+			MaxUSD: 0, DocumentsInFlight: uint64(r.cfg.Foundry.Graph.DocumentsInFlight), MaxTextBytes: uint64(r.cfg.Foundry.Documents.MaxBytes),
+		},
+		Models: resolved.Extract(),
+		Fold: &ontologyagent.ExtractFold{
+			FromVersion: label(from), FromOntologyTOML: fromDef.OntologyTOML, FromMappingsTOML: fromDef.MappingsTOML,
+		},
+	})
+	if err != nil {
+		return false, fmt.Errorf("encode the move's extract request: %w", err)
+	}
+	var folded *ontologyagent.FoldEvent
+	a.sentExtract = true
+	raw, err := r.agent.Extract(ctx, body, resolved.Key, func(e json.RawMessage) error {
+		if name, _ := ontologyagent.EventName(e); name == "fold" {
+			folded = &ontologyagent.FoldEvent{}
+			if err := json.Unmarshal(e, folded); err != nil {
+				return permanent("the ontology agent's word on the move can't be read", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, callFailure("move the load to its new version", err)
+	}
+	a.results["move"] = raw
+	if folded == nil {
+		result, err := ontologyagent.DecodeExtractResult(raw)
+		if err == nil && result.Status == ontologyagent.ExtractLoadUnknown {
+			return false, permanent("the database does not hold this load, or it is being deleted; make another load current or start a new one", nil)
+		}
+		return false, retry("the ontology agent said nothing of the load's move; Helix will retry", err)
+	}
+	var outcome model.FoundryFoldOutcome
+	switch folded.Outcome.Kind {
+	case ontologyagent.FoldMoved:
+		outcome = model.FoundryFoldOutcome{State: model.FoundryFillMoved, LinksAdded: folded.Outcome.LinksAdded}
+	case ontologyagent.FoldNotAdditive:
+		outcome = model.FoundryFoldOutcome{State: model.FoundryFillNeedsLoad, Why: folded.Outcome.Why}
+	case ontologyagent.FoldMarkerElsewhere:
+		outcome = model.FoundryFoldOutcome{State: model.FoundryFillNeedsLoad,
+			Why: []model.FoundryFoldWhy{{Kind: ontologyagent.FoldMarkerElsewhere, Item: folded.Outcome.Version}}}
+	default:
+		return false, retry("the ontology agent's word on the load's move can't be read; Helix will retry",
+			fmt.Errorf("fold outcome %q", folded.Outcome.Kind))
+	}
+	switch err := r.db.RecordFoundryLoadMove(ctx, job.ID, r.workerID, fill, outcome); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return false, retry("the job's lease was lost", err)
+	case err != nil:
+		return false, retry("could not record the load's move; Helix will retry", err)
+	}
+	log.From(ctx).Info("graph job: a move in place", "job", job.ID, "load", job.LoadID, "from", label(from), "to", label(to),
+		"outcome", folded.Outcome.Kind, "links", folded.Outcome.LinksAdded)
+	if outcome.State != model.FoundryFillMoved {
+		return false, nil
+	}
+	job.VersionID = fill.ToVersionID
+	return true, nil
+}
+
 // carriedAliasesPerJob is the most aliases carried to a load whose asking
 // documents one resend job owes (oweAskingDocuments), and
 // askingDocumentsPerJob how many documents it owes them before it stops
@@ -1578,8 +1720,9 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 			MaxUSD: maxUSD, DocumentsInFlight: uint64(r.cfg.Foundry.Graph.DocumentsInFlight),
 			MaxTextBytes: uint64(r.cfg.Foundry.Documents.MaxBytes),
 		},
-		Models: resolved.Extract(),
-		Remove: remove,
+		Models:     resolved.Extract(),
+		Remove:     remove,
+		AskedApart: a.askedApart,
 	})
 	if err != nil {
 		return false, fmt.Errorf("encode extract request: %w", err)

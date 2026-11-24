@@ -148,7 +148,43 @@ type ExtractRequest struct {
 	// Remove are documents to take out of the load before Documents are
 	// extracted; one the load doesn't hold is nothing to remove.
 	Remove []string `json:"remove,omitempty"`
+	// Fold moves the load in place from the version its marker records to
+	// OntologyVersion first, when the change only adds (contract 4.32.0): it
+	// takes no Documents and no Remove, and a "fold" event says what came of
+	// it (FoldEvent).
+	Fold *ExtractFold `json:"fold,omitempty"`
+	// AskedApart are the links a load gained by moves in place along its
+	// version's chain (FoundryAskedApart): every other call leaves them out,
+	// so the documents loaded before replay, and new text is asked them in a
+	// pass of their own (contract 4.32.0).
+	AskedApart []string `json:"asked_apart,omitempty"`
 }
+
+// ExtractFold is the version a load moves from in place (ExtractRequest.Fold).
+type ExtractFold struct {
+	FromVersion      string `json:"from_version"`
+	FromOntologyTOML string `json:"from_ontology_toml"`
+	FromMappingsTOML string `json:"from_mappings_toml"`
+}
+
+// FoldEvent is an Extract's "fold" event: what came of moving the load in
+// place. Outcome.Kind is moved (LinksAdded), not_additive (Why) or
+// marker_elsewhere (Version, the version the load's marker records).
+type FoldEvent struct {
+	Outcome struct {
+		Kind       string                 `json:"kind"`
+		LinksAdded []string               `json:"links_added"`
+		Why        []model.FoundryFoldWhy `json:"why"`
+		Version    string                 `json:"version"`
+	} `json:"outcome"`
+}
+
+// The kinds of FoldEvent's outcome.
+const (
+	FoldMoved           = "moved"
+	FoldNotAdditive     = "not_additive"
+	FoldMarkerElsewhere = "marker_elsewhere"
+)
 
 // AliasDecision is the wire kind of an alias (contract 4.22.0): a name of a
 // type that a person linked to an entity, by a resolve decision of one

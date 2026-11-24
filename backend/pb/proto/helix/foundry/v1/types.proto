@@ -2654,6 +2654,59 @@ message FoundryHealFinding {
   // Who dismissed it, and its support then; set while dismissed.
   optional string dismissed_by_user_id = 9;
   optional int64 support_at_dismissal = 10;
+  // Where its card's "Add this link" stands in the current load; unset for
+  // a finding that names no relationship to add.
+  FoundryHealFindingState state = 11;
+}
+
+// FoundryHealFindingState is where a finding's "Add this link" stands in
+// the ontology's current load, derived from the finding and the load's
+// move for it; nothing stores it.
+message FoundryHealFindingState {
+  oneof state {
+    // Nothing done yet: Add this link.
+    FoundryHealOpen open = 1;
+    // A version that adds the link exists, newer than the current one, and
+    // isn't current yet: make it current and move the load to it.
+    FoundryHealVersion covered = 2;
+    // The current load is moving to the version (a resend job owes it).
+    FoundryHealVersion moving = 3;
+    // The current load moved to the version: documents read from now on
+    // state the link. Those loaded before keep their reviews.
+    FoundryHealMoved moved = 4;
+    // The load can't move: a new load of the version is needed, for why.
+    FoundryHealNeedsLoad needs_load = 5;
+  }
+}
+
+message FoundryHealOpen {}
+
+// FoundryHealVersion names a version, by id and number.
+message FoundryHealVersion {
+  string version_id = 1;
+  int64 version = 2;
+}
+
+message FoundryHealMoved {
+  string version_id = 1;
+  int64 version = 2;
+  // The links the load gained.
+  repeated string links_added = 3;
+}
+
+message FoundryHealNeedsLoad {
+  string version_id = 1;
+  int64 version = 2;
+  // What needs a new load: the engine's kind and item (contract 4.32.0's
+  // fold why, such as type_added and types.Deal), or Foundry's own:
+  // document_sets, sources (tables or table_files), not_a_draft, or
+  // marker_elsewhere with the version the load holds.
+  repeated FoundryFoldWhy why = 3;
+}
+
+message FoundryFoldWhy {
+  string kind = 1;
+  string item = 2;
 }
 
 // FoundryHealRun is one audit of an ontology's load.

@@ -308,6 +308,14 @@ type memStore struct {
 	// reconciles are the versions a move of the load in place records, which
 	// ReconcileFoundryLoadMarker puts the load at.
 	reconciles map[string]bool
+	// versions are versions beside version, by id.
+	versions map[string]*model.OntologyVersion
+	// moveOwed is the move in place the load owes, and moves what the jobs
+	// recorded of moves.
+	moveOwed *model.FoundryHealFill
+	moves    []model.FoundryFoldOutcome
+	// askedApart are the links each version asks apart, by its id.
+	askedApart map[string][]string
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
 	aiConfig *model.FoundryAIConfig
 	mu       sync.Mutex
@@ -625,7 +633,27 @@ func (s *memStore) Endpoint(_ context.Context, id, path string) (string, error) 
 	return "https://abc.cluster.example.com" + path, nil
 }
 
+func (s *memStore) FoundryLoadMoveOwed(context.Context, string) (*model.FoundryHealFill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.moveOwed, nil
+}
+
+func (s *memStore) RecordFoundryLoadMove(_ context.Context, _, _ string, _ *model.FoundryHealFill, outcome model.FoundryFoldOutcome) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.moves, s.moveOwed = append(s.moves, outcome), nil
+	return nil
+}
+
+func (s *memStore) FoundryAskedApart(_ context.Context, _, versionID string) ([]string, error) {
+	return s.askedApart[versionID], nil
+}
+
 func (s *memStore) GetOntologyVersion(_ context.Context, ontologyID, id string) (*model.OntologyVersion, error) {
+	if v, ok := s.versions[id]; ok && v.OntologyID == ontologyID {
+		return v, nil
+	}
 	if s.version == nil || s.version.ID != id || s.version.OntologyID != ontologyID {
 		return nil, foundrystore.ErrNotFound
 	}

@@ -94,6 +94,27 @@ func (u Unimplemented) ReconcileFoundryLoadMarker(context.Context, string, strin
 	u.unimplemented("ReconcileFoundryLoadMarker")
 	return false, nil
 }
+func (u Unimplemented) SetCurrentOntologyVersionFilling(context.Context, string, string, string, *string, string,
+	*model.FoundryGraphJob) (*model.FoundryHealFill, error) {
+	u.unimplemented("SetCurrentOntologyVersionFilling")
+	return nil, nil
+}
+func (u Unimplemented) FoundryLoadMoveOwed(context.Context, string) (*model.FoundryHealFill, error) {
+	u.unimplemented("FoundryLoadMoveOwed")
+	return nil, nil
+}
+func (u Unimplemented) RecordFoundryLoadMove(context.Context, string, string, *model.FoundryHealFill, model.FoundryFoldOutcome) error {
+	u.unimplemented("RecordFoundryLoadMove")
+	return nil
+}
+func (u Unimplemented) FoundryAskedApart(context.Context, string, string) ([]string, error) {
+	u.unimplemented("FoundryAskedApart")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryHealFills(context.Context, string) (map[string]*model.FoundryHealFill, error) {
+	u.unimplemented("ListFoundryHealFills")
+	return nil, nil
+}
 func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
 	u.unimplemented("EndFoundryLoadResend")
 	return nil

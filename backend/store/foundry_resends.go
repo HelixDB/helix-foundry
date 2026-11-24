@@ -868,7 +868,7 @@ WHERE load_id=? AND kind='resolve' AND applied_status='pending'
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6), w.job_id=?
-WHERE w.load_id=? AND w.status='owed' AND `+foundryResendIn("w.reason", model.FoundryResendKnown)+` AND NOT (w.reason=? AND `+
+WHERE w.load_id=? AND w.status='owed' AND `+foundryResendIn("w.reason", model.FoundryResendFailEnds)+` AND NOT (w.reason=? AND `+
 		foundryAliasUnread+`)`,
 		job.ID, job.LoadID, string(model.FoundryResendName))
 	return err
