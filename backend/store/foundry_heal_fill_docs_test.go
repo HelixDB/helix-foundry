@@ -100,7 +100,8 @@ func TestFoundryFillCollectsSendsAndEnds(t *testing.T) {
 	factsA, reviewsA := f.extraction(t, f.a)
 	written := model.FoundryFillDocument{DocumentID: f.a, Requests: 1, Outcome: "written", Facts: 2, Held: 1, ReviewsTaken: 3, USDMicros: 1500}
 	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, written))
-	// Again, as a retry after a lost event says it: counted once.
+	// Again, as a retry after a lost event says it: counted once, but what
+	// its calls spent is spent again.
 	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, written))
 	facts, reviews := f.extraction(t, f.a)
 	assert.Equal(t, factsA+2, facts)
@@ -108,7 +109,13 @@ func TestFoundryFillCollectsSendsAndEnds(t *testing.T) {
 	got = f.fill(t, "FILL")
 	assert.Equal(t, model.FoundryFillApplying, got.State)
 	assert.Equal(t, model.FoundryFillCounts{Owed: 2, Left: 1, Filled: 1, ReviewsTaken: 3, FactsAdded: 2}, got.Counts)
-	assert.InDelta(t, 0.0015, got.SpentUSD, 1e-9)
+	assert.InDelta(t, 0.003, got.SpentUSD, 1e-9)
+	var jobSpent int64
+	require.NoError(t, testDB.QueryRow(`SELECT usd_micros FROM foundry_load_jobs WHERE id=?`, job.ID).Scan(&jobSpent))
+	assert.Equal(t, int64(3000), jobSpent, "the job's spend, which the day's cap reads")
+	var owedCards int
+	require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_review_owed WHERE load_id=? AND doc_id=?`, f.load, f.a).Scan(&owedCards))
+	assert.Equal(t, 1, owedCards, "its review cards are rebuilt")
 	// A word on a request the job didn't read ends nothing.
 	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, model.FoundryFillDocument{DocumentID: f.b, Requests: 9, Outcome: "nothing"}))
 	assert.Equal(t, 1, f.linksOwed(t))
@@ -127,7 +134,10 @@ func TestFoundryFillCollectsSendsAndEnds(t *testing.T) {
 	assert.ErrorIs(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, written), store.ErrNotFound)
 	spent, err := f.db.SumFoundryFillSpend(ctx, f.ontology.ID, time.Now().Add(-time.Hour))
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, spent, int64(0))
+	assert.Equal(t, int64(3000), spent)
+	spent, err = f.db.SumFoundryFillSpend(ctx, f.ontology.ID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Zero(t, spent, "only jobs since")
 }
 
 // A fill that owes nothing, its reviews gone, is filled at once.

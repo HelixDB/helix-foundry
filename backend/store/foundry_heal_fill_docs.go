@@ -176,24 +176,43 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(unsendable))+`)`, ap
 
 // RecordFoundryFillDocument records what an Extract of job jobID said of a
 // document it sent to be filled, while workerID holds the job's lease
-// (ErrNotFound when it lost it, and nothing is written), in one transaction:
-// the document's request ends if it is still the one the job read, and only
-// then are its numbers counted, on the fill and on the document's row of the
-// load (a fact more for each fact its fill added, a review more for each
-// claim it held and one fewer for each it took), with what it spent. So an
-// event sent again, by a retry after one was lost, counts once: the engine
-// says the same numbers each time. The fill ends filled once it owes no
-// document. An outcome the binary doesn't know counts as refused.
+// (ErrNotFound when it lost it, and nothing is written), in one transaction.
+// What it spent is the job's, the fill's, and its set's month allowance's,
+// whatever else: a call made is paid. The document's request ends if it is
+// still the one the job read, and only then are its numbers counted, on the
+// fill and on the document's row of the load (a fact more for each fact its
+// fill added, a review more for each claim it held and one fewer for each
+// it took), and its review cards owed a rebuild. So an event sent again, by
+// a retry after one was lost, counts once: the engine says the same numbers
+// each time. The fill ends filled once it owes no document. An outcome the
+// binary doesn't know counts as refused.
 func (s *mysqlDB) RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
-		var loadID string
-		if err := tx.db.QueryRowContext(ctx, `SELECT load_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`, jobID, workerID).
-			Scan(&loadID); err != nil {
+		var loadID, ontologyID, workspaceID string
+		if err := tx.db.QueryRowContext(ctx, `SELECT load_id, ontology_id, workspace_id FROM foundry_load_jobs`+ownedFoundryGraphJob+` FOR UPDATE`,
+			jobID, workerID).Scan(&loadID, &ontologyID, &workspaceID); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
 			return err
+		}
+		if d.USDMicros > 0 || d.InputTokens > 0 || d.OutputTokens > 0 {
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs SET usd_micros=usd_micros+?, input_tokens=input_tokens+?,
+  output_tokens=output_tokens+? WHERE id=?`, d.USDMicros, d.InputTokens, d.OutputTokens, jobID); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET spent_usd=spent_usd+? WHERE load_id=? AND state='applying'`,
+				float64(d.USDMicros)/1e6, loadID); err != nil {
+				return err
+			}
+			// A fill is no one's start: its spend counts against its set's
+			// month allowance, as a sync's does.
+			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_document_set_spend (set_id, month, workspace_id, usd_micros)
+SELECT m.set_id, ?, ?, ? FROM foundry_load_documents m WHERE m.load_id=? AND m.document_id=?
+ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time.Now()), workspaceID, d.USDMicros, loadID, d.DocumentID); err != nil {
+				return err
+			}
 		}
 		ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends SET status='done', ended_at=NOW(6), job_id=?
 WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`,
@@ -220,13 +239,19 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 			facts, held, taken = 0, 0, 0
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+column+`=`+column+`+1, facts_added=facts_added+?,
-  reviews_taken=reviews_taken+?, spent_usd=spent_usd+?, failures=0, last_error=NULL WHERE load_id=? AND state='applying'`,
-			facts, taken, float64(d.USDMicros)/1e6, loadID); err != nil {
+  reviews_taken=reviews_taken+?, failures=0, last_error=NULL WHERE load_id=? AND state='applying'`,
+			facts, taken, loadID); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions SET facts=facts+?, reviews=GREATEST(reviews+?-?, 0),
   usd_micros=usd_micros+? WHERE load_id=? AND document_id=?`, facts, held, taken, d.USDMicros, loadID, d.DocumentID); err != nil {
 			return err
+		}
+		// Its reviews changed: those taken go from the review page.
+		if facts+held+taken > 0 {
+			if err := tx.oweFoundryReviewDocument(ctx, ontologyID, loadID, d.DocumentID); err != nil {
+				return err
+			}
 		}
 		return tx.endFoundryFillIfDone(ctx, loadID)
 	})

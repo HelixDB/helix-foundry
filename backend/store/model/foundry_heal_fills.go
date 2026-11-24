@@ -117,7 +117,8 @@ type FoundryFillDocument struct {
 	// Outcome is written, nothing, native, or refused (Reason).
 	Outcome, Reason           string
 	Facts, Held, ReviewsTaken int64
-	USDMicros                 int64
+	// What its calls spent, as its usage says.
+	USDMicros, InputTokens, OutputTokens int64
 }
 
 // FoundryFillDue is a fill the heal worker has to act on: a moved one whose

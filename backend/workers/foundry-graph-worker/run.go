@@ -1497,7 +1497,7 @@ func (r *runner) fill(ctx context.Context, job *model.FoundryGraphJob, def ontol
 // fillBudget is what the next Extract of the load's fill may spend: the
 // least of what the fill's cap leaves (model.FoundryFillCapUSD), what the
 // ontology's fills may still spend today (model.FoundryFillDailyCapUSD, its
-// resend jobs' spend over 24 hours, this attempt's too), and the job's and
+// resend jobs' spend over 24 hours, this one's so far), and the job's and
 // the workspace's month caps (budget). stopped is a fill that can't go on
 // now: past its cap it stops (model.FoundryFillCapReached), its documents no
 // longer owed; past the day's, or the month's, it pauses until a day later,
@@ -1529,7 +1529,9 @@ func (r *runner) fillBudget(ctx context.Context, job *model.FoundryGraphJob, a *
 	if err != nil {
 		return 0, false, retry("could not read the day's spend; Helix will retry", err)
 	}
-	dayLeft := model.FoundryFillDailyCapUSD - float64(day+a.spent)/1e6
+	// The job's row counts what its documents spent as each is recorded
+	// (store.RecordFoundryFillDocument), this attempt's included.
+	dayLeft := model.FoundryFillDailyCapUSD - float64(day)/1e6
 	jobLeft, spent, err := r.budget(ctx, job, a)
 	if err != nil {
 		return 0, false, err
@@ -1567,8 +1569,10 @@ func (r *runner) recordFill(ctx context.Context, job *model.FoundryGraphJob, eve
 		}
 		return retry(c.Message, cause)
 	}
-	d := model.FoundryFillDocument{DocumentID: event.DocID, Requests: o.Requests, USDMicros: int64(event.Usage.USDMicros),
-		Outcome: ontologyagent.FillRefused, Reason: model.FoundryReleaseUnanswered}
+	u := event.Usage
+	d := model.FoundryFillDocument{DocumentID: event.DocID, Requests: o.Requests, USDMicros: int64(u.USDMicros),
+		InputTokens: int64(u.InputTokens), OutputTokens: int64(u.OutputTokens), Outcome: ontologyagent.FillRefused,
+		Reason: model.FoundryReleaseUnanswered}
 	if filled, ok := a.filled[event.DocID]; ok && event.Outcome.Kind != ontologyagent.OutcomeFailed {
 		d.Outcome, d.Reason, d.Facts, d.Held, d.ReviewsTaken = filled.Outcome.Kind, filled.Outcome.Reason, filled.Facts, filled.Held,
 			filled.ReviewsTaken
