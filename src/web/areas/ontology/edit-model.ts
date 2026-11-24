@@ -561,11 +561,19 @@ export function validateEdit(
         )
           return `UnknownProp in ${name}.`;
       }
+      // A link the batch adds counts, as Revise reads the draft the batch
+      // leaves (a finding's Add this link puts it beside this route).
+      const added = resulting(bundle, batch).links;
       if (
         value.links !== undefined &&
         (!Array.isArray(value.links) ||
           value.links.some((name: unknown) => {
-            const link = ontology?.links.find((l) => l.name === name);
+            const put = added[String(name)];
+            const link =
+              ontology?.links.find((l) => l.name === name) ??
+              (object(put)
+                ? { from: String(put.from), to: String(put.to) }
+                : undefined);
             return (
               !link ||
               !Object.hasOwn(value.types, link.from) ||
