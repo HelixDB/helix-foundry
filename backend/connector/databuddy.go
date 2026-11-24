@@ -186,9 +186,19 @@ func (k *databuddyKind) Discover(ctx context.Context, src Source) (Discovery, er
 			}
 		}
 	}
-	// A full read of occurrences is sized from the daily counts.
+	// A full read of occurrences is sized from the daily counts, and keeps
+	// nothing of a day too large to keep whole.
 	if why := reasons["custom_events_daily"]; why != "" && reasons[databuddyOccurrences] == "" {
 		reasons[databuddyOccurrences] = why
+	}
+	if len(sites) > 0 && readable(databuddyOccurrences) {
+		why, err := k.occurrencesTooLarge(ctx, src.Secret, sites, time.Now().UTC())
+		if err != nil {
+			return Discovery{}, err
+		}
+		if why != "" {
+			reasons[databuddyOccurrences] = why
+		}
 	}
 	objects := make([]saasTable, len(databuddyTables))
 	for i, t := range databuddyTables {
@@ -243,12 +253,9 @@ func (k *databuddyKind) Sync(ctx context.Context, src Source, table Table, w Row
 	return table, nil
 }
 
-// occurrenceStart is the first day a full read of occurrences keeps: the
-// oldest day from from's on whose occurrences, with every later day's to
-// to's, fit maxDatabuddyOccurrences across the sites, by Databuddy's daily
-// counts. A day too large to keep alone is refused rather than kept in part:
-// past it the table would hold no whole day.
-func (k *databuddyKind) occurrenceStart(ctx context.Context, key string, sites []map[string]any, from, to time.Time) (time.Time, error) {
+// occurrenceCounts are Databuddy's counts of custom events by UTC day,
+// summed over the sites, from from's day to to's.
+func (k *databuddyKind) occurrenceCounts(ctx context.Context, key string, sites []map[string]any, from, to time.Time) (map[string]int64, error) {
 	daily, _ := databuddyTableOf("custom_events_daily")
 	counts := map[string]int64{}
 	for _, site := range sites {
@@ -262,16 +269,46 @@ func (k *databuddyKind) occurrenceStart(ctx context.Context, key string, sites [
 			return nil
 		})
 		if err != nil {
-			return time.Time{}, err
+			return nil, err
 		}
 	}
+	return counts, nil
+}
+
+// occurrencesTooLarge says why the sites' occurrences can't be kept: a day,
+// yesterday or today so far, holds more than maxDatabuddyOccurrences, so no
+// whole day fits. Discover makes the table unavailable for it rather than
+// fail every table's sync.
+func (k *databuddyKind) occurrencesTooLarge(ctx context.Context, key string, sites []map[string]any, now time.Time) (string, error) {
+	counts, err := k.occurrenceCounts(ctx, key, sites, now.AddDate(0, 0, -1), now)
+	if err != nil {
+		return "", err
+	}
+	for _, n := range counts {
+		if n > maxDatabuddyOccurrences {
+			return fmt.Sprintf("the websites send more custom events in a day than Foundry keeps of them (%d); choose fewer websites", maxDatabuddyOccurrences), nil
+		}
+	}
+	return "", nil
+}
+
+// occurrenceStart is the first day a full read of occurrences keeps: the
+// oldest day from from's on whose occurrences, with every later day's to
+// to's, fit maxDatabuddyOccurrences across the sites, by Databuddy's daily
+// counts. A day too large to keep alone is refused rather than kept in part
+// (Discover makes the table unavailable first, unless a day grew since).
+func (k *databuddyKind) occurrenceStart(ctx context.Context, key string, sites []map[string]any, from, to time.Time) (time.Time, error) {
+	counts, err := k.occurrenceCounts(ctx, key, sites, from, to)
+	if err != nil {
+		return time.Time{}, err
+	}
 	var kept int64
-	first := databuddyDayOf(from)
-	for day := databuddyDayOf(to); !day.Before(first); day = day.AddDate(0, 0, -1) {
+	first, last := databuddyDayOf(from), databuddyDayOf(to)
+	for day := last; !day.Before(first); day = day.AddDate(0, 0, -1) {
 		kept += counts[day.Format(time.DateOnly)]
 		switch {
 		case kept <= maxDatabuddyOccurrences:
-		case day.Equal(databuddyDayOf(to)):
+		case day.Equal(last):
 			return time.Time{}, invalid("the websites sent more custom events today than Foundry keeps of them (%d); choose fewer websites or turn off %s",
 				maxDatabuddyOccurrences, databuddyOccurrences)
 		default:
