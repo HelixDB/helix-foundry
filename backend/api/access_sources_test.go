@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -136,6 +137,69 @@ func TestGranteeFollowsSlack(t *testing.T) {
 	}
 	if _, err := client.GetFoundryOntology(ctx, &foundryv1.GetFoundryOntologyRequest{WorkspaceId: "ws-1", OntologyId: "ont-5"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("an ontology she reads none of: %v", err)
+	}
+}
+
+// Slack's tables are read by their rows: a grantee reads #general's channel
+// row and messages (C1), Slack's directory while Slack has a non-guest
+// account for her, and no table whole; the agent's key no directory. Her
+// question keeps the tables and the channels whose rows it held.
+func TestGranteeReadsSlackRows(t *testing.T) {
+	s, store := slackService(t, "C1")
+	tables := []access.TableRef{{ConnectorID: "conn-slack", Table: "users"}, {ConnectorID: "conn-slack", Table: "channels"},
+		{ConnectorID: "conn-slack", Table: "messages"}}
+	in := store.inputs["ont-5"]
+	in.Inputs.Tables = tables
+	store.inputs["ont-5"] = in
+	h := store.holdings["load-5"]
+	h.Tables = tables
+	store.holdings["load-5"] = h
+	now := time.Now()
+	store.sharing["ada@example.com"] = []foundrymodel.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}, Member: true}}
+	reader := &fakeFoundryRead{result: `{"asked_at":"2026-11-22","results":[{"ok":{}}]}`}
+	s.deps.FoundryRead = reader
+	conn, as := served(t, s)
+	client := foundryv1.NewFoundryServiceClient(conn)
+	ctx := as(slackMember)
+
+	if _, err := client.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-5", LoadId: "load-5",
+		ReadsJson: `[{"query":{}}]`}); err != nil {
+		t.Fatal(err)
+	}
+	read := reader.requests[len(reader.requests)-1]
+	id := ontologyagent.TableSourceID
+	want := `{"sources":["` + id("conn-slack", "users") + `"],"rows":[{"field":"channel_id","source":"` + id("conn-slack", "channels") +
+		`","values":["C1"]},{"field":"message_id","prefixes":["C1:"],"source":"` + id("conn-slack", "messages") +
+		`"}],"documents":{"only":["doc-general"]},"sets":["set-slack"],"enrichment":false,"withheld":[]}`
+	if read.GetVisibilityJson() != want {
+		t.Fatalf("visibility %s, want %s", read.GetVisibilityJson(), want)
+	}
+
+	asked, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-5", Question: "Who posted?",
+		ClientToken: "slack-rows"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := store.questions[len(store.questions)-1]
+	if stored.Seen == nil || !slices.Equal(stored.Seen.Tables, tables) || !slices.Equal(stored.SeenItems, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}}) {
+		t.Fatalf("seen %+v, items %+v", stored.Seen, stored.SeenItems)
+	}
+	get := func() error {
+		_, err := client.GetFoundryQuestion(ctx, &foundryv1.GetFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-5", Id: asked.GetQuestion().GetId()})
+		return err
+	}
+	if err := get(); err != nil {
+		t.Fatalf("her own question: %v", err)
+	}
+	// Slack makes her a guest in #general: she keeps its rows but not the
+	// directory, so the answer, which read it, goes.
+	store.sharing["ada@example.com"] = []foundrymodel.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}}}
+	if err := get(); status.Code(err) != codes.NotFound {
+		t.Fatalf("a question that read the directory she no longer reads: %v", err)
+	}
+	store.sharing["ada@example.com"] = []foundrymodel.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C2"}, Member: true}}
+	if err := get(); status.Code(err) != codes.NotFound {
+		t.Fatalf("a question of #general's rows, which she no longer reads: %v", err)
 	}
 }
 

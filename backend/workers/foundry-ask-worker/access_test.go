@@ -382,6 +382,46 @@ func TestGranteeQuestionsFollowSlack(t *testing.T) {
 			t.Fatalf("seen %+v, items %+v", seen, h.store.seenItems[q.ID])
 		}
 	})
+	// Slack's tables are read by their rows: the agent is told her channels'
+	// rows and, Slack knowing her as no guest, its directory; the catalog
+	// names the tables, and what her answer read keeps them and their channel.
+	t.Run("Slack's tables by her channels' rows", func(t *testing.T) {
+		h, q := slackHarness(t, false)
+		now := time.Now()
+		h.store.sharing["ada@example.com"] = []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &now, Visible: []string{"C1"}, Member: true}}
+		tables := []access.TableRef{{ConnectorID: "conn-slack", Table: "users"}, {ConnectorID: "conn-slack", Table: "messages"},
+			{ConnectorID: "conn-slack", Table: "reactions"}}
+		load := h.store.currentLoads["ont-1"]
+		load.Inputs.Tables = tables
+		h.store.currentLoads["ont-1"] = load
+		holdings := h.store.holdings["load-1"]
+		holdings.Tables = tables
+		h.store.holdings["load-1"] = holdings
+		h.store.generation.Input.Tables = []model.OntologyGenerationTable{{ConnectorID: "conn-slack", Table: "users"},
+			{ConnectorID: "conn-slack", Table: "messages"}, {ConnectorID: "conn-slack", Table: "reactions"}}
+		if settled := h.run(t, q); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		req := askedWithin(t, h)
+		messages := ontologyagent.TableSourceID("conn-slack", "messages")
+		if req.Visibility == nil || fmt.Sprint(req.Visibility.Sources) != "["+ontologyagent.TableSourceID("conn-slack", "users")+"]" ||
+			fmt.Sprint(req.Visibility.Rows) != fmt.Sprint([]ontologyagent.HeldRows{{Source: messages, Field: "message_id", Prefix: true, Items: []string{"C1:"}}}) {
+			t.Fatalf("visibility %+v", req.Visibility)
+		}
+		var catalog []string
+		for _, e := range req.Catalog {
+			if e.Kind == ontologyagent.CatalogTable {
+				catalog = append(catalog, e.ID)
+			}
+		}
+		if !slices.Contains(catalog, messages) || slices.Contains(catalog, ontologyagent.TableSourceID("conn-slack", "reactions")) {
+			t.Fatalf("catalog tables %v: the messages, never a table no rule tells apart", catalog)
+		}
+		seen := h.store.seen[q.ID]
+		if seen == nil || fmt.Sprint(seen.Tables) != "[{conn-slack users} {conn-slack messages}]" || fmt.Sprint(h.store.seenItems[q.ID]) != "[{conn-slack C1}]" {
+			t.Fatalf("seen %+v, items %+v", seen, h.store.seenItems[q.ID])
+		}
+	})
 	// The load may hold days of a channel the last read didn't list, so no
 	// reader of every listed channel reads it whole: each document is told.
 	t.Run("every channel shared with her still reads the load document by document", func(t *testing.T) {

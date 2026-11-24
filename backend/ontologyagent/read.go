@@ -79,9 +79,13 @@ func ParseValidAt(day string, now time.Time) (time.Time, error) {
 // Visibility is what a reader holds of a load it doesn't hold all of (the
 // contract's Visibility).
 type Visibility struct {
-	// Sources are the tables and table files it holds, by the ids mappings read
-	// them by.
+	// Sources are the tables and table files it holds whole, by the ids
+	// mappings read them by.
 	Sources []string `json:"sources"`
+	// Rows are the tables it holds some rows of (contract 4.32.0), each never
+	// in Sources; left out when there are none, so an engine before 4.32.0,
+	// which refuses the field, still reads every other reader.
+	Rows []HeldRows `json:"rows,omitempty"`
 	// Documents are the load's documents it holds.
 	Documents VisibleDocuments `json:"documents"`
 	// Sets are the document sets it holds a document of.
@@ -130,13 +134,65 @@ func (d *VisibleDocuments) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// HeldRows are the rows of one source a reader holds (the contract's
+// HeldRows): those whose row key's Field is one of Items, or, with Prefix,
+// starts with one of them.
+type HeldRows struct {
+	Source, Field string
+	Prefix        bool
+	Items         []string
+}
+
+// MarshalJSON writes {"source", "field", "values": [...]}, or "prefixes" for
+// Prefix.
+func (h HeldRows) MarshalJSON() ([]byte, error) {
+	items := h.Items
+	if items == nil {
+		items = []string{}
+	}
+	key := "values"
+	if h.Prefix {
+		key = "prefixes"
+	}
+	return json.Marshal(map[string]any{"source": h.Source, "field": h.Field, key: items})
+}
+
+// UnmarshalJSON reads what MarshalJSON writes: exactly one of values and
+// prefixes.
+func (h *HeldRows) UnmarshalJSON(raw []byte) error {
+	var fields struct {
+		Source   string    `json:"source"`
+		Field    string    `json:"field"`
+		Values   *[]string `json:"values"`
+		Prefixes *[]string `json:"prefixes"`
+	}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	switch {
+	case (fields.Values == nil) == (fields.Prefixes == nil):
+		return fmt.Errorf("rows of %q hold values or prefixes, exactly one", fields.Source)
+	case fields.Values != nil:
+		*h = HeldRows{Source: fields.Source, Field: fields.Field, Items: *fields.Values}
+	default:
+		*h = HeldRows{Source: fields.Source, Field: fields.Field, Prefix: true, Items: *fields.Prefixes}
+	}
+	return nil
+}
+
 // WithheldProp is a property a reader doesn't see at all.
 type WithheldProp struct {
 	Type string `json:"type"`
 	Prop string `json:"prop"`
 }
 
-// VisibilityOf is what the agent reads of part.
+// VisibilityOf is what the agent reads of part: its tables and table files
+// held whole as sources, and the tables it holds some rows of as rows, each
+// by the id mappings read it by (TableSourceID).
+//
+//	VisibilityOf(access.Part{Rows: []access.TableRows{{Table: access.TableRef{ConnectorID: "c", Table: "messages"},
+//		Rule: access.ItemPrefixRows("message_id", ":"), Items: []string{"C1"}}}}).Rows
+//	// [{Source: TableSourceID("c", "messages"), Field: "message_id", Prefix: true, Items: ["C1:"]}]
 func VisibilityOf(part access.Part) Visibility {
 	out := Visibility{
 		Sources: make([]string, 0, len(part.Tables)+len(part.Files)), Sets: make([]string, 0, len(part.Sets)),
@@ -145,6 +201,10 @@ func VisibilityOf(part access.Part) Visibility {
 	}
 	for _, t := range part.Tables {
 		out.Sources = append(out.Sources, TableSourceID(t.ConnectorID, t.Table))
+	}
+	for _, r := range part.Rows {
+		field, prefix, items := r.Held()
+		out.Rows = append(out.Rows, HeldRows{Source: TableSourceID(r.Table.ConnectorID, r.Table.Table), Field: field, Prefix: prefix, Items: items})
 	}
 	out.Sources = append(out.Sources, part.Files...)
 	for _, s := range part.Sets {
