@@ -59,4 +59,3 @@ func TestFoundryHealStateProto(t *testing.T) {
 		t.Fatal("no state is no state")
 	}
 }
-
