@@ -258,3 +258,53 @@ func ExampleReads_Of() {
 	fmt.Println(asAda.Reads(private), asKey.Reads(private))
 	// Output: true false
 }
+
+// Audienced keeps the connectors whose kinds report their sources'
+// permissions alone.
+func TestAudienced(t *testing.T) {
+	kinds := sourceaccess.Audienced(newStore().connectors)
+	assert.Len(t, kinds, 1)
+	assert.Contains(t, kinds, "conn-slack")
+	assert.Empty(t, sourceaccess.Audienced(nil))
+}
+
+// Told, built from what the API told a grantee is shared with it
+// (VisibleItems), reads a load as the grants it was told from: the part of
+// it the API narrows a read to, its items included, is the same, however
+// fresh the source's audiences are.
+func TestToldReadsALoadAsTheGrantsItWasToldFrom(t *testing.T) {
+	ctx := context.Background()
+	day := func(id, channel string) access.DocumentRef {
+		return access.DocumentRef{ID: id, Set: conv, Stream: "conversations", ExternalID: channel + ":2026-11-01"}
+	}
+	other := access.DocumentRef{ID: "d-notes", Set: access.SetRef{SetID: "set-notes"}}
+	holdings := access.Holdings{
+		Tables:    []access.TableRef{{ConnectorID: "conn-slack", Table: "messages"}, {ConnectorID: "conn-stripe", Table: "customers"}},
+		Files:     []access.DocumentRef{day("f-general", "C1")},
+		Documents: []access.DocumentRef{day("d-general", "C1"), day("d-leadership", "C2"), day("d-random", "C3"), other},
+	}
+	stale := now.Add(-8 * 24 * time.Hour)
+	for name, sharing := range map[string][]model.FoundrySourceSharing{
+		"two channels shared":       shared("C1", "C2"),
+		"one channel shared":        shared("C1"),
+		"none shared":               shared(),
+		"audiences never read":      nil,
+		"audiences over a week old": {{ConnectorID: "conn-slack", ReadAt: &stale, Visible: []string{"C1"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			targets := []access.Target{access.ConnectorTarget("conn-slack"), access.ConnectorTarget("conn-stripe"), access.DocumentSetTarget("set-notes")}
+			store := newStore(targets...)
+			store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": sharing}
+			var asked int
+			g, err := sourceaccess.New(store, people{asked: &asked}, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
+			require.NoError(t, err)
+			told := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, g.VisibleItems())
+			assert.Equal(t, g.Part(holdings), told.Part(holdings))
+		})
+	}
+	t.Run("both channels of one load", func(t *testing.T) {
+		told := sourceaccess.Told(sourceaccess.Audienced(newStore().connectors), []access.Target{access.ConnectorTarget("conn-slack")},
+			[]access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}})
+		assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}}, told.Part(holdings).Items)
+	})
+}

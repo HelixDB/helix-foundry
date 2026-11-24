@@ -59,6 +59,17 @@ func ReachOf(readAt, problemAt *time.Time, visible []string, now time.Time) Sour
 	if !AudiencesFresh(readAt, problemAt, now) {
 		return SourceReach{}
 	}
+	return SharedReach(visible)
+}
+
+// SharedReach is the known reach of a connector whose source shares visible
+// of its items with the reader, as the API tells a grantee what it reads now
+// (GetMyFoundryAccess's source_items): Founder's worker reads a call's part
+// of a load with it.
+//
+//	access.SharedReach([]string{"C1"}).Sees("C1") // true
+//	access.SharedReach(nil).Known()               // true: it reads none of them
+func SharedReach(visible []string) SourceReach {
 	r := SourceReach{items: make(map[string]bool, len(visible))}
 	for _, key := range visible {
 		r.items[key] = true

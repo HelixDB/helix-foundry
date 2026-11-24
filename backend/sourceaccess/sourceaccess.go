@@ -135,16 +135,46 @@ func (r *Reads) kinds(ctx context.Context, workspaceID string) (map[string]conne
 	if err != nil {
 		return nil, fmt.Errorf("read connectors: %w", err)
 	}
-	kinds = map[string]connector.Audienced{}
+	kinds = Audienced(connectors)
+	r.mu.Lock()
+	r.audienced[workspaceID] = kinds
+	r.mu.Unlock()
+	return kinds, nil
+}
+
+// Audienced are those of connectors whose kinds report their sources'
+// permissions (connector.AudiencedKind), by id.
+//
+//	sourceaccess.Audienced([]*model.Connector{{ID: "c1", Kind: "slack"}, {ID: "c2", Kind: "stripe"}}) // c1 alone
+func Audienced(connectors []*model.Connector) map[string]connector.Audienced {
+	kinds := map[string]connector.Audienced{}
 	for _, c := range connectors {
 		if kind, ok := connector.AudiencedKind(c.Kind); ok {
 			kinds[c.ID] = kind
 		}
 	}
-	r.mu.Lock()
-	r.audienced[workspaceID] = kinds
-	r.mu.Unlock()
-	return kinds, nil
+	return kinds
+}
+
+// Told is targets as a grantee reads them who the API told visible are the
+// items the audienced connectors of kinds share with it now
+// (GetMyFoundryAccess's source_items, access.Grants.VisibleItems): what it
+// reads of a load (access.Grants.Part) is what the grants Of built that told
+// it read. Founder's worker reads what a grantee's call read with it.
+//
+//	sourceaccess.Told(kinds, targets, []access.ItemRef{{ConnectorID: "c1", Item: "C1"}}) // reads c1's #general (C1) alone
+func Told(kinds map[string]connector.Audienced, targets []access.Target, visible []access.ItemRef) access.Grants {
+	reach := make(map[string]access.SourceReach, len(kinds))
+	for id := range kinds {
+		var keys []string
+		for _, item := range visible {
+			if item.ConnectorID == id {
+				keys = append(keys, item.Item)
+			}
+		}
+		reach[id] = access.SharedReach(keys)
+	}
+	return access.NewGrants(targets).WithSharing(newSharing(kinds, reach))
 }
 
 // newSharing is reach, by audienced connector of kinds, each told its

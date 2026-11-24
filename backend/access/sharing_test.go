@@ -56,6 +56,18 @@ func TestReachOf(t *testing.T) {
 	assert.False(t, zero.Sees("C1"))
 }
 
+// SharedReach is a known reach, as the API tells it, whatever the source's
+// last read: it reads exactly the items given.
+func TestSharedReach(t *testing.T) {
+	r := access.SharedReach([]string{"C1"})
+	assert.True(t, r.Known())
+	assert.True(t, r.Sees("C1"))
+	assert.False(t, r.Sees("C2"))
+	none := access.SharedReach(nil)
+	assert.True(t, none.Known(), "sharing nothing is known")
+	assert.False(t, none.Sees("C1"))
+}
+
 func TestGrantsWithSharing(t *testing.T) {
 	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	fresh, stale := now.Add(-time.Hour), now.Add(-8*24*time.Hour)

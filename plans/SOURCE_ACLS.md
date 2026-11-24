@@ -57,9 +57,20 @@ kind only differs in what its adapter can report.
   more than a day ago with a failed read since, reads as items unknown: its
   documents go to full readers only, and the Access page says why.
 - **What was read stays with it**: a grantee's answer records the items its
-  documents were of, and a restricted member's Founder thread the items
-  shared with them as its turns ran; either is theirs only while every one
-  is still shared with them.
+  documents were of, and a restricted member's Founder thread the items of
+  what its calls read; either is theirs only while every one is still shared
+  with them. A thread's call records, once it returns: for a graph read, the
+  items of the documents and table files of its load that the reader reads
+  (`access.Grants.Part`, the part the API narrows the read to: a result names
+  only its quotes' documents, not those its rows, entities and counts came
+  from), as the load held them before the call and after (a sync may trim a
+  document out of it meanwhile); for an ask or get_question, its question's
+  items; for a list_questions, every listed question's. Its other tools
+  read no document's content and record nothing, so a thread that read
+  nothing of a channel is never hidden by losing it. Items are read on both
+  sides of each call (a helper's too): one the call drew on and the reader
+  lost during it fails the turn for good, before the result is delivered
+  (a helper's turn ends there, as the worker's does).
 
 So effective visibility of a connector's content for a grantee is:
 `granted (connector or set) ∧ visible(item)`, always partial.
@@ -89,7 +100,8 @@ So effective visibility of a connector's content for a grantee is:
   many people it narrows and which of them it has no account for or knows
   as guests, by user id. The source's directory never leaves the API.
 - `GetMyFoundryAccess` tells a grantee the items shared with it
-  (`source_items`), which Founder's worker records on the thread.
+  (`source_items`), which Founder's worker reads around each call; it
+  records on the thread only those of what the call read (`agent.drew`).
 
 ## The site
 
