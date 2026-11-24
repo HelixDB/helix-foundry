@@ -13609,7 +13609,7 @@
         },
         "stale": {
           "type": "boolean",
-          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, as its tables always do."
+          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, and so do its tables."
         },
         "problem": {
           "$ref": "#/definitions/v1FoundrySourceAudienceProblem",

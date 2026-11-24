@@ -98,6 +98,7 @@ func TestSourceAudiences(t *testing.T) {
 	// email, reads only what lists them. An agent's key, no one, reads the
 	// public ones.
 	t.Run("each reader sees what the source shares with them", func(t *testing.T) {
+		members := map[string]bool{"ada@example.com": true, "  ADA@Example.com\n": true}
 		for reader, want := range map[string][]string{
 			"ada@example.com":       {"C1", "C2"},
 			"  ADA@Example.com\n":   {"C1", "C2"},
@@ -116,9 +117,12 @@ func TestSourceAudiences(t *testing.T) {
 			assert.True(t, s.ReadAt.Equal(stored), reader)
 			assert.Nil(t, s.ProblemAt, reader)
 			assert.Empty(t, got[public].Visible, "a source with no account for them shares no public item: %s", reader)
+			assert.Equal(t, members[reader], s.Member, "only a matched person who isn't a guest reads the directory: %q", reader)
+			assert.False(t, got[public].Member, "a source with no account for them shares no directory: %s", reader)
 		}
 		agent := sharingAs(t, db, ws, nil)
 		assert.Equal(t, []string{"C1"}, agent[slack].Visible, "an agent's key reads the public channels")
+		assert.False(t, agent[slack].Member, "an agent's key reads no directory")
 		assert.Equal(t, []string{"C9"}, agent[public].Visible)
 		assert.Empty(t, sharingOf(t, db, id26("SA-NONE"), "ada@example.com"), "audiences are the workspace's")
 	})
@@ -176,6 +180,7 @@ func TestSourceAudiences(t *testing.T) {
 		assert.Equal(t, "1 1 2 1", sourceRows(t, slack))
 		s := sharingOf(t, db, ws, "ada@example.com")[slack]
 		assert.Equal(t, []string{"C2"}, s.Visible, "now a guest, Ada sees only what lists her")
+		assert.False(t, s.Member, "now a guest, Ada reads no directory")
 		assert.Empty(t, sharingOf(t, db, ws, "grace@example.com")[slack].Visible, "no longer in the workspace, Grace sees nothing")
 		read = read.Add(time.Hour)
 	})

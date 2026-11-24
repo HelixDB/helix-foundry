@@ -10173,7 +10173,7 @@ type FoundrySourceAudience struct {
 	ReadAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=read_at,json=readAt,proto3" json:"read_at,omitempty"`
 	// The items are unknown: never read, last read more than 7 days ago, or
 	// more than a day ago with a failed read since. Its documents then go to
-	// full readers only, as its tables always do.
+	// full readers only, and so do its tables.
 	Stale bool `protobuf:"varint,4,opt,name=stale,proto3" json:"stale,omitempty"`
 	// Why the latest read failed, when no read has worked since; unset
 	// otherwise.

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/helixdb/helix-foundry/backend/access"
 )
 
 // slackPeople are a workspace's users for audiences: Ada, with her email
@@ -321,5 +323,61 @@ func TestEmailsAndAudiences(t *testing.T) {
 	a := Audiences{People: map[Email]Person{ada: {}}}
 	if _, ok := a.People[mustEmail(t, " ADA@example.com")]; !ok || len(slices.Collect(maps.Keys(a.People))) != 1 {
 		t.Error("an email in another case is another person")
+	}
+}
+
+// Every Slack table but its directory tells each row's channel by the field
+// of its key (the table's first key column, which a mapping's row_key
+// names): a row a grantee holds by a channel is that channel's, as the
+// engine reads it from the stored row key. users is the directory; a table
+// Slack doesn't sync holds no row.
+func TestSlackTableRows(t *testing.T) {
+	kind, _ := slackAt(t, newSlackWorkspace().routes())
+	var tables []Table
+	for _, o := range slackObjects {
+		tables = append(tables, Table{Name: o.name})
+	}
+	sinks, err := slackRead(t, kind, tables, noDocuments{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range slackObjects {
+		rule := kind.TableRows(o.name)
+		if o.name == "users" {
+			if rule.Match() != access.RowsDirectory {
+				t.Errorf("users = %v; want the directory", rule.Match())
+			}
+			continue
+		}
+		rows := sinks[o.name].rows
+		if len(rows) == 0 {
+			t.Fatalf("%s wrote no rows to check", o.name)
+		}
+		for _, row := range rows {
+			channel := fmt.Sprint(row["channel_id"])
+			field, prefix, held := access.TableRows{Rule: rule, Items: []string{channel}}.Held()
+			if field != o.key {
+				t.Errorf("%s holds rows by %s; its key is %s", o.name, field, o.key)
+			}
+			key := fmt.Sprint(row[field])
+			if prefix && !strings.HasPrefix(key, held[0]) || !prefix && key != held[0] {
+				t.Errorf("%s row %s isn't held by its channel %s (%v)", o.name, key, channel, held)
+			}
+			for _, other := range []string{"C", channel[:len(channel)-1], channel + "0"} {
+				_, _, by := access.TableRows{Rule: rule, Items: []string{other}}.Held()
+				if prefix && strings.HasPrefix(key, by[0]) || !prefix && key == by[0] {
+					t.Errorf("%s row %s is held by channel %s too", o.name, key, other)
+				}
+			}
+		}
+	}
+	if kind.TableRows("reactions").Match() != access.RowsUnheld {
+		t.Error("a table Slack doesn't sync is told apart")
+	}
+	app := newSlackAppTest(t, slackAudienceRoutes()).app
+	for _, o := range slackObjects {
+		if app.TableRows(o.name) != kind.TableRows(o.name) {
+			t.Errorf("the install tells %s apart as a token doesn't", o.name)
+		}
 	}
 }

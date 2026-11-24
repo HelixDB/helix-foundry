@@ -109,6 +109,15 @@ func shared(visible ...string) []model.FoundrySourceSharing {
 	return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, Visible: visible}}
 }
 
+// asMember is sharing as the store reads it for a person Slack has an account
+// for that isn't a guest's.
+func asMember(sharing []model.FoundrySourceSharing) []model.FoundrySourceSharing {
+	for i := range sharing {
+		sharing[i].Member = true
+	}
+	return sharing
+}
+
 func TestGrants(t *testing.T) {
 	ctx := context.Background()
 	public := access.DocumentRef{ID: "d1", Set: conv, Stream: "conversations", ExternalID: "C1:2026-11-01"}
@@ -118,10 +127,20 @@ func TestGrants(t *testing.T) {
 		sharing   map[string][]model.FoundrySourceSharing
 		wantEmail []string
 		reads     [2]bool
+		// directory says it reads Slack's users.
+		directory bool
 	}{
-		"a member reads the channels Slack shares with her email, in one form": {
-			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "agent": shared("C1")},
-			wantEmail: []string{"ada@example.com"}, reads: [2]bool{true, true}},
+		"a member reads the channels Slack shares with her email, in one form, and its directory": {
+			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": asMember(shared("C1", "C2")), "agent": shared("C1")},
+			wantEmail: []string{"ada@example.com"}, reads: [2]bool{true, true}, directory: true},
+		"a guest reads what lists her, and no directory": {
+			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C2")},
+			wantEmail: []string{"ada@example.com"}, reads: [2]bool{false, true}},
+		"audiences read over a week ago: no directory either": {
+			reader: ada, wantEmail: []string{"ada@example.com"}, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": func() []model.FoundrySourceSharing {
+				at := now.Add(-8 * 24 * time.Hour)
+				return []model.FoundrySourceSharing{{ConnectorID: "conn-slack", ReadAt: &at, Visible: []string{"C1"}, Member: true}}
+			}()}},
 		"a member left out of a private channel": {
 			reader: ada, sharing: map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1")},
 			wantEmail: []string{"ada@example.com"}, reads: [2]bool{true, false}},
@@ -158,6 +177,9 @@ func TestGrants(t *testing.T) {
 			assert.Equal(t, tc.reads, [2]bool{g.Reads(public), g.Reads(private)})
 			assert.False(t, g.CoversSet(conv), "an audienced connector's set is never covered whole")
 			assert.False(t, g.CoversTable(access.TableRef{ConnectorID: "conn-slack", Table: "messages"}), "nor its tables")
+			assert.Equal(t, tc.reads[0] || tc.reads[1], g.ReadsTable(access.TableRef{ConnectorID: "conn-slack", Table: "messages"}),
+				"its messages are read by the channels shared")
+			assert.Equal(t, tc.directory, g.ReadsTable(access.TableRef{ConnectorID: "conn-slack", Table: "users"}), "its directory")
 			assert.True(t, g.CoversTable(access.TableRef{ConnectorID: "conn-stripe", Table: "customers"}), "a source that reports nothing isn't narrowed")
 			assert.Equal(t, tc.wantEmail, store.emails)
 			// The same call reads none of it again.
@@ -302,6 +324,21 @@ func TestToldReadsALoadAsTheGrantsItWasToldFrom(t *testing.T) {
 			assert.Equal(t, g.Part(holdings), told.Part(holdings))
 		})
 	}
+	// The API tells a grantee no directory, which holds no item: what Told
+	// reads of the load's documents and rows, and so their items, is the same.
+	t.Run("a directory is no item", func(t *testing.T) {
+		targets := []access.Target{access.ConnectorTarget("conn-slack")}
+		store := newStore(targets...)
+		store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": asMember(shared("C1"))}
+		var asked int
+		g, err := sourceaccess.New(store, people{asked: &asked}, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
+		require.NoError(t, err)
+		told := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, g.VisibleItems())
+		withUsers := access.Holdings{Tables: append([]access.TableRef{{ConnectorID: "conn-slack", Table: "users"}}, holdings.Tables...), Documents: holdings.Documents}
+		assert.Equal(t, []access.TableRef{{ConnectorID: "conn-slack", Table: "users"}}, g.Part(withUsers).Tables)
+		assert.Empty(t, told.Part(withUsers).Tables)
+		assert.Equal(t, g.Part(withUsers).Items, told.Part(withUsers).Items)
+	})
 	t.Run("both channels of one load", func(t *testing.T) {
 		told := sourceaccess.Told(sourceaccess.Audienced(newStore().connectors), []access.Target{access.ConnectorTarget("conn-slack")},
 			[]access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}})
