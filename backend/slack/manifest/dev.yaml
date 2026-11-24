@@ -1,14 +1,15 @@
-# Helix's distributed Slack app "Helix Foundry", dev: unlisted, Helix's own
-# sandboxes only. Create or update the app from this file; slack/manifest_test.go
-# keeps its scopes and events equal to what the bot needs with dev's flags
-# (slack.Required with foundry.slack.feed and foundry.slack.follow on): the
-# channel history the data connector and unmentioned follow-ups read.
+# Helix's distributed Slack app "Founder (dev)", Helix Foundry's assistant in
+# Slack, dev: unlisted, Helix's own sandboxes only. Create or update the app
+# from this file; slack/manifest_test.go keeps its scopes and events equal to
+# what the bot needs with dev's flags (slack.Required with foundry.slack.feed
+# and foundry.slack.follow on): the channel history the data connector and
+# unmentioned follow-ups read.
 display_information:
-  name: Helix Foundry (dev)
+  name: Founder (dev)
   description: Ask your Foundry ontologies and act on them from Slack.
 features:
   bot_user:
-    display_name: Helix Foundry
+    display_name: Founder (dev)
     always_online: true
   app_home:
     home_tab_enabled: false
