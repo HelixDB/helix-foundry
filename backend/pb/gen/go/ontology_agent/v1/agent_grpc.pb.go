@@ -139,7 +139,9 @@ type AgentClient interface {
 	// before its commit; sending it back with a later request replays it with no model call.
 	// The errors, cancelling and retries are as for Ingest, cancelling stopping before the next
 	// document's commit or sweep page, and the errors of the request's models and key (see
-	// above).
+	// above). A request with `fold` moves the load in place to its version first, when the change
+	// only adds (a `fold` event says what came of it); `asked_apart` asks a moved load's new
+	// links in calls of their own.
 	Extract(ctx context.Context, in *ExtractRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExtractEvent], error)
 	// Removes one load from a graph: its edges, then its nodes, `batch` per request, then its
 	// marker. Deleting the load's nodes also deletes every edge attached to them, edges the
@@ -587,7 +589,9 @@ type AgentServer interface {
 	// before its commit; sending it back with a later request replays it with no model call.
 	// The errors, cancelling and retries are as for Ingest, cancelling stopping before the next
 	// document's commit or sweep page, and the errors of the request's models and key (see
-	// above).
+	// above). A request with `fold` moves the load in place to its version first, when the change
+	// only adds (a `fold` event says what came of it); `asked_apart` asks a moved load's new
+	// links in calls of their own.
 	Extract(*ExtractRequest, grpc.ServerStreamingServer[ExtractEvent]) error
 	// Removes one load from a graph: its edges, then its nodes, `batch` per request, then its
 	// marker. Deleting the load's nodes also deletes every edge attached to them, edges the
