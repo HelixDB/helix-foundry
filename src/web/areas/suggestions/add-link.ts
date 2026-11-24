@@ -304,14 +304,17 @@ export function stateText(s: CardState): string | undefined {
     case "applying": {
       const spend =
         s.cap > 0 ? `, ${dollars(s.spent)} of ${dollars(s.cap)}` : "";
+      // A pause lasts up to a day: its date, not just its time.
       const paused = s.pausedUntil
-        ? ` Paused until ${s.pausedUntil.toISOString().slice(11, 16)} UTC.`
+        ? ` Paused until ${s.pausedUntil.toISOString().slice(0, 16).replace("T", " ")} UTC.`
         : "";
       return `Filling the current load (${version}) with this link: ${s.done} of ${plural(s.owed, "document")}${spend}.${paused}`;
     }
     case "fixed": {
+      // Past the documents one fill takes: they have reviews of the link,
+      // not statements of it.
       const left = s.left
-        ? ` ${plural(s.left, "more document")} state it: a new load asks them.`
+        ? ` ${plural(s.left, "more document")} ${s.left === 1 ? "has" : "have"} reviews of it: a new load asks them.`
         : "";
       const refused = s.refused
         ? ` Reviews stay in ${plural(s.refused, "document")} that couldn't be filled.`
