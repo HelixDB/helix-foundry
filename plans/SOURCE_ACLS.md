@@ -54,6 +54,14 @@ kind only differs in what its adapter can report.
   over 1,000 items (`access.MaxHeldItems`: the engine repeats every held
   item, per mapping naming the field, in each partial entity's read, which
   must fit Helix's 2 MiB request): full readers only. Nothing loads write changes.
+  A question or Founder graph read over such a table records every channel
+  the reader holds (up to the cap) and the directory when it read users,
+  since the engine doesn't say which rows an answer drew on: leaving any one
+  of those channels, or becoming a guest, hides that answer or thread.
+  Accepted, as for documents (a read draws on every one it could read); the
+  rows stored are at most about 1,000 per source a question or thread
+  (`foundry_question_source_items`, `foundry_agent_thread_source_items`). Narrowing it to the rows an answer
+  cited needs the engine to report them.
   Rollout: every agent call checks the agent speaks the contract exactly,
   so an older engine refuses all calls rather than seeing `rows`; the
   hosted pin bumps the helixsvc and agent images (one pod) together.

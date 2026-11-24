@@ -367,7 +367,9 @@ type Part struct {
 	// Items are the items of audienced sources the documents, files and rows
 	// it reads are of, and the directory (DirectoryItem) of each source whose
 	// directory it reads, sorted: what it says can be of them, so it stays
-	// the reader's only while they are (Keeps).
+	// the reader's only while they are (Keeps). A table read by its rows
+	// gives every item it holds (up to MaxHeldItems), since the engine
+	// doesn't say which rows an answer drew on.
 	Items []ItemRef
 	// DecisionSets are the sets of the documents the decisions it reads came
 	// from: its answers carry those values, so grants must keep covering them.
