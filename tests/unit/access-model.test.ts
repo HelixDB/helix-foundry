@@ -626,6 +626,9 @@ describe("restricted mode", () => {
       "/nowhere",
       // Settings › Slack: the install, and unlinking their own account.
       "/settings/slack",
+      // A partner app's consent page, which tells them only owners and
+      // admins connect apps.
+      "/oauth/authorize",
     ])
       expect(granteeRedirect(path), path).toBeUndefined();
     for (const path of [
@@ -633,6 +636,7 @@ describe("restricted mode", () => {
       "/data/connections/c",
       "/settings",
       "/settings/access",
+      "/settings/apps",
       "/settings/members",
       "/settings/slack/more",
       "/ontology/new",

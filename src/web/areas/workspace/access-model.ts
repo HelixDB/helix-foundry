@@ -638,6 +638,7 @@ export function restrictedHoldingNothing(
  *     granteeRedirect("/workflows/a") // "/ask"
  *     granteeRedirect("/settings/slack") // undefined
  *     granteeRedirect("/settings/members") // "/ask"
+ *     granteeRedirect("/oauth/authorize") // undefined: only owners and admins connect apps, it says
  */
 export function granteeRedirect(
   pathname: string,
@@ -665,6 +666,10 @@ export function granteeRedirect(
         : `/explore/${second}/records`;
     case "settings":
       return second === "slack" && third === undefined ? undefined : "/ask";
+    // A partner app's consent page says that only owners and admins
+    // connect apps.
+    case "oauth":
+      return undefined;
     case "data":
     case "workflows":
     case "automations":

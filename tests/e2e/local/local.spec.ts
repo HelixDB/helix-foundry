@@ -350,7 +350,16 @@ test("keeps only settings and the theme in the account menu", async ({
   await expect(page.getByRole("tab", { name: "Slack" })).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(3);
   await expect(page.getByText("Helix dashboard")).toHaveCount(0);
-  for (const path of ["/settings/members", "/settings/billing"]) {
+  // No connected apps: a local install has no Helix to register them with.
+  await expect(page.getByRole("tab", { name: "Connected apps" })).toHaveCount(
+    0,
+  );
+  for (const path of [
+    "/settings/members",
+    "/settings/billing",
+    "/settings/apps",
+    "/oauth/authorize",
+  ]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found" }),

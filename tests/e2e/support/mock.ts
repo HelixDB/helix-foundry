@@ -177,6 +177,10 @@ export const mock = {
     dataLayoutConflicts?: number;
     // Alan's role in Acme (a member by default).
     alanRole?: "WORKSPACE_ROLE_ADMIN" | "WORKSPACE_ROLE_MEMBER";
+    // Helix offers no connected apps; Acme already has Northwind reading
+    // its Stripe connector (mock/routes/partner-apps.ts).
+    partnerAppsAvailable?: boolean;
+    partnerAppInstalled?: boolean;
     // Alan can't query databases: he reads through source grants.
     memberQueryRead?: boolean;
     // Acme's Okta directory synced: Engineering (Ada, Alan) and Finance
@@ -369,6 +373,33 @@ export const mock = {
       `${MOCK}/__mock/event-sources/${encodeURIComponent(connectorId)}/pieces`,
       { method: "POST", body: JSON.stringify(send) },
     );
+    return { status: res.status, body: await res.json() };
+  },
+  /**
+   * A connected app trading the code /oauth/authorize sent it for tokens
+   * at Helix's token endpoint, under the backend's rules
+   * (mock/routes/partner-apps.ts): its status and body, tokens or an OAuth
+   * error.
+   */
+  partnerExchange: async (exchange: {
+    clientId: string;
+    clientSecret: string;
+    code: string;
+    codeVerifier: string;
+  }): Promise<{
+    status: number;
+    body: {
+      accessToken?: string;
+      refreshToken?: string;
+      scope?: string;
+      workspaceId?: string;
+      error?: string;
+    };
+  }> => {
+    const res = await fetch(`${MOCK}/__mock/partner-apps/exchange`, {
+      method: "POST",
+      body: JSON.stringify(exchange),
+    });
     return { status: res.status, body: await res.json() };
   },
 };
