@@ -52,6 +52,9 @@ kind only differs in what its adapter can report.
   directory, whole for a matched non-guest person only. A table with no
   rule, a mapping whose `row_key` lacks the field, unknown audiences, or
   over 10,000 items: full readers only. Nothing loads write changes.
+  Rollout: every agent call checks the agent speaks the contract exactly,
+  so an older engine refuses all calls rather than seeing `rows`; the
+  hosted pin bumps the helixsvc and agent images (one pod) together.
 - **Freshness**: audiences are read from the source at the end of a
   successful sync, in full, whatever tables the connector syncs, at most once
   an hour (`syncer.AudienceEvery`, unless a read since failed), after the

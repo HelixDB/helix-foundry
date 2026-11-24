@@ -83,8 +83,10 @@ type Visibility struct {
 	// mappings read them by.
 	Sources []string `json:"sources"`
 	// Rows are the tables it holds some rows of (contract 4.32.0), each never
-	// in Sources; left out when there are none, so an engine before 4.32.0,
-	// which refuses the field, still reads every other reader.
+	// in Sources; left out when there are none, as the contract allows. No
+	// engine before 4.32.0 is ever sent it: every call checks the agent
+	// speaks ContractVersion exactly first, so Foundry and its agent ship
+	// together.
 	Rows []HeldRows `json:"rows,omitempty"`
 	// Documents are the load's documents it holds.
 	Documents VisibleDocuments `json:"documents"`
