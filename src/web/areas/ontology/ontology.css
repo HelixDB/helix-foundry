@@ -1213,20 +1213,140 @@
 .on-tour-sources small {
   color: var(--hf-text-2);
 }
-/* Onboarding's start: the sample, then one card toggling the user's agent
-   and their own data. On a narrow phone the toggle's labels wrap. */
-.on-start-or {
-  margin: 20px 0 8px;
+/* Onboarding's start: two cards side by side, the user's agent and this
+   page's wizard, each its title, a line and its button at the foot (one
+   column on a phone); the sample a quiet link under them. */
+.on-start-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--hf-space-2);
+}
+.on-start-card {
+  flex-direction: column;
+  flex-wrap: nowrap;
+}
+.on-start-card > .on-card-text {
+  min-width: 0;
+}
+.on-card.on-start-card > .hf-btn {
+  align-self: flex-start;
+  margin-top: auto;
+}
+@media (max-width: 640px) {
+  .on-start-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.on-start-sample {
+  margin: 16px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.on-start-sample a {
+  color: var(--hf-text-2);
+  text-decoration: underline;
+}
+
+/* The wizard's company step: the domain and Research on one row, then the
+   company, the pages read and its questions, each answer's options as
+   chips that fill it. */
+.on-company-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.on-company-form .hf-field {
+  flex: 1 1 220px;
+  margin-top: 0;
+}
+.on-company-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.on-company {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.on-company-sources {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+}
+.on-company-sources a {
+  color: var(--hf-text-2);
+}
+.on-company .on-question .hf-field {
+  margin-top: 0;
+}
+.on-company .on-question textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.on-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.on-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-raised);
+  color: var(--hf-text-2);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+}
+.on-chip:hover,
+.on-chip:focus-visible {
+  border-color: var(--hf-border-strong);
+  color: var(--hf-text);
+}
+.on-chip[aria-pressed="true"] {
+  border-color: var(--hf-accent-border);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+/* Under the goal: its draft from the company's answers, and Write it again. */
+.on-goal-draft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.on-goal-draft .hf-form-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+/* The review's Advanced: name and database, folded away. */
+.on-advanced {
+  margin-top: 12px;
+}
+.on-advanced > summary {
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
   font-weight: 500;
+  cursor: pointer;
 }
-.on-start-toggle {
-  flex-basis: 100%;
+.on-advanced[open] > summary {
+  margin-bottom: 10px;
 }
-.on-start-toggle .hf-segmented button {
-  height: auto;
-  min-height: 28px;
+/* What the chosen sources hold toward one draft's tables, warning once over. */
+.on-table-count {
+  color: var(--hf-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.on-table-count.is-over {
+  color: var(--hf-warning-text);
+  font-weight: 600;
 }
 
 /* The tour's first answer, as Ask shows it, and the questions to ask next. */

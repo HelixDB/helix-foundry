@@ -12,7 +12,9 @@ import {
   cancelGeneration,
   cancelQuestion,
   createLoad,
+  draftGoal,
   generateOntology,
+  researchCompany,
   reviseOntologyVersion,
   setCurrentLoad,
   setCurrentVersion,
@@ -531,6 +533,63 @@ describe("Founder's events", () => {
         "agent_action_prepared",
         { operation: "create_load", target_named_by_user: true },
       ],
+    ]);
+  });
+});
+
+describe("company research's events", () => {
+  it("reports its start and how it ended, never the domain", async () => {
+    call.mockResolvedValueOnce({
+      research: {
+        id: "r1",
+        fetched: true,
+        questions: [{ id: "q1" }, { id: "q2" }],
+      },
+    });
+    await researchCompany("ws", "globex.com");
+    expect(call).toHaveBeenCalledWith(
+      "/v1/workspaces/ws/foundry/company-research",
+      { domain: "globex.com" },
+    );
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["company_research_started"],
+      ["company_research_done", { fetched: true, questions: 2 }],
+    ]);
+    vi.mocked(trackEvent).mockClear();
+    call.mockResolvedValueOnce({ research: { id: "r2" } });
+    await researchCompany("ws", "globex.com");
+    expect(vi.mocked(trackEvent).mock.calls[1]).toEqual([
+      "company_research_done",
+      { fetched: false, questions: 0 },
+    ]);
+  });
+
+  it("reports why research failed", async () => {
+    call.mockRejectedValueOnce(new ApiError("slow down", 429));
+    await expect(researchCompany("ws", "globex.com")).rejects.toThrow();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["company_research_started"],
+      ["company_research_failed", { reason: "rate_limit" }],
+    ]);
+  });
+
+  it("reports a goal drafted, or why not, never the goal", async () => {
+    call.mockResolvedValueOnce({ goal: "Ops asks.", name: "Globex" });
+    const body = { answers: [{ questionId: "q1", answer: "Ops" }], data: "" };
+    expect(await draftGoal("ws", "r/1", body)).toEqual({
+      goal: "Ops asks.",
+      name: "Globex",
+    });
+    expect(call).toHaveBeenCalledWith(
+      "/v1/workspaces/ws/foundry/company-research/r%2F1:draft-goal",
+      body,
+    );
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([["goal_drafted"]]);
+    vi.mocked(trackEvent).mockClear();
+    call.mockRejectedValueOnce(new ApiError("unavailable", 503));
+    await expect(draftGoal("ws", "r1", body)).rejects.toThrow();
+    expect(vi.mocked(trackEvent).mock.calls).toEqual([
+      ["goal_draft_failed", { reason: "error" }],
     ]);
   });
 });

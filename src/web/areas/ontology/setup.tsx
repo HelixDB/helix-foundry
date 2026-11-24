@@ -475,15 +475,15 @@ export function SetupFlow({
           <ol id={stepsId} className="on-wizard" aria-label="Setup steps">
             <FlowStep
               number={1}
-              title={STEP_COPY.name.title}
-              text={STEP_COPY.name.text}
+              title="Name"
+              text="What people will call it."
               state="done"
               summary={ontologyName(ontology)}
             />
             <FlowStep
               number={2}
-              title={STEP_COPY.database.title}
-              text={STEP_COPY.database.text}
+              title="Database"
+              text="Where its entities and facts are written."
               state="done"
               summary={database}
             />

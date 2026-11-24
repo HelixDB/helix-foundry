@@ -189,14 +189,22 @@ export type AnalyticsEvents = {
   } & FirstTouchProperties;
   workspace_created: FirstTouchProperties;
   // A workspace with no ontology shows only the new-ontology wizard, which
-  // first asks how to start: the sample (sample_clicked), the user's own
-  // data, or their agent (setup_prompt_copied).
+  // first asks how to start: Set up here (the wizard) or with their agent,
+  // the sample a link below (sample_clicked).
   onboarding_shown: undefined;
   onboarding_own_data_clicked: undefined;
   // The new-ontology wizard's step on screen (a workspace's first ontology
   // of its own, or another), and why creating it failed.
   ontology_step_shown: { step: WizardStepId; first: boolean };
   ontology_create_failed: { reason: "no_subscription" | Refusal };
+  // Its company step: a site researched, with whether a page could be read
+  // and how many questions came back, or why not; then a goal drafted from
+  // it, or why not. Never the domain, the answers or the goal.
+  company_research_started: undefined;
+  company_research_done: { fetched: boolean; questions: number };
+  company_research_failed: { reason: Refusal };
+  goal_drafted: undefined;
+  goal_draft_failed: { reason: Refusal };
 
   // The sample company: Use the sample, then its tour reaching each step,
   // with how long each took: its data (by the page's clock), its draft made

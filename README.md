@@ -70,7 +70,7 @@ See the [local setup guide](local/README.md) for what runs, where data lives, AI
 
 **What you do next**
 
-1. No data to hand? Click **Use the sample**: Acme Corp, a made-up software company, as a PostgreSQL database (customers, subscriptions, invoices, support tickets, usage) and documents (contracts, call notes, an incident report). It walks you through the data, the goal, a ready-made ontology, its load and a question, in about a minute, once Foundry has an AI provider.
+1. No data to hand? Under Get started’s two cards, click **Or look around a sample company first**: Acme Corp, a made-up software company, as a PostgreSQL database (customers, subscriptions, invoices, support tickets, usage) and documents (contracts, call notes, an incident report). It walks you through the data, the goal, a ready-made ontology, its load and a question, in about a minute, once Foundry has an AI provider.
 2. Otherwise, connect your data or upload documents, say what you want to know, and let the ontology agent draft the ontology.
 3. Review the draft, make it current and load it into HelixDB.
 4. Explore the graph and its records, or ask the **Analyst**.

@@ -9,6 +9,7 @@ import {
   DRAFT_STEPS,
   ONTOLOGY_STEPS,
   STEP_COPY,
+  WIZARD_STEPS,
   draftWizard,
   ontologySetup,
   stepSummary,
@@ -430,7 +431,10 @@ describe("the wizard's kept choices", () => {
     store.set(
       key,
       JSON.stringify({
-        name: "Orders",
+        domain: "globex.com",
+        company: null,
+        drafted: null,
+        name: "",
         database: null,
         connectorIds: ["c1"],
         eventSources: [...chosen],
@@ -443,7 +447,190 @@ describe("the wizard's kept choices", () => {
     const read = readNewOntology("ws1")!;
     expect(new Map(read.eventSources)).toEqual(chosen);
     expect(read.connectorIds).toEqual(["c1"]);
+    expect(read.domain).toBe("globex.com");
     forgetNewOntology("ws1");
+    expect(readNewOntology("ws1")).toBeNull();
+  });
+
+  it("keeps the company's research, its answers and the goal drafted from it", () => {
+    stub();
+    const research = {
+      id: "res1",
+      domain: "globex.com",
+      companyName: "Globex",
+      questions: [
+        { id: "q1", question: "Who asks?", options: ["Ops", "Finance"] },
+        { id: "q2", bestGuess: "Churn" },
+      ],
+      sources: ["https://globex.com/"],
+      fetched: true,
+      createdAt: null,
+    };
+    store.set(
+      key,
+      JSON.stringify({
+        token: "t1",
+        domain: "globex.com",
+        company: { research, answers: [["q1", "Ops"]] },
+        drafted: { goal: "Ops asks.", name: "Globex operations" },
+        name: "Orders",
+        database: { kind: "existing", tenantId: "t1" },
+      }),
+    );
+    const read = readNewOntology("ws1")!;
+    expect(read.company).toEqual({ research, answers: [["q1", "Ops"]] });
+    expect(read.drafted).toEqual({
+      goal: "Ops asks.",
+      name: "Globex operations",
+    });
+    expect(read.name).toBe("Orders");
+    expect(read.database).toEqual({ kind: "existing", tenantId: "t1" });
+  });
+
+  it("drops the company whole, with the goal drafted from it, when any part doesn't read", () => {
+    stub();
+    const research = {
+      id: "res1",
+      questions: [{ id: "q1", question: "Who asks?", options: ["Ops"] }],
+    };
+    const read = (company: unknown) => {
+      store.set(
+        key,
+        JSON.stringify({
+          token: "t1",
+          company,
+          drafted: { goal: "Ops asks.", name: "Globex operations" },
+          goal: "Ops asks.",
+        }),
+      );
+      return readNewOntology("ws1")!;
+    };
+    expect(read({ research, answers: [] }).company).toEqual({
+      research,
+      answers: [],
+    });
+    for (const company of [
+      null,
+      { research },
+      { research, answers: {} },
+      { research: { ...research, id: "" }, answers: [] },
+      { research: { ...research, companyName: 4 }, answers: [] },
+      { research: { ...research, fetched: "yes" }, answers: [] },
+      { research: { ...research, createdAt: 4 }, answers: [] },
+      {
+        research: { ...research, sources: ["javascript:alert(1)"] },
+        answers: [],
+      },
+      {
+        research: { ...research, sources: "https://globex.com/" },
+        answers: [],
+      },
+      { research: { ...research, questions: { q1: {} } }, answers: [] },
+      { research: { ...research, questions: [3] }, answers: [] },
+      {
+        research: { ...research, questions: [{ question: "no id" }] },
+        answers: [],
+      },
+      {
+        research: { ...research, questions: [{ id: "q1", options: "Ops" }] },
+        answers: [],
+      },
+      {
+        research: { ...research, questions: [{ id: "q1", options: [4] }] },
+        answers: [],
+      },
+      {
+        research: { ...research, questions: [{ id: "q1", bestGuess: 4 }] },
+        answers: [],
+      },
+      { research, answers: [["q1", 4]] },
+      { research, answers: [["q2", "an answer to no question"]] },
+      { research, answers: [["q1", "Ops", "x"]] },
+      { research, answers: ["q1"] },
+    ]) {
+      const r = read(company);
+      expect(r.company, JSON.stringify(company)).toBeNull();
+      expect(r.drafted).toBeNull();
+      // The goal stays the user's.
+      expect(r.goal).toBe("Ops asks.");
+    }
+  });
+
+  it("reads the database chosen only whole", () => {
+    stub();
+    const read = (database: unknown) => {
+      store.set(key, JSON.stringify({ token: "t1", database }));
+      return readNewOntology("ws1")!.database;
+    };
+    // An existing pick with no tenant yet is one being chosen.
+    for (const database of [
+      { kind: "existing", tenantId: "" },
+      { kind: "new", project: { kind: "existing", id: "p1" }, name: "Orders" },
+      { kind: "new", project: { kind: "new", name: "Acme" }, name: "" },
+    ])
+      expect(read({ ...database, extra: 1 })).toEqual(database);
+    for (const database of [
+      { kind: "existing" },
+      { kind: "existing", tenantId: 4 },
+      { kind: "new" },
+      { kind: "new", name: "Orders" },
+      { kind: "new", project: "p1", name: "Orders" },
+      { kind: "new", project: { kind: "existing" }, name: "Orders" },
+      { kind: "new", project: { kind: "existing", id: "" }, name: "Orders" },
+      { kind: "new", project: { kind: "new" }, name: "Orders" },
+      { kind: "new", project: { kind: "other", id: "p1" }, name: "Orders" },
+      { kind: "new", project: { kind: "new", name: "Acme" } },
+      "existing",
+    ])
+      expect(read(database), JSON.stringify(database)).toBeNull();
+  });
+
+  it("keeps each of what an earlier attempt made only whole", () => {
+    stub();
+    const read = (made: unknown) => {
+      store.set(key, JSON.stringify({ token: "t1", made }));
+      return readNewOntology("ws1")!.made;
+    };
+    const project = { id: "p1", name: "Acme" },
+      database = { id: "t1", projectId: "p1", name: "Orders" };
+    expect(read({ project, database })).toEqual({ project, database });
+    expect(read({ project: { id: "p1" }, database })).toEqual({ database });
+    expect(read({ project, database: { ...database, projectId: "" } })).toEqual(
+      { project },
+    );
+    expect(read({ project: { ...project, id: 4 }, database: "t1" })).toEqual(
+      {},
+    );
+  });
+
+  it("drops what doesn't read as its field to its empty value", () => {
+    stub();
+    store.set(
+      key,
+      JSON.stringify({
+        token: "t1",
+        domain: 4,
+        company: { research: { domain: "no id" }, answers: [] },
+        drafted: "yes",
+        name: null,
+        database: { kind: "other" },
+        made: [],
+        ontologyId: "",
+      }),
+    );
+    expect(readNewOntology("ws1")).toMatchObject({
+      domain: "",
+      company: null,
+      drafted: null,
+      name: "",
+      database: null,
+      made: {},
+      ontologyId: undefined,
+    });
+    // Not an object, or not JSON, is nothing kept.
+    store.set(key, "[1]");
+    expect(readNewOntology("ws1")).toBeNull();
+    store.set(key, "{");
     expect(readNewOntology("ws1")).toBeNull();
   });
 
@@ -526,8 +713,11 @@ describe("stepSummary", () => {
 
 describe("STEP_COPY", () => {
   it("names every step of the wizard and the overview", () => {
-    for (const id of [...DRAFT_STEPS, ...ONTOLOGY_STEPS])
+    for (const id of [...WIZARD_STEPS, ...DRAFT_STEPS, ...ONTOLOGY_STEPS])
       expect(STEP_COPY[id].title).toBeTruthy();
     expect(STEP_COPY.draft.title).toBe("Generate a draft");
+    expect(STEP_COPY.company.title).toBe("Your company");
+    expect(Object.keys(STEP_COPY)).not.toContain("name");
+    expect(Object.keys(STEP_COPY)).not.toContain("database");
   });
 });
