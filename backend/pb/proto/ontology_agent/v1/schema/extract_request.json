@@ -154,6 +154,10 @@
         }
       ]
     },
+    "Canonical": {
+      "description": "A suggested link's canonical form (P5 D11): lowercased, each run of characters other than\nletters and digits one `_`, none at either end. Never empty.",
+      "type": "string"
+    },
     "Certificate": {
       "description": "The labels of facts of one ontology version, judged by one verifier model under one prompt\nversion, by cell. No cell is in it twice, no cell's counts overflow, and its id is the hash\nof what it holds.",
       "type": "object",
@@ -601,10 +605,17 @@
           "type": "string"
         },
         "fill": {
-          "description": "Links to fill the document with, which its commit wasn't asked: links of the request's\n`asked_apart`, each routed for its set. Of a document the load holds, its saved work for\nits text replays with them asked apart (only their calls are asked, with the budget),\nand what a commit asked them would write beside what its commit wrote is written, in one\ntransaction of its own (origin `fill`): their facts, quotes and held claims, the ends\nthey create, and the reviews of a relationship no link covered whose quote a stated fact\nof them overlaps, which go. Its `filled` event, before its `document` event, says what\ncame of it. What the load holds of it already (a fill sent again) is not written twice,\nand a document whose commit was asked them is `native`. With no saved work of its text it\nis refused `not_replayed`, and asks nothing. Of a document the load doesn't hold, they\nare asked apart at its commit, which is `native`.",
+          "description": "Links to fill the document with, which its commit wasn't asked: links of the request's\n`asked_apart`, each routed for its set. Of a document the load holds, its saved work for\nits text replays with them asked apart (only their calls are asked, with the budget),\nand what a commit asked them would write beside what its commit wrote is written, in one\ntransaction of its own (origin `fill`): their facts, quotes and held claims, the ends\nthey create, and the reviews of a relationship no link covered whose quote a stated fact\nof them overlaps, which go. Its `filled` event, before its `document` event, says what\ncame of it. What the load holds of it already (a fill sent again) is not written twice,\nand a document whose commit was asked them is `native`. With no saved work of its text it\nis refused `not_replayed`, and asks nothing. Of a document the load doesn't hold, they\nare asked apart at its commit, which is `native`. A document whose id holds U+001F\ncan't be filled, as a fill's anchor names it.",
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "fill_spellings": {
+          "description": "The canonical spellings of the suggestions whose reviews a fill takes (a finding's):\na review of a relationship no link covered goes only if its suggestion's canonical\nspelling is one of these and a stated fact of `fill` overlaps its quote. A review of\nanother relationship in the same sentence stays. Required with `fill`, and only with it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Canonical"
           }
         },
         "media_type": {

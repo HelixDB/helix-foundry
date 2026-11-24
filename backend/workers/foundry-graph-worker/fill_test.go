@@ -211,7 +211,7 @@ func TestFillSendsEachOwedDocumentWithTheLinkAlone(t *testing.T) {
 		filling(h, "doc-a")
 		h.agent.extract = func(raw string, stream agentv1.Agent_ExtractServer) error {
 			return extractEvents(stream, []string{
-				documentEvent("doc-a", `{"kind":"failed","code":"model","model_failure":"overloaded","retryable":true}`, usage),
+				documentEvent("doc-a", `{"kind":"failed","code":"model","model_failure":"unavailable","retryable":true}`, usage),
 				`{"event":"extract_finished"}`}, `{"status":"done","totals":`+totals+`}`)
 		}
 		outcome := h.run(t, resendJob())

@@ -180,7 +180,7 @@
       ]
     },
     {
-      "description": "What came of filling a document with links its commit wasn't asked\n([`ExtractDocument::fill`]), just before its `document` event. Its numbers are what the\ndocument states of those links, whatever this run wrote of it, so a fill sent again,\nafter its first event was lost, says the same.",
+      "description": "What came of filling a document with links its commit wasn't asked\n([`ExtractDocument::fill`]), just before its `document` event. Its `facts` and `held`\nare what the document states of those links, whatever this run wrote of it, so a fill\nsent again, after its first event was lost, says the same; `reviews_taken` is this run's.",
       "type": "object",
       "properties": {
         "doc_id": {
@@ -215,7 +215,7 @@
           "$ref": "#/$defs/FillOutcome"
         },
         "reviews_taken": {
-          "description": "Its relationships reported as no link's that a stated fact of them covers: the\nreviews the fill takes, or took.",
+          "description": "Its reviews of a relationship no link covered, of a suggestion of `fill_spellings`,\nthat this run took: none unless `written`, so a fill sent again after its first event\nwas lost says none.",
           "type": "integer",
           "format": "uint",
           "minimum": 0
