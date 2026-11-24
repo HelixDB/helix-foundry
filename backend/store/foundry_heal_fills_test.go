@@ -203,7 +203,7 @@ func TestFoundryLoadMovesInPlaceForAFinding(t *testing.T) {
 	require.NotNil(t, fill)
 	assert.Equal(t, model.FoundryFillMoving, fill.State)
 	assert.Equal(t, from, fill.FromVersionID)
-	assert.Equal(t, to.ID, f.ontologyNow(t).CurrentVersionID)
+	assert.Equal(t, to.ID, *f.ontologyNow(t).CurrentVersionID)
 	assert.Equal(t, 1, f.moveOwed(t))
 	assert.Empty(t, f.owed(t), "a move names no document")
 	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
@@ -312,9 +312,10 @@ func TestFoundryLoadMoveOwedPastAFailedJob(t *testing.T) {
 	owed, err := f.db.FoundryLoadMoveOwed(ctx, f.load)
 	require.NoError(t, err)
 	require.NotNil(t, owed)
-	// An approval's resend sends it again; two more failures give it up.
-	for i, d := range []*model.FoundryReviewDecision{f.held(f.a, 0, readA), f.held(f.b, 1, readB)} {
-		require.True(t, f.approve(t, fmt.Sprint(i), d))
+	// Pressed again, it is sent again; two more failures give it up.
+	for i := range 2 {
+		_, err := f.press(t, fmt.Sprint("again", i), to.ID, &to.ID, fingerprint("MOVEF"))
+		require.NoError(t, err)
 		f.end(t, f.claim(t), fmt.Sprint("failed", i), model.FoundryGraphJobFailed)
 	}
 	assert.Zero(t, f.moveOwed(t))
@@ -346,7 +347,7 @@ func TestFoundryLoadMoveCarriedToALoadOfItsVersion(t *testing.T) {
 	rebuild := loadJob(f.ontology, "MOVEC-B")
 	rebuild.VersionID = from
 	require.NoError(t, f.db.CreateFoundryLoad(ctx, rebuild))
-	f.loaded(t, "w-rebuild")
+	f.loaded(t, "w-rebuild", f.a, f.b)
 	require.Equal(t, rebuild.LoadID, *f.ontologyNow(t).CurrentLoadID)
 	fills, err := f.db.ListFoundryHealFills(ctx, rebuild.LoadID)
 	require.NoError(t, err)
