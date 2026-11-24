@@ -211,7 +211,7 @@ func WindowedTable(kind, table string) bool {
 	case "google":
 		return table == "calendar_events" || table == "event_attendees"
 	case "databuddy":
-		return table == "daily_metrics" || table == "sessions" || table == "profiles"
+		return table == "daily_metrics" || table == "custom_events_daily" || table == "custom_event_occurrences" || table == "sessions" || table == "profiles"
 	}
 	return false
 }
