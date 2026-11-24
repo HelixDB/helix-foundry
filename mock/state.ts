@@ -163,8 +163,18 @@ export function resetState() {
   for (const reset of resets) reset();
 }
 
+const configured: (() => void)[] = [];
+/**
+ * Registers what an area does once POST /__mock/config set its knobs (a
+ * seed a knob asks for), so every route sees it at once.
+ */
+export function onConfig(run: () => void) {
+  configured.push(run);
+}
+
 /** What a POST /__mock/config does beyond setting its knobs. */
 export function applyConfig() {
+  for (const run of configured) run();
   if (!config.freshInstall || !db.workspaces.has("ws_acme")) return;
   db.workspaces.delete("ws_acme");
   const kept = db.memberships.filter((m) => m.workspaceId !== "ws_acme");

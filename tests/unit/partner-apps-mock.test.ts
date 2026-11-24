@@ -41,8 +41,11 @@ async function load(local = false) {
     }
     throw new Error(`no mock route for ${method} ${path}`);
   };
-  const config = (knobs: Record<string, unknown>) =>
+  // As POST /__mock/config does.
+  const config = (knobs: Record<string, unknown>) => {
     Object.assign(state.config, knobs);
+    state.applyConfig();
+  };
   return { call, config, apps, state };
 }
 afterEach(() => vi.unstubAllEnvs());

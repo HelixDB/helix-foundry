@@ -15,6 +15,7 @@ import {
   isReply,
   LOCAL_TOKEN,
   membership,
+  onConfig,
   onReset,
 } from "../state";
 import {
@@ -276,6 +277,7 @@ function seedIfAsked() {
     revokedAt: null,
   });
 }
+onConfig(seedIfAsked);
 
 /** The caller's membership when it owns or administers the workspace, where offered. */
 function manager(workspaceId: string, userId: string) {
@@ -283,7 +285,6 @@ function manager(workspaceId: string, userId: string) {
   if (isReply(m)) return m;
   if (!manages(m)) return fail("PERMISSION_DENIED", "permission denied");
   if (!offered()) return fail("FAILED_PRECONDITION", NOT_OFFERED);
-  seedIfAsked();
   return m;
 }
 

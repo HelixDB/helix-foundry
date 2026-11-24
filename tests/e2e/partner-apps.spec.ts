@@ -204,7 +204,7 @@ test("a request Helix refuses, or one that can't be used, goes nowhere", async (
   await refused(
     { redirect_uri: "https://northwind.example/elsewhere" },
     "This app can’t connect",
-    "redirect_uri is not registered for this app.",
+    "Redirect_uri is not registered for this app.",
   );
   await refused(
     { client_id: FABRIKAM.clientId, redirect_uri: FABRIKAM.redirectUri },
