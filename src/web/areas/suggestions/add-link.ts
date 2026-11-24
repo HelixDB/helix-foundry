@@ -106,7 +106,45 @@ export type CardState =
   | { kind: "covered"; version: number; versionId: string }
   | { kind: "moving"; version: number }
   | { kind: "moved"; version: number; links: string[] }
-  | { kind: "needs_load"; version: number; versionId: string; why: string[] };
+  | { kind: "needs_load"; version: number; versionId: string; why: string[] }
+  | ({ kind: "applying" | "fixed" | "stopped"; version: number } & Fill);
+
+/** A fill of the documents behind a finding, as its card counts it. */
+export type Fill = {
+  owed: number;
+  done: number;
+  left: number;
+  resolved: number;
+  facts: number;
+  spent: number;
+  cap: number;
+  // When a paused fill resumes; none when it isn't paused.
+  pausedUntil?: Date;
+  stopReason: string;
+};
+
+/** A fill on the wire, read without trust: counts are whole and not below 0. */
+function fillOf(f: wfe.FoundryHealFill): Fill {
+  const whole = (v?: string) => {
+    const x = Number(v);
+    return Number.isSafeInteger(x) && x > 0 ? x : 0;
+  };
+  const usd = (v?: number) =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+  const paused = f.pausedUntil ? new Date(f.pausedUntil) : undefined;
+  return {
+    owed: whole(f.docsOwed),
+    done: whole(f.docsDone),
+    left: whole(f.docsLeft),
+    resolved: whole(f.reviewsResolved),
+    facts: whole(f.factsAdded),
+    spent: usd(f.spentUsd),
+    cap: usd(f.capUsd),
+    pausedUntil:
+      paused && !Number.isNaN(paused.getTime()) ? paused : undefined,
+    stopReason: f.stopReason || "",
+  };
+}
 
 /**
  * The card's state from the finding's `state`, read without trust: none for
@@ -145,8 +183,24 @@ export function cardState(
       versionId: state.needsLoad.versionId || "",
       why: (state.needsLoad.why || []).map(whyText),
     };
+  for (const kind of ["applying", "fixed", "stopped"] as const) {
+    const fill = state[kind];
+    if (fill) return { kind, version: n(fill), ...fillOf(fill) };
+  }
   return { kind: "open" };
 }
+
+/** Each reason a fill stops, in words. */
+const STOPPED: Record<string, string> = {
+  cap_reached: "it spent its limit",
+  model_unavailable: "the model kept failing",
+  dismissed: "the suggestion was dismissed",
+  load_replaced: "another load became current",
+};
+
+const plural = (n: number, one: string, many = `${one}s`) =>
+  `${n} ${n === 1 ? one : many}`;
+const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
 /** Each kind of reason a version needs a load, in words. */
 const WHY: Record<string, (item: string) => string> = {
@@ -211,5 +265,21 @@ export function stateText(s: CardState): string | undefined {
       return `The current load is on ${version} now: documents read from now on state this link. The reviews here stay until their documents are read again.`;
     case "needs_load":
       return `Needs a new load: ${version} changes more than a link${s.why.length ? `: ${s.why.join("; ")}` : ""}.`;
+    case "applying": {
+      const spend =
+        s.cap > 0 ? `, ${dollars(s.spent)} of ${dollars(s.cap)}` : "";
+      const paused = s.pausedUntil
+        ? ` Paused until ${s.pausedUntil.toISOString().slice(11, 16)} UTC.`
+        : "";
+      return `Filling the current load (${version}) with this link: ${s.done} of ${plural(s.owed, "document")}${spend}.${paused}`;
+    }
+    case "fixed": {
+      const left = s.left
+        ? ` ${plural(s.left, "more document")} state it: a new load asks them.`
+        : "";
+      return `${plural(s.resolved, "review")} resolved, ${plural(s.facts, "fact")} added in the current load (${version}).${left}`;
+    }
+    case "stopped":
+      return `Filling stopped after ${s.done} of ${plural(s.owed, "document")}: ${STOPPED[s.stopReason] || s.stopReason.replaceAll("_", " ") || "it stopped"}. ${plural(s.resolved, "review")} resolved, ${plural(s.facts, "fact")} added.`;
   }
 }

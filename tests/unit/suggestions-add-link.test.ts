@@ -184,6 +184,86 @@ describe("cardState", () => {
   });
 });
 
+describe("a fill of the documents behind a finding", () => {
+  const fill = {
+    versionId: "v8",
+    version: "8",
+    linksAdded: ["mentors"],
+    docsOwed: "2",
+    docsDone: "1",
+    docsLeft: "0",
+    reviewsResolved: "3",
+    factsAdded: "2",
+    spentUsd: 0.0125,
+    capUsd: 5,
+  };
+  const counted = {
+    owed: 2,
+    done: 1,
+    left: 0,
+    resolved: 3,
+    facts: 2,
+    spent: 0.0125,
+    cap: 5,
+    pausedUntil: undefined,
+    stopReason: "",
+  };
+
+  it("reads each of its states, counts read without trust", () => {
+    expect(cardState({ applying: fill })).toEqual({
+      kind: "applying",
+      version: 8,
+      ...counted,
+    });
+    expect(cardState({ fixed: fill })).toEqual({
+      kind: "fixed",
+      version: 8,
+      ...counted,
+    });
+    expect(
+      cardState({ stopped: { ...fill, stopReason: "cap_reached" } }),
+    ).toEqual({ kind: "stopped", version: 8, ...counted, stopReason: "cap_reached" });
+    const broken = cardState({
+      applying: { docsOwed: "-3", docsDone: "x", spentUsd: -1, pausedUntil: "soon" },
+    });
+    expect(broken).toMatchObject({ owed: 0, done: 0, spent: 0, pausedUntil: undefined });
+  });
+
+  it("says how far it got, what it spent and what it did", () => {
+    expect(stateText({ kind: "applying", version: 8, ...counted })).toBe(
+      "Filling the current load (version 8) with this link: 1 of 2 documents, $0.01 of $5.00.",
+    );
+    // A $0 local model has no spend to say.
+    expect(
+      stateText({ kind: "applying", version: 8, ...counted, cap: 0 }),
+    ).toBe(
+      "Filling the current load (version 8) with this link: 1 of 2 documents.",
+    );
+    expect(
+      stateText({
+        kind: "applying",
+        version: 8,
+        ...counted,
+        pausedUntil: new Date("2026-11-24T14:00:00Z"),
+      }),
+    ).toMatch(/ Paused until 14:00 UTC\.$/);
+    expect(
+      stateText({ kind: "fixed", version: 8, ...counted, resolved: 1, facts: 1 }),
+    ).toBe("1 review resolved, 1 fact added in the current load (version 8).");
+    expect(stateText({ kind: "fixed", version: 8, ...counted, left: 3 })).toBe(
+      "3 reviews resolved, 2 facts added in the current load (version 8). 3 more documents state it: a new load asks them.",
+    );
+    expect(
+      stateText({ kind: "stopped", version: 8, ...counted, stopReason: "dismissed" }),
+    ).toBe(
+      "Filling stopped after 1 of 2 documents: the suggestion was dismissed. 3 reviews resolved, 2 facts added.",
+    );
+    expect(
+      stateText({ kind: "stopped", version: 8, ...counted, stopReason: "a_later_reason" }),
+    ).toMatch(/: a later reason\./);
+  });
+});
+
 describe("a suggestion's Add this link in place", () => {
   const finding = (state?: object, proposal: object | null = null) => ({
     fingerprint: "f".repeat(64),

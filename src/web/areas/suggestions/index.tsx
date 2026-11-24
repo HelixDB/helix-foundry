@@ -62,12 +62,14 @@ export function OntologySuggestions() {
   const list = useQuery({
       ...suggestionQueries.list(ws, o),
       // Until the current load's audit completes, its suggestions are on
-      // their way; while a load moves to a version that adds a link, its
-      // card says when it has.
+      // their way; while a load moves to a version that adds a link, or
+      // fills the documents behind one with it, its card says how far.
       refetchInterval: (q) =>
         auditPending(q.state.data, current)
           ? POLL_MS
-          : q.state.data?.findings?.some((f) => f.state?.moving)
+          : q.state.data?.findings?.some(
+                (f) => f.state?.moving || f.state?.applying,
+              )
             ? MOVE_POLL_MS
             : false,
     }),

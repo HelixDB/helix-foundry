@@ -4927,9 +4927,29 @@ export type FoundryHealVersion = { versionId?: string; version?: string };
 /** v1FoundryFoldWhy: what needs a new load, as the engine or Foundry says it. */
 export type FoundryFoldWhy = { kind?: string; item?: string };
 /**
+ * v1FoundryHealFill: the fill of the documents behind a finding's reviews
+ * with the link the load gained (int64s as strings, dollars as numbers).
+ */
+export type FoundryHealFill = FoundryHealVersion & {
+  linksAdded?: string[];
+  docsOwed?: string;
+  docsDone?: string;
+  docsLeft?: string;
+  reviewsResolved?: string;
+  factsAdded?: string;
+  spentUsd?: number;
+  capUsd?: number;
+  // When a paused fill resumes.
+  pausedUntil?: string;
+  // stopped's reason: cap_reached, model_unavailable, dismissed or
+  // load_replaced.
+  stopReason?: string;
+};
+/**
  * v1FoundryHealFindingState: one of open (nothing done), covered (a version
  * adds the link and isn't current), moving (the current load moves to it),
- * moved (it did, gaining linksAdded) and needsLoad (it can't, for why).
+ * moved (it did, gaining linksAdded), needsLoad (it can't, for why), and
+ * the fill after a move: applying, fixed and stopped.
  */
 export type FoundryHealFindingState = {
   open?: Record<string, never>;
@@ -4937,6 +4957,9 @@ export type FoundryHealFindingState = {
   moving?: FoundryHealVersion;
   moved?: FoundryHealVersion & { linksAdded?: string[] };
   needsLoad?: FoundryHealVersion & { why?: FoundryFoldWhy[] };
+  applying?: FoundryHealFill;
+  fixed?: FoundryHealFill;
+  stopped?: FoundryHealFill;
 };
 /** v1FoundryHealRun: one audit of a load. */
 export type FoundryHealRun = {

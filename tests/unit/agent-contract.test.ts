@@ -21,8 +21,8 @@ import { draftFromTables } from "../../mock/routes/ontology-agent";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
-  it("is 4.32.0, the engine that moves a load in place to a version that only adds a link", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.32.0 sha256:1de26d95cc21ae42");
+  it("is 4.33.0, the engine that fills a moved load's documents with the link it gained", () => {
+    expect(AGENT_CONTRACT_VERSION).toBe("4.33.0 sha256:ae5acbf23bf27cff");
   });
 
   it("takes asked_at for as_of, and refuses as_of", () => {

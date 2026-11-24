@@ -269,6 +269,48 @@ test("adds a link in place, and the current load moves to it", async ({
   ).toHaveCount(0);
 });
 
+// Once the load moved, self-healing fills the documents behind the finding
+// with the link: the card counts them as they go, then what the fill did.
+test("shows the fill of the documents behind the finding", async ({ page }) => {
+  await mock.configure({ loadStepMs: 200, healFill: true });
+  await loaded(page);
+  const none = () =>
+    cards(page).filter({ hasText: "Documents state “subsidiary of”" });
+  await none()
+    .getByRole("link", { name: "Add this link", exact: true })
+    .click();
+  const form = page.getByRole("region", { name: "Add this link" });
+  for (const end of ["From", "To"]) {
+    await form.getByLabel(end).click();
+    await page.getByRole("option", { name: "Customer", exact: true }).click();
+  }
+  await form.getByRole("button", { name: "Save as a new version" }).click();
+  await expect(
+    page.getByText(/^Version \d+ saved with the link\.$/),
+  ).toBeVisible({ timeout: 15_000 });
+  await page
+    .getByRole("button", { name: "Make current and update the load" })
+    .click();
+  await expect(none().getByRole("status")).toHaveText(
+    /^Updating the current load to version \d+…$/,
+  );
+  await page.clock.runFor(2_500);
+  await expect(none().getByRole("status")).toHaveText(
+    /^The current load is on version \d+ now/,
+  );
+  await page.reload();
+  await expect(none().getByRole("status")).toHaveText(
+    /^Filling the current load \(version \d+\) with this link: 1 of 2 documents, \$0\.01 of \$5\.00\.$/,
+  );
+  await page.clock.runFor(2_500);
+  await expect(none().getByRole("status")).toHaveText(
+    /^5 reviews resolved, 4 facts added in the current load \(version \d+\)\.$/,
+  );
+  await expect(none().getByRole("link", { name: "Add this link" })).toHaveCount(
+    0,
+  );
+});
+
 // A version that changes more than a link needs a new load, which the card
 // says, offering one.
 test("says when the version needs a new load", async ({ page }) => {
