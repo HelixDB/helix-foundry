@@ -10,6 +10,7 @@ import type { MockReply } from "../../mock/http";
 import { contractErrors } from "../../mock/agent-contract";
 import { routes } from "../../mock/routes";
 import { WORKFLOWS_OFF } from "../../mock/routes/access";
+import { connectorAudiences } from "../../mock/routes/data";
 import { handleDocumentUpload } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
 
@@ -1644,6 +1645,9 @@ describe("a source's own permissions", () => {
     const shared = me.sourceItems!.map((i) => i.itemKey);
     expect(shared).toEqual([...shared].sort());
     expect(shared).not.toContain(LEADERSHIP);
+    // Slack's directory is an item of hers while Slack has a non-guest
+    // account for her (access.DirectoryItem).
+    expect(shared).toContain("*directory");
     expect(shared).toEqual(
       expect.arrayContaining(
         [...new Set(docs.map(channelOf))].filter((c) => c !== LEADERSHIP),
@@ -1661,6 +1665,20 @@ describe("a source's own permissions", () => {
         clientToken: "slack-q",
       })
     ).body.question as wfe.FoundryQuestion;
+    expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(200);
+    // Slack makes her a guest: its directory is no longer one of her items,
+    // nor her answer, which read it, hers; made a member again, both are.
+    const eveInSlack = connectorAudiences(id)!.people!.find(
+      (p) => p.email === "eve@example.com",
+    )!;
+    eveInSlack.guest = true;
+    const asGuest = (await eve("GET", `${A}/me`))
+      .body as wfe.GetMyFoundryAccessResponse;
+    expect((asGuest.sourceItems || []).map((i) => i.itemKey)).not.toContain(
+      "*directory",
+    );
+    expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(404);
+    eveInSlack.guest = false;
     expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(200);
     const listed = (await eve("GET", `${O}/documents`)).body
       .documents as wfe.FoundryDocument[];

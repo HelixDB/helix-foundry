@@ -418,7 +418,7 @@ func TestGranteeQuestionsFollowSlack(t *testing.T) {
 			t.Fatalf("catalog tables %v: the messages, never a table no rule tells apart", catalog)
 		}
 		seen := h.store.seen[q.ID]
-		if seen == nil || fmt.Sprint(seen.Tables) != "[{conn-slack users} {conn-slack messages}]" || fmt.Sprint(h.store.seenItems[q.ID]) != "[{conn-slack C1}]" {
+		if seen == nil || fmt.Sprint(seen.Tables) != "[{conn-slack users} {conn-slack messages}]" || fmt.Sprint(h.store.seenItems[q.ID]) != "[{conn-slack *directory} {conn-slack C1}]" {
 			t.Fatalf("seen %+v, items %+v", seen, h.store.seenItems[q.ID])
 		}
 	})

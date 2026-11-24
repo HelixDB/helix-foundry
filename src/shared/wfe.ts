@@ -5848,7 +5848,11 @@ export type GetMyFoundryAccessResponse = {
   ontologyIds?: string[];
   partialOntologyIds?: string[];
   workflows?: boolean;
-  /** A grantee's: the channels its sources share with it now, sorted. */
+  /**
+   * A grantee's: the channels its sources share with it now, sorted, and a
+   * source's directory of people (Slack's users) as the item `*directory`
+   * while it has a non-guest account for them.
+   */
   sourceItems?: FoundrySourceItem[];
 };
 

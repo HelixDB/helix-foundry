@@ -9934,6 +9934,8 @@ type GetMyFoundryAccessResponse struct {
 	// For a grantee, the items of the sources that report their permissions
 	// (a Slack connection's channels) that those sources share with it now,
 	// sorted: what Founder records a restricted member's thread read under.
+	// A source's directory of people (Slack's users) is the item "*directory",
+	// shared with a person the source has a non-guest account for.
 	SourceItems []*FoundrySourceItem `protobuf:"bytes,6,rep,name=source_items,json=sourceItems,proto3" json:"source_items,omitempty"`
 }
 

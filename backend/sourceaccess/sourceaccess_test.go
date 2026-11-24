@@ -324,9 +324,10 @@ func TestToldReadsALoadAsTheGrantsItWasToldFrom(t *testing.T) {
 			assert.Equal(t, g.Part(holdings), told.Part(holdings))
 		})
 	}
-	// The API tells a grantee no directory, which holds no item: what Told
-	// reads of the load's documents and rows, and so their items, is the same.
-	t.Run("a directory is no item", func(t *testing.T) {
+	// The API tells a grantee Slack's directory as an item while she is one
+	// of its people: Told reads it whole, as the API did, and it is one of
+	// the part's items, so a thread that read it goes once she is a guest.
+	t.Run("a directory is told as its item", func(t *testing.T) {
 		targets := []access.Target{access.ConnectorTarget("conn-slack")}
 		store := newStore(targets...)
 		store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": asMember(shared("C1"))}
@@ -336,8 +337,12 @@ func TestToldReadsALoadAsTheGrantsItWasToldFrom(t *testing.T) {
 		told := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, g.VisibleItems())
 		withUsers := access.Holdings{Tables: append([]access.TableRef{{ConnectorID: "conn-slack", Table: "users"}}, holdings.Tables...), Documents: holdings.Documents}
 		assert.Equal(t, []access.TableRef{{ConnectorID: "conn-slack", Table: "users"}}, g.Part(withUsers).Tables)
-		assert.Empty(t, told.Part(withUsers).Tables)
-		assert.Equal(t, g.Part(withUsers).Items, told.Part(withUsers).Items)
+		assert.Equal(t, g.Part(withUsers), told.Part(withUsers))
+		assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: access.DirectoryItem}, {ConnectorID: "conn-slack", Item: "C1"}},
+			told.Part(withUsers).Items)
+		guest := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}})
+		assert.Empty(t, guest.Part(withUsers).Tables, "told no directory, she reads none")
+		assert.False(t, guest.SeesItems(told.Part(withUsers).Items))
 	})
 	t.Run("both channels of one load", func(t *testing.T) {
 		told := sourceaccess.Told(sourceaccess.Audienced(newStore().connectors), []access.Target{access.ConnectorTarget("conn-slack")},

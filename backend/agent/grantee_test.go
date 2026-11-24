@@ -444,6 +444,47 @@ func TestAGranteesThreadHoldsTheChannelsItReadAlone(t *testing.T) {
 	}
 }
 
+// A read of Slack's tables draws on the channels whose rows she reads and,
+// while Slack has a non-guest account for her (the API tells her its
+// directory, access.DirectoryItem), its users: the thread is hers only while
+// both still are, so one that quoted the directory goes once she is a guest.
+func TestAGranteesThreadHoldsTheSlackRowsItRead(t *testing.T) {
+	directory := access.ItemRef{ConnectorID: "conn-slack", Item: access.DirectoryItem}
+	general, leadership := access.ItemRef{ConnectorID: "conn-slack", Item: "C1"}, access.ItemRef{ConnectorID: "conn-slack", Item: "C2"}
+	tables := func(h *harness, member bool) {
+		slackWorkspace(h)
+		h.db.grants = []model.FoundryAccessGrant{{Principal: access.Principal{Kind: access.PrincipalUser, ID: user}, Target: access.ConnectorTarget("conn-slack")}}
+		h.db.holdings["load-tables"] = access.Holdings{Tables: []access.TableRef{{ConnectorID: "conn-slack", Table: "users"}, {ConnectorID: "conn-slack", Table: "messages"}}}
+		if member {
+			h.backend.items = append([]*foundryv1.FoundrySourceItem{{ConnectorId: "conn-slack", ItemKey: access.DirectoryItem}}, h.backend.items...)
+		}
+	}
+	t.Run("a member who becomes a guest", func(t *testing.T) {
+		h := newHarness(t, readLoad("load-tables"), say("Here it is."), say("Never said."))
+		tables(h, true)
+		_, err := h.runner.Run(context.Background(), message("Who posted?"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.ItemRef{directory, general, leadership}, h.db.thread("thread1").Granted.Items)
+
+		h.backend.items = h.backend.items[1:]
+		next := message("And then?")
+		next.ID = "turn2"
+		_, err = h.runner.Run(context.Background(), next)
+		var f *Failure
+		require.ErrorAs(t, err, &f)
+		assert.True(t, f.Permanent)
+		assert.Contains(t, f.Message, "no longer lets you read")
+		assert.Len(t, h.model.requests, 2, "no model call")
+	})
+	t.Run("a guest reads no directory", func(t *testing.T) {
+		h := newHarness(t, readLoad("load-tables"), say("Here it is."))
+		tables(h, false)
+		_, err := h.runner.Run(context.Background(), message("Who posted?"))
+		require.NoError(t, err)
+		assert.Equal(t, []access.ItemRef{general, leadership}, h.db.thread("thread1").Granted.Items, "#general's and #leadership's messages")
+	})
+}
+
 // A call that read a channel she was removed from during it fails the turn
 // for good, its result reaching neither the model nor the person, and the
 // thread, holding that channel, is no longer hers; one she was added to

@@ -365,8 +365,9 @@ type Part struct {
 	Documents    []string
 	Sets         []SetRef
 	// Items are the items of audienced sources the documents, files and rows
-	// it reads are of, sorted: what it says can be of them, so it stays the
-	// reader's only while they are (Keeps).
+	// it reads are of, and the directory (DirectoryItem) of each source whose
+	// directory it reads, sorted: what it says can be of them, so it stays
+	// the reader's only while they are (Keeps).
 	Items []ItemRef
 	// DecisionSets are the sets of the documents the decisions it reads came
 	// from: its answers carry those values, so grants must keep covering them.
@@ -394,6 +395,10 @@ func (g Grants) Part(h Holdings) Part {
 		switch hold, rows := g.table(t); hold {
 		case holdsWhole:
 			out.Tables = append(out.Tables, t)
+			// An audienced source's table held whole is its directory.
+			if g.sharing.audienced(t.ConnectorID) {
+				out.Items = append(out.Items, ItemRef{ConnectorID: t.ConnectorID, Item: DirectoryItem})
+			}
 		case holdsRows:
 			out.Rows = append(out.Rows, rows)
 			for _, item := range rows.Items {

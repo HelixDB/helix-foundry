@@ -659,6 +659,12 @@ const MAX_HELD_ITEMS = 1_000;
 
 /** An item of an audienced source the reader read (access.ItemRef). */
 type Item = { connectorId: string; item: string };
+/**
+ * The item a source's directory of people is (access.DirectoryItem): shared
+ * with a reader the source has a non-guest account for, told with their
+ * items, and one of what read it, so that goes once they are a guest.
+ */
+const DIRECTORY_ITEM = "*directory";
 
 /**
  * A principal's grants as it reads them (access.Grants with its Sharing):
@@ -785,10 +791,14 @@ function itemOf(r: Reader, documentId: string): Item | undefined {
     : undefined;
 }
 
-/** Whether the source of `i`'s connector shares it with the reader now. */
+/**
+ * Whether the source of `i`'s connector shares it with the reader now: its
+ * directory while it has a non-guest account for them.
+ */
 function sees(r: Reader, i: Item) {
   const reach = r.sharing.get(i.connectorId);
-  return !!reach?.known && reach.items.has(i.item);
+  if (!reach?.known) return false;
+  return i.item === DIRECTORY_ITEM ? reach.member : reach.items.has(i.item);
 }
 
 /**
@@ -806,14 +816,20 @@ function readsDocument(r: Reader, documentId: string) {
   return !!i && sees(r, i);
 }
 
-/** The items every audienced source shares with the reader, sorted (Grants.VisibleItems). */
+/**
+ * The items every audienced source shares with the reader, its directory
+ * among them while it is one of the source's people, sorted
+ * (Grants.VisibleItems).
+ */
 const visibleItems = (r: Reader): Item[] =>
   r.targets.length
     ? [...r.sharing]
         .sort(([a], [b]) => a.localeCompare(b))
         .flatMap(([connectorId, reach]) =>
           reach.known
-            ? [...reach.items].sort().map((item) => ({ connectorId, item }))
+            ? [...(reach.member ? [DIRECTORY_ITEM] : []), ...reach.items]
+                .sort()
+                .map((item) => ({ connectorId, item }))
             : [],
         )
     : [];
@@ -1255,9 +1271,15 @@ export function guarded(route: MockRoute): MockRoute {
                   : [];
               }),
             );
-          // The channels whose rows of its tables it reads, too.
+          // The channels whose rows of its tables it reads, too, and the
+          // directory of a source whose directory it reads.
           for (const t of l.tables) {
             const hold = tableHold(reader, t);
+            if (hold.kind === "whole" && reader.sharing.has(t.connectorId))
+              items.set(`${t.connectorId}\u001f${DIRECTORY_ITEM}`, {
+                connectorId: t.connectorId,
+                item: DIRECTORY_ITEM,
+              });
             if (hold.kind === "rows")
               for (const item of hold.items)
                 items.set(`${t.connectorId}\u001f${item}`, {

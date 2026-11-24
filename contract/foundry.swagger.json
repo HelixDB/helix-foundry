@@ -14504,7 +14504,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundrySourceItem"
           },
-          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under."
+          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under.\nA source's directory of people (Slack's users) is the item \"*directory\",\nshared with a person the source has a non-guest account for."
         }
       }
     },

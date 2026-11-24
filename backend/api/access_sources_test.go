@@ -162,6 +162,19 @@ func TestGranteeReadsSlackRows(t *testing.T) {
 	client := foundryv1.NewFoundryServiceClient(conn)
 	ctx := as(slackMember)
 
+	// /me tells her Slack's directory as an item, which Founder's worker
+	// reads a call's part of a load with.
+	my, err := client.GetMyFoundryAccess(ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: "ws-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, item := range my.GetSourceItems() {
+		keys = append(keys, item.GetConnectorId()+"/"+item.GetItemKey())
+	}
+	if want := []string{"conn-slack/" + access.DirectoryItem, "conn-slack/C1"}; !slices.Equal(keys, want) {
+		t.Fatalf("source items %v, want %v", keys, want)
+	}
 	if _, err := client.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-5", LoadId: "load-5",
 		ReadsJson: `[{"query":{}}]`}); err != nil {
 		t.Fatal(err)
@@ -181,7 +194,7 @@ func TestGranteeReadsSlackRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := store.questions[len(store.questions)-1]
-	if stored.Seen == nil || !slices.Equal(stored.Seen.Tables, tables) || !slices.Equal(stored.SeenItems, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}}) {
+	if stored.Seen == nil || !slices.Equal(stored.Seen.Tables, tables) || !slices.Equal(stored.SeenItems, []access.ItemRef{{ConnectorID: "conn-slack", Item: access.DirectoryItem}, {ConnectorID: "conn-slack", Item: "C1"}}) {
 		t.Fatalf("seen %+v, items %+v", stored.Seen, stored.SeenItems)
 	}
 	get := func() error {

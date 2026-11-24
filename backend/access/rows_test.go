@@ -152,5 +152,40 @@ func ExampleGrants_ReadsTable() {
 	fmt.Println(asAda.Part(access.Holdings{Tables: []access.TableRef{messages, users}}).Items)
 	// Output:
 	// true true true false
-	// [{slack C1}]
+	// [{slack *directory} {slack C1}]
+}
+
+// Slack's directory is an item (DirectoryItem): shared with its people,
+// told by VisibleItems and back through SharedReach as the API tells it, and
+// one of a part that reads it, so what that part said goes with it.
+func TestDirectoryItem(t *testing.T) {
+	now := time.Now()
+	users, messages := access.TableRef{ConnectorID: "slack", Table: "users"}, access.TableRef{ConnectorID: "slack", Table: "messages"}
+	directory, general := access.ItemRef{ConnectorID: "slack", Item: access.DirectoryItem}, access.ItemRef{ConnectorID: "slack", Item: "C1"}
+	grants := func(reach access.SourceReach) access.Grants {
+		return access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
+			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": reach}, kinds))
+	}
+	member := grants(access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}, Member: true}, now))
+	assert.Equal(t, []access.ItemRef{directory, general}, member.VisibleItems())
+	part := member.Part(access.Holdings{Tables: []access.TableRef{users, messages}})
+	assert.Equal(t, []access.ItemRef{directory, general}, part.Items, "the directory and #general's rows")
+	assert.True(t, member.Keeps(part.Inputs(), part.Items))
+
+	// The API tells a grantee its items; read back, they are a member's.
+	told := grants(access.SharedReach(access.Shared{Items: []string{access.DirectoryItem, "C1"}}))
+	assert.True(t, told.ReadsTable(users), "told the directory, it reads it")
+	assert.Equal(t, part, told.Part(access.Holdings{Tables: []access.TableRef{users, messages}}))
+	assert.Equal(t, member.VisibleItems(), told.VisibleItems())
+
+	// A guest now: the directory is no longer hers, nor what read it.
+	guest := grants(access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now))
+	assert.Equal(t, []access.ItemRef{general}, guest.VisibleItems())
+	assert.False(t, guest.SeesItems(part.Items))
+	assert.True(t, guest.SeesItems([]access.ItemRef{general}))
+	assert.False(t, grants(access.SourceReach{}).SeesItems([]access.ItemRef{directory}), "unknown audiences share no directory")
+
+	// A table held whole of a connector no source narrows is of no item.
+	stripe := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	assert.Empty(t, access.NewGrants([]access.Target{access.ConnectorTarget("stripe")}).Part(access.Holdings{Tables: []access.TableRef{stripe}}).Items)
 }

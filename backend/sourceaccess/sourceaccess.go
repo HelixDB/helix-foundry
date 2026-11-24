@@ -161,8 +161,9 @@ func Audienced(connectors []*model.Connector) map[string]connector.Audienced {
 // (GetMyFoundryAccess's source_items, access.Grants.VisibleItems): what it
 // reads of a load's documents and rows (access.Grants.Part.Items) is what the
 // grants Of built that told it read. Founder's worker reads what a grantee's
-// call read with it. The API tells no directory (access.RowsDirectory), which
-// holds no item: Told reads none.
+// call read with it. The API tells a source's directory (access.RowsDirectory)
+// as its item access.DirectoryItem, so Told reads it whole as the API did, and
+// it is one of the items of a part that read it.
 //
 //	sourceaccess.Told(kinds, targets, []access.ItemRef{{ConnectorID: "c1", Item: "C1"}}) // reads c1's #general (C1) alone
 func Told(kinds map[string]connector.Audienced, targets []access.Target, visible []access.ItemRef) access.Grants {
