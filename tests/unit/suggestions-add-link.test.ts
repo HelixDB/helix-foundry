@@ -195,7 +195,7 @@ describe("cardState", () => {
     expect(
       stateText({ kind: "moved", version: 8, links: [], fillPending: true }),
     ).toBe(
-      "The current load is on version 8 now: documents read from now on state this link, and the documents behind these reviews are being asked it next.",
+      "The current load is on version 8 now: documents read from now on state this link. Self-healing reads the documents behind these reviews for it next.",
     );
     expect(
       stateText({

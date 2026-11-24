@@ -295,7 +295,7 @@ export function stateText(s: CardState): string | undefined {
       return `Updating the current load to ${version}…`;
     case "moved":
       return s.fillPending
-        ? `The current load is on ${version} now: documents read from now on state this link, and the documents behind these reviews are being asked it next.`
+        ? `The current load is on ${version} now: documents read from now on state this link. Self-healing reads the documents behind these reviews for it next.`
         : `The current load is on ${version} now: documents read from now on state this link. The reviews here stay until their documents are read again.`;
     case "needs_load":
       return s.changes

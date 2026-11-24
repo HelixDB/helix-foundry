@@ -258,7 +258,7 @@ test("adds a link in place, and the current load moves to it", async ({
   );
   await page.clock.runFor(2_500);
   await expect(none().getByRole("status")).toHaveText(
-    /^The current load is on version \d+ now: documents read from now on state this link\./,
+    /^The current load is on version \d+ now: documents read from now on state this link\. Self-healing reads the documents behind these reviews for it next\.$/,
   );
   // Done in place: no Add this link, no new load to start.
   await expect(none().getByRole("link", { name: "Add this link" })).toHaveCount(
