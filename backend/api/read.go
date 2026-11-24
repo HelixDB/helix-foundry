@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -57,22 +58,46 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	if granted, ok := granteeLoad(ctx); ok && req.GetLoadId() != granted.LoadID {
 		return nil, status.Error(codes.NotFound, "load not found")
 	}
-	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, req.GetLoadId())
-	switch {
-	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && load.Status == foundrymodel.FoundryLoadDeleted:
-		return nil, status.Error(codes.NotFound, "load not found")
-	case err != nil:
-		return nil, status.Errorf(codes.Internal, "get load: %v", err)
-	case load.Status == foundrymodel.FoundryLoadDeleting || load.Status == foundrymodel.FoundryLoadDeleteFailed:
-		return nil, status.Error(codes.FailedPrecondition, "the load is being deleted")
+	load, out, err := s.readLoad(ctx, o, req)
+	// A load Foundry moved in place whose marker moved before its row did:
+	// put right from the recorded move, then read again, once.
+	if stored, ok := loadMismatch(err); ok {
+		switch reconciled, rerr := s.deps.DB.ReconcileFoundryLoadMarker(ctx, req.GetLoadId(), stored); {
+		case rerr != nil:
+			return nil, status.Errorf(codes.Internal, "reconcile the load's version: %v", rerr)
+		case reconciled:
+			load, out, err = s.readLoad(ctx, o, req)
+		}
 	}
-	v, err := s.loadOntologyVersion(ctx, o.ID, load.VersionID)
 	if err != nil {
 		return nil, err
 	}
+	s.track(ctx, run, &foundrymodel.FoundryWorkflowRead{
+		LoadID: load.ID, Reads: json.RawMessage(req.GetReadsJson()), Result: json.RawMessage(out.GetResultJson()),
+	})
+	return &foundryv1.ReadFoundryGraphResponse{ResultJson: out.GetResultJson()}, nil
+}
+
+// readLoad reads the request's load of o through foundry-read, at the
+// version its row records: the load, and foundry-read's answer.
+func (s *Service) readLoad(ctx context.Context, o *foundrymodel.FoundryOntology, req *foundryv1.ReadFoundryGraphRequest) (
+	*foundrymodel.FoundryLoad, *foundryreadv1.ReadResponse, error) {
+	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, req.GetLoadId())
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && load.Status == foundrymodel.FoundryLoadDeleted:
+		return nil, nil, status.Error(codes.NotFound, "load not found")
+	case err != nil:
+		return nil, nil, status.Errorf(codes.Internal, "get load: %v", err)
+	case load.Status == foundrymodel.FoundryLoadDeleting || load.Status == foundrymodel.FoundryLoadDeleteFailed:
+		return nil, nil, status.Error(codes.FailedPrecondition, "the load is being deleted")
+	}
+	v, err := s.loadOntologyVersion(ctx, o.ID, load.VersionID)
+	if err != nil {
+		return nil, nil, err
+	}
 	var def ontologyagent.Definition
 	if err := json.Unmarshal(v.Definition, &def); err != nil || v.Format != foundrymodel.OntologyFormatAgentBundle {
-		return nil, status.Errorf(codes.Internal, "the load's version %s is not an ontology agent draft", v.ID)
+		return nil, nil, status.Errorf(codes.Internal, "the load's version %s is not an ontology agent draft", v.ID)
 	}
 	read := &foundryreadv1.ReadRequest{
 		WorkspaceId: o.WorkspaceID, OntologyId: o.ID, LoadId: load.ID, OntologyVersion: load.OntologyVersion(),
@@ -81,16 +106,26 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
 		g, _ := access.GranteeFrom(ctx)
 		if read.VisibilityJson, err = s.granteeVisibility(ctx, g, load.ID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		read.MappingsToml = def.MappingsTOML
 	}
 	out, err := s.deps.FoundryRead.Read(ctx, read)
-	if err != nil {
-		return nil, err
+	return load, out, err
+}
+
+// loadMismatchPrefix starts the message of a read the engine refused for a
+// load its marker records at another version (agent-server's
+// Refused::LoadMismatch).
+const loadMismatchPrefix = "load_mismatch: the load was created with ontology version "
+
+// loadMismatch is the version a read refused as load_mismatch names, if err
+// is one.
+func loadMismatch(err error) (string, bool) {
+	st, ok := status.FromError(err)
+	if !ok || err == nil {
+		return "", false
 	}
-	s.track(ctx, run, &foundrymodel.FoundryWorkflowRead{
-		LoadID: load.ID, Reads: json.RawMessage(req.GetReadsJson()), Result: json.RawMessage(out.GetResultJson()),
-	})
-	return &foundryv1.ReadFoundryGraphResponse{ResultJson: out.GetResultJson()}, nil
+	_, version, found := strings.Cut(st.Message(), loadMismatchPrefix)
+	return strings.TrimSpace(version), found && strings.TrimSpace(version) != ""
 }

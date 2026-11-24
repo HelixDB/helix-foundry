@@ -740,11 +740,11 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 }
 
 // dropFoundryLoadRows removes what Foundry keeps of a deleted load beside
-// its row: the decisions, documents, sources, access mark, resends and
-// extractions it was written with.
+// its row: the decisions, documents, sources, access mark, resends,
+// extractions and heal fills it was written with.
 func (s *mysqlDB) dropFoundryLoadRows(ctx context.Context, loadID string) error {
 	for _, table := range []string{"foundry_load_decisions", "foundry_load_documents", "foundry_load_sources", "foundry_load_access",
-		"foundry_load_resends", "foundry_load_extractions"} {
+		"foundry_load_resends", "foundry_load_extractions", "foundry_heal_fills"} {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE load_id=?`, loadID); err != nil {
 			return err
 		}

@@ -305,6 +305,9 @@ func startAgent(t *testing.T, agent *fakeAgent) *ontologyagent.Client {
 // its tenant on a shared cluster, the synced customers table and the
 // ontology's documents; it records the job's progress and extractions.
 type memStore struct {
+	// reconciles are the versions a move of the load in place records, which
+	// ReconcileFoundryLoadMarker puts the load at.
+	reconciles map[string]bool
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
 	aiConfig *model.FoundryAIConfig
 	mu       sync.Mutex
@@ -457,6 +460,12 @@ func (s *memStore) OweFoundryAskingResends(_ context.Context, job *model.Foundry
 			Document: s.held[doc]})
 	}
 	return true, nil
+}
+
+func (s *memStore) ReconcileFoundryLoadMarker(_ context.Context, _, storedVersion string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reconciles[storedVersion], nil
 }
 
 func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end model.FoundryResendEnd) error {
@@ -1762,6 +1771,15 @@ func TestLoadOutcomes(t *testing.T) {
 		"an extract into a load of another version": {func(h *harness) {
 			h.agent.extract = extractResult(`{"status":"load_mismatch","stored_version":"foundry-v2"}`)
 		}, failed, "foundry-v2"},
+		// A move in place whose marker went first: put right, and retried there.
+		"a load moved in place": {func(h *harness) {
+			h.store.reconciles = map[string]bool{"foundry-v2": true}
+			h.agent.ingest = ingestResult(`{"status":"load_mismatch","stored_version":"foundry-v2"}`)
+		}, retried, "moved to foundry-v2 in place"},
+		"an extract into a load moved in place": {func(h *harness) {
+			h.store.reconciles = map[string]bool{"foundry-v2": true}
+			h.agent.extract = extractResult(`{"status":"load_mismatch","stored_version":"foundry-v2"}`)
+		}, retried, "moved to foundry-v2 in place"},
 		"an extract into a load the database lacks": {func(h *harness) {
 			h.agent.extract = extractResult(`{"status":"load_unknown"}`)
 		}, failed, "does not hold this load"},

@@ -90,6 +90,10 @@ func (u Unimplemented) FoundryLoadDecisionsOwed(context.Context, string) (*model
 	u.unimplemented("FoundryLoadDecisionsOwed")
 	return nil, nil
 }
+func (u Unimplemented) ReconcileFoundryLoadMarker(context.Context, string, string) (bool, error) {
+	u.unimplemented("ReconcileFoundryLoadMarker")
+	return false, nil
+}
 func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
 	u.unimplemented("EndFoundryLoadResend")
 	return nil

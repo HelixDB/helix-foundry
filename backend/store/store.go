@@ -438,6 +438,7 @@ type Store interface {
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
+	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
 	RequestFoundryReviewPasses(ctx context.Context) (int, error)

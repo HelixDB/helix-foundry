@@ -38,6 +38,16 @@ const FoundryResendDecisions FoundryResendReason = "decisions"
 // next load applies it.
 const FoundryResendName FoundryResendReason = "name"
 
+// FoundryResendKnown are the reasons this binary reads. A row of another
+// reason, as a later binary owes ('move', 'link'), is never listed, sent,
+// ended, failed or counted owed here: it stays as it is, for the binary that
+// knows it, so rolling back leaves it untouched.
+var FoundryResendKnown = []FoundryResendReason{FoundryResendApproval, FoundryResendDecisions, FoundryResendName}
+
+// FoundryResendDocuments are the known reasons that owe a document: a resend
+// job sends each with its document. FoundryResendDecisions names none.
+var FoundryResendDocuments = []FoundryResendReason{FoundryResendApproval, FoundryResendName}
+
 // FoundryExtractKindDecisionsMax is the most decisions of one kind (resolve,
 // prop, release, withdraw, alias) one Extract takes, and
 // FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,

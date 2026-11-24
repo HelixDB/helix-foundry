@@ -92,6 +92,7 @@ type healStore interface {
 	FoundryHealLoadChanged(ctx context.Context, runID, ontologyID, loadID string) (bool, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetFoundryGraphJob(ctx context.Context, ontologyID, id string) (*model.FoundryGraphJob, error)
+	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 }
 
 // auditor is the ontology agent sidecar.

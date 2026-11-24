@@ -80,6 +80,7 @@ type store interface {
 	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	RecordFoundryReleaseOutcomes(ctx context.Context, jobID, workerID, docID string, outcomes []model.FoundryReleaseOutcome, names []model.FoundryDocumentName) error
+	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -838,7 +839,7 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 		}
 		return nil
 	case ontologyagent.IngestLoadMismatch:
-		return permanent(fmt.Sprintf("the database holds this load from another version (%s); start a new load", result.StoredVersion), nil)
+		return r.mismatch(ctx, job, result.StoredVersion, "; start a new load")
 	case ontologyagent.IngestLoadUnknown:
 		return permanent("this load is being deleted from the database; start a new load", nil)
 	case ontologyagent.IngestIndexesPending:
@@ -863,6 +864,20 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	default:
 		return retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
+}
+
+// mismatch ends an attempt that found the job's load held at storedVersion:
+// retried, at that version, when Foundry recorded a move of the load to it
+// whose row hadn't followed the marker (ReconcileFoundryLoadMarker), else
+// failed for good, with more said after.
+func (r *runner) mismatch(ctx context.Context, job *model.FoundryGraphJob, storedVersion, more string) error {
+	switch reconciled, err := r.db.ReconcileFoundryLoadMarker(ctx, job.LoadID, storedVersion); {
+	case err != nil:
+		return retry("could not read the load's version; Helix will retry", err)
+	case reconciled:
+		return retry(fmt.Sprintf("the load moved to %s in place; Helix will retry at it", storedVersion), nil)
+	}
+	return permanent(fmt.Sprintf("the database holds this load from another version (%s)%s", storedVersion, more), nil)
 }
 
 // callIngest sends req to Ingest, counting its chunks as they come, and
@@ -1644,7 +1659,7 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	case ontologyagent.ExtractBudgetExhausted:
 		return true, nil
 	case ontologyagent.ExtractLoadMismatch:
-		return false, permanent(fmt.Sprintf("the database holds this load from another version (%s)", result.StoredVersion), nil)
+		return false, r.mismatch(ctx, job, result.StoredVersion, "")
 	case ontologyagent.ExtractLoadUnknown:
 		return false, permanent("the database does not hold this load, or it is being deleted; make another load current or start a new one", nil)
 	case ontologyagent.ExtractIndexesPending:
