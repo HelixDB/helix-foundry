@@ -74,9 +74,9 @@ describe("addLinkEdits", () => {
   it("routes a link the version declares without putting it again", () => {
     const b = bundle(ONTOLOGY, route("notes", '"all"', ["works_at"]));
     const got = addLinkEdits(b, { ...ask, link: "ceo_of" });
-    expect(got.kind === "edits" && got.edits.map((e) => e.put?.itemId)).toEqual([
-      "extraction.notes",
-    ]);
+    expect(got.kind === "edits" && got.edits.map((e) => e.put?.itemId)).toEqual(
+      ["extraction.notes"],
+    );
   });
 
   it("refuses what it can't add", () => {
@@ -85,7 +85,9 @@ describe("addLinkEdits", () => {
       const got = addLinkEdits(b, a);
       return got.kind === "refused" ? got.why : "";
     };
-    expect(refused(routed, { ...ask, link: "ceo_of" })).toMatch(/already state/);
+    expect(refused(routed, { ...ask, link: "ceo_of" })).toMatch(
+      /already state/,
+    );
     expect(refused(bundle(ONTOLOGY, route("other", '["set_2"]', [])))).toMatch(
       /No route reads/,
     );

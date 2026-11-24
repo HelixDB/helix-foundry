@@ -85,7 +85,12 @@ export function AddLinkForm({
       </p>
       <label className="hf-field">
         <span>From</span>
-        <Select label="From" value={from} onChange={setFrom} options={options} />
+        <Select
+          label="From"
+          value={from}
+          onChange={setFrom}
+          options={options}
+        />
       </label>
       <label className="hf-field">
         <span>To</span>

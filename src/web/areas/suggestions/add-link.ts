@@ -168,7 +168,8 @@ const WHY: Record<string, (item: string) => string> = {
   link_derived: (i) => `${i} derives other links`,
   link_read_by_mapping: (i) => `${i} is stated by a table`,
   document_sets: () => "it reads other document sets",
-  sources: (i) => `it reads other ${i === "table_files" ? "table files" : "tables"}`,
+  sources: (i) =>
+    `it reads other ${i === "table_files" ? "table files" : "tables"}`,
   not_a_draft: () => "it isn't an agent draft",
   marker_elsewhere: (i) => `the load holds ${i}`,
 };

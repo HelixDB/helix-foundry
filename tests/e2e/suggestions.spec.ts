@@ -221,8 +221,12 @@ test("adds a link in place, and the current load moves to it", async ({
   await loaded(page);
   const none = () =>
     cards(page).filter({ hasText: "Documents state “subsidiary of”" });
-  await none().getByRole("link", { name: "Add this link", exact: true }).click();
-  await expect(page).toHaveURL(/\/versions\/[^?]+\?tab=edit&fill=d{64}&link=subsidiary_of&set=set_acme_general&describe=/);
+  await none()
+    .getByRole("link", { name: "Add this link", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    /\/versions\/[^?]+\?tab=edit&fill=d{64}&link=subsidiary_of&set=set_acme_general&describe=/,
+  );
   const form = page.getByRole("region", { name: "Add this link" });
   await expect(form.getByRole("heading")).toHaveText(
     "Add the link “subsidiary_of”",
@@ -240,7 +244,9 @@ test("adds a link in place, and the current load moves to it", async ({
     await page.getByRole("option", { name: "Customer", exact: true }).click();
   }
   await form.getByRole("button", { name: "Save as a new version" }).click();
-  await expect(page.getByText(/^Version \d+ saved with the link\.$/)).toBeVisible({
+  await expect(
+    page.getByText(/^Version \d+ saved with the link\.$/),
+  ).toBeVisible({
     timeout: 15_000,
   });
   await page
@@ -255,9 +261,9 @@ test("adds a link in place, and the current load moves to it", async ({
     /^The current load is on version \d+ now: documents read from now on state this link\./,
   );
   // Done in place: no Add this link, no new load to start.
-  await expect(
-    none().getByRole("link", { name: "Add this link" }),
-  ).toHaveCount(0);
+  await expect(none().getByRole("link", { name: "Add this link" })).toHaveCount(
+    0,
+  );
   await expect(
     none().getByRole("button", { name: "Start a new load" }),
   ).toHaveCount(0);
@@ -270,7 +276,9 @@ test("says when the version needs a new load", async ({ page }) => {
   await loaded(page);
   const none = () =>
     cards(page).filter({ hasText: "Documents state “subsidiary of”" });
-  await none().getByRole("link", { name: "Add this link", exact: true }).click();
+  await none()
+    .getByRole("link", { name: "Add this link", exact: true })
+    .click();
   const form = page.getByRole("region", { name: "Add this link" });
   for (const end of ["From", "To"]) {
     await form.getByLabel(end).click();

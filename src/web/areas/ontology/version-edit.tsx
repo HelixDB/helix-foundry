@@ -505,11 +505,7 @@ export function AgentEdit({
         </Button>
       </div>
       {run?.save && g ? (
-        <SaveStatus
-          generation={g}
-          pending={pending}
-          fill={ask?.fingerprint}
-        />
+        <SaveStatus generation={g} pending={pending} fill={ask?.fingerprint} />
       ) : (
         run &&
         g && (
