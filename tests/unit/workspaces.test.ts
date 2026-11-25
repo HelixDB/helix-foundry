@@ -138,6 +138,48 @@ describe("workspaces", () => {
     const refusal = (status: number, code: number, message: string) =>
       Response.json({ code, message, details: [] }, { status });
 
+    it("sends this browser's first touch, on a retry too", async () => {
+      const bodies: unknown[] = [];
+      vi.stubGlobal("localStorage", {
+        getItem: () =>
+          JSON.stringify({
+            source: "github",
+            landing_path: "/",
+            at: Date.now(),
+          }),
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url === "/papi/csrf")
+            return Response.json({ token: "t", expiresInSeconds: 3600 });
+          bodies.push(JSON.parse(String(init?.body)));
+          return bodies.length === 1
+            ? refusal(409, 6, "already exists")
+            : Response.json({ id: "ws_4" });
+        }),
+      );
+      await createWorkspace("Acme");
+      expect(bodies).toHaveLength(2);
+      for (const body of bodies)
+        expect(body).toMatchObject({ attribution: { utmSource: "github" } });
+    });
+
+    it("sends no attribution without a first touch", async () => {
+      const bodies: unknown[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url === "/papi/csrf")
+            return Response.json({ token: "t", expiresInSeconds: 3600 });
+          bodies.push(JSON.parse(String(init?.body)));
+          return Response.json({ id: "ws_5" });
+        }),
+      );
+      await createWorkspace("Acme");
+      expect(bodies[0]).not.toHaveProperty("attribution");
+    });
+
     it("sends the name's slug", async () => {
       const slugs = replies(Response.json({ id: "ws_1", slug: "acme-inc" }));
       expect(await createWorkspace(" Acme Inc. ")).toMatchObject({

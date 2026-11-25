@@ -6,6 +6,7 @@ import type {
   WorkspaceRole as WfeRole,
 } from "../shared/wfe";
 import { ApiError, api } from "./api";
+import { storedSignupAttribution } from "./first-touch";
 import { readStorage, writeStorage } from "./kit";
 import type { ShellUser, ShellWorkspace, WorkspaceRole } from "./ui";
 
@@ -102,17 +103,21 @@ export function slugify(name: string) {
 }
 
 /**
- * Creates a workspace in the stamp's default region. Its slug comes from the
- * name and is unique across Helix, so when it is taken (ALREADY_EXISTS) or
- * reserved, the workspace is created once more with a short random suffix:
- * "acme" becomes "acme-7k2f", and the name stays as typed.
+ * Creates a workspace in the stamp's default region, with this browser's
+ * first touch, which the WFE keeps as the person's signup source when it is
+ * the first workspace they own. Its slug comes from the name and is unique
+ * across Helix, so when it is taken (ALREADY_EXISTS) or reserved, the
+ * workspace is created once more with a short random suffix: "acme" becomes
+ * "acme-7k2f", and the name stays as typed.
  */
 export async function createWorkspace(name: string) {
+  const attribution = storedSignupAttribution();
   const create = (slug: string) =>
     api<Workspace>("/v1/workspaces", {
       slug,
       displayName: name.trim(),
       region: process.env.NEXT_PUBLIC_DEFAULT_WORKSPACE_REGION || "us-east-2",
+      ...(attribution && { attribution }),
     } satisfies CreateWorkspaceRequest);
   const slug = slugify(name);
   try {
