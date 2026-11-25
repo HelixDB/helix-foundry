@@ -537,7 +537,7 @@ export function SampleTour() {
     })),
   ];
   // The load against its usual time, by the minute.
-  const now = useNow(15_000),
+  const now = useNow(loaded ? 600_000 : 15_000),
     wait = sampleLoadWait(load?.createdAt, now);
   const suggestions = useMemo(() => askSuggestions(version), [version]);
   // A question asked while the load runs waits in this browser, so the tour
@@ -576,7 +576,7 @@ export function SampleTour() {
   const first = questions?.questions?.at(-1);
   const [askError, setAskError] = useState(""),
     [asking, setAsking] = useState(false),
-    // Try again after a failed first ask.
+    // Try again after a failed first ask, which is asked once until then.
     [tries, setTries] = useState(0);
   const firstAsked = useRef(false),
     firstToken = useRef(crypto.randomUUID());
@@ -624,11 +624,7 @@ export function SampleTour() {
       next.clientToken,
       next.first ? { since: connector?.createdAt ?? undefined } : undefined,
     ).then((asked) => {
-      if (!asked) {
-        firstAsked.current = false;
-        return;
-      }
-      if (!next.held) return;
+      if (!asked || !next.held) return;
       keepHeld(undefined);
       navigate(paths.ask(o, { thread: asked.threadId || asked.id }));
     });
@@ -889,7 +885,10 @@ export function SampleTour() {
                 <Button
                   size="sm"
                   icon={RotateCcw}
-                  onClick={() => setTries((n) => n + 1)}
+                  onClick={() => {
+                    firstAsked.current = false;
+                    setTries((n) => n + 1);
+                  }}
                 >
                   Try again
                 </Button>
