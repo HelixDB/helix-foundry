@@ -213,6 +213,75 @@ func TestFoundryFillLandedAfterACrashCountsAsFilled(t *testing.T) {
 	assert.IsType(t, model.FoundryFindingFixed{}, model.FoundryFindingStateOf(got, nil))
 }
 
+// A second finding of the same link (joining the first's move) sends a
+// document the first filled again, and the engine finds the first's
+// transaction landed: counted filled, but none of what that record counted
+// is counted twice, on the fill or the document. A landed document of
+// another link than any other fill of the load filled counts as ever.
+func TestFoundryFillLandedOfAnotherFillOfItsLinkCountsNothingTwice(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "FILLJ")
+	first := f.collecting(t, f.moved(t, "FILLJ"))
+	_, err := f.db.OweFoundryFillDocuments(ctx, first, f.ontology.WorkspaceID, []string{f.a}, pageAt(first, []string{f.a}))
+	require.NoError(t, err)
+	require.NoError(t, f.db.StartFoundryFill(ctx, first, f.ontology.WorkspaceID, 1, 0, &model.FoundryGraphJob{ID: id26("RS-FILLJ")}))
+	job := f.claim(t)
+	written := model.FoundryFillDocument{FillID: first.ID, DocumentID: f.a, Requests: 1, Outcome: "written", Facts: 2, Held: 1, ReviewsTaken: 3}
+	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, written))
+	require.Equal(t, model.FoundryFillFilled, f.fill(t, "FILLJ").State)
+	f.end(t, job, "first", model.FoundryGraphJobSucceeded)
+	factsA, reviewsA := f.extraction(t, f.a)
+	factsB, reviewsB := f.extraction(t, f.b)
+	second := f.collecting(t, f.moved(t, "FILLJ2"))
+	_, err = f.db.OweFoundryFillDocuments(ctx, second, f.ontology.WorkspaceID, []string{f.a, f.b}, pageAt(second, []string{f.a, f.b}))
+	require.NoError(t, err)
+	require.NoError(t, f.db.StartFoundryFill(ctx, second, f.ontology.WorkspaceID, 2, 0, &model.FoundryGraphJob{ID: id26("RS-FILLJ2")}))
+	job = f.claim(t)
+	landed := model.FoundryFillDocument{FillID: second.ID, DocumentID: f.a, Requests: 2, Outcome: "landed", Facts: 2, Held: 1, ReviewsTaken: 3}
+	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, landed))
+	got := f.fill(t, "FILLJ2")
+	assert.Equal(t, model.FoundryFillCounts{Owed: 2, Filled: 1}, got.Counts)
+	facts, reviews := f.extraction(t, f.a)
+	assert.Equal(t, [2]int{factsA, reviewsA}, [2]int{facts, reviews}, "counted by the first's record")
+	// The first's finding of another link: the landed transaction can only
+	// be this fill's own, its record lost.
+	_, err = testDB.Exec(`UPDATE foundry_heal_findings SET finding=JSON_SET(finding, '$.signal.canonical', 'advises') WHERE fingerprint=?`,
+		fingerprint("FILLJ"))
+	require.NoError(t, err)
+	landed.DocumentID, landed.Requests = f.b, 1
+	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, landed))
+	got = f.fill(t, "FILLJ2")
+	assert.Equal(t, model.FoundryFillFilled, got.State)
+	assert.Equal(t, model.FoundryFillCounts{Owed: 2, Filled: 2, ReviewsTaken: 3, FactsAdded: 2}, got.Counts)
+	facts, reviews = f.extraction(t, f.b)
+	assert.Equal(t, [2]int{factsB + 2, max(reviewsB+1-3, 0)}, [2]int{facts, reviews})
+}
+
+// While another moved fill of the load holds a cursor at the version the
+// load records, no other fill's collect is claimed (it would start the
+// collect over, ending what the cursor's pages owed): only the cursor's.
+// A cursor of a version the load moved on from holds nothing back.
+func TestFoundryFillCollectWaitsForAnotherFillsCursor(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "FILLWC")
+	paged := f.collecting(t, f.moved(t, "FILLWC"))
+	other := f.moved(t, "FILLWC2")
+	ok, err := f.db.OweFoundryFillDocuments(ctx, paged, f.ontology.WorkspaceID, []string{f.a}, pageAt(paged, []string{f.a}))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, f.db.ReleaseFoundryFillCollect(ctx, paged))
+	claimed, err := f.db.ClaimFoundryFillCollect(ctx, other, time.Hour)
+	require.NoError(t, err)
+	assert.False(t, claimed, "another's cursor waits")
+	assert.Nil(t, f.fill(t, "FILLWC2").PausedUntil)
+	assert.Equal(t, 1, f.linksOwed(t))
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET collect_version_id=? WHERE id=?`, id26("V-OLD"), paged.ID)
+	require.NoError(t, err)
+	claimed, err = f.db.ClaimFoundryFillCollect(ctx, other, time.Hour)
+	require.NoError(t, err)
+	assert.True(t, claimed, "a cursor of an older version is started over")
+}
+
 // A fill that owes nothing, its reviews gone, is filled at once.
 func TestFoundryFillWithNothingOwedIsFilled(t *testing.T) {
 	ctx := context.Background()

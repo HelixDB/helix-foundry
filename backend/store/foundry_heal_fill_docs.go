@@ -215,8 +215,15 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(unsendable))+`)`, ap
 // each time, and a fill sent again after its transaction landed, whose
 // answer this never recorded (a crash between the engine's write and this
 // record), is "landed" with what that transaction took (contract 4.35.0),
-// counted as filled. The fill ends filled once it owes no document. An
-// outcome the binary doesn't know counts as refused.
+// counted as filled. A "landed" transaction may be another fill's of the
+// same link (its finding's canonical), whose record counted it already, as
+// when a second finding joins the first's move and sends its documents
+// again: while another fill of the load with that link has filled a
+// document, a landed one is counted filled with no facts, claims or reviews,
+// so none is counted twice (a crash between such a fill's own write and its
+// record then under-counts that document, never over-counts it). The fill
+// ends filled once it owes no document. An outcome the binary doesn't know
+// counts as refused.
 func (s *mysqlDB) RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -250,7 +257,23 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 			column = "docs_native"
 		}
 		facts, held, taken := d.Facts, d.Held, d.ReviewsTaken
-		if d.Outcome != "written" && d.Outcome != "landed" && d.Outcome != "nothing" {
+		switch d.Outcome {
+		case "written", "nothing":
+		case "landed":
+			var counted bool
+			if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_heal_fills f
+  JOIN foundry_heal_findings h ON h.ontology_id=f.ontology_id AND h.fingerprint=f.fingerprint
+  JOIN foundry_heal_fills o ON o.load_id=f.load_id AND o.id<>f.id AND o.docs_filled>0
+  JOIN foundry_heal_findings oh ON oh.ontology_id=o.ontology_id AND oh.fingerprint=o.fingerprint
+  WHERE f.id=? AND f.load_id=?
+    AND JSON_UNQUOTE(JSON_EXTRACT(oh.finding, '$.signal.canonical'))=JSON_UNQUOTE(JSON_EXTRACT(h.finding, '$.signal.canonical')))`,
+				d.FillID, loadID).Scan(&counted); err != nil {
+				return err
+			}
+			if counted {
+				facts, held, taken = 0, 0, 0
+			}
+		default:
 			// A native document's commit counted what it states; a refused one
 			// wrote nothing.
 			facts, held, taken = 0, 0, 0
@@ -736,14 +759,19 @@ WHERE w.load_id=? AND w.reason=? AND w.status='owed'
 // collect names it (RestartFoundryFillCollect, OweFoundryFillDocuments,
 // StartFoundryFill, FailFoundryFillCollect), so a collect that outlived its
 // lease writes nothing. A collect that dies leaves it to run out, its cursor
-// kept for the next. claimed is false when
-// another holds it, or the fill changed.
+// kept for the next. While another moved fill of the load holds a cursor at
+// the version the load records, only that fill is claimed: a worker reading
+// an older due list never starts another's collect over, which would end
+// the documents the cursor's pages owed. claimed is false when another holds
+// it, or another's cursor waits, or the fill changed.
 func (s *mysqlDB) ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (claimed bool, err error) {
 	until := time.Now().UTC().Add(lease).Truncate(time.Microsecond)
 	res, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills f SET f.paused_until=?
 WHERE f.id=? AND f.state='moved' AND (f.paused_until IS NULL OR f.paused_until<=NOW(6))
-  AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM foundry_heal_fills WHERE load_id=? AND id<>? AND state='moved' AND paused_until>NOW(6)) b)`,
-		until, fill.ID, fill.LoadID, fill.ID)
+  AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM foundry_heal_fills WHERE load_id=? AND id<>? AND state='moved' AND paused_until>NOW(6)) b)
+  AND NOT EXISTS (SELECT 1 FROM (SELECT c.id FROM foundry_heal_fills c JOIN foundry_loads l ON l.id=c.load_id
+    WHERE c.load_id=? AND c.id<>? AND c.state='moved' AND c.collect_version_id=l.version_id) k)`,
+		until, fill.ID, fill.LoadID, fill.ID, fill.LoadID, fill.ID)
 	if err != nil {
 		return false, err
 	}
