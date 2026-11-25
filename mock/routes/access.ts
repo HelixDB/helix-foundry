@@ -546,7 +546,10 @@ const targetKey = (t: FoundryAccessTarget) =>
     "\u001f",
   );
 
-/** Whether targets give `set`, whatever its source shares (Grants.givesSet). */
+/**
+ * Whether targets give `set`, whatever its source shares (Grants.givesSet):
+ * everything in the workspace gives every set, a document in no set aside.
+ */
 function givesSet(
   targets: readonly FoundryAccessTarget[],
   set: { setId: string; connectorId: string },
@@ -555,6 +558,7 @@ function givesSet(
     !!set.setId &&
     targets.some(
       (t) =>
+        t.kind === "KIND_WORKSPACE" ||
         (t.kind === "KIND_DOCUMENT_SET" && t.documentSetId === set.setId) ||
         (t.kind === "KIND_CONNECTOR" &&
           !!set.connectorId &&
@@ -563,13 +567,14 @@ function givesSet(
   );
 }
 
-/** Whether targets give a table, by its own grant or its connector's. */
+/** Whether targets give a table, by its own grant, its connector's or everything's. */
 const givesTable = (
   targets: readonly FoundryAccessTarget[],
   x: { connectorId: string; table: string },
 ) =>
   targets.some(
     (t) =>
+      t.kind === "KIND_WORKSPACE" ||
       (t.kind === "KIND_CONNECTOR" && t.connectorId === x.connectorId) ||
       (t.kind === "KIND_TABLE" &&
         t.connectorId === x.connectorId &&
@@ -578,20 +583,25 @@ const givesTable = (
 
 /**
  * Whether targets give at least every one of `wanted` (Grants.Holds), as
- * given, whatever their sources share: a table by its own grant or its
- * connector's, everything else by its own.
+ * given, whatever their sources share: a table by its own grant, its
+ * connector's or everything's, a connector or a set by its own or
+ * everything's, everything else (everything itself, People enrichment) by
+ * its own.
  */
-function holdsAll(
+export function holdsAll(
   targets: readonly FoundryAccessTarget[],
   wanted: readonly FoundryAccessTarget[],
 ) {
+  const everything = targets.some((t) => t.kind === "KIND_WORKSPACE");
   return wanted.every((w) =>
     w.kind === "KIND_TABLE"
       ? givesTable(targets, {
           connectorId: w.connectorId || "",
           table: w.table || "",
         })
-      : targets.some((t) => targetKey(t) === targetKey(w)),
+      : (everything &&
+          (w.kind === "KIND_CONNECTOR" || w.kind === "KIND_DOCUMENT_SET")) ||
+        targets.some((t) => targetKey(t) === targetKey(w)),
   );
 }
 
@@ -968,7 +978,8 @@ const inputsOut = (i: Inputs): FoundryLoadAccessInputs => ({
 
 /**
  * The workspace's grants, oldest first, without those of a connector or set
- * that is gone (the store deletes them with it).
+ * that is gone (the store deletes them with it); everything in the
+ * workspace and People enrichment name neither, so stay.
  */
 function grantsOf(workspaceId: string) {
   const connectors = new Set(workspaceConnectors(workspaceId).map((c) => c.id)),
@@ -979,6 +990,7 @@ function grantsOf(workspaceId: string) {
       (g.target.kind === "KIND_DOCUMENT_SET"
         ? sets.has(g.target.documentSetId || "")
         : g.target.kind === "KIND_ENRICHMENT" ||
+          g.target.kind === "KIND_WORKSPACE" ||
           connectors.has(g.target.connectorId || "")),
   );
   return state.grants.filter((g) => g.workspaceId === workspaceId);
@@ -1444,7 +1456,8 @@ export function makeAppKey(
 
 /**
  * Whether every target names a source live in the workspace: its connector
- * or set (People enrichment always is).
+ * or set (everything in the workspace and People enrichment name none, so
+ * always are).
  */
 export function sourcesLive(
   workspaceId: string,
@@ -1455,7 +1468,9 @@ export function sourcesLive(
   return targets.every((t) =>
     t.kind === "KIND_DOCUMENT_SET"
       ? sets.has(t.documentSetId!)
-      : t.kind === "KIND_ENRICHMENT" || connectors.has(t.connectorId!),
+      : t.kind === "KIND_ENRICHMENT" ||
+        t.kind === "KIND_WORKSPACE" ||
+        connectors.has(t.connectorId!),
   );
 }
 
@@ -1522,6 +1537,7 @@ const KIND_NAMES: Partial<Record<string, string>> = {
   KIND_TABLE: "table",
   KIND_DOCUMENT_SET: "document_set",
   KIND_ENRICHMENT: "enrichment",
+  KIND_WORKSPACE: "workspace",
 };
 
 /** A target as ParseTarget reads it: each kind names exactly what it needs. */
@@ -1703,15 +1719,9 @@ export const accessRoutes: MockRoute[] = [
           principalKey(g.principal) === principalKey(principal),
       );
       if (
-        targets.some(
-          (t) =>
-            !holding.some(
-              (g) =>
-                targetKey(g.target) === targetKey(t) ||
-                (t.kind === "KIND_TABLE" &&
-                  g.target.kind === "KIND_CONNECTOR" &&
-                  g.target.connectorId === t.connectorId),
-            ),
+        !holdsAll(
+          holding.map((g) => g.target),
+          targets,
         )
       ) {
         if (principal.kind === "KIND_USER") {
@@ -1736,7 +1746,9 @@ export const accessRoutes: MockRoute[] = [
         targets.some((t) =>
           t.kind === "KIND_DOCUMENT_SET"
             ? !sets.has(t.documentSetId!)
-            : t.kind !== "KIND_ENRICHMENT" && !connectors.has(t.connectorId!),
+            : t.kind !== "KIND_ENRICHMENT" &&
+              t.kind !== "KIND_WORKSPACE" &&
+              !connectors.has(t.connectorId!),
         )
       )
         return fail(

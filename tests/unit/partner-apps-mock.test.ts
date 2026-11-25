@@ -54,7 +54,15 @@ const VERIFIER = "v".repeat(43),
   CHALLENGE = createHash("sha256").update(VERIFIER).digest("base64url"),
   W = "/v1/workspaces/ws_acme";
 const STRIPE = { kind: "KIND_CONNECTOR", connectorId: "conn_acme_stripe" },
-  SHOP = { kind: "KIND_CONNECTOR", connectorId: "conn_acme_shop" };
+  SHOP = { kind: "KIND_CONNECTOR", connectorId: "conn_acme_shop" },
+  EVERYTHING = { kind: "KIND_WORKSPACE" },
+  // As the WFE answers it: the ids it doesn't name are "".
+  STORED_EVERYTHING = {
+    ...EVERYTHING,
+    connectorId: "",
+    table: "",
+    documentSetId: "",
+  };
 
 /** The mock's apps, and the bodies their requests send. */
 async function setup(local = false) {
@@ -336,6 +344,13 @@ describe("approving", () => {
     );
     await refused(
       {
+        targets: [{ kind: "KIND_WORKSPACE", connectorId: "conn_acme_stripe" }],
+      },
+      400,
+      `a source is malformed: access: a workspace grant can't name connector "conn_acme_stripe", table "" and set ""`,
+    );
+    await refused(
+      {
         targets: Array.from({ length: 1001 }, (_, i) => ({
           kind: "KIND_TABLE",
           connectorId: "conn_acme_stripe",
@@ -490,6 +505,29 @@ describe("the partner's token exchange", () => {
     config({ alanRole: "WORKSPACE_ROLE_ADMIN" });
     expect((await exchange(c)).body).toEqual({ error: "invalid_grant" });
     expect(await installs()).toEqual([]);
+  });
+  it("makes an install of everything in the workspace, which no deletion since consent refuses", async () => {
+    const { code, exchange, installs, access, call } = await setup();
+    const c = await code({ targets: [EVERYTHING] });
+    // Everything names no source, so none of it is gone by the exchange.
+    expect(
+      (await call("DELETE", `${W}/foundry/connectors/conn_acme_shop`)).status,
+    ).toBe(200);
+    expect((await exchange(c)).status).toBe(200);
+    const [i] = await installs();
+    const targets = ((await access()).grants as any[])
+      .filter((g) => g.principal.id === i.credentialId)
+      .map((g) => g.target);
+    expect(targets).toEqual([STORED_EVERYTHING]);
+    // And the grant outlives a connector deleted after it.
+    expect(
+      (await call("DELETE", `${W}/foundry/connectors/conn_acme_stripe`)).status,
+    ).toBe(200);
+    expect(
+      ((await access()).grants as any[]).filter(
+        (g) => g.principal.id === i.credentialId,
+      ),
+    ).toHaveLength(1);
   });
   it("leaves nothing behind when a source was deleted since consent", async () => {
     const { code, exchange, installs, call } = await setup();

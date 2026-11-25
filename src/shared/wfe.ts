@@ -5737,12 +5737,15 @@ export type FoundryAccessTargetKind =
   | "KIND_CONNECTOR"
   | "KIND_TABLE"
   | "KIND_DOCUMENT_SET"
-  | "KIND_ENRICHMENT";
+  | "KIND_ENRICHMENT"
+  | "KIND_WORKSPACE";
 
 /**
  * v1FoundryAccessTarget: what one grant gives. A connector names
  * `connectorId`, a table `connectorId` and `table`, a set `documentSetId`,
- * and People enrichment nothing.
+ * and People enrichment and everything in the workspace (every connector,
+ * table and document set, now and later, each as far as its source shares;
+ * never People enrichment) nothing.
  */
 export type FoundryAccessTarget = {
   kind?: FoundryAccessTargetKind;

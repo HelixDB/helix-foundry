@@ -166,6 +166,75 @@ test("an agent's key reads the ontologies its sources cover", async ({
   );
 });
 
+test("everything in the workspace gives what is loaded later, and a source chosen replaces it", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200, memberQueryRead: false });
+  await signIn(page);
+  // Given before anything is loaded, it reads the load that comes after.
+  const key = await openSources(page, "agents", "Support agent");
+  const everything = key.getByRole("checkbox", {
+    name: /^Everything in the workspace ·/,
+  });
+  await expect(everything).not.toBeChecked();
+  await expect(key).toContainText(
+    "the channels each person is in; not People enrichment",
+  );
+  await everything.check();
+  // The sources one by one show off, to be chosen in its place.
+  await expect(
+    key.getByRole("checkbox", { name: /^Stripe/ }),
+  ).not.toBeChecked();
+  await expect(key.getByRole("checkbox", { name: /^Stripe/ })).toBeEnabled();
+  const put = page.waitForRequest(
+    (r) => r.method() === "PUT" && r.url().endsWith("/foundry/access/grants"),
+  );
+  await key.getByRole("button", { name: "Save" }).click();
+  expect((await put).postDataJSON().targets).toEqual([
+    { kind: "KIND_WORKSPACE" },
+  ]);
+  await expect(
+    page.getByText("Saved what Support agent can read."),
+  ).toBeVisible();
+  await key.getByRole("button", { name: "Close" }).first().click();
+
+  await uploadAndLoadContract(page);
+  const again = await openSources(page, "agents", "Support agent");
+  await expect(
+    again.getByRole("checkbox", { name: /^Everything in the workspace ·/ }),
+  ).toBeChecked();
+  await expect(again.getByRole("list", { name: "Can read" })).toContainText(
+    "Customer contracts",
+  );
+  // Choosing Stripe replaces it.
+  await again.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await expect(
+    again.getByRole("checkbox", { name: /^Everything in the workspace ·/ }),
+  ).not.toBeChecked();
+  await again.getByRole("button", { name: "Close" }).first().click();
+  await expect(
+    page.getByRole("listitem", { name: "Support agent" }),
+  ).toContainText("Reads Customer contracts");
+
+  // A member given it is told what restricting still takes.
+  const alan = await openSources(page, "people", "Alan Turing");
+  await alan
+    .getByRole("checkbox", { name: /^Everything in the workspace ·/ })
+    .check();
+  await alan.getByRole("button", { name: "Save" }).click();
+  const confirm = page.getByRole("dialog", { name: "Restrict Alan Turing?" });
+  await expect(confirm).toContainText(
+    "They keep every connection and document set, now and later, but lose People enrichment unless it’s chosen",
+  );
+  await confirm.getByRole("button", { name: "Save and restrict" }).click();
+  await expect(
+    page.getByText("Saved what Alan Turing can read."),
+  ).toBeVisible();
+  await expect(alan.getByRole("list", { name: "Can read" })).toContainText(
+    "Customer contracts",
+  );
+});
+
 test("a restricted member sees only what their sources cover", async ({
   page,
   browser,

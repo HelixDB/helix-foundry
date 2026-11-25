@@ -24,6 +24,7 @@ import {
 import { accessQuery, keysQuery, setGrants, sourcesQuery } from "./access-api";
 import {
   grantsOf,
+  holdsEverything,
   setOwners,
   sourceTree,
   targetsOf,
@@ -240,7 +241,9 @@ function AppSourcesDialog({
     setError("");
     try {
       await setGrants(id, principal, targetsOf(chosen, owners));
-      trackEvent("partner_app_sources_saved");
+      trackEvent("partner_app_sources_saved", {
+        sources: holdsEverything(chosen) ? "everything" : "chosen",
+      });
       await qc.invalidateQueries({ queryKey: accessQuery(id).queryKey });
       notify(`Saved what ${title} can read.`);
       onClose();
@@ -277,6 +280,7 @@ function AppSourcesDialog({
           onChange={setChosen}
           audience="app"
           disabled={pending}
+          advanced
         />
         {chosen.length === 0 && (
           <p className="wk-note">

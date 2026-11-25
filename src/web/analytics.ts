@@ -430,14 +430,18 @@ export type AnalyticsEvents = {
   relay_link_revoked: undefined;
   // Connected apps (areas/workspace/partner-authorize.tsx,
   // partner-apps-tab.tsx): an app's consent page shown, approved with what
-  // it allowed (before leaving for the app) or why Helix refused it,
-  // cancelled (before leaving), and an install's sources saved or the
-  // install revoked. Never the app's name or id.
+  // it allowed and whether it reads everything in the workspace or sources
+  // chosen one by one (before leaving for the app) or why Helix refused it,
+  // cancelled (before leaving), and an install's sources saved (the same
+  // `sources`) or the install revoked. Never the app's name or id.
   partner_app_consent_shown: undefined;
-  partner_app_approved: { scopes: "read" | "ask" | "read_ask" };
+  partner_app_approved: {
+    scopes: "read" | "ask" | "read_ask";
+    sources: "everything" | "chosen";
+  };
   partner_app_denied: undefined;
   partner_app_approve_refused: { reason: Refusal };
-  partner_app_sources_saved: undefined;
+  partner_app_sources_saved: { sources: "everything" | "chosen" };
   partner_app_revoked: undefined;
   signed_out: undefined;
 

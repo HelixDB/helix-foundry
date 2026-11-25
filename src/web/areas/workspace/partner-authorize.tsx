@@ -25,7 +25,9 @@ import { tabStorage } from "../data/sign-ins";
 import { SourcePicker, useAccessData } from "./access";
 import { sourcesQuery } from "./access-api";
 import {
+  EVERYTHING,
   grantsOf,
+  holdsEverything,
   setOwners,
   sourceTree,
   targetsOf,
@@ -287,9 +289,10 @@ function Consent({
 }
 
 /**
- * The sources of the workspace chosen, as the grants editor lists them,
- * prefilled with what the app's install reads there already; then Approve
- * and Cancel.
+ * The sources of the workspace chosen, as the grants editor lists them:
+ * everything in the workspace, unless the app's install reads sources
+ * chosen there already, with the sources one by one and People enrichment
+ * under Advanced; then Approve and Cancel.
  */
 function ConsentSources({
   workspace,
@@ -352,7 +355,7 @@ function ConsentSources({
           kind: "KIND_SERVICE_CREDENTIAL",
           id: existing.credentialId,
         })
-      : [],
+      : [EVERYTHING],
     sources = chosen ?? prefill;
   const sets = data.sets.data || [],
     tree = sourceTree(data.connectors.data?.connectors || [], sets),
@@ -370,6 +373,7 @@ function ConsentSources({
         );
       await trackBeforeLeaving("partner_app_approved", {
         scopes: scopesEvent(allowed),
+        sources: holdsEverything(sources) ? "everything" : "chosen",
       });
       clearSlackReturn(tabStorage());
       window.location.assign(back);
@@ -393,10 +397,13 @@ function ConsentSources({
         onChange={setChosen}
         audience="app"
         disabled={pending}
+        advanced
       />
       <p className="wk-note">
         {app.name} reads only what these sources hold of each ontology’s current
-        load. You’ll be sent back to{" "}
+        load. Everything in the workspace includes connections and documents
+        added later; Slack and other sources that follow their own permissions
+        give only what they share with everyone. You’ll be sent back to{" "}
         <span className="hf-mono">{redirectOrigin}</span>. Change what it reads,
         or revoke it, any time in Settings › Connected apps.
       </p>

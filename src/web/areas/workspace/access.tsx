@@ -62,9 +62,12 @@ import {
 } from "./access-api";
 import {
   addsSources,
+  EVERYTHING,
+  everythingNote,
   grantKey,
   grantsOf,
   heldGrants,
+  holdsEverything,
   leftOutBy,
   leftOutText,
   missingText,
@@ -101,7 +104,8 @@ import { slackQuery } from "./slack-api";
 // Settings › Access (hosted, owners and admins): what agents, people and
 // teams may read through source grants. A grant gives a connection (its
 // tables now and later, and the sets its syncs write), one table, a
-// document set, or People enrichment; whoever it is for reads the part of an
+// document set, everything in the workspace (every connection, table and
+// set, now and later), or People enrichment; whoever it is for reads the part of an
 // ontology's current load those sources hold, and asks it questions, all of it
 // once the load reads nothing else. Agents' keys reach Foundry only that way;
 // a member restricted here sees only those ontologies, in Founder (the
@@ -196,9 +200,12 @@ export function readsLine(data: AccessData, principal: Principal) {
   );
 }
 
-// What being restricted takes, said wherever saving restricts someone.
-const restrictionCost =
-  "They lose the rest of each ontology’s schema, other connections and other documents, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People.";
+// What being restricted takes, said wherever saving restricts someone:
+// with everything in the workspace, only what no source gives.
+const restrictionCost = (grants: readonly Grant[]) =>
+  holdsEverything(grants)
+    ? "They keep every connection and document set, now and later, but lose People enrichment unless it’s chosen, and Data, Settings and making ontologies, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People."
+    : "They lose the rest of each ontology’s schema, other connections and other documents, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People.";
 
 /** One source of the editor: its box, and what it is. */
 function SourceCheck({
@@ -245,11 +252,15 @@ const connectionNote = (audience: PickerAudience, follows: boolean) =>
       : "all of it, now and later";
 
 /**
- * The workspace's sources as checkboxes, controlled: each connection with
- * its tables and the sets its syncs write, the sets people made, and People
- * enrichment. A table or set its connection's grant covers shows chosen and
- * can't be changed on its own. `follows` are the connections that follow
- * their sources' permissions.
+ * The workspace's sources as checkboxes, controlled: everything in the
+ * workspace, then each connection with its tables and the sets its syncs
+ * write, the sets people made, and People enrichment. Choosing one of
+ * those replaces everything, and everything replaces them (toggle). A
+ * table or set its connection's grant covers shows chosen and can't be
+ * changed on its own. `follows` are the connections that follow their
+ * sources' permissions. `advanced` puts the sources one by one, People
+ * enrichment among them, under a disclosure, Advanced, open at first only
+ * while one of them is chosen.
  */
 export function SourcePicker({
   tree,
@@ -258,6 +269,7 @@ export function SourcePicker({
   onChange,
   audience,
   disabled,
+  advanced,
 }: {
   tree: SourceTree;
   follows: ReadonlySet<string | undefined>;
@@ -265,12 +277,15 @@ export function SourcePicker({
   onChange: (chosen: Grant[]) => void;
   audience: PickerAudience;
   disabled?: boolean;
+  advanced?: boolean;
 }) {
   const flip = (g: Grant) => onChange(toggle(chosen, g));
   const state = (g: Grant, owner?: string) => sourceState(chosen, g, owner);
-  return (
-    <fieldset className="wk-access-sources" disabled={disabled}>
-      <legend>Sources</legend>
+  const [open, setOpen] = useState(() =>
+    chosen.some((g) => g.kind !== "workspace"),
+  );
+  const each = (
+    <>
       {tree.connections.length > 0 && (
         <ul aria-label="Connections">
           {tree.connections.map((c) => {
@@ -365,6 +380,39 @@ export function SourcePicker({
           </SourceCheck>
         </li>
       </ul>
+    </>
+  );
+  return (
+    <fieldset className="wk-access-sources" disabled={disabled}>
+      <legend>Sources</legend>
+      <ul aria-label="Everything">
+        <li>
+          <SourceCheck
+            state={state(EVERYTHING)}
+            onToggle={() => flip(EVERYTHING)}
+          >
+            <span>
+              Everything in the workspace
+              <small> · {everythingNote(audience === "app")}</small>
+            </span>
+          </SourceCheck>
+        </li>
+      </ul>
+      {advanced ? (
+        <details
+          className="wk-access-advanced"
+          open={open}
+          onToggle={(e) => setOpen(e.currentTarget.open)}
+        >
+          <summary>Advanced</summary>
+          <p className="wk-note">
+            Choose sources one by one instead, or add People enrichment.
+          </p>
+          {each}
+        </details>
+      ) : (
+        each
+      )}
     </fieldset>
   );
 }
@@ -475,12 +523,12 @@ export function GrantsDialog({
           }
           description={
             principal.kind !== "KIND_TEAM"
-              ? `They’ll see only what these sources hold. ${restrictionCost}`
+              ? `They’ll see only what these sources hold. ${restrictionCost(chosen)}`
               : [
                   restricts &&
                     `${unnamed ? "Its members" : restricting.map(nameOf).join(", ")} will see only what the team’s sources hold.`,
                   leavingText,
-                  restricts && restrictionCost,
+                  restricts && restrictionCost(chosen),
                 ]
                   .filter(Boolean)
                   .join(" ")
@@ -1229,12 +1277,11 @@ function TeamDialog({
   );
   // Joining a team that holds sources restricts whoever isn't yet.
   const access = data.access.data || {},
+    teamGrants = team
+      ? grantsOf(access.grants || [], { kind: "KIND_TEAM", id: team.id || "" })
+      : [],
     joining =
-      team &&
-      grantsOf(access.grants || [], {
-        kind: "KIND_TEAM",
-        id: team.id || "",
-      }).length > 0
+      team && teamGrants.length > 0
         ? people.filter((m) => {
             const userId = m.user?.id || "";
             return (
@@ -1271,7 +1318,7 @@ function TeamDialog({
               ? `Restrict ${nameOf(joining[0]!)}?`
               : `Restrict ${plural(joining.length, "member")}?`
           }
-          description={`${joining.map(nameOf).join(", ")} will see only what ${team?.name || "the team"}’s sources hold. ${restrictionCost}`}
+          description={`${joining.map(nameOf).join(", ")} will see only what ${team?.name || "the team"}’s sources hold. ${restrictionCost(teamGrants)}`}
           confirmLabel="Save and restrict"
           pending={pending}
           onConfirm={() => void save()}

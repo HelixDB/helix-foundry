@@ -112,6 +112,7 @@ const KINDS = [
   "KIND_TABLE",
   "KIND_DOCUMENT_SET",
   "KIND_ENRICHMENT",
+  "KIND_WORKSPACE",
 ] as const;
 
 const CODE_TTL_MS = 5 * 60_000,

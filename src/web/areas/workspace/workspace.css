@@ -222,6 +222,19 @@
   margin-top: 4px;
   padding-left: 26px;
 }
+.wk-access-advanced {
+  display: grid;
+  gap: var(--hf-space-1);
+}
+.wk-access-advanced > summary {
+  padding: 4px 0;
+}
+.wk-access-advanced[open] > summary {
+  margin-bottom: 0;
+}
+.wk-access-advanced > .wk-note {
+  margin: 0;
+}
 .wk-access-source {
   display: flex;
   align-items: center;

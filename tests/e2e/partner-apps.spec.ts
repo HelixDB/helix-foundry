@@ -87,11 +87,30 @@ test("an owner connects an app through signing in, and it reads only what was ch
   await expect(
     form.getByRole("link", { name: "northwind.example" }),
   ).toHaveAttribute("rel", "noopener noreferrer");
-  // Nothing chosen yet: Approve waits for a source.
+  // Everything in the workspace starts chosen; the sources one by one and
+  // People enrichment wait, off, under Advanced.
+  const everything = form.getByRole("checkbox", {
+    name: /^Everything in the workspace ·/,
+  });
+  await expect(everything).toBeChecked();
+  await expect(form).toContainText(
+    "Everything in the workspace includes connections and documents added later",
+  );
   const approve = form.getByRole("button", { name: "Approve" });
+  await expect(approve).toBeEnabled();
+  await expect(form.getByRole("checkbox", { name: /^Stripe ·/ })).toBeHidden();
+  // Without it, Approve waits for a source.
+  await everything.uncheck();
   await expect(approve).toBeDisabled();
   await expect(form).toContainText("Choose at least one source.");
+  await everything.check();
+  // A source chosen under Advanced replaces it.
+  await form.getByText("Advanced", { exact: true }).click();
+  await expect(
+    form.getByRole("checkbox", { name: /^People enrichment ·/ }),
+  ).not.toBeChecked();
   await form.getByRole("checkbox", { name: /^Stripe ·/ }).check();
+  await expect(everything).not.toBeChecked();
   await expect(form).toContainText(
     "every table it syncs and every document set it owns, including ones added later",
   );
@@ -162,6 +181,67 @@ test("an owner connects an app through signing in, and it reads only what was ch
   await expect(
     page.getByRole("heading", { name: "Nothing to approve here" }),
   ).toBeVisible();
+});
+
+test("approving as it comes gives the app everything in the workspace, and Edit sources keeps that choice", async ({
+  page,
+}) => {
+  await signIn(page);
+  await answerAsApp(page);
+  await page.goto(authorizePath());
+  const form = consent(page);
+  await expect(
+    form.getByRole("checkbox", { name: /^Everything in the workspace ·/ }),
+  ).toBeChecked();
+  await expect(form).toContainText("what the source shares with everyone");
+  const approved = page.waitForRequest((r) =>
+    r.url().endsWith("/partner-apps/authorization:approve"),
+  );
+  await form.getByRole("button", { name: "Approve" }).click();
+  // Everything alone: People enrichment isn't in it.
+  expect((await approved).postDataJSON().targets).toEqual([
+    { kind: "KIND_WORKSPACE" },
+  ]);
+  await page.waitForURL((url) => url.origin === "https://northwind.example");
+  const code = new URL(page.url()).searchParams.get("code")!;
+  expect(
+    (
+      await mock.partnerExchange({
+        clientId: NORTHWIND.clientId,
+        clientSecret: NORTHWIND.secret,
+        code,
+        codeVerifier: VERIFIER,
+      })
+    ).status,
+  ).toBe(200);
+
+  await page.goto("/settings/apps");
+  await page
+    .getByRole("button", { name: "Edit sources for Northwind Insights" })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Sources for Northwind Insights",
+  });
+  const everything = dialog.getByRole("checkbox", {
+    name: /^Everything in the workspace ·/,
+  });
+  await expect(everything).toBeChecked();
+  // Advanced starts closed while nothing in it is chosen.
+  await expect(
+    dialog.getByRole("checkbox", { name: /^Stripe ·/ }),
+  ).toBeHidden();
+  await dialog.getByText("Advanced", { exact: true }).click();
+  await dialog.getByRole("checkbox", { name: /^People enrichment ·/ }).check();
+  await expect(everything).toBeChecked();
+  const put = page.waitForRequest(
+    (r) => r.method() === "PUT" && r.url().endsWith("/foundry/access/grants"),
+  );
+  await dialog.getByRole("button", { name: "Save" }).click();
+  expect((await put).postDataJSON().targets).toEqual([
+    { kind: "KIND_WORKSPACE" },
+    { kind: "KIND_ENRICHMENT" },
+  ]);
+  await expect(dialog).toBeHidden();
 });
 
 test("Cancel goes back to the app saying so", async ({ page }) => {
@@ -253,7 +333,9 @@ test("only owners and admins connect an app", async ({ browser }) => {
   await expect(form).toContainText(
     "Signed in as alan@example.com, connecting Acme.",
   );
-  await form.getByRole("checkbox", { name: /^Shop database ·/ }).check();
+  await expect(
+    form.getByRole("checkbox", { name: /^Everything in the workspace ·/ }),
+  ).toBeChecked();
   await form.getByRole("button", { name: "Approve" }).click();
   await alan.waitForURL((url) => url.origin === "https://northwind.example");
   expect(new URL(alan.url()).searchParams.get("code")).toMatch(/^hlxpa_/);
@@ -451,6 +533,41 @@ test("an install's sources are edited, alone, and it is revoked", async ({
   await expect(
     page.getByText("Saved what Northwind Insights can read."),
   ).toBeVisible();
+
+  // Everything in the workspace in its place, then back to one source.
+  await row
+    .getByRole("button", { name: "Edit sources for Northwind Insights" })
+    .click();
+  const shop = dialog.getByRole("checkbox", { name: /^Shop database ·/ }),
+    everything = dialog.getByRole("checkbox", {
+      name: /^Everything in the workspace ·/,
+    });
+  await expect(shop).toBeChecked();
+  await everything.check();
+  await expect(shop).not.toBeChecked();
+  const toEverything = page.waitForRequest(
+    (r) => r.method() === "PUT" && r.url().endsWith("/foundry/access/grants"),
+  );
+  await save.click();
+  expect((await toEverything).postDataJSON().targets).toEqual([
+    { kind: "KIND_WORKSPACE" },
+  ]);
+  await expect(dialog).toBeHidden();
+  await row
+    .getByRole("button", { name: "Edit sources for Northwind Insights" })
+    .click();
+  await expect(everything).toBeChecked();
+  await dialog.getByText("Advanced", { exact: true }).click();
+  await shop.check();
+  await expect(everything).not.toBeChecked();
+  const back = page.waitForRequest(
+    (r) => r.method() === "PUT" && r.url().endsWith("/foundry/access/grants"),
+  );
+  await save.click();
+  expect((await back).postDataJSON().targets).toEqual([
+    { kind: "KIND_CONNECTOR", connectorId: "conn_acme_shop" },
+  ]);
+  await expect(dialog).toBeHidden();
 
   await row.getByRole("button", { name: "Revoke Northwind Insights" }).click();
   const confirm = page.getByRole("dialog", {
