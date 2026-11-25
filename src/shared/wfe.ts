@@ -255,6 +255,20 @@ export type CreateWorkspaceRequest = {
   slug: string;
   region: string;
   displayName?: string;
+  /** Kept as the person's signup source if it is the first workspace they own. */
+  attribution?: SignupAttribution;
+};
+
+/**
+ * v1SignupAttribution: the site's first touch (src/web/first-touch.ts), its
+ * utm_ tags and referring host, each a tag of lowercase [a-z0-9._-], at most
+ * 40 characters. The WFE keeps only that much of any value.
+ */
+export type SignupAttribution = {
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  referrerDomain?: string;
 };
 
 /** helixwfev1ListWorkspaceMembersResponse: GET /v1/workspaces/{workspaceId}/members */
@@ -2321,6 +2335,75 @@ export type PutDataLayoutRequest = {
   // int64: the revision read.
   expectedRevision: string;
 };
+
+// ---------------------------------------------------------------- Ontology: company research
+// POST /v1/workspaces/{workspaceId}/foundry/company-research reads a
+// company's public site (its homepage and up to 3 pages of it about the
+// company, never a private address) and has the workspace's extract model
+// sum it up and ask at most 5 questions a site can't answer, each with a best
+// guess. POST .../company-research/{researchId}:draft-goal writes a
+// generation goal and an ontology name from that research, the answers and
+// the client's inventory of the chosen data. Both are synchronous (about 45 s
+// at most), for owners and admins, charged to the workspace's AI as any model
+// work: FOUNDRY_AI_NOT_CONFIGURED and FOUNDRY_PRO_REQUIRED as generating,
+// RESOURCE_EXHAUSTED past the hourly cap per user, FAILED_PRECONDITION reason
+// FOUNDRY_RESEARCH_BUDGET past the workspace's monthly spend, UNAVAILABLE
+// reason FOUNDRY_RESEARCH_FAILED when the model failed. A free-mail or
+// malformed domain is INVALID_ARGUMENT, in a sentence the page shows.
+
+/** v1FoundryResearchQuestion: one thing only the company can say. */
+export type FoundryResearchQuestion = {
+  // "q1".."q5".
+  id: string;
+  question?: string;
+  // What the site suggests: the answer field starts with it.
+  bestGuess?: string;
+  // Up to 4 short answers to pick from.
+  options?: string[];
+};
+
+/** v1FoundryCompanyResearch */
+export type FoundryCompanyResearch = {
+  id: string;
+  // The registrable domain read: "globex.com" for "https://www.globex.com/x".
+  domain?: string;
+  companyName?: string;
+  // At most 600 characters.
+  summary?: string;
+  // An ontology name, at most 60 characters: "Globex operations".
+  suggestedName?: string;
+  questions?: FoundryResearchQuestion[];
+  // The pages read, as URLs.
+  sources?: string[];
+  // False when no page could be read: the summary and guesses come from the
+  // domain alone.
+  fetched?: boolean;
+  createdAt?: string | null;
+};
+
+/** FoundryServiceResearchFoundryCompanyBody: POST .../company-research. */
+export type ResearchCompanyRequest = { domain: string };
+
+/** v1ResearchFoundryCompanyResponse */
+export type ResearchCompanyResponse = { research?: FoundryCompanyResearch };
+
+/** v1FoundryResearchAnswer */
+export type FoundryResearchAnswer = { questionId: string; answer: string };
+
+/**
+ * FoundryServiceDraftFoundryGoalBody: POST
+ * .../company-research/{researchId}:draft-goal. Each answer at most 500
+ * characters, naming a question of the research (else INVALID_ARGUMENT);
+ * `data` the chosen data in plain text, at most 12,000 characters. An
+ * unknown research, or another workspace's, is NOT_FOUND.
+ */
+export type DraftGoalRequest = {
+  answers: FoundryResearchAnswer[];
+  data: string;
+};
+
+/** v1DraftFoundryGoalResponse: a goal of at most 2,000 characters and a name of at most 60. */
+export type DraftGoalResponse = { goal?: string; name?: string };
 
 // ---------------------------------------------------------------- Ontology: loads
 // Routes under .../ontologies/{ontologyId}/loads...: a load is one write of a
@@ -5737,12 +5820,15 @@ export type FoundryAccessTargetKind =
   | "KIND_CONNECTOR"
   | "KIND_TABLE"
   | "KIND_DOCUMENT_SET"
-  | "KIND_ENRICHMENT";
+  | "KIND_ENRICHMENT"
+  | "KIND_WORKSPACE";
 
 /**
  * v1FoundryAccessTarget: what one grant gives. A connector names
  * `connectorId`, a table `connectorId` and `table`, a set `documentSetId`,
- * and People enrichment nothing.
+ * and People enrichment and everything in the workspace (every connector,
+ * table and document set, now and later, each as far as its source shares;
+ * never People enrichment) nothing.
  */
 export type FoundryAccessTarget = {
   kind?: FoundryAccessTargetKind;
@@ -6377,3 +6463,89 @@ export type SetFoundrySlackAccessRequest = {
 
 /** v1FoundrySlackAccessResponse: the Slack user's link once READ; unset once NONE. */
 export type FoundrySlackAccessResponse = { link?: FoundrySlackLink | null };
+
+// ---------------------------------------------------------------- Workspace: connected apps
+// Partner apps (the WFE's partner_apps.go): other companies' integrations
+// Helix registered, which read a workspace's Foundry through the HTTP API on
+// the MCP host with OAuth tokens. GET /v1/partner-apps/authorization reads
+// one app's request on the site's /oauth/authorize (any signed-in user);
+// owners and admins approve it (POST
+// /v1/workspaces/{workspaceId}/partner-apps/authorization:approve), and list
+// and revoke a workspace's installs (GET and DELETE
+// .../partner-apps/installs). An install's sources are its credential's
+// Foundry source grants (Access, above), changed through the access routes.
+// Where Helix offers no connected apps, FAILED_PRECONDITION "Connected apps
+// aren't offered here".
+
+/** v1PublicPartnerApp: what a customer sees of a registered app. */
+export type PublicPartnerApp = {
+  clientId: string;
+  name: string;
+  publisher: string;
+  homepageUrl?: string;
+  verified?: boolean;
+};
+
+/**
+ * v1GetPartnerAppAuthorizationResponse: GET /v1/partner-apps/authorization
+ * ?clientId=&redirectUri=&scope=&state=. `scopes` is what the app asks for,
+ * in canonical order (foundry.read, foundry.ask); `redirectOrigin` the
+ * redirect URI's scheme and host; `denyUrl` the redirect URI with
+ * error=access_denied, the state and iss, where Cancel goes (denying records
+ * nothing). INVALID_ARGUMENT "This app isn't registered with Helix" for an
+ * unknown or disabled app, "redirect_uri is not registered for this app",
+ * "scope …" or "state is too long".
+ */
+export type GetPartnerAppAuthorizationResponse = {
+  app?: PublicPartnerApp;
+  scopes?: string[];
+  redirectOrigin?: string;
+  denyUrl?: string;
+};
+
+/**
+ * typesv1FoundrySourceTarget: one source an install reads, as Foundry's
+ * FoundryAccessTarget names it (the same JSON).
+ */
+export type FoundrySourceTarget = FoundryAccessTarget;
+
+/**
+ * WfeServiceApprovePartnerAppAuthorizationBody: POST
+ * .../partner-apps/authorization:approve, owners and admins on the Foundry
+ * site. `scopes` is what the person allowed, a non-empty subset of the
+ * app's; `targets` 1 to 1000 sources (everything in the workspace,
+ * KIND_WORKSPACE, counts as one). It stores a one-time code (5 minutes)
+ * the app trades for tokens; NOT_FOUND "One of the sources you chose was
+ * deleted".
+ */
+export type ApprovePartnerAppAuthorizationRequest = {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  codeChallenge: string;
+  scopes: string[];
+  targets: FoundrySourceTarget[];
+};
+
+/** v1ApprovePartnerAppAuthorizationResponse: the redirect URI with ?code=hlxpa_…&state=…&iss=…. */
+export type ApprovePartnerAppAuthorizationResponse = { redirectUrl?: string };
+
+/**
+ * v1PartnerAppInstallView: one app's live access to the workspace: a
+ * service credential nobody holds the token of, reading only its source
+ * grants. `appDisabled` while Helix suspended the app.
+ */
+export type PartnerAppInstall = {
+  id: string;
+  app?: PublicPartnerApp;
+  credentialId: string;
+  scopes?: string[];
+  approvedByUserId?: string;
+  createdAt?: string;
+  approvedAt?: string;
+  lastUsedAt?: string | null;
+  appDisabled?: boolean;
+};
+
+/** v1ListPartnerAppInstallsResponse: GET .../partner-apps/installs, the most recently used first. */
+export type ListPartnerAppInstallsResponse = { installs?: PartnerAppInstall[] };

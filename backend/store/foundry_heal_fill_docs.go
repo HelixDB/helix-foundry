@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -212,8 +213,18 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(unsendable))+`)`, ap
 // fill added, a review more for each claim it held and one fewer for each
 // it took), and its review cards owed a rebuild. So an event sent again, by
 // a retry after one was lost, counts once: the engine says the same numbers
-// each time. The fill ends filled once it owes no document. An outcome the
-// binary doesn't know counts as refused.
+// each time, and a fill sent again after its transaction landed, whose
+// answer this never recorded (a crash between the engine's write and this
+// record), is "landed" with what that transaction took (contract 4.35.0),
+// counted as filled. A "landed" transaction may be another fill's of the
+// same link (its finding's canonical), whose record counted it already, as
+// when a second finding joins the first's move and sends its documents
+// again: while another fill of the load with that link has filled a
+// document, a landed one is counted filled with no facts, claims or reviews,
+// so none is counted twice (a crash between such a fill's own write and its
+// record then under-counts that document, never over-counts it). The fill
+// ends filled once it owes no document. An outcome the binary doesn't know
+// counts as refused.
 func (s *mysqlDB) RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -239,7 +250,7 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 		}
 		column := "docs_refused"
 		switch d.Outcome {
-		case "written":
+		case "written", "landed":
 			column = "docs_filled"
 		case "nothing":
 			column = "docs_nothing"
@@ -247,7 +258,23 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 			column = "docs_native"
 		}
 		facts, held, taken := d.Facts, d.Held, d.ReviewsTaken
-		if d.Outcome != "written" && d.Outcome != "nothing" {
+		switch d.Outcome {
+		case "written", "nothing":
+		case "landed":
+			var counted bool
+			if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_heal_fills f
+  JOIN foundry_heal_findings h ON h.ontology_id=f.ontology_id AND h.fingerprint=f.fingerprint
+  JOIN foundry_heal_fills o ON o.load_id=f.load_id AND o.id<>f.id AND o.docs_filled>0
+  JOIN foundry_heal_findings oh ON oh.ontology_id=o.ontology_id AND oh.fingerprint=o.fingerprint
+  WHERE f.id=? AND f.load_id=?
+    AND JSON_UNQUOTE(JSON_EXTRACT(oh.finding, '$.signal.canonical'))=JSON_UNQUOTE(JSON_EXTRACT(h.finding, '$.signal.canonical')))`,
+				d.FillID, loadID).Scan(&counted); err != nil {
+				return err
+			}
+			if counted {
+				facts, held, taken = 0, 0, 0
+			}
+		default:
 			// A native document's commit counted what it states; a refused one
 			// wrote nothing.
 			facts, held, taken = 0, 0, 0
@@ -417,7 +444,10 @@ const foundryFillSpendQueued = 7 * 24 * time.Hour
 // least support first, with its suggestion as stored; an applying one to resume, whose pause ended or who owes
 // documents while no job is live on the ontology (a failed or ended job
 // queued none); and a moving one whose move's job failed (failFoundryLoadMove),
-// once its backoff ended, with no job live, to send again (Resume).
+// once its backoff ended, with no job live, to send again (Resume). Of a
+// load's moved fills, one whose collect saved a cursor comes first, so the
+// documents it owed stay owed until it resumes (another's fresh collect
+// would end them).
 func (s *mysqlDB) DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+foundryHealFillColumns+`, o.workspace_id, h.finding, f.state='applying'`+foundryHealFillFrom+`
 JOIN foundry_ontologies o ON o.id=f.ontology_id AND o.current_load_id=f.load_id
@@ -436,7 +466,7 @@ WHERE o.deleted_at IS NULL AND ws.deleted_at IS NULL AND ws.status NOT IN ('dele
     OR (f.state='moving' AND f.failures>0 AND (f.paused_until IS NULL OR f.paused_until<=NOW(6))
         AND EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=f.load_id AND w.document_id='' AND w.reason=? AND w.status='owed')
         AND NOT EXISTS (SELECT 1 FROM foundry_load_jobs j WHERE j.ontology_id=o.id AND j.active_key IS NOT NULL)))
-ORDER BY f.state IN ('applying', 'moving') DESC, h.support, f.id LIMIT ?`, string(model.FoundryResendLink), string(model.FoundryResendMove), limit)
+ORDER BY f.state IN ('applying', 'moving') DESC, f.collect_after IS NOT NULL DESC, h.support, f.id LIMIT ?`, string(model.FoundryResendLink), string(model.FoundryResendMove), limit)
 	if err != nil {
 		return nil, fmt.Errorf("find fills due: %w", err)
 	}
@@ -475,19 +505,16 @@ ORDER BY f.state IN ('applying', 'moving') DESC, h.support, f.id LIMIT ?`, strin
 	return due, nil
 }
 
-// OweFoundryFillDocuments owes fill's load, under the ontology's lock, a
-// fill of each of documentIDs ('link' rows), while the fill is still moved,
-// its collect's lease the one this collect claimed (fill.PausedUntil,
-// ClaimFoundryFillCollect), and its load current: owed again where a row
-// exists, so a collect run again after a crash, or a fill after an earlier
-// one, sends each. The rows count as owed only once the fill applies
-// (StartFoundryFill). A collect's first page (fresh) first ends every 'link'
-// row the load still owes, which only a collect that stopped partway leaves
-// (no fill applies while one collects): a fill sends only the documents its
-// own collect listed. ok is false when the fill, its lease or its load
-// changed, and nothing is owed.
-func (s *mysqlDB) OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string,
-	fresh bool) (ok bool, err error) {
+// RestartFoundryFillCollect starts fill's collect over, at versionID, under
+// the ontology's lock, while the fill is still moved, its collect's lease the
+// one this collect claimed (fill.PausedUntil, ClaimFoundryFillCollect), its
+// finding open, and its load current at versionID: it ends every 'link' row
+// the load still owes, which only a collect that stopped partway leaves (no
+// fill applies while one collects), and clears every cursor of the load's
+// fills, whose rows those were. So a fill sends only the documents its own
+// collect listed. ok is false when the fill, its lease, its finding or its
+// load changed, and nothing changes.
+func (s *mysqlDB) RestartFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, workspaceID, versionID string) (ok bool, err error) {
 	err = s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
 		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, fill.OntologyID)
@@ -497,39 +524,284 @@ func (s *mysqlDB) OweFoundryFillDocuments(ctx context.Context, fill *model.Found
 		if err != nil {
 			return err
 		}
-		if o.CurrentLoadID == nil || *o.CurrentLoadID != fill.LoadID {
-			return nil
-		}
-		if held, err := tx.holdsFoundryFillCollect(ctx, fill); err != nil || !held {
+		if _, err := tx.holdsFoundryFillCollect(ctx, o, fill, versionID); err != nil {
 			return err
 		}
 		ok = true
-		if fresh {
-			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6)
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6)
 WHERE w.load_id=? AND w.reason=? AND w.status='owed'
   AND NOT EXISTS (SELECT 1 FROM foundry_heal_fills a WHERE a.load_id=w.load_id AND a.state='applying')`,
-				fill.LoadID, string(model.FoundryResendLink)); err != nil {
-				return err
-			}
+			fill.LoadID, string(model.FoundryResendLink)); err != nil {
+			return err
 		}
-		if len(documentIDs) == 0 {
-			return nil
-		}
-		return tx.oweFoundryResends(ctx, fill.LoadID, model.FoundryResendLink, documentIDs)
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+` WHERE load_id=?`, fill.LoadID)
+		return err
 	})
+	if errors.Is(err, errCollectLost) || errors.Is(err, ErrFillCollectMoved) {
+		return false, nil
+	}
+	if err == nil && ok {
+		fill.Collect = nil
+	}
 	return ok, err
 }
 
+// ErrFillCollectMoved is a fill's collect whose load moved in place, or
+// whose cursor was rewound or cleared, since it listed: it starts over, or
+// resumes from the cursor as it stands, at once, counting no failure.
+var ErrFillCollectMoved = errors.New("store: the fill's collect moved under it")
+
+// errCollectLost is a collect that may no longer write: its fill is no
+// longer moved under its lease, its finding closed, its load is no longer
+// current, or its cursor isn't the one it last saved. Nothing it wrote in
+// the transaction stays.
+var errCollectLost = errors.New("store: the fill's collect changed under it")
+
+// OweFoundryFillDocuments owes fill's load a fill of each of documentIDs
+// ('link' rows), one page of its collect, and saves at as how far the
+// collect got, in one transaction, its Owed the rows the load then owes, so
+// the rows owed are always what the cursor counts and a collect cut off
+// after it resumes past the page: under the ontology's lock, while the fill
+// is still moved, its collect's lease the one this collect claimed, its
+// finding open, its cursor the one this collect last saved (fill.Collect;
+// none before its first page), and its load current at at.VersionID. A
+// cursor cleared or rewound meanwhile (its finding closed, or a document
+// became reviewed behind it, rewindFoundryFillCollectsBehind) is never
+// written over: the collect resumes from it as it stands. fill.Collect is
+// the cursor saved. A row that exists is owed again, so a fill after an earlier one
+// sends each. The rows count as owed only once the fill applies
+// (StartFoundryFill). A page saved is progress: the fill's collect failures
+// start again from none. ok is false when the fill, its lease, its finding,
+// its cursor or its load changed, and nothing is owed or saved.
+func (s *mysqlDB) OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string,
+	at model.FoundryFillCursor) (ok bool, err error) {
+	if at.After == "" || at.VersionID == "" || at.Owed < 0 || at.Left < 0 {
+		return false, fmt.Errorf("a collect's cursor names its last document and version, and counts no less than nothing: %+v", at)
+	}
+	err = s.WithTx(ctx, func(txDB Store) error {
+		tx := txDB.(*mysqlDB)
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, fill.OntologyID)
+		if err == ErrNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		saved, err := tx.holdsFoundryFillCollect(ctx, o, fill, at.VersionID)
+		if err != nil {
+			return err
+		}
+		if !sameFoundryFillCursor(saved, fill.Collect) {
+			return errCollectLost
+		}
+		if len(documentIDs) > 0 {
+			if err := tx.oweFoundryResends(ctx, fill.LoadID, model.FoundryResendLink, documentIDs); err != nil {
+				return err
+			}
+		}
+		// The rows the load owes are this collect's alone (a fresh one
+		// ends the rest, and none applies meanwhile): what a page owes
+		// again, after a rewind, counts once.
+		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason=? AND status='owed'`,
+			fill.LoadID, string(model.FoundryResendLink)).Scan(&at.Owed); err != nil {
+			return err
+		}
+		// Written only while the fill's finding is open: a writer that closes
+		// it holds the ontology's lock too, so this matches, but the cursor
+		// never outlives its finding even so.
+		res, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills f SET f.collect_after=?, f.collect_version_id=?, f.collect_owed=?,
+  f.collect_left=?, f.failures=0, f.last_error=NULL
+WHERE f.id=? AND f.state='moved' AND f.paused_until=? AND f.collect_after<=>? AND f.collect_version_id<=>?
+  AND EXISTS (SELECT 1 FROM foundry_heal_findings h WHERE h.ontology_id=f.ontology_id AND h.fingerprint=f.fingerprint AND h.status='open')`,
+			at.After, at.VersionID, at.Owed, at.Left, fill.ID, *fill.PausedUntil, cursorAfter(fill.Collect), cursorVersion(fill.Collect))
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			if err == nil {
+				err = errCollectLost
+			}
+			return err
+		}
+		ok = true
+		return nil
+	})
+	if errors.Is(err, errCollectLost) || errors.Is(err, ErrFillCollectMoved) {
+		return false, nil
+	}
+	if err == nil && ok {
+		fill.Collect, fill.Failures = &at, 0
+	}
+	return ok, err
+}
+
+// cursorAfter and cursorVersion are a cursor's columns, NULL for none.
+func cursorAfter(at *model.FoundryFillCursor) any {
+	if at == nil {
+		return nil
+	}
+	return at.After
+}
+
+func cursorVersion(at *model.FoundryFillCursor) any {
+	if at == nil {
+		return nil
+	}
+	return at.VersionID
+}
+
+// sameFoundryFillCursor reports whether a and b are the same cursor, or
+// both none.
+func sameFoundryFillCursor(a, b *model.FoundryFillCursor) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// holdsFoundryFillCollect checks that fill's collect may write, its
+// ontology o locked by the caller: the load still current (errCollectLost
+// otherwise) at versionID (locked FOR SHARE, so no move in place lands
+// before the write commits; ErrFillCollectMoved otherwise), and the fill
+// still moved under the collect lease this collect claimed
+// (ClaimFoundryFillCollect), with its finding open (FOR SHARE: one dismissed or
+// superseded meanwhile has its cursor cleared, which a collect still
+// running must not save again; errCollectLost otherwise). saved is the
+// cursor the row holds, for a write to compare with the one it last saved.
+// It locks the load's row, then all its fills' (lockFoundryLoadFills).
+func (s *mysqlDB) holdsFoundryFillCollect(ctx context.Context, o *model.FoundryOntology, fill *model.FoundryHealFill,
+	versionID string) (saved *model.FoundryFillCursor, err error) {
+	if fill.PausedUntil == nil || o.CurrentLoadID == nil || *o.CurrentLoadID != fill.LoadID {
+		return nil, errCollectLost
+	}
+	var at string
+	switch err := s.db.QueryRowContext(ctx, `SELECT version_id FROM foundry_loads WHERE id=? FOR SHARE`, fill.LoadID).Scan(&at); {
+	case err == sql.ErrNoRows:
+		return nil, errCollectLost
+	case err != nil:
+		return nil, err
+	case at != versionID:
+		return nil, fmt.Errorf("%w: the load moved from version %s to %s", ErrFillCollectMoved, versionID, at)
+	}
+	if err := s.lockFoundryLoadFills(ctx, fill.LoadID); err != nil {
+		return nil, err
+	}
+	var after, version sql.NullString
+	var cursor model.FoundryFillCursor
+	var fingerprint string
+	switch err := s.db.QueryRowContext(ctx, `SELECT fingerprint, collect_after, collect_version_id, collect_owed, collect_left FROM foundry_heal_fills
+WHERE id=? AND state='moved' AND paused_until=? FOR UPDATE`, fill.ID, *fill.PausedUntil).Scan(&fingerprint, &after, &version, &cursor.Owed, &cursor.Left); {
+	case err == sql.ErrNoRows:
+		return nil, errCollectLost
+	case err != nil:
+		return nil, err
+	}
+	var status string
+	switch err := s.db.QueryRowContext(ctx, `SELECT status FROM foundry_heal_findings WHERE ontology_id=? AND fingerprint=? FOR SHARE`,
+		fill.OntologyID, fingerprint).Scan(&status); {
+	case err == sql.ErrNoRows:
+		return nil, errCollectLost
+	case err != nil:
+		return nil, err
+	case status != string(model.FoundryHealOpen):
+		return nil, errCollectLost
+	}
+	// The table's CHECK holds both or neither.
+	if after.Valid && version.Valid {
+		cursor.After, cursor.VersionID = after.String, version.String
+		return &cursor, nil
+	}
+	return nil, nil
+}
+
+// lockFoundryLoadFills locks every fill row of load loadID, in the order
+// of the load's index on them, as a statement over all of them does (a
+// restart's, or a document's write rewinding cursors,
+// rewindFoundryFillCollectsBehind): a transaction that locked one of them
+// first and then the rest could deadlock with one that locks them all in
+// order. A caller that locks the load's row takes it first, as a move in
+// place does (RecordFoundryLoadMove).
+func (s *mysqlDB) lockFoundryLoadFills(ctx context.Context, loadID string) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_heal_fills WHERE load_id=? ORDER BY fingerprint FOR UPDATE`, loadID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+	}
+	return rows.Err()
+}
+
+// foundryDocumentReviewed reports whether load loadID holds document docID
+// as one of the reviewed documents a collect lists
+// (ListFoundryHealDocuments): extracted, with reviews.
+func (s *mysqlDB) foundryDocumentReviewed(ctx context.Context, loadID, docID string) (bool, error) {
+	var reviewed bool
+	err := s.db.QueryRowContext(ctx, `SELECT status='extracted' AND reviews>0 FROM foundry_load_extractions WHERE load_id=? AND document_id=?`,
+		loadID, docID).Scan(&reviewed)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return reviewed, err
+}
+
+// rewindFoundryFillCollectsBehind moves back the cursor of each moved fill
+// of load loadID whose collect listed past document docID, once docID is
+// one of the load's reviewed documents and wasn't (reviewed, read before
+// the write): a partial load's document extracted, a failed one extracted
+// again, or a review taken back. A collect pages forward from its cursor,
+// so it would never list the document: the cursor goes back to the load's
+// document just before it ("" for none), so the collect lists it next,
+// and those after it again. What a page owes again is owed already, and
+// the cursor counts the rows the load owes (OweFoundryFillDocuments), so
+// nothing counts twice; left starts again from none, a lower bound still.
+// A collect still running saves nothing more (its cursor moved), and the
+// next resumes from the rewound one: a document reviewed behind a long
+// collect costs the pages from it on, not the whole collect again.
+//
+// The cursors are read as they stand (the UPDATE's current read, waiting
+// for a page being saved), never from the transaction's snapshot, which
+// could miss one saved since; the UPDATE locks the load's fills in index
+// order, as every collect write does (lockFoundryLoadFills). A document
+// that becomes reviewed after its page was listed and before that page is
+// saved is still missed: the window of one Audit call.
+func (s *mysqlDB) rewindFoundryFillCollectsBehind(ctx context.Context, loadID, docID string, reviewed bool) error {
+	if reviewed {
+		return nil
+	}
+	switch now, err := s.foundryDocumentReviewed(ctx, loadID, docID); {
+	case err != nil:
+		return err
+	case !now:
+		return nil
+	}
+	var before string
+	switch err := s.db.QueryRowContext(ctx, `SELECT document_id FROM foundry_load_extractions WHERE load_id=? AND document_id<?
+ORDER BY document_id DESC LIMIT 1`, loadID, docID).Scan(&before); {
+	case err == sql.ErrNoRows:
+	case err != nil:
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET collect_after=?, collect_left=0
+WHERE load_id=? AND state='moved' AND collect_after>=?`, before, loadID, docID)
+	return err
+}
+
+// clearFoundryFillCursor is the SET of a fill row with no collect cursor.
+const clearFoundryFillCursor = `collect_after=NULL, collect_version_id=NULL, collect_owed=0, collect_left=0`
+
 // StartFoundryFill starts fill, moved, once its documents are owed: owed
 // documents, left past model.FoundryFillMaxDocuments, under
-// model.FoundryFillCapUSD, applying, and resend queued behind the live job.
+// model.FoundryFillCapUSD, applying, its collect's cursor cleared, and
+// resend queued behind the live job.
 // A fill that owes none is filled at once: no review of it is left to fill.
 // Under the ontology's lock, only while the fill is still moved, its
-// collect's lease this collect's, its load current, the load owes exactly
-// owed 'link' rows (what this collect owed, no more and no fewer), and no
-// other fill of the load applies (ErrConflict otherwise, and nothing
-// changes).
-func (s *mysqlDB) StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64,
+// collect's lease this collect's, its finding open, its cursor the one this
+// collect last saved (fill.Collect), and its load current at versionID, the
+// version the collect listed at (ErrFillCollectMoved otherwise); and the load owes exactly owed 'link' rows (what this collect
+// owed, no more and no fewer), and no other fill of the load applies
+// (ErrConflict otherwise). Refused, nothing changes.
+func (s *mysqlDB) StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID, versionID string, owed, left int64,
 	resend *model.FoundryGraphJob) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -540,14 +812,23 @@ func (s *mysqlDB) StartFoundryFill(ctx context.Context, fill *model.FoundryHealF
 		if err != nil {
 			return err
 		}
+		// The live job before the fill's row, the order a job's own writes
+		// take them (a document recorded restarts collects behind it).
+		live, err := tx.liveFoundryGraphJob(ctx, fill.OntologyID)
+		if err != nil {
+			return err
+		}
 		if o.CurrentLoadID == nil || *o.CurrentLoadID != fill.LoadID {
 			return ErrConflict
 		}
-		if held, err := tx.holdsFoundryFillCollect(ctx, fill); err != nil || !held {
-			if err == nil {
-				err = ErrConflict
-			}
+		saved, err := tx.holdsFoundryFillCollect(ctx, o, fill, versionID)
+		switch {
+		case errors.Is(err, errCollectLost):
+			return ErrConflict
+		case err != nil:
 			return err
+		case !sameFoundryFillCursor(saved, fill.Collect):
+			return fmt.Errorf("%w: its cursor isn't the one it saved", ErrFillCollectMoved)
 		}
 		var links int64
 		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason=? AND status='owed'`,
@@ -557,16 +838,12 @@ func (s *mysqlDB) StartFoundryFill(ctx context.Context, fill *model.FoundryHealF
 		if links != owed {
 			return fmt.Errorf("%w: the load owes %d documents to fill, its collect %d", ErrConflict, links, owed)
 		}
-		live, err := tx.liveFoundryGraphJob(ctx, fill.OntologyID)
-		if err != nil {
-			return err
-		}
 		state, active := model.FoundryFillApplying, any(fill.LoadID)
 		if owed == 0 {
 			state, active = model.FoundryFillFilled, nil
 		}
 		res, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state=?, active_key=?, docs_owed=?, docs_left=?, cap_usd=?,
-  failures=0, last_error=NULL, paused_until=NULL WHERE id=? AND state='moved'
+  failures=0, last_error=NULL, paused_until=NULL, `+clearFoundryFillCursor+` WHERE id=? AND state='moved'
   AND NOT EXISTS (SELECT 1 FROM (SELECT load_id FROM foundry_heal_fills WHERE load_id=? AND state='applying') a)`,
 			string(state), active, owed, left, model.FoundryFillCapUSD, fill.ID, fill.LoadID)
 		if err != nil {
@@ -619,14 +896,19 @@ WHERE id=? AND state IN ('applying', 'moving') AND paused_until<=NOW(6)`, fill.I
 }
 
 // FailFoundryFillCollect counts a collect of fill, moved, that failed for
-// why: what it owed ends ('link' rows, while no fill of the load applies),
-// and it backs off by model.FoundryFillBackoff (paused_until, which the due
-// list reads, and which ends its lease), and after as many failures, one
-// more needs a load (why collect_failed, the error), so a collect that keeps
-// failing never runs at every tick. The links its move added stay the
-// load's: its Extracts still ask them apart (FoundryAskedApart). Only while
-// the fill is still moved and its collect's lease this collect's.
-func (s *mysqlDB) FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error {
+// why, saving nothing more: it backs off by model.FoundryFillBackoff
+// (paused_until, which the due list reads, and which ends its lease), and
+// after as many failures in a row (a page saved starts them again from
+// none, OweFoundryFillDocuments), one more needs a load (why collect_failed,
+// the error), so a collect that keeps failing never runs at every tick. What
+// its pages owed, and its cursor, stay for the next attempt to resume,
+// unless restart (a start refused as not what the load owes, so the cursor
+// can't be trusted) or it needs a load: then what the load owes ends
+// ('link' rows, while no fill of the load applies) and the cursor goes. The
+// links its move added stay the load's: its Extracts still ask them apart
+// (FoundryAskedApart). Only while the fill is still moved and its collect's
+// lease this collect's.
+func (s *mysqlDB) FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string, restart bool) error {
 	for len(why) > 200 || !utf8.ValidString(why) {
 		why = why[:min(len(why), 200)]
 		for !utf8.ValidString(why) {
@@ -638,6 +920,9 @@ func (s *mysqlDB) FailFoundryFillCollect(ctx context.Context, fill *model.Foundr
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		if err := tx.lockFoundryLoadFills(ctx, fill.LoadID); err != nil {
+			return err
+		}
 		var failures int
 		err := tx.db.QueryRowContext(ctx, `SELECT failures FROM foundry_heal_fills WHERE id=? AND state='moved' AND paused_until=? FOR UPDATE`,
 			fill.ID, *fill.PausedUntil).Scan(&failures)
@@ -647,13 +932,19 @@ func (s *mysqlDB) FailFoundryFillCollect(ctx context.Context, fill *model.Foundr
 		if err != nil {
 			return err
 		}
-		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6)
+		given := failures >= len(model.FoundryFillBackoff)
+		if restart || given {
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6)
 WHERE w.load_id=? AND w.reason=? AND w.status='owed'
   AND NOT EXISTS (SELECT 1 FROM foundry_heal_fills a WHERE a.load_id=w.load_id AND a.state='applying')`,
-			fill.LoadID, string(model.FoundryResendLink)); err != nil {
-			return err
+				fill.LoadID, string(model.FoundryResendLink)); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+` WHERE load_id=?`, fill.LoadID); err != nil {
+				return err
+			}
 		}
-		if failures >= len(model.FoundryFillBackoff) {
+		if given {
 			given, err := json.Marshal([]model.FoundryFoldWhy{{Kind: model.FoundryWhyCollectFailed, Item: why}})
 			if err != nil {
 				return err
@@ -674,16 +965,25 @@ WHERE w.load_id=? AND w.reason=? AND w.status='owed'
 // as only one of its fills applies at a time). The lease is the fill's
 // paused_until, which keeps it off the due list (DueFoundryHealFills) for
 // every other worker; fill.PausedUntil holds it then, and every write of the
-// collect names it (OweFoundryFillDocuments, StartFoundryFill,
-// FailFoundryFillCollect), so a collect that outlived its lease writes
-// nothing. A collect that dies leaves it to run out. claimed is false when
-// another holds it, or the fill changed.
+// collect names it (RestartFoundryFillCollect, OweFoundryFillDocuments,
+// StartFoundryFill, FailFoundryFillCollect), so a collect that outlived its
+// lease writes nothing. A collect that dies leaves it to run out, its cursor
+// kept for the next. While another moved fill of the load holds a cursor at
+// the version the load records, with its finding open (so the fill is due,
+// and resumes), only that fill is claimed: a worker reading an older due
+// list never starts another's collect over, which would end the documents
+// the cursor's pages owed. A cursor whose finding closed waits for nothing:
+// the next collect starts over, ending it. claimed is false when another
+// holds it, or another's cursor waits, or the fill changed.
 func (s *mysqlDB) ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (claimed bool, err error) {
 	until := time.Now().UTC().Add(lease).Truncate(time.Microsecond)
 	res, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills f SET f.paused_until=?
 WHERE f.id=? AND f.state='moved' AND (f.paused_until IS NULL OR f.paused_until<=NOW(6))
-  AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM foundry_heal_fills WHERE load_id=? AND id<>? AND state='moved' AND paused_until>NOW(6)) b)`,
-		until, fill.ID, fill.LoadID, fill.ID)
+  AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM foundry_heal_fills WHERE load_id=? AND id<>? AND state='moved' AND paused_until>NOW(6)) b)
+  AND NOT EXISTS (SELECT 1 FROM (SELECT c.id FROM foundry_heal_fills c JOIN foundry_loads l ON l.id=c.load_id
+    JOIN foundry_heal_findings h ON h.ontology_id=c.ontology_id AND h.fingerprint=c.fingerprint AND h.status='open'
+    WHERE c.load_id=? AND c.id<>? AND c.state='moved' AND c.collect_version_id=l.version_id) k)`,
+		until, fill.ID, fill.LoadID, fill.ID, fill.LoadID, fill.ID)
 	if err != nil {
 		return false, err
 	}
@@ -697,8 +997,9 @@ WHERE f.id=? AND f.state='moved' AND (f.paused_until IS NULL OR f.paused_until<=
 
 // ReleaseFoundryFillCollect gives up fill's collect lease
 // (ClaimFoundryFillCollect) without counting a failure, as a heal worker
-// that stops mid-collect does: the fill is due again at once, and its next
-// collect ends what this one owed. Only while it holds the lease.
+// that stops mid-collect does, or one whose collect saved pages before it
+// ran out of time: the fill is due again at once, and its next collect
+// resumes from the cursor its pages saved. Only while it holds the lease.
 func (s *mysqlDB) ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error {
 	if fill.PausedUntil == nil {
 		return nil
@@ -706,16 +1007,4 @@ func (s *mysqlDB) ReleaseFoundryFillCollect(ctx context.Context, fill *model.Fou
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET paused_until=NULL WHERE id=? AND state='moved' AND paused_until=?`,
 		fill.ID, *fill.PausedUntil)
 	return err
-}
-
-// holdsFoundryFillCollect reports whether fill is still moved under the
-// collect lease this collect claimed (ClaimFoundryFillCollect).
-func (s *mysqlDB) holdsFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) (bool, error) {
-	if fill.PausedUntil == nil {
-		return false, nil
-	}
-	var held bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_heal_fills WHERE id=? AND state='moved' AND paused_until=?)`,
-		fill.ID, *fill.PausedUntil).Scan(&held)
-	return held, err
 }

@@ -73,6 +73,8 @@ const (
 	FoundryService_DeleteFoundryOntology_FullMethodName                 = "/helix.foundry.v1.FoundryService/DeleteFoundryOntology"
 	FoundryService_UpdateFoundryOntology_FullMethodName                 = "/helix.foundry.v1.FoundryService/UpdateFoundryOntology"
 	FoundryService_GetCurrentOntologyVersion_FullMethodName             = "/helix.foundry.v1.FoundryService/GetCurrentOntologyVersion"
+	FoundryService_ResearchFoundryCompany_FullMethodName                = "/helix.foundry.v1.FoundryService/ResearchFoundryCompany"
+	FoundryService_DraftFoundryGoal_FullMethodName                      = "/helix.foundry.v1.FoundryService/DraftFoundryGoal"
 	FoundryService_ListOntologyVersions_FullMethodName                  = "/helix.foundry.v1.FoundryService/ListOntologyVersions"
 	FoundryService_GetOntologyVersion_FullMethodName                    = "/helix.foundry.v1.FoundryService/GetOntologyVersion"
 	FoundryService_CreateOntologyVersion_FullMethodName                 = "/helix.foundry.v1.FoundryService/CreateOntologyVersion"
@@ -290,6 +292,29 @@ type FoundryServiceClient interface {
 	DeleteFoundryOntology(ctx context.Context, in *DeleteFoundryOntologyRequest, opts ...grpc.CallOption) (*FoundryOntologyResponse, error)
 	UpdateFoundryOntology(ctx context.Context, in *UpdateFoundryOntologyRequest, opts ...grpc.CallOption) (*FoundryOntologyResponse, error)
 	GetCurrentOntologyVersion(ctx context.Context, in *GetCurrentOntologyVersionRequest, opts ...grpc.CallOption) (*OntologyVersionResponse, error)
+	// Helix Foundry company research, for a new ontology's goal: the wizard
+	// reads the company's website, asks what a website can't answer, then
+	// drafts the goal from the answers and the chosen data. Both answer at
+	// once (within about 45 seconds), on the workspace's model, for an owner
+	// or admin signed in as themselves; a grantee or a service key is
+	// PERMISSION_DENIED. Each person makes foundry.onboarding.research
+	// per_user_per_hour calls an hour of the two together
+	// (RESOURCE_EXHAUSTED), and a workspace spends at most its monthly_usd a
+	// month on them (FAILED_PRECONDITION, reason FOUNDRY_RESEARCH_BUDGET). No
+	// provider is FOUNDRY_AI_NOT_CONFIGURED, the workspace's own key off Pro
+	// FOUNDRY_PRO_REQUIRED; a model that fails or runs out of time is
+	// UNAVAILABLE, reason FOUNDRY_RESEARCH_FAILED, and what it spent counts.
+	//
+	// ResearchFoundryCompany reads the domain's site (its home page and up to
+	// three pages about the company, over https) and has the model name the
+	// company, summarise it and ask up to five questions, each with its best
+	// guess. A domain that isn't one, an IP address or a personal email
+	// provider's is INVALID_ARGUMENT, saying so.
+	ResearchFoundryCompany(ctx context.Context, in *ResearchFoundryCompanyRequest, opts ...grpc.CallOption) (*ResearchFoundryCompanyResponse, error)
+	// DraftFoundryGoal writes a goal, and an ontology name, from a research's
+	// answers and the data chosen. A research the workspace hasn't is
+	// NOT_FOUND; an answer to a question it didn't ask INVALID_ARGUMENT.
+	DraftFoundryGoal(ctx context.Context, in *DraftFoundryGoalRequest, opts ...grpc.CallOption) (*DraftFoundryGoalResponse, error)
 	ListOntologyVersions(ctx context.Context, in *ListOntologyVersionsRequest, opts ...grpc.CallOption) (*ListOntologyVersionsResponse, error)
 	GetOntologyVersion(ctx context.Context, in *GetOntologyVersionRequest, opts ...grpc.CallOption) (*OntologyVersionResponse, error)
 	CreateOntologyVersion(ctx context.Context, in *CreateOntologyVersionRequest, opts ...grpc.CallOption) (*OntologyVersionResponse, error)
@@ -1188,6 +1213,26 @@ func (c *foundryServiceClient) GetCurrentOntologyVersion(ctx context.Context, in
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(OntologyVersionResponse)
 	err := c.cc.Invoke(ctx, FoundryService_GetCurrentOntologyVersion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ResearchFoundryCompany(ctx context.Context, in *ResearchFoundryCompanyRequest, opts ...grpc.CallOption) (*ResearchFoundryCompanyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResearchFoundryCompanyResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ResearchFoundryCompany_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DraftFoundryGoal(ctx context.Context, in *DraftFoundryGoalRequest, opts ...grpc.CallOption) (*DraftFoundryGoalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DraftFoundryGoalResponse)
+	err := c.cc.Invoke(ctx, FoundryService_DraftFoundryGoal_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2489,6 +2534,29 @@ type FoundryServiceServer interface {
 	DeleteFoundryOntology(context.Context, *DeleteFoundryOntologyRequest) (*FoundryOntologyResponse, error)
 	UpdateFoundryOntology(context.Context, *UpdateFoundryOntologyRequest) (*FoundryOntologyResponse, error)
 	GetCurrentOntologyVersion(context.Context, *GetCurrentOntologyVersionRequest) (*OntologyVersionResponse, error)
+	// Helix Foundry company research, for a new ontology's goal: the wizard
+	// reads the company's website, asks what a website can't answer, then
+	// drafts the goal from the answers and the chosen data. Both answer at
+	// once (within about 45 seconds), on the workspace's model, for an owner
+	// or admin signed in as themselves; a grantee or a service key is
+	// PERMISSION_DENIED. Each person makes foundry.onboarding.research
+	// per_user_per_hour calls an hour of the two together
+	// (RESOURCE_EXHAUSTED), and a workspace spends at most its monthly_usd a
+	// month on them (FAILED_PRECONDITION, reason FOUNDRY_RESEARCH_BUDGET). No
+	// provider is FOUNDRY_AI_NOT_CONFIGURED, the workspace's own key off Pro
+	// FOUNDRY_PRO_REQUIRED; a model that fails or runs out of time is
+	// UNAVAILABLE, reason FOUNDRY_RESEARCH_FAILED, and what it spent counts.
+	//
+	// ResearchFoundryCompany reads the domain's site (its home page and up to
+	// three pages about the company, over https) and has the model name the
+	// company, summarise it and ask up to five questions, each with its best
+	// guess. A domain that isn't one, an IP address or a personal email
+	// provider's is INVALID_ARGUMENT, saying so.
+	ResearchFoundryCompany(context.Context, *ResearchFoundryCompanyRequest) (*ResearchFoundryCompanyResponse, error)
+	// DraftFoundryGoal writes a goal, and an ontology name, from a research's
+	// answers and the data chosen. A research the workspace hasn't is
+	// NOT_FOUND; an answer to a question it didn't ask INVALID_ARGUMENT.
+	DraftFoundryGoal(context.Context, *DraftFoundryGoalRequest) (*DraftFoundryGoalResponse, error)
 	ListOntologyVersions(context.Context, *ListOntologyVersionsRequest) (*ListOntologyVersionsResponse, error)
 	GetOntologyVersion(context.Context, *GetOntologyVersionRequest) (*OntologyVersionResponse, error)
 	CreateOntologyVersion(context.Context, *CreateOntologyVersionRequest) (*OntologyVersionResponse, error)
@@ -3020,6 +3088,12 @@ func (UnimplementedFoundryServiceServer) UpdateFoundryOntology(context.Context, 
 }
 func (UnimplementedFoundryServiceServer) GetCurrentOntologyVersion(context.Context, *GetCurrentOntologyVersionRequest) (*OntologyVersionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentOntologyVersion not implemented")
+}
+func (UnimplementedFoundryServiceServer) ResearchFoundryCompany(context.Context, *ResearchFoundryCompanyRequest) (*ResearchFoundryCompanyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResearchFoundryCompany not implemented")
+}
+func (UnimplementedFoundryServiceServer) DraftFoundryGoal(context.Context, *DraftFoundryGoalRequest) (*DraftFoundryGoalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DraftFoundryGoal not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListOntologyVersions(context.Context, *ListOntologyVersionsRequest) (*ListOntologyVersionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListOntologyVersions not implemented")
@@ -4351,6 +4425,42 @@ func _FoundryService_GetCurrentOntologyVersion_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FoundryServiceServer).GetCurrentOntologyVersion(ctx, req.(*GetCurrentOntologyVersionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ResearchFoundryCompany_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResearchFoundryCompanyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ResearchFoundryCompany(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ResearchFoundryCompany_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ResearchFoundryCompany(ctx, req.(*ResearchFoundryCompanyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DraftFoundryGoal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DraftFoundryGoalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DraftFoundryGoal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DraftFoundryGoal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DraftFoundryGoal(ctx, req.(*DraftFoundryGoalRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6733,6 +6843,14 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCurrentOntologyVersion",
 			Handler:    _FoundryService_GetCurrentOntologyVersion_Handler,
+		},
+		{
+			MethodName: "ResearchFoundryCompany",
+			Handler:    _FoundryService_ResearchFoundryCompany_Handler,
+		},
+		{
+			MethodName: "DraftFoundryGoal",
+			Handler:    _FoundryService_DraftFoundryGoal_Handler,
 		},
 		{
 			MethodName: "ListOntologyVersions",

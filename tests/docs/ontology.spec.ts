@@ -137,16 +137,12 @@ test("ontology: the panel, the overview and a new one", async ({ page }) => {
   await ontologiesPanel(page)
     .getByRole("link", { name: "New ontology" })
     .click();
-  await page.getByLabel("Ontology name").fill("Orders");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("radio", { name: "orders in Production" }).check();
+  // Its company: the site read, and what it can't tell asked, each with a
+  // guess.
+  await page.getByLabel("Company website").fill("acme.com");
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
   await shot(page, "ontology", "new-ontology");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
-  await choose(page.getByRole("combobox", { name: /^Project/ }), "Staging");
-  await page.getByLabel("Database name").fill("orders-graph");
-  await shot(page, "ontology", "new-database");
-  await page.getByRole("radio", { name: "Use an existing one" }).click();
-  await page.getByRole("radio", { name: "orders in Production" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
   // One step for what it drafts from: tables, API sources and documents.
   await expect(
@@ -163,8 +159,21 @@ test("ontology: the panel, the overview and a new one", async ({ page }) => {
   await shot(page, "ontology", "new-ontology-data");
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Goal").fill(GOAL);
+  // The goal, written from the answers and the data chosen.
+  await expect(
+    page.getByText("Foundry wrote the goal from your answers."),
+  ).toBeVisible();
+  await shot(page, "ontology", "new-ontology-goal");
   await page.getByRole("button", { name: "Continue" }).click();
+  // The review's Advanced: the name, and the database (a new one unless
+  // one is chosen).
+  await page.getByText("Advanced: name and database").click();
+  await page.getByLabel("Ontology name").fill("Orders");
+  await choose(page.getByRole("combobox", { name: /^Project/ }), "Staging");
+  await page.getByLabel("Database name").fill("orders-graph");
+  await shot(page, "ontology", "new-database");
+  await page.getByRole("radio", { name: "Use an existing one" }).click();
+  await page.getByRole("radio", { name: "orders in Production" }).check();
   await expect(
     page.getByRole("button", { name: "Create and generate" }),
   ).toBeEnabled();
@@ -291,11 +300,15 @@ test("ontology: create video", async ({ browser }) => {
   await click(
     ontologiesPanel(video).getByRole("link", { name: "New ontology" }),
   );
-  await caption(video, "Name it, then go step by step");
-  await type(video.getByLabel("Ontology name"), "Orders");
-  await click(video.getByRole("button", { name: "Continue" }));
-  await caption(video, "Choose the Helix database its loads write into");
-  await click(video.getByRole("radio", { name: "orders in Production" }));
+  await caption(
+    video,
+    "Foundry reads your company’s site and asks a few questions",
+  );
+  await type(video.getByLabel("Company website"), "acme.com");
+  await click(video.getByRole("button", { name: "Research" }));
+  await expect(video.getByRole("list", { name: "Questions" })).toBeVisible();
+  await video.waitForTimeout(1800);
+  await caption(video, "Answer what it can’t tell, or keep its guesses");
   await click(video.getByRole("button", { name: "Continue" }));
   await caption(
     video,
@@ -314,9 +327,17 @@ test("ontology: create video", async ({ browser }) => {
   ).toBeChecked({ timeout: 15_000 });
   await video.waitForTimeout(1500);
   await click(video.getByRole("button", { name: "Continue" }));
-  await caption(video, "Describe the questions you want to answer");
-  await type(video.getByLabel("Goal"), GOAL);
+  await caption(video, "Foundry writes the goal from your answers and data");
+  await expect(
+    video.getByText("Foundry wrote the goal from your answers."),
+  ).toBeVisible();
+  await video.waitForTimeout(1800);
   await click(video.getByRole("button", { name: "Continue" }));
+  await caption(video, "Advanced holds its name and Helix database");
+  await click(video.getByText("Advanced: name and database"));
+  await type(video.getByLabel("Ontology name"), "Orders");
+  await click(video.getByRole("radio", { name: "Use an existing one" }));
+  await click(video.getByRole("radio", { name: "orders in Production" }));
   await caption(video, "Review, then create it with its first draft", 1800);
   await poster(video, "ontology", "create-an-ontology");
   await click(video.getByRole("button", { name: "Create and generate" }));

@@ -135,6 +135,8 @@ export const mock = {
     // month spent on questions before.
     askStepMs?: number;
     askOutcome?: "answered" | "cannot_answer" | "budget_exhausted" | "failed";
+    // With cannot_answer: the decline lacks a property, not a link.
+    askGap?: "undeclared_property";
     askMarkup?: boolean;
     // false: answers as a 3.10.0 engine did, without outputs or visuals.
     askVisuals?: boolean;
@@ -175,8 +177,17 @@ export const mock = {
     s3RoleAccess?: boolean;
     // Another writer comes first on each of the next n data-layout PUTs.
     dataLayoutConflicts?: number;
+    // Company research and drafting a goal from it: how long each call
+    // takes (600 ms), and every call failing as the model failing, the
+    // month's spend out or the hourly cap.
+    companyResearchMs?: number;
+    companyResearchOutcome?: "fail" | "budget" | "rate_limit";
     // Alan's role in Acme (a member by default).
     alanRole?: "WORKSPACE_ROLE_ADMIN" | "WORKSPACE_ROLE_MEMBER";
+    // Helix offers no connected apps; Acme already has Northwind reading
+    // its Stripe connector (mock/routes/partner-apps.ts).
+    partnerAppsAvailable?: boolean;
+    partnerAppInstalled?: boolean;
     // Alan can't query databases: he reads through source grants.
     memberQueryRead?: boolean;
     // Acme's Okta directory synced: Engineering (Ada, Alan) and Finance
@@ -371,6 +382,33 @@ export const mock = {
     );
     return { status: res.status, body: await res.json() };
   },
+  /**
+   * A connected app trading the code /oauth/authorize sent it for tokens
+   * at Helix's token endpoint, under the backend's rules
+   * (mock/routes/partner-apps.ts): its status and body, tokens or an OAuth
+   * error.
+   */
+  partnerExchange: async (exchange: {
+    clientId: string;
+    clientSecret: string;
+    code: string;
+    codeVerifier: string;
+  }): Promise<{
+    status: number;
+    body: {
+      accessToken?: string;
+      refreshToken?: string;
+      scope?: string;
+      workspaceId?: string;
+      error?: string;
+    };
+  }> => {
+    const res = await fetch(`${MOCK}/__mock/partner-apps/exchange`, {
+      method: "POST",
+      body: JSON.stringify(exchange),
+    });
+    return { status: res.status, body: await res.json() };
+  },
 };
 
 export const test = base.extend<{ fresh: void }>({
@@ -405,9 +443,9 @@ export async function signIn(
 /**
  * Signs in as `email`, a user with no workspace yet, and creates `name` from
  * the picker: a new workspace, so on Foundry Free, with no data and no
- * ontology. It opens on its onboarding, Get started (the sample, the user's
- * own data or their agent), which is all it offers besides Settings until it
- * has an ontology (createFirstOntology).
+ * ontology. It opens on its onboarding, Get started (Set up with your agent,
+ * Set up here, and the sample company's link), which is all it offers
+ * besides Settings until it has an ontology (createFirstOntology).
  */
 export async function signInToNewWorkspace(
   page: Page,
@@ -441,34 +479,58 @@ export async function createWorkspace(page: Page, name: string) {
   return dialog;
 }
 
-/** Opens /ontology/new and names the ontology: the database step shows. */
-export async function startOntology(page: Page, name: string) {
+/**
+ * Opens /ontology/new and skips its first step, Your company: the sources
+ * step shows.
+ */
+export async function startOntology(page: Page) {
   await page.goto("/ontology/new");
-  await page.getByLabel("Ontology name").fill(name);
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
 }
 
 /**
- * Opens a new workspace's first ontology from its onboarding, with Use my own
- * data (the other side of Get started's toggle): the sources step shows, the
- * first of the only steps it asks (no name, no database).
+ * Walks the wizard on from the sources step as it stands (every synced
+ * connector unless changed, no document sets) with no goal to the review,
+ * and opens its Advanced, naming the ontology `name` when given: the
+ * database shows, a new one unless chosen (chooseDatabase).
+ */
+export async function reviewOntology(page: Page, name?: string) {
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/);
+  await openAdvanced(page);
+  if (name !== undefined) await page.getByLabel("Ontology name").fill(name);
+}
+
+/** Opens the review's Advanced (name and database) unless it is open. */
+export async function openAdvanced(page: Page) {
+  const advanced = page.locator("details.on-advanced");
+  if (!(await advanced.evaluate((d) => (d as HTMLDetailsElement).open)))
+    await advanced.getByText("Advanced: name and database").click();
+  await expect(page.getByLabel("Ontology name")).toBeVisible();
+}
+
+/** Chooses the review's existing database `name` ("orders in Production"). */
+export async function chooseDatabase(page: Page, name: string | RegExp) {
+  await page.getByRole("radio", { name: "Use an existing one" }).click();
+  await page.getByRole("radio", { name }).check();
+}
+
+/** Creates the ontology from the review: Create and generate. */
+export async function finishOntology(page: Page) {
+  await page.getByRole("button", { name: "Create and generate" }).click();
+}
+
+/**
+ * Opens a new workspace's first ontology from its onboarding, with Set up
+ * here, and skips Your company: the sources step shows.
  */
 export async function startFirstOntology(page: Page) {
   await page.goto("/ontology/new");
-  await page.getByRole("radio", { name: "Use my own data" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-}
-
-/**
- * Walks the wizard on from the database step, once one is chosen: the
- * sources step as it stands (every synced connector unless changed, no
- * document sets) and no goal, then Create and generate.
- */
-export async function finishOntology(page: Page) {
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set up here" }).click();
   await page.getByRole("button", { name: "Skip" }).click();
-  await page.getByRole("button", { name: "Create and generate" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
 }
 
 /**
@@ -481,9 +543,9 @@ export async function createdOntology(page: Page): Promise<string> {
 }
 
 /**
- * Creates a new workspace's first ontology from its onboarding, with Use my
- * own data: drafted from one uploaded document (into General), with nothing
- * connected, so named General, on a new database (which brings the
+ * Creates a new workspace's first ontology from its onboarding, with Set up
+ * here: no company, drafted from one uploaded document (into General), with
+ * nothing connected, so named General, on a new database (which brings the
  * workspace its free Helix plan), and made current and loaded once drafted.
  * The workspace then offers every page. The ontology's overview path.
  */
@@ -495,7 +557,7 @@ export async function createFirstOntology(page: Page): Promise<string> {
   await expect(uploadCard(page, "notes.md")).toContainText("Uploaded");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Skip" }).click();
-  await page.getByRole("button", { name: "Create and generate" }).click();
+  await finishOntology(page);
   return createdOntology(page);
 }
 

@@ -2,7 +2,9 @@ package access_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -18,6 +20,7 @@ func TestParseTarget(t *testing.T) {
 		{"table", "c", "customers", "", access.TableTarget("c", "customers")},
 		{"document_set", "", "", "s", access.DocumentSetTarget("s")},
 		{"enrichment", "", "", "", access.EnrichmentTarget()},
+		{"workspace", "", "", "", access.WorkspaceTarget()},
 	} {
 		got, err := access.ParseTarget(tc.kind, tc.connector, tc.table, tc.set)
 		if err != nil || got != tc.want {
@@ -34,6 +37,8 @@ func TestParseTarget(t *testing.T) {
 		{"table", "c", "", ""}, {"table", "", "t", ""}, {"table", "c", "t", "s"},
 		{"document_set", "", "", ""}, {"document_set", "c", "", "s"}, {"document_set", "", "t", "s"},
 		{"enrichment", "c", "", ""}, {"enrichment", "", "t", ""}, {"enrichment", "", "", "s"},
+		{"workspace", "c", "", ""}, {"workspace", "", "t", ""}, {"workspace", "", "", "s"}, {"workspace", "c", "t", "s"},
+		{"Workspace", "", "", ""}, {"everything", "", "", ""},
 	} {
 		if got, err := access.ParseTarget(bad[0], bad[1], bad[2], bad[3]); err == nil {
 			t.Fatalf("%q parsed as %+v", bad, got)
@@ -81,8 +86,34 @@ func TestGrantsCover(t *testing.T) {
 		"what nothing covers": {
 			grants: []access.Target{access.ConnectorTarget("pg"), access.EnrichmentTarget()}, in: access.Inputs{Uncoverable: true},
 			miss: access.Inputs{Uncoverable: true}},
+		"the workspace covers every table, uploaded set and connector's set": {
+			grants: []access.Target{access.WorkspaceTarget()},
+			in:     access.Inputs{Tables: []access.TableRef{stripe, invoices, postgres}, Sets: []access.SetRef{contracts, notes}, DecisionSets: []access.SetRef{contracts}},
+			covers: true},
+		// It names nothing, so what the workspace adds after the grant is covered too.
+		"the workspace covers a connector and a set added later": {
+			grants: []access.Target{access.WorkspaceTarget()},
+			in:     access.Inputs{Tables: []access.TableRef{{ConnectorID: "new", Table: "t"}}, Sets: []access.SetRef{{SetID: "new-set"}, {SetID: "new-notes", ConnectorID: "new"}}},
+			covers: true},
+		"the workspace never gives People enrichment": {
+			grants: []access.Target{access.WorkspaceTarget()}, in: access.Inputs{Tables: []access.TableRef{postgres}, Enrichment: true},
+			miss: access.Inputs{Enrichment: true}},
+		"the workspace and People enrichment cover a load that applied profiles": {
+			grants: []access.Target{access.WorkspaceTarget(), access.EnrichmentTarget()},
+			in:     access.Inputs{Tables: []access.TableRef{postgres}, Sets: []access.SetRef{notes}, Enrichment: true}, covers: true},
+		"the workspace with other grants covers as much": {
+			grants: []access.Target{access.TableTarget("stripe", "customers"), access.WorkspaceTarget(), access.DocumentSetTarget("contracts")},
+			in:     access.Inputs{Tables: []access.TableRef{stripe, invoices}, Sets: []access.SetRef{contracts, notes}}, covers: true},
+		"the workspace covers no document in no set": {
+			grants: []access.Target{access.WorkspaceTarget()}, in: access.Inputs{Tables: []access.TableRef{stripe}, Sets: []access.SetRef{gone}, DecisionSets: []access.SetRef{gone}},
+			miss: access.Inputs{Sets: []access.SetRef{gone}, DecisionSets: []access.SetRef{gone}}},
+		"the workspace covers nothing that can't be covered or told": {
+			grants: []access.Target{access.WorkspaceTarget(), access.EnrichmentTarget()}, in: access.Inputs{Tables: []access.TableRef{stripe}, Uncoverable: true, Unknown: true},
+			miss: access.Inputs{Uncoverable: true, Unknown: true}},
 	} {
-		g := access.NewGrants(tc.grants)
+		// Every connector named is live: a workspace grant gives a connector's
+		// tables and sets only while it is (TestWorkspaceGrantDeletedConnector).
+		g := access.NewGrants(tc.grants).WithSharing(access.NewSharing([]string{"stripe", "pg", "granola", "new"}, nil, nil))
 		if got := g.Covers(tc.in); got != tc.covers {
 			t.Errorf("%s: covers %v", name, got)
 		}
@@ -96,7 +127,8 @@ func TestGrantsEmpty(t *testing.T) {
 	if !access.NewGrants(nil).Empty() {
 		t.Fatal("no grants aren't empty")
 	}
-	for _, target := range []access.Target{access.ConnectorTarget("c"), access.TableTarget("c", "t"), access.DocumentSetTarget("s"), access.EnrichmentTarget()} {
+	for _, target := range []access.Target{access.ConnectorTarget("c"), access.TableTarget("c", "t"), access.DocumentSetTarget("s"), access.EnrichmentTarget(),
+		access.WorkspaceTarget()} {
 		if access.NewGrants([]access.Target{target}).Empty() {
 			t.Fatalf("%v is empty", target.Kind())
 		}
@@ -144,6 +176,20 @@ func TestGrantsReach(t *testing.T) {
 	if g.Covers(access.Inputs{Tables: []access.TableRef{stripe}, Unknown: true}) {
 		t.Error("what can't be told isn't covered")
 	}
+	workspace := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(access.NewSharing([]string{"crm"}, nil, nil))
+	for name, tc := range map[string]struct {
+		in   access.Inputs
+		want bool
+	}{
+		"any table":                   {access.Inputs{Tables: []access.TableRef{crm}}, true},
+		"any set":                     {access.Inputs{Sets: []access.SetRef{{SetID: "hr"}}}, true},
+		"profiles alone":              {access.Inputs{Enrichment: true}, false},
+		"profiles and a table":        {access.Inputs{Tables: []access.TableRef{crm}, Enrichment: true}, true},
+		"only a document in no set":   {access.Inputs{Sets: []access.SetRef{{}}}, false},
+		"what can't be told, even so": {access.Inputs{Tables: []access.TableRef{crm}, Unknown: true}, false},
+	} {
+		assert.Equal(t, tc.want, workspace.Reaches(tc.in), "workspace: %s", name)
+	}
 }
 
 func TestGrantsPart(t *testing.T) {
@@ -176,6 +222,19 @@ func TestGrantsPart(t *testing.T) {
 	all := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general"), access.DocumentSetTarget("hr"), access.EnrichmentTarget()}).Part(holdings)
 	if !all.AllDocuments || !all.Enrichment {
 		t.Fatalf("%+v", all)
+	}
+	// The workspace holds every table, file, document and decision of it, but
+	// not the profiles.
+	workspace := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(access.NewSharing([]string{"stripe", "crm"}, nil, nil)).Part(holdings)
+	want = access.Part{
+		Tables: []access.TableRef{stripe, crm}, Files: []string{"f1", "f2"}, AllDocuments: true, Documents: []string{"d1", "d2", "d3"},
+		Sets: []access.SetRef{general, hr}, DecisionSets: []access.SetRef{general, hr}, Withheld: []access.PropRef{{Type: "B", Prop: "unrecorded"}},
+	}
+	if fmt.Sprintf("%+v", workspace) != fmt.Sprintf("%+v", want) {
+		t.Fatalf("workspace: %+v, want %+v", workspace, want)
+	}
+	if !workspace.Holds(part) || part.Holds(workspace) {
+		t.Fatal("the workspace's part holds a connector's and a set's, and not the other way round")
 	}
 }
 
@@ -289,4 +348,137 @@ func TestGrantsHolds(t *testing.T) {
 		assert.Equal(t, tc.want, g.Holds(tc.targets), name)
 	}
 	assert.False(t, access.NewGrants(nil).Holds([]access.Target{access.EnrichmentTarget()}), "no grants hold profiles")
+}
+
+// A workspace grant holds every connector, table and set, named or not, and
+// is held only by itself; People enrichment it neither holds nor gives.
+func TestWorkspaceGrantHolds(t *testing.T) {
+	workspace := access.NewGrants([]access.Target{access.WorkspaceTarget()})
+	for name, tc := range map[string]struct {
+		targets []access.Target
+		want    bool
+	}{
+		"any connector":         {[]access.Target{access.ConnectorTarget("stripe"), access.ConnectorTarget("later")}, true},
+		"any table":             {[]access.Target{access.TableTarget("crm", "accounts")}, true},
+		"any set":               {[]access.Target{access.DocumentSetTarget("hr")}, true},
+		"itself":                {[]access.Target{access.WorkspaceTarget()}, true},
+		"profiles":              {[]access.Target{access.EnrichmentTarget()}, false},
+		"a set and the profile": {[]access.Target{access.DocumentSetTarget("hr"), access.EnrichmentTarget()}, false},
+		"an unknown target":     {[]access.Target{{}}, false},
+	} {
+		assert.Equal(t, tc.want, workspace.Holds(tc.targets), name)
+	}
+	assert.True(t, access.NewGrants([]access.Target{access.WorkspaceTarget(), access.EnrichmentTarget()}).
+		Holds([]access.Target{access.ConnectorTarget("c"), access.EnrichmentTarget()}), "with profiles granted too")
+	// Nothing narrower holds it: a thread read under the workspace is lost
+	// once the person holds every source by name instead.
+	for name, targets := range map[string][]access.Target{
+		"a connector":                  {access.ConnectorTarget("stripe")},
+		"every source by name":         {access.ConnectorTarget("stripe"), access.TableTarget("crm", "accounts"), access.DocumentSetTarget("hr")},
+		"profiles":                     {access.EnrichmentTarget()},
+		"every source and the profile": {access.ConnectorTarget("stripe"), access.DocumentSetTarget("hr"), access.EnrichmentTarget()},
+		"nothing":                      nil,
+	} {
+		assert.False(t, access.NewGrants(targets).Holds([]access.Target{access.WorkspaceTarget()}), name)
+	}
+}
+
+func ExampleWorkspaceTarget() {
+	// The workspace's live connectors: "deleted" is gone, though a load still
+	// holds its table.
+	g := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(access.NewSharing([]string{"stripe", "added-later"}, nil, nil))
+	fmt.Println(g.Covers(access.Inputs{Tables: []access.TableRef{{ConnectorID: "added-later", Table: "accounts"}}}))
+	fmt.Println(g.Covers(access.Inputs{Tables: []access.TableRef{{ConnectorID: "deleted", Table: "accounts"}}}))
+	fmt.Println(g.Covers(access.Inputs{Sets: []access.SetRef{{SetID: "contracts"}}, Enrichment: true}))
+	fmt.Println(g.Holds([]access.Target{access.ConnectorTarget("stripe")}), access.NewGrants([]access.Target{access.ConnectorTarget("stripe")}).Holds([]access.Target{access.WorkspaceTarget()}))
+	// Output:
+	// true
+	// false
+	// false
+	// true false
+}
+
+// A workspace grant gives a connector's tables and sets only while the
+// connector is live: a deleted one's grants and its source's permissions go
+// with it, but a load still holds its tables and its documents keep its sets,
+// which the workspace would otherwise give whole, its source's sharing
+// unread. Uploaded sets it always gives; a connector's own grant is as before.
+func TestWorkspaceGrantDeletedConnector(t *testing.T) {
+	messages := access.TableRef{ConnectorID: "slack", Table: "messages"}
+	customers := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	conversations := access.SetRef{SetID: "conv", ConnectorID: "slack"}
+	contracts := access.SetRef{SetID: "contracts"}
+	private := access.DocumentRef{ID: "d-private", Set: conversations, Stream: "conversations", ExternalID: "C2:2026-11-01"}
+	upload := access.DocumentRef{ID: "d-upload", Set: contracts}
+	holdings := access.Holdings{Tables: []access.TableRef{messages, customers}, Documents: []access.DocumentRef{private, upload}}
+	slackOnly := access.Inputs{Tables: []access.TableRef{messages}, Sets: []access.SetRef{conversations}}
+	workspace := []access.Target{access.WorkspaceTarget()}
+
+	for name, sharing := range map[string]access.Sharing{
+		"Slack deleted":   access.NewSharing([]string{"stripe"}, nil, nil),
+		"no live sharing": {},
+	} {
+		g := access.NewGrants(workspace).WithSharing(sharing)
+		assert.False(t, g.CoversTable(messages), "%s: the deleted connector's table", name)
+		assert.False(t, g.ReadsTable(messages), "%s: none of its rows", name)
+		assert.False(t, g.CoversSet(conversations), "%s: its Conversations set", name)
+		assert.False(t, g.ReachesSet(conversations), "%s: nothing of the set", name)
+		assert.False(t, g.Reads(private), "%s: a private channel's day", name)
+		assert.False(t, g.Reaches(slackOnly), "%s: a load of it alone", name)
+		assert.False(t, g.Covers(access.Inputs{Tables: []access.TableRef{customers}, Sets: []access.SetRef{conversations}}), "%s: a load holding it", name)
+		assert.False(t, g.Keeps(slackOnly, nil), "%s: an answer from it", name)
+		assert.True(t, g.CoversSet(contracts), "%s: an uploaded set", name)
+		assert.True(t, g.Reads(upload), "%s: an upload", name)
+		part := g.Part(holdings)
+		assert.Equal(t, []string{"d-upload"}, part.Documents, "%s: documents", name)
+		assert.False(t, part.AllDocuments, name)
+		assert.Empty(t, part.Rows, name)
+		assert.Equal(t, name == "Slack deleted", slices.Contains(part.Tables, customers), "%s: a live connector's table, only when it is known live", name)
+		assert.NotContains(t, part.Tables, messages, name)
+	}
+
+	// Live, the workspace gives it, and its source narrows it as a
+	// connector's grant (TestGrantsWithSharing).
+	now := time.Now()
+	live := access.NewSharing([]string{"slack", "stripe"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds)
+	g := access.NewGrants(workspace).WithSharing(live)
+	assert.True(t, g.ReachesSet(conversations))
+	assert.False(t, g.CoversSet(conversations), "narrowed: never whole")
+	assert.False(t, g.Reads(private), "narrowed: not a channel Slack doesn't share with them")
+	assert.True(t, g.Reads(access.DocumentRef{ID: "d-public", Set: conversations, Stream: "conversations", ExternalID: "C1:2026-11-01"}))
+	assert.True(t, g.CoversTable(customers))
+	// As it reads once Slack is deleted, leaving g as it was.
+	gone := g.WithoutConnector("slack")
+	assert.False(t, gone.ReachesSet(conversations), "deleted: nothing of its set")
+	assert.False(t, gone.ReadsTable(messages), "deleted: nothing of its table")
+	assert.True(t, gone.CoversTable(customers), "deleted: the others are as they were")
+	assert.Empty(t, gone.VisibleItems(), "deleted: nothing its source shared")
+	assert.True(t, g.ReachesSet(conversations), "g itself is as it was")
+	assert.Equal(t, []access.ItemRef{{ConnectorID: "slack", Item: "C1"}}, g.VisibleItems())
+	unnarrowed := access.NewGrants(workspace).WithSharing(access.NewSharing([]string{"slack"}, nil, nil))
+	assert.True(t, unnarrowed.CoversTable(messages), "a live connector no source narrows is whole")
+	assert.True(t, unnarrowed.CoversSet(conversations))
+
+	// A connector's or a set's own grant doesn't ask: it goes with its
+	// connector.
+	for _, targets := range [][]access.Target{{access.ConnectorTarget("slack")}, {access.TableTarget("slack", "messages"), access.DocumentSetTarget("conv")}} {
+		for name, sharing := range map[string]access.Sharing{"Slack not live": access.NewSharing([]string{"stripe"}, nil, nil), "no sharing": {}} {
+			g := access.NewGrants(targets).WithSharing(sharing)
+			assert.True(t, g.CoversTable(messages), "%v, %s", targets, name)
+			assert.True(t, g.CoversSet(conversations), "%v, %s", targets, name)
+		}
+	}
+}
+
+func TestNewSharingOfAConnectorNotLive(t *testing.T) {
+	assert.PanicsWithValue(t, `access: sharing of connector "slack", which isn't live`, func() {
+		access.NewSharing([]string{"stripe"}, map[string]access.SourceReach{"slack": {}}, kinds)
+	})
+}
+
+func ExampleGrants_WithoutConnector() {
+	g := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(access.NewSharing([]string{"stripe"}, nil, nil))
+	customers := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	fmt.Println(g.CoversTable(customers), g.WithoutConnector("stripe").CoversTable(customers))
+	// Output: true false
 }

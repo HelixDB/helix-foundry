@@ -81,6 +81,8 @@ func TestResend(t *testing.T) {
 		h := newHarness(t)
 		owes(h, "doc-a", "doc-b")
 		h.bucket.put(document.ArtifactPrefix("ws-1", "doc-a")+"key_a.json.gz", []byte(`{"calls":[]}`))
+		// Nor the sample's shipped extraction.
+		h.store.resends[1].Document.SHA256, _ = sampleDocument(t)
 		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), approval("2", "doc-b", hashB), approval("3", "doc-c", hashA)}
 		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
 			return extractEvents(stream, []string{

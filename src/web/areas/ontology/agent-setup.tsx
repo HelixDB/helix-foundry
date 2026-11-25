@@ -35,8 +35,8 @@ const WHAT =
  * pages' queries. Of these the sample company's connector and set are left
  * out, as the sample's data is no source of the user's own ontology, unless
  * `keepSample`: the sample's own. A sentence saying what it does and the
- * button, for an `.on-card` to lay out (Get started's); `compact`, the button
- * alone, for a panel's header.
+ * button under its title, for an `.on-card` to lay out (Get started's);
+ * `compact`, the button alone, for a panel's header.
  */
 export function AgentSetup({
   ontology,
@@ -124,6 +124,7 @@ export function AgentSetup({
   ) : (
     <>
       <div className="on-card-text">
+        <strong>Set up with your agent</strong>
         <p>{WHAT}</p>
       </div>
       {button}

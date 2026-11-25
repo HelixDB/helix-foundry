@@ -2,6 +2,8 @@ package access
 
 import (
 	"cmp"
+	"fmt"
+	"maps"
 	"slices"
 	"time"
 )
@@ -133,22 +135,55 @@ type SourceKind interface {
 	TableRows(table string) RowRule
 }
 
-// Sharing is what one reader reads of each of a workspace's connectors whose
-// sources report their permissions, by connector id. A connector it doesn't
-// name is no such connector: grants alone say what of it is read. The zero
-// Sharing names none, so it narrows nothing.
+// Sharing is what one reader reads of a workspace's connectors: which of
+// them are live, and, by connector id, what the sources of those that report
+// their permissions share with it. A live connector it doesn't name as such
+// is none of those: grants alone say what of it is read. A workspace grant
+// (TargetWorkspace) gives only a live connector's tables and sets: a deleted
+// connector's grants and its source's permissions go with it, but a load
+// still holds its tables and its documents keep its sets. The zero Sharing
+// knows no connector live, so a workspace grant gives no connector's table or
+// set under it, and narrows nothing else.
 type Sharing struct {
+	live  map[string]bool
 	reach map[string]SourceReach
 	kinds map[string]SourceKind
 }
 
-// NewSharing is reach, by audienced connector id, with kinds telling which
-// item each of their documents and rows is of. A connector of reach whose
-// reach is the zero SourceReach is one whose items are unknown; one kinds
-// doesn't name tells no document's or row's item.
-func NewSharing(reach map[string]SourceReach, kinds map[string]SourceKind) Sharing {
-	return Sharing{reach: reach, kinds: kinds}
+// NewSharing is what a reader reads of a workspace whose live connectors are
+// live: reach, by audienced connector id (each one of live), with kinds
+// telling which item each of their documents and rows is of. A connector of
+// reach whose reach is the zero SourceReach is one whose items are unknown;
+// one kinds doesn't name tells no document's or row's item. It panics on a
+// reach of a connector live doesn't name: what a source shares is read only
+// for the workspace's live connectors.
+//
+//	access.NewSharing([]string{"slack", "stripe"}, map[string]access.SourceReach{"slack": access.SourceReach{}}, nil) // Slack's items unknown
+func NewSharing(live []string, reach map[string]SourceReach, kinds map[string]SourceKind) Sharing {
+	s := Sharing{live: make(map[string]bool, len(live)), reach: reach, kinds: kinds}
+	for _, id := range live {
+		s.live[id] = true
+	}
+	for id := range reach {
+		if !s.live[id] {
+			panic(fmt.Sprintf("access: sharing of connector %q, which isn't live", id))
+		}
+	}
+	return s
 }
+
+// without is s once connectorID is deleted, s left as it is.
+func (s Sharing) without(connectorID string) Sharing {
+	out := Sharing{live: maps.Clone(s.live), reach: maps.Clone(s.reach), kinds: maps.Clone(s.kinds)}
+	delete(out.live, connectorID)
+	delete(out.reach, connectorID)
+	delete(out.kinds, connectorID)
+	return out
+}
+
+// isLive reports whether connectorID is one of the workspace's live
+// connectors.
+func (s Sharing) isLive(connectorID string) bool { return connectorID != "" && s.live[connectorID] }
 
 // audienced reports whether connectorID's source reports its permissions:
 // no grant gives all of it, since the items its documents and rows are of

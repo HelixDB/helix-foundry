@@ -261,6 +261,18 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	if userID := actor(ctx).UserID; userID != "" {
 		gen.RequestedByUserID = &userID
 	}
+	// The sample's tables never change, so a refresh would only load the same
+	// data again, unwatched, on the graph worker: the sample's ontology has
+	// refresh off, whichever path made it (the website's tour, an agent's
+	// generate_ontology).
+	if gen.Input.Sample != "" && o.AutoRefresh {
+		switch err := s.deps.DB.SetFoundryOntologyAutoRefresh(ctx, ws, o.ID, false); {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "ontology not found")
+		case err != nil:
+			return nil, status.Errorf(codes.Internal, "turn the sample's refresh off: %v", err)
+		}
+	}
 	perHour := s.deps.Cfg.Foundry.Ontology.PerHour
 	err = s.deps.DB.EnqueueOntologyGeneration(ctx, gen, perHour)
 	switch {

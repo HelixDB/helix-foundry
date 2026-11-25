@@ -53,6 +53,13 @@ var chunks = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Chunks the ontology agent handled, by job kind and outcome: loaded, already_loaded (a retry found it stored), empty, or unknown.",
 }, []string{"kind", "outcome"})
 
+var sampleDocuments = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_sample_documents_total",
+	Help: "Sample documents a job sent with the extraction shipped with the sample (sample.Extraction), by whether every model call " +
+		"replayed from it (replayed true) or some were asked of the model (false: the shipped extraction is stale for the engine's " +
+		"prompts or the models; record it again).",
+}, []string{"replayed"})
+
 var documentsHeld = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_documents_held_total",
 	Help: "Documents a job no person started held back unsent, by reason: set_allowance (the month's allowance of their set, or of its " +

@@ -29,7 +29,15 @@ import { normalizeName } from "../explore/naming";
 import { refKey } from "../explore/rule-breaks";
 import { ENRICHMENT_SOURCE } from "./enrichment-fields";
 import { versionFormat } from "./format";
-import { readAgentBundle, withLoad } from "./model";
+import {
+  MAX_GOAL,
+  agentGraph,
+  byDegree,
+  foundryGraph,
+  readAgentBundle,
+  readFoundry,
+  withLoad,
+} from "./model";
 import { ontologyPaths } from "./paths";
 import { isRecord } from "../../../shared/json";
 
@@ -2052,6 +2060,52 @@ export function askSuggestions(v?: OntologyVersion | null): string[] {
 }
 
 /**
+ * The questions a load's first reader may ask with one click, and where they
+ * came from (for analytics): the version's competency questions
+ * (askSuggestions), else a few any load of its schema answers: how many of
+ * each type it holds, then which entities have the most of another type
+ * linked to them, for its most linked types first (at most four in all).
+ * Undefined for a version not read, or one without a type.
+ *
+ * @example
+ * startQuestions({ id: "v", format: "ONTOLOGY_FORMAT_FOUNDRY_V1", definition: { entities: [{ name: "Customer" }, { name: "Invoice" }], relationships: [{ name: "billed_to", from: "Invoice", to: "Customer" }] } });
+ * // { source: "schema", questions: ["How many records of each type does this load hold?", "Which Customer records have the most Invoice records linked to them?"] }
+ * startQuestions(undefined); // undefined
+ */
+export function startQuestions(
+  v?: OntologyVersion | null,
+): { source: "competency" | "schema"; questions: string[] } | undefined {
+  if (!v) return undefined;
+  const competency = askSuggestions(v);
+  if (competency.length) return { source: "competency", questions: competency };
+  const graph =
+      versionFormat(v) === "agent_bundle"
+        ? agentGraph(readAgentBundle(v.definition))
+        : foundryGraph(readFoundry(v.definition)),
+    ranked = byDegree(graph).map((n) => n.name);
+  if (!ranked.length) return undefined;
+  const rank = (type: string) => ranked.indexOf(type);
+  const linked = graph.edges
+    .filter((e) => e.from !== e.to && rank(e.from) >= 0 && rank(e.to) >= 0)
+    .sort((a, b) => rank(a.to) - rank(b.to) || rank(a.from) - rank(b.from))
+    .map(
+      (e) =>
+        `Which ${e.to} records have the most ${e.from} records linked to them?`,
+    );
+  return {
+    source: "schema",
+    questions: [
+      ...new Set([
+        "How many records of each type does this load hold?",
+        ...(linked.length
+          ? linked
+          : [`How many ${ranked[0]} records are there?`]),
+      ]),
+    ].slice(0, 4),
+  };
+}
+
+/**
  * The ontology an Ask path is about, or "" for /ask itself, which opens
  * the ontology last opened, for a segment that isn't valid
  * percent-encoding, and for any other path.
@@ -2120,4 +2174,52 @@ export function draftGoal(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * What an owner or admin may draft from a question the ontology can't
+ * answer because it declares no such property or link (`kind`
+ * undeclared_property or undeclared_relation; any other kind is the data's,
+ * not the schema's, so undefined): the button's label, naming the property
+ * or link when the gap writes it as code (in backticks, or a snake_case
+ * name), and Generate's goal, which says what is missing and why, at most
+ * MAX_GOAL characters.
+ *
+ * @example
+ * gapDraft("Who signed it?", { status: "cannot_answer", kind: "undeclared_relation", gap: "A signed_by link from Contract to Person", reason: "No link records it.", queries: [], usage: {} });
+ * // { kind: "undeclared_relation", name: "signed_by", label: "Add signed_by to the ontology",
+ * //   goal: "Add the signed_by link to the ontology, so it can answer: “Who signed it?”\nWhat’s missing: A signed_by link from Contract to Person\nWhy it couldn’t: No link records it." }
+ */
+export function gapDraft(
+  question: string,
+  result: Ended<"cannot_answer">,
+):
+  | {
+      kind: "undeclared_property" | "undeclared_relation";
+      name?: string;
+      label: string;
+      goal: string;
+    }
+  | undefined {
+  const kind = result.kind;
+  if (kind !== "undeclared_property" && kind !== "undeclared_relation")
+    return undefined;
+  const noun = kind === "undeclared_property" ? "property" : "link",
+    gap = plainText(result.gap),
+    name =
+      /`([\w.-]{1,64})`/.exec(result.gap)?.[1] ??
+      /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/.exec(gap)?.[0];
+  const goal = [
+    `Add ${name ? `the ${name} ${noun}` : `the missing ${noun}`} to the ontology, so it can answer: “${question.trim()}”`,
+    gap ? `What’s missing: ${gap}` : "",
+    result.reason ? `Why it couldn’t: ${plainText(result.reason)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return {
+    kind,
+    ...(name ? { name } : {}),
+    label: `Add ${name || `the missing ${noun}`} to the ontology`,
+    goal: [...goal].slice(0, MAX_GOAL).join(""),
+  };
 }

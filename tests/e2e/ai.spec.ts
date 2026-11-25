@@ -1,10 +1,12 @@
 import type { Page } from "@playwright/test";
 import {
   choose,
+  chooseDatabase,
   createdOntology,
   expect,
   finishOntology,
   mock,
+  reviewOntology,
   signIn,
   signInToNewWorkspace,
   startOntology,
@@ -297,8 +299,9 @@ test("links a first draft's key failure on the new ontology's overview too", asy
   await bringClaude(page, KEY);
   await expect(page.getByText("AI models now run on Claude.")).toBeVisible();
   await mock.configure({ ontologyStepMs: 200, ontologyOutcome: "auth" });
-  await startOntology(page, "Orders");
-  await page.getByRole("radio", { name: "orders in Production" }).check();
+  await startOntology(page);
+  await reviewOntology(page, "Orders");
+  await chooseDatabase(page, "orders in Production");
   await finishOntology(page);
   const overview = await createdOntology(page);
   await expect(page.getByText("The draft failed")).toBeVisible({

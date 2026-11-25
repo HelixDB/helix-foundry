@@ -1,0 +1,440 @@
+import type { Request } from "@playwright/test";
+import {
+  chooseDatabase,
+  createdOntology,
+  expect,
+  file,
+  finishOntology,
+  mock,
+  openAdvanced,
+  signIn,
+  signInToNewWorkspace,
+  test,
+  uploadCard,
+} from "./support/mock";
+
+// Onboarding on the user's own data: Get started's two cards (Set up with
+// your agent, Set up here) and the sample company's link under them; the one
+// new-ontology wizard's Your company step (the domain from the user's email,
+// Research, its questions with guesses and chips, what it says when the site
+// can't be read or the research fails, Skip); the goal drafted from the
+// answers and the chosen data; the review's derived name and Advanced (name
+// and database); a first draft that is always made current and loaded; and
+// the 50-table cap said with its numbers next to Continue and Generate.
+
+const RESEARCH = /\/foundry\/company-research$/,
+  DRAFT = /\/foundry\/company-research\/[^/]+:draft-goal$/;
+const isPost = (pattern: RegExp) => (r: Request) =>
+  r.method() === "POST" && pattern.test(new URL(r.url()).pathname);
+const researched = async () =>
+  (await mock.stats()).requests.filter((r) =>
+    /^POST \/v1\/workspaces\/\w+\/foundry\/company-research \d+$/.test(r),
+  );
+
+test("offers two ways to set up, side by side, with the sample a link under them", async ({
+  page,
+}) => {
+  await signInToNewWorkspace(page);
+  const agent = page.locator(".on-start-card").filter({
+      hasText: "Set up with your agent",
+    }),
+    here = page.locator(".on-start-card").filter({ hasText: "Set up here" });
+  await expect(
+    agent.getByRole("button", { name: "Copy prompt" }),
+  ).toBeVisible();
+  await expect(here.getByRole("button", { name: "Set up here" })).toBeVisible();
+  // No toggle between them, and the sample is no card of its own.
+  await expect(page.getByRole("radiogroup")).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Or look around a sample company first" }),
+  ).toHaveAttribute("href", "/ontology/sample");
+  // Two equal cards side by side; one column on a phone.
+  const boxes = async () =>
+    Promise.all([agent.boundingBox(), here.boundingBox()]);
+  let [a, b] = await boxes();
+  expect(Math.round(a!.y)).toBe(Math.round(b!.y));
+  expect(Math.abs(a!.width - b!.width)).toBeLessThan(2);
+  await page.setViewportSize({ width: 375, height: 800 });
+  [a, b] = await boxes();
+  expect(b!.y).toBeGreaterThan(a!.y + a!.height - 1);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(375);
+});
+
+test("researches the company from the user's email, drafts the goal from the answers, and creates the ontology by the name it derives", async ({
+  page,
+}) => {
+  await mock.configure({ ontologyStepMs: 300 });
+  await signInToNewWorkspace(page, "Globex", "grace@globex-industries.com");
+  await page.getByRole("button", { name: "Set up here" }).click();
+  const steps = page.getByRole("list", { name: "Steps" });
+  await expect(steps.locator('[aria-current="step"]')).toContainText(
+    "Your company",
+  );
+  // The domain comes from the email.
+  const domain = page.getByLabel("Company website");
+  await expect(domain).toHaveValue("globex-industries.com");
+  const asked = page.waitForRequest(isPost(RESEARCH));
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Reading" }),
+  ).toHaveText("Reading globex-industries.com…");
+  expect((await asked).postDataJSON()).toEqual({
+    domain: "globex-industries.com",
+  });
+  await expect(
+    page.getByRole("status").filter({ hasText: "Foundry read" }),
+  ).toHaveText("Foundry read Globex Industries: 4 questions to answer below.");
+  // What it found: the company, the pages it read, and its questions, each
+  // answer starting as its best guess.
+  await expect(page.locator(".on-company")).toContainText(
+    "Globex Industries sells software that helps teams run their operations.",
+  );
+  for (const [name, href] of [
+    ["globex-industries.com", "https://globex-industries.com/"],
+    ["globex-industries.com/about", "https://globex-industries.com/about"],
+  ]) {
+    const link = page.getByRole("link", { name, exact: true });
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
+  const questions = page.getByRole("list", { name: "Questions" });
+  await expect(questions.getByRole("listitem")).toHaveCount(4);
+  const who = page.getByRole("textbox", {
+      name: "Who will ask this ontology questions, and what for?",
+    }),
+    most = page.getByRole("textbox", { name: "Which questions matter most?" }),
+    truth = page.getByRole("textbox", {
+      name: "When two sources describe a customer, which one is right?",
+    });
+  await expect(who).toHaveValue(
+    "Globex Industries’s operations and finance teams, to see how customers, orders and revenue connect.",
+  );
+  await expect(most).toHaveValue(
+    "Which customers are growing or at risk, and why.",
+  );
+  // A chip fills its answer; any answer can be typed.
+  const chips = page.getByRole("group", {
+    name: "Answers to “Which questions matter most?”",
+  });
+  await chips.getByRole("button", { name: "Churn risk" }).click();
+  await expect(most).toHaveValue("Churn risk");
+  await expect(
+    chips.getByRole("button", { name: "Churn risk" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await truth.fill("Stripe for billing, the CRM for people");
+  await who.fill("");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(steps.getByRole("listitem").first()).toContainText(
+    "Globex Industries: 3 answers",
+  );
+
+  // Sources: one uploaded document.
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Upload documents" }).click();
+  await (
+    await chooser
+  ).setFiles([file("notes.md", "# Notes\n\nRenewals slip.\n")]);
+  await expect(uploadCard(page, "notes.md")).toContainText("Uploaded");
+  const drafting = page.waitForRequest(isPost(DRAFT));
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // The goal step drafts one by itself, from the answers left and the data
+  // chosen.
+  await expect(
+    page.getByRole("status").filter({ hasText: "Writing a goal" }),
+  ).toHaveText("Writing a goal from your answers…");
+  const body = (await drafting).postDataJSON();
+  expect(body.answers).toEqual([
+    { questionId: "q2", answer: "Churn risk" },
+    { questionId: "q3", answer: "Stripe for billing, the CRM for people" },
+    { questionId: "q4", answer: "Paid an invoice in the last 90 days." },
+  ]);
+  expect(body.data).toContain("General");
+  const goal = page.getByLabel("Goal");
+  await expect(goal).toHaveValue(
+    /^Globex Industries uses this ontology to answer its team’s questions/,
+  );
+  await expect(goal).toHaveValue(/Which questions matter most\? Churn risk/);
+  await expect(goal).toBeFocused();
+  await expect(
+    page.getByText("Foundry wrote the goal from your answers."),
+  ).toBeVisible();
+  const drafted = await goal.inputValue();
+
+  // Write it again asks before replacing an edited goal.
+  await goal.fill("Renewals at risk, by customer.");
+  await page.getByRole("button", { name: "Write it again" }).click();
+  const confirm = page.getByRole("dialog", { name: "Write the goal again?" });
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(goal).toHaveValue("Renewals at risk, by customer.");
+  const again = page.waitForRequest(isPost(DRAFT));
+  await page.getByRole("button", { name: "Write it again" }).click();
+  await confirm.getByRole("button", { name: "Write it again" }).click();
+  await again;
+  await expect(goal).toHaveValue(drafted);
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // The review: the name the draft came with, the database a new one named
+  // as it, both in Advanced.
+  await expect(page.getByRole("main")).toContainText(
+    "Foundry creates Globex Industries operations on a new Helix database",
+  );
+  await openAdvanced(page);
+  await expect(page.getByLabel("Ontology name")).toHaveValue("");
+  await expect(page.getByLabel("Ontology name")).toHaveAttribute(
+    "placeholder",
+    "Globex Industries operations",
+  );
+  await expect(page.getByLabel("Database name")).toHaveValue(
+    "Globex Industries operations",
+  );
+  const created = page.waitForRequest(isPost(/\/foundry\/ontologies$/)),
+    generated = page.waitForRequest(isPost(/:generate$/));
+  await finishOntology(page);
+  expect((await created).postDataJSON()).toMatchObject({
+    name: "Globex Industries operations",
+  });
+  // Every new ontology's first draft is made current and loaded.
+  expect((await generated).postDataJSON()).toMatchObject({
+    noConnectors: true,
+    goal: drafted,
+    loadWhenReady: true,
+  });
+  await page.goto(await createdOntology(page));
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "Globex Industries operations",
+    }),
+  ).toBeVisible();
+});
+
+test("names the ontology and picks an existing database in Advanced", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/ontology/new");
+  // Not a personal mail domain: the email's is offered.
+  await expect(page.getByLabel("Company website")).toHaveValue("example.com");
+  await page.getByLabel("Company website").fill("https://www.Acme.com/about");
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await expect(page.locator(".on-company")).toContainText("Acme");
+  // Editing the domain drops the research.
+  await page.getByLabel("Company website").fill("acme.co");
+  await expect(page.getByRole("list", { name: "Questions" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Skip" })).toBeVisible();
+  await page.getByLabel("Company website").fill("acme.com");
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Goal")).toHaveValue(/^Acme uses this ontology/);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await openAdvanced(page);
+  await expect(page.getByLabel("Ontology name")).toHaveAttribute(
+    "placeholder",
+    "Acme operations",
+  );
+  await page.getByLabel("Ontology name").fill("Acme renewals");
+  await expect(page.getByRole("main")).toContainText(
+    "Foundry creates Acme renewals on a new Helix database",
+  );
+  await chooseDatabase(page, "orders in Production");
+  await expect(page.getByRole("main")).toContainText(
+    "Foundry creates Acme renewals on the database you chose",
+  );
+  const created = page.waitForRequest(isPost(/\/foundry\/ontologies$/)),
+    generated = page.waitForRequest(isPost(/:generate$/));
+  await finishOntology(page);
+  expect((await created).postDataJSON()).toEqual({
+    name: "Acme renewals",
+    tenantId: "ten_acme_orders",
+    clientToken: expect.any(String),
+  });
+  expect((await generated).postDataJSON()).toMatchObject({
+    connectorIds: ["conn_acme_stripe", "conn_acme_shop"],
+    loadWhenReady: true,
+  });
+  await page.goto(await createdOntology(page));
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Acme renewals" }),
+  ).toBeVisible();
+  // No new database or project was made.
+  expect(
+    (await mock.stats()).requests.filter((r) =>
+      /^POST \/v1\/(tenants|projects)/.test(r),
+    ),
+  ).toEqual([]);
+});
+
+test("offers no domain for a personal email, refuses one, and skips the company", async ({
+  page,
+}) => {
+  await signInToNewWorkspace(page, "Grace", "grace@gmail.com");
+  await page.getByRole("button", { name: "Set up here" }).click();
+  const domain = page.getByLabel("Company website"),
+    research = page.getByRole("button", { name: "Research" });
+  await expect(domain).toHaveValue("");
+  await expect(research).toBeDisabled();
+  await domain.fill("gmail.com");
+  await research.click();
+  await expect(page.locator(".on-company-error")).toContainText(
+    "Gmail.com is a personal mail provider: enter your company’s domain.",
+  );
+  // Skip goes on without it: no research, so no goal is drafted.
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+  const steps = page.getByRole("list", { name: "Steps" });
+  await expect(steps.getByRole("listitem").first()).toContainText("Skipped");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Upload documents" }).click();
+  await (await chooser).setFiles([file("notes.md", "# Notes\n")]);
+  await expect(uploadCard(page, "notes.md")).toContainText("Uploaded");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Goal")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Write it again" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Skip" }).click();
+  // Named from what it drafts from.
+  await openAdvanced(page);
+  await expect(page.getByLabel("Ontology name")).toHaveAttribute(
+    "placeholder",
+    "General",
+  );
+  expect(
+    (await mock.stats()).requests.filter((r) => r.includes(":draft-goal")),
+  ).toEqual([]);
+});
+
+test("says when the site can't be read, and when the research fails, with Retry", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/ontology/new");
+  const domain = page.getByLabel("Company website"),
+    research = page.getByRole("button", { name: "Research" });
+  // Unreadable: guesses from the domain alone, and no pages.
+  await domain.fill("unreadable-co.com");
+  await research.click();
+  await expect(
+    page.getByText(
+      "Foundry couldn’t read the site, so these guesses come from the domain alone.",
+    ),
+  ).toBeVisible();
+  await expect(page.locator(".on-company-sources")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+
+  // The model failing: why, with Retry, which asks again; Skip still works.
+  await domain.fill("fail-co.com");
+  await research.click();
+  const failed = page.locator(".on-company-error");
+  await expect(failed).toContainText(
+    "The model couldn’t finish the research; try again.",
+  );
+  await expect(page.getByRole("list", { name: "Questions" })).toHaveCount(0);
+  await failed.getByRole("button", { name: "Retry" }).click();
+  await expect.poll(async () => (await researched()).length).toBe(3);
+  await expect(failed).toBeVisible();
+  // This month's allowance spent, and the hourly cap, in the WFE's words.
+  await mock.configure({ companyResearchOutcome: "budget" });
+  await domain.fill("globex.com");
+  await research.click();
+  await expect(failed).toContainText(
+    "This workspace has spent this month’s allowance for company research.",
+  );
+  await mock.configure({ companyResearchOutcome: "rate_limit" });
+  await failed.getByRole("button", { name: "Retry" }).click();
+  await expect(failed).toContainText(
+    "Too many company researches this hour; try again later.",
+  );
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+});
+
+test("leaves the goal to the user when drafting it fails", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/ontology/new");
+  await page.getByLabel("Company website").fill("acme.com");
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await mock.configure({ companyResearchOutcome: "fail" });
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.locator(".on-goal-draft [role=alert]")).toHaveText(
+    "The model couldn’t finish the research; try again.",
+  );
+  const goal = page.getByLabel("Goal");
+  await expect(goal).toHaveValue("");
+  await goal.fill("Which customers renew late?");
+  await page.getByRole("button", { name: "Continue" }).click();
+  // The research's name still names it.
+  await openAdvanced(page);
+  await expect(page.getByLabel("Ontology name")).toHaveAttribute(
+    "placeholder",
+    "Acme operations",
+  );
+});
+
+test("says what the 50-table cap needs untick, beside Continue and Generate", async ({
+  page,
+}) => {
+  // A synced warehouse of 60 tables beside Acme's Stripe and Shop: more
+  // than one draft reads, every synced connector being the default.
+  await page.route(
+    /\/papi\/v1\/workspaces\/ws_acme\/foundry\/connectors$/,
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch(),
+        json = await res.json();
+      const shop = json.connectors.find(
+        (c: { id: string }) => c.id === "conn_acme_shop",
+      );
+      json.connectors.push({
+        ...shop,
+        id: "conn_e2e_warehouse",
+        name: "Warehouse",
+        tables: Array.from({ length: 60 }, (_, i) => ({
+          name: `public.t${i + 1}`,
+          rowCount: "10",
+        })),
+      });
+      await route.fulfill({ response: res, json });
+    },
+  );
+  await signIn(page);
+  await page.goto("/ontology/new?step=sources");
+  const reason = page
+      .getByRole("status")
+      .filter({ hasText: "These sources hold" }),
+    count = page.locator(".on-table-count"),
+    onward = page.getByRole("button", { name: "Continue" });
+  await expect(reason).toHaveText(
+    /^These sources hold (\d+) tables and one draft reads at most 50, table files included\. Untick connectors or sets until it’s 50 or fewer\.$/,
+  );
+  const held = Number(/hold (\d+)/.exec((await reason.textContent())!)![1]);
+  expect(held).toBeGreaterThan(60);
+  await expect(count).toHaveText(`${held} of 50 tables`);
+  await expect(count).toHaveClass(/is-over/);
+  await expect(onward).toBeDisabled();
+  // Shop and Warehouse are both PostgreSQL, under one choice.
+  const connectors = page.getByRole("list", { name: "Connectors" });
+  await connectors
+    .getByRole("button", { name: "Show PostgreSQL connectors" })
+    .click();
+  await connectors.getByRole("checkbox", { name: /Warehouse/ }).uncheck();
+  await expect(reason).toHaveCount(0);
+  await expect(count).toHaveText(`${held - 60} of 50 tables`);
+  await expect(count).not.toHaveClass(/is-over/);
+  await expect(onward).toBeEnabled();
+
+  // Generate says the same.
+  await page.goto("/ontology/ont_acme_contracts/generate");
+  await expect(reason).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Generate", exact: true }),
+  ).toBeDisabled();
+});

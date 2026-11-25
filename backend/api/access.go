@@ -393,12 +393,9 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 		heldTargets[i] = g.Target
 	}
 	covered := access.NewGrants(heldTargets)
-	if slices.ContainsFunc(targets, func(t access.Target) bool {
-		if t.Kind() == access.TargetTable {
-			return !covered.CoversTable(access.TableRef{ConnectorID: t.ConnectorID(), Table: t.Table()})
-		}
-		return !slices.Contains(heldTargets, t)
-	}) {
+	// A target the held grants already give (a table of a granted connector,
+	// anything but People enrichment under a workspace grant) is nothing new.
+	if slices.ContainsFunc(targets, func(t access.Target) bool { return !covered.Holds([]access.Target{t}) }) {
 		if synced, err = s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
 			return nil, err
 		}
@@ -560,6 +557,8 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 	}
 	after := map[string]access.Inputs{}
 	keep := func(foundrymodel.FoundryAccessGrant) bool { return true }
+	// deleted is the connector the change deletes, if it does.
+	var deleted string
 	switch change := req.GetChange().GetChange().(type) {
 	case *foundryv1.FoundryAccessChange_LoadVersion_:
 		in, err := s.versionInputs(ctx, ws, change.LoadVersion.GetOntologyId(), change.LoadVersion.GetVersionId())
@@ -589,6 +588,8 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 		keep = func(gr foundrymodel.FoundryAccessGrant) bool {
 			return gr.Target.ConnectorID() != connector.ID && !slices.Contains(owned, gr.Target.DocumentSetID())
 		}
+		// A workspace grant stays, and gives none of its tables and sets.
+		deleted = connector.ID
 		after = before
 	case *foundryv1.FoundryAccessChange_MoveDocument_:
 		set, err := s.deps.DB.GetFoundryDocumentSet(ctx, ws, change.MoveDocument.GetDocumentSetId())
@@ -637,6 +638,9 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 		next, err := s.principalGrants(ctx, ws, p, heldAfter[p])
 		if err != nil {
 			return nil, err
+		}
+		if deleted != "" {
+			next = next.WithoutConnector(deleted)
 		}
 		narrowed[p] = readAs{then, next}
 	}
@@ -690,6 +694,7 @@ var targetKindToProto = map[access.TargetKind]foundryv1.FoundryAccessTarget_Kind
 	access.TargetTable:       foundryv1.FoundryAccessTarget_KIND_TABLE,
 	access.TargetDocumentSet: foundryv1.FoundryAccessTarget_KIND_DOCUMENT_SET,
 	access.TargetEnrichment:  foundryv1.FoundryAccessTarget_KIND_ENRICHMENT,
+	access.TargetWorkspace:   foundryv1.FoundryAccessTarget_KIND_WORKSPACE,
 }
 
 // targetKindNames are the proto's kinds by the names ParseTarget reads; an

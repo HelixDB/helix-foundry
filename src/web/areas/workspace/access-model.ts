@@ -24,15 +24,21 @@ import { formatNumber, plural } from "../../kit/util";
 // permissions).
 
 /**
- * What one grant gives, as the editor holds it: a connector (its tables now
+ * What one grant gives, as the editor holds it: everything in the workspace
+ * (every connector, table and document set, now and later, each as far as
+ * its source shares; never People enrichment), a connector (its tables now
  * and later, and the sets it owns), one table of a connector, a document
  * set, or People enrichment. Each kind names exactly what it needs.
  */
 export type Grant =
+  | { kind: "workspace" }
   | { kind: "connector"; connectorId: string }
   | { kind: "table"; connectorId: string; table: string }
   | { kind: "set"; setId: string }
   | { kind: "enrichment" };
+
+/** The grant of everything in the workspace. */
+export const EVERYTHING: Grant = { kind: "workspace" };
 
 /**
  * A grant as a key, unique per grant.
@@ -40,13 +46,15 @@ export type Grant =
  *     grantKey({ kind: "table", connectorId: "c", table: "t" }) // "table:c:t"
  */
 export const grantKey = (g: Grant) =>
-  g.kind === "connector"
-    ? `connector:${g.connectorId}`
-    : g.kind === "table"
-      ? `table:${g.connectorId}:${g.table}`
-      : g.kind === "set"
-        ? `set:${g.setId}`
-        : "enrichment";
+  g.kind === "workspace"
+    ? "workspace"
+    : g.kind === "connector"
+      ? `connector:${g.connectorId}`
+      : g.kind === "table"
+        ? `table:${g.connectorId}:${g.table}`
+        : g.kind === "set"
+          ? `set:${g.setId}`
+          : "enrichment";
 
 /** A WFE target as a Grant; undefined for a kind this build doesn't know, or one missing what its kind names. */
 export function grantOf(t: FoundryAccessTarget): Grant | undefined {
@@ -54,6 +62,8 @@ export function grantOf(t: FoundryAccessTarget): Grant | undefined {
     table = t.table || "",
     set = t.documentSetId || "";
   switch (t.kind) {
+    case "KIND_WORKSPACE":
+      return !c && !table && !set ? EVERYTHING : undefined;
     case "KIND_CONNECTOR":
       return c ? { kind: "connector", connectorId: c } : undefined;
     case "KIND_TABLE":
@@ -70,6 +80,8 @@ export function grantOf(t: FoundryAccessTarget): Grant | undefined {
 /** A Grant as the WFE's target. */
 export function targetOf(g: Grant): FoundryAccessTarget {
   switch (g.kind) {
+    case "workspace":
+      return { kind: "KIND_WORKSPACE" };
     case "connector":
       return { kind: "KIND_CONNECTOR", connectorId: g.connectorId };
     case "table":
@@ -173,15 +185,28 @@ export function heldGrants(
   return [...new Map(all.map((g) => [grantKey(g), g])).values()];
 }
 
+/** Whether `grants` hold everything in the workspace. */
+export const holdsEverything = (grants: readonly Grant[]) =>
+  grants.some((g) => g.kind === "workspace");
+
 /**
  * The targets to save for `grants`: once each, without a table or a set
  * its connector's grant already covers (`owners` gives the connector that
- * owns a set, if one does).
+ * owns a set, if one does), and with everything in the workspace, only that
+ * and People enrichment.
+ *
+ *     targetsOf([EVERYTHING, { kind: "connector", connectorId: "c" }, { kind: "enrichment" }], new Map())
+ *     // [{ kind: "KIND_WORKSPACE" }, { kind: "KIND_ENRICHMENT" }]
  */
 export function targetsOf(
   grants: readonly Grant[],
   owners: ReadonlyMap<string, string>,
 ): FoundryAccessTarget[] {
+  if (holdsEverything(grants))
+    return [
+      EVERYTHING,
+      ...grants.filter((g) => g.kind === "enrichment").slice(0, 1),
+    ].map(targetOf);
   const connectors = new Set(
     grants.flatMap((g) => (g.kind === "connector" ? [g.connectorId] : [])),
   );
@@ -249,7 +274,8 @@ export const setOwners = (sets: readonly FoundryDocumentSet[]) =>
 /**
  * How the editor shows one source given the grants chosen: chosen, or
  * covered by its connection's grant (shown chosen, and not to be changed
- * on its own), or neither.
+ * on its own), or neither. Everything in the workspace leaves each source
+ * off, to be chosen in its place (toggle).
  */
 export type SourceState = "chosen" | "covered" | "off";
 export function sourceState(
@@ -272,12 +298,28 @@ export function sourceState(
   return keys.has(grantKey(source)) ? "chosen" : "off";
 }
 
-/** `chosen` with `source` turned on or off. */
+/**
+ * `chosen` with `source` turned on or off. Everything in the workspace and
+ * the sources it gives replace each other: choosing it drops every
+ * connector, table and set chosen, and choosing one of those drops it.
+ * People enrichment stays as it is either way.
+ *
+ *     toggle([{ kind: "set", setId: "s" }, { kind: "enrichment" }], EVERYTHING) // [{ kind: "enrichment" }, EVERYTHING]
+ *     toggle([EVERYTHING], { kind: "set", setId: "s" }) // [{ kind: "set", setId: "s" }]
+ */
 export function toggle(chosen: readonly Grant[], source: Grant): Grant[] {
   const key = grantKey(source);
-  return chosen.some((g) => grantKey(g) === key)
-    ? chosen.filter((g) => grantKey(g) !== key)
-    : [...chosen, source];
+  if (chosen.some((g) => grantKey(g) === key))
+    return chosen.filter((g) => grantKey(g) !== key);
+  if (source.kind === "enrichment") return [...chosen, source];
+  return [
+    ...chosen.filter((g) =>
+      source.kind === "workspace"
+        ? g.kind === "enrichment"
+        : g.kind !== "workspace",
+    ),
+    source,
+  ];
 }
 
 // ---------------------------------------------------------------- coverage
@@ -296,6 +338,8 @@ export type Missing = {
  * What of `inputs` `grants` leave out: a table neither its connector nor
  * itself is granted, a set neither itself nor its owning connector is,
  * People enrichment, and whether the load holds what nothing covers.
+ * Everything in the workspace gives every table and every set, but never
+ * People enrichment or a document in no set.
  *
  *     missing([{ kind: "connector", connectorId: "c" }], {
  *       tables: [{ connectorId: "c", table: "t" }],
@@ -305,9 +349,11 @@ export function missing(
   grants: readonly Grant[],
   inputs: FoundryLoadAccessInputs,
 ): Missing {
-  const keys = new Set(grants.map(grantKey));
+  const keys = new Set(grants.map(grantKey)),
+    everything = keys.has("workspace");
   const connector = (id: string) =>
-    !!id && keys.has(grantKey({ kind: "connector", connectorId: id }));
+    everything ||
+    (!!id && keys.has(grantKey({ kind: "connector", connectorId: id })));
   return {
     tables: (inputs.tables || [])
       .map((t) => ({ connectorId: t.connectorId || "", table: t.table || "" }))
@@ -537,11 +583,14 @@ export function newlyRestricted(
 }
 
 /**
- * Whether `chosen` gives what `saved` doesn't: only that has to confine whoever
- * holds it (the backend checks the grantee then), as taking sources away is
- * always allowed. A table its saved connector covers is nothing new.
+ * Whether `chosen` gives what `saved` doesn't (the backend's Grants.Holds):
+ * only that has to confine whoever holds it (the backend checks the grantee
+ * then), as taking sources away is always allowed. A table its saved
+ * connector covers is nothing new, nor is any connector, table or set once
+ * everything in the workspace is saved.
  *
  *     addsSources([{ kind: "connector", connectorId: "c" }], [{ kind: "table", connectorId: "c", table: "t" }]) // false
+ *     addsSources([EVERYTHING], [{ kind: "enrichment" }]) // true
  */
 export function addsSources(
   saved: readonly Grant[],
@@ -551,6 +600,10 @@ export function addsSources(
   return chosen.some(
     (g) =>
       !held.has(grantKey(g)) &&
+      !(
+        held.has("workspace") &&
+        (g.kind === "connector" || g.kind === "table" || g.kind === "set")
+      ) &&
       !(
         g.kind === "table" &&
         held.has(grantKey({ kind: "connector", connectorId: g.connectorId }))
@@ -638,6 +691,7 @@ export function restrictedHoldingNothing(
  *     granteeRedirect("/workflows/a") // "/ask"
  *     granteeRedirect("/settings/slack") // undefined
  *     granteeRedirect("/settings/members") // "/ask"
+ *     granteeRedirect("/oauth/authorize") // undefined: only owners and admins connect apps, it says
  */
 export function granteeRedirect(
   pathname: string,
@@ -665,6 +719,10 @@ export function granteeRedirect(
         : `/explore/${second}/records`;
     case "settings":
       return second === "slack" && third === undefined ? undefined : "/ask";
+    // A partner app's consent page says that only owners and admins
+    // connect apps.
+    case "oauth":
+      return undefined;
     case "data":
     case "workflows":
     case "automations":
@@ -765,6 +823,26 @@ export const audienceRead = (a: FoundrySourceAudience): AudienceRead =>
  */
 export const SLACK_GRANT_NOTE =
   "only the channels each person is in, now and later";
+
+/**
+ * Who a source is given to, for what its grant says it gives: people
+ * (members and teams), who read a connection that follows its source's
+ * permissions as far as each of them is let in; an agent's key, or a
+ * partner app's install (an outside app), which reads one only as far as
+ * the source shares with everyone.
+ */
+export type PickerAudience = "people" | "key" | "app";
+
+/**
+ * What a grant of everything in the workspace gives, said beside it: for
+ * people, each person's channels of a Slack connection; for a key or an
+ * app, what each source shares with everyone.
+ *
+ *     everythingNote("key").includes("what the source shares with everyone") // true
+ *     everythingNote("people").includes("the channels each person is in") // true
+ */
+export const everythingNote = (audience: PickerAudience) =>
+  `every connection, table and document set, including ones added later; a connection that follows its source’s permissions (Slack) gives only ${audience === "people" ? "the channels each person is in" : "what the source shares with everyone"}; not People enrichment`;
 
 /** How many names a note lists before it counts the rest. */
 const NAMES_LISTED = 5;

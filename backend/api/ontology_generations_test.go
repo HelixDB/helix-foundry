@@ -82,6 +82,15 @@ func (s *generationStore) ListFoundryDocumentSets(_ context.Context, workspaceID
 	return out, nil
 }
 
+func (s *generationStore) SetFoundryOntologyAutoRefresh(_ context.Context, workspaceID, id string, on bool) error {
+	o, ok := s.ontologies[id]
+	if !ok || o.WorkspaceID != workspaceID {
+		return foundrystore.ErrNotFound
+	}
+	o.AutoRefresh = on
+	return nil
+}
+
 func (s *generationStore) live(ontologyID string) *foundrymodel.OntologyGeneration {
 	for _, g := range s.generations {
 		if g.OntologyID == ontologyID && (g.Status == foundrymodel.OntologyGenerationQueued || g.Status == foundrymodel.OntologyGenerationRunning ||
@@ -468,6 +477,30 @@ func TestFoundryOntologyGenerationRPCs(t *testing.T) {
 		if gen.GetSample() != sample.Acme || store.generations[0].Input.Sample != sample.Acme || len(gen.GetTables()) != len(sample.Tables) ||
 			gen.GetTitle() != sample.Title || calls.calls.Load() != 0 {
 			t.Fatalf("generation = %+v after %d title requests", gen, calls.calls.Load())
+		}
+	})
+	// Its tables never change, so its ontology never refreshes; a draft of
+	// one's own data leaves refresh as it was.
+	t.Run("turns the sample's refresh off", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		acme(store, "")
+		store.ontologies["ont-1"].AutoRefresh = true
+		if _, err := generate(s, sampleRequest()); err != nil {
+			t.Fatal(err)
+		}
+		if store.ontologies["ont-1"].AutoRefresh {
+			t.Fatal("the sample's ontology still refreshes")
+		}
+		s, store = generationService(t, 50)
+		acme(store, "")
+		store.ontologies["ont-1"].AutoRefresh = true
+		own := sampleRequest()
+		own.Sample = ""
+		if _, err := generate(s, own); err != nil {
+			t.Fatal(err)
+		}
+		if !store.ontologies["ont-1"].AutoRefresh {
+			t.Fatal("a draft of one's own data turned refresh off")
 		}
 	})
 	// The sample's draft calls no model, so a local install with no AI

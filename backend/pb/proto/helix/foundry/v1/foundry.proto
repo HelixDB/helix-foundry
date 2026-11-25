@@ -290,6 +290,40 @@ service FoundryService {
   rpc GetCurrentOntologyVersion(GetCurrentOntologyVersionRequest) returns (OntologyVersionResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/current"};
   }
+
+  // Helix Foundry company research, for a new ontology's goal: the wizard
+  // reads the company's website, asks what a website can't answer, then
+  // drafts the goal from the answers and the chosen data. Both answer at
+  // once (within about 45 seconds), on the workspace's model, for an owner
+  // or admin signed in as themselves; a grantee or a service key is
+  // PERMISSION_DENIED. Each person makes foundry.onboarding.research
+  // per_user_per_hour calls an hour of the two together
+  // (RESOURCE_EXHAUSTED), and a workspace spends at most its monthly_usd a
+  // month on them (FAILED_PRECONDITION, reason FOUNDRY_RESEARCH_BUDGET). No
+  // provider is FOUNDRY_AI_NOT_CONFIGURED, the workspace's own key off Pro
+  // FOUNDRY_PRO_REQUIRED; a model that fails or runs out of time is
+  // UNAVAILABLE, reason FOUNDRY_RESEARCH_FAILED, and what it spent counts.
+  //
+  // ResearchFoundryCompany reads the domain's site (its home page and up to
+  // three pages about the company, over https) and has the model name the
+  // company, summarise it and ask up to five questions, each with its best
+  // guess. A domain that isn't one, an IP address or a personal email
+  // provider's is INVALID_ARGUMENT, saying so.
+  rpc ResearchFoundryCompany(ResearchFoundryCompanyRequest) returns (ResearchFoundryCompanyResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/company-research"
+      body: "*"
+    };
+  }
+  // DraftFoundryGoal writes a goal, and an ontology name, from a research's
+  // answers and the data chosen. A research the workspace hasn't is
+  // NOT_FOUND; an answer to a question it didn't ask INVALID_ARGUMENT.
+  rpc DraftFoundryGoal(DraftFoundryGoalRequest) returns (DraftFoundryGoalResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/company-research/{research_id}:draft-goal"
+      body: "*"
+    };
+  }
   rpc ListOntologyVersions(ListOntologyVersionsRequest) returns (ListOntologyVersionsResponse) {
     option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/versions"};
   }
@@ -1575,6 +1609,36 @@ message CreateFoundryOntologyRequest {
 message FoundryOntologyResponse {
   FoundryOntology ontology = 1;
 }
+
+message ResearchFoundryCompanyRequest {
+  string workspace_id = 1;
+  // The company's website or domain, as typed: "acme.com",
+  // "https://www.acme.com/about"; reduced to its registrable domain.
+  string domain = 2;
+}
+message ResearchFoundryCompanyResponse {
+  FoundryCompanyResearch research = 1;
+}
+
+message DraftFoundryGoalRequest {
+  string workspace_id = 1;
+  // A research of this workspace's (FoundryCompanyResearch.id).
+  string research_id = 2;
+  // Answers to its questions, each at most once and at most 500
+  // characters; a question left out, or answered empty, is unanswered.
+  repeated FoundryResearchAnswer answers = 3;
+  // What the ontology will read, in plain text, as the site lists it (the
+  // chosen tables and their columns, documents): at most 12000 characters.
+  string data = 4;
+}
+message DraftFoundryGoalResponse {
+  // Plain text, at most 2000 characters: who uses the ontology and what
+  // for, then the questions it must answer, one per line. A model wrote it
+  // from what people and a website wrote: the person edits it.
+  string goal = 1;
+  // A name for the ontology, at most 60 characters.
+  string name = 2;
+}
 message ListFoundryOntologiesRequest {
   string workspace_id = 1;
   string page_token = 2;
@@ -2283,8 +2347,8 @@ message ListFoundryAccessResponse {
 }
 
 // SetFoundryAccessGrantsRequest replaces a principal's grants with targets,
-// none to take them all away. Every target must be of a live connector or
-// set of the workspace (NOT_FOUND otherwise).
+// none to take them all away. Every connector or set a target names must be
+// live in the workspace (NOT_FOUND otherwise).
 message SetFoundryAccessGrantsRequest {
   string workspace_id = 1;
   FoundryPrincipal principal = 2;

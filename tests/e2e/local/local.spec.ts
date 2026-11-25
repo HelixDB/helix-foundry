@@ -11,7 +11,7 @@ import {
   explorer,
   file,
   postToWfe,
-  startOntology,
+  reviewOntology,
   uploadAndLoadContract,
   uploadCard,
 } from "../support/mock";
@@ -172,11 +172,9 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
-  // Local setup keeps the own-data default and also offers its local MCP.
-  await expect(
-    page.getByRole("radio", { name: "Use my own data" }),
-  ).toBeChecked();
-  await page.getByRole("radio", { name: "Set up with your agent" }).click();
+  // The same two cards as hosted: Set up here, and its agent on the local
+  // MCP.
+  await expect(page.getByRole("button", { name: "Set up here" })).toBeVisible();
   await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
   const prompt = await page.evaluate(() => navigator.clipboard.readText());
   expect(prompt).toContain("http://localhost:8081/mcp");
@@ -227,7 +225,7 @@ test("walks a new install through the sample company, from its database to Ask",
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
   await page
-    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .getByRole("link", { name: "Or look around a sample company first" })
     .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
@@ -292,8 +290,8 @@ test("asks for an AI provider before adding the sample company, then goes back t
     loadStepMs: 200,
   });
   await page.goto("/");
-  const sample = page.getByRole("button", {
-      name: "See it on a sample company (1 min)",
+  const sample = page.getByRole("link", {
+      name: "Or look around a sample company first",
     }),
     gate = page.getByRole("note").filter({
       hasText: "Adding the sample needs an AI provider",
@@ -303,8 +301,8 @@ test("asks for an AI provider before adding the sample company, then goes back t
       name: "Get started",
     });
   await sample.click();
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(gate).toBeVisible();
-  await expect(page).toHaveURL(/\/ontology\/new$/);
 
   await gate.getByRole("link", { name: "Choose a provider" }).click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
@@ -314,6 +312,7 @@ test("asks for an AI provider before adding the sample company, then goes back t
   await expect(first).toBeVisible();
 
   await sample.click();
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
   await gate.getByRole("link", { name: "Choose a provider" }).click();
   await page.getByRole("radio", { name: "Claude", exact: true }).check();
   await page.getByLabel("API key").fill("sk-ant-api03-local-0123456789abcd");
@@ -350,7 +349,16 @@ test("keeps only settings and the theme in the account menu", async ({
   await expect(page.getByRole("tab", { name: "Slack" })).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(3);
   await expect(page.getByText("Helix dashboard")).toHaveCount(0);
-  for (const path of ["/settings/members", "/settings/billing"]) {
+  // No connected apps: a local install has no Helix to register them with.
+  await expect(page.getByRole("tab", { name: "Connected apps" })).toHaveCount(
+    0,
+  );
+  for (const path of [
+    "/settings/members",
+    "/settings/billing",
+    "/settings/apps",
+    "/oauth/authorize",
+  ]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found" }),
@@ -361,7 +369,10 @@ test("keeps only settings and the theme in the account menu", async ({
 test("offers every connector to a new workspace", async ({ page }) => {
   // Its onboarding's sources step adds data through the Data area's picker.
   await createGlobex(page);
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set up here" }).click();
+  // No company domain: the owner is owner@localhost.
+  await expect(page.getByLabel("Company website")).toHaveValue("");
+  await page.getByRole("button", { name: "Skip" }).click();
   await page.getByRole("button", { name: "Add data" }).first().click();
   const picker = page.locator("dialog[open]");
   await expect(picker).toHaveAccessibleName("Where is your data?");
@@ -472,7 +483,8 @@ test("creates a database in this computer's Helix, without a plan or keys to rev
   // project named as the workspace. A document uploaded in its onboarding
   // gives the first draft something to read.
   await createGlobex(page);
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Set up here" }).click();
+  await page.getByRole("button", { name: "Skip" }).click();
   // The sources step offers no API source, and says nothing of agents'
   // pieces.
   await expect(
@@ -998,12 +1010,16 @@ test("gates drafts and uploads until an AI provider is chosen", async ({
   ).toBeVisible();
 
   // A new ontology is still created; its draft waits, and its page says so.
-  await startOntology(page, "Returns");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
-  await page.getByLabel("Database name").fill("Returns");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
+  // Its company step can't research without one, and is skipped.
+  await page.goto("/ontology/new");
+  await expect(
+    page.getByRole("note").filter({
+      hasText: "Researching your company needs an AI provider",
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Research" })).toBeDisabled();
   await page.getByRole("button", { name: "Skip" }).click();
+  await reviewOntology(page, "Returns");
   await expect(
     page.getByRole("note").filter({
       hasText: "Its first draft needs an AI provider",

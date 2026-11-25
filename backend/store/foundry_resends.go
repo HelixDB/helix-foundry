@@ -371,9 +371,19 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 		return nil
 	}
 	// A fill applies to the current load only: the one it replaces stops
-	// filling, ending what it owes, so it never resumes if made current again.
+	// filling, ending what it owes, so it never resumes if made current again;
+	// and a collect of its that saved a cursor starts over if it is, what its
+	// pages owed ended (a fill of it applying stopped already).
 	if was != nil {
 		if err := s.stopFoundryFill(ctx, *was, "", model.FoundryFillLoadReplaced, ""); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_resends SET status='done', ended_at=NOW(6)
+WHERE load_id=? AND reason=? AND status='owed'`, *was, string(model.FoundryResendLink)); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+` WHERE load_id=? AND collect_after IS NOT NULL`,
+			*was); err != nil {
 			return err
 		}
 	}
@@ -1041,7 +1051,14 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 		if err := tx.mergeFoundryDocumentNames(ctx, loadID, docID, names); err != nil {
 			return err
 		}
+		reviewed, err := tx.foundryDocumentReviewed(ctx, loadID, docID)
+		if err != nil {
+			return err
+		}
 		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true); err != nil {
+			return err
+		}
+		if err := tx.rewindFoundryFillCollectsBehind(ctx, loadID, docID, reviewed); err != nil {
 			return err
 		}
 		// A withdraw taken back, or a name settled, changed the document's

@@ -159,15 +159,19 @@ func (u Unimplemented) ReleaseFoundryFillCollect(context.Context, *model.Foundry
 	u.unimplemented("ReleaseFoundryFillCollect")
 	return nil
 }
-func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string, bool) (bool, error) {
+func (u Unimplemented) RestartFoundryFillCollect(context.Context, *model.FoundryHealFill, string, string) (bool, error) {
+	u.unimplemented("RestartFoundryFillCollect")
+	return false, nil
+}
+func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string, model.FoundryFillCursor) (bool, error) {
 	u.unimplemented("OweFoundryFillDocuments")
 	return false, nil
 }
-func (u Unimplemented) FailFoundryFillCollect(context.Context, *model.FoundryHealFill, string) error {
+func (u Unimplemented) FailFoundryFillCollect(context.Context, *model.FoundryHealFill, string, bool) error {
 	u.unimplemented("FailFoundryFillCollect")
 	return nil
 }
-func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, int64, int64, *model.FoundryGraphJob) error {
+func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, string, int64, int64, *model.FoundryGraphJob) error {
 	u.unimplemented("StartFoundryFill")
 	return nil
 }
@@ -2512,4 +2516,24 @@ func (u Unimplemented) DrawFoundryHeldClaim(context.Context, string, int, int) (
 func (u Unimplemented) InsertFoundryReviewQuoteDraw(context.Context, model.FoundryReviewDraw) error {
 	u.unimplemented("InsertFoundryReviewQuoteDraw")
 	return nil
+}
+
+func (u Unimplemented) CheckFoundryCompanyResearchHour(context.Context, string, int) error {
+	u.unimplemented("CheckFoundryCompanyResearchHour")
+	return nil
+}
+
+func (u Unimplemented) StartFoundryCompanyResearch(context.Context, *model.FoundryCompanyResearch, model.FoundryCompanyResearchLimits) error {
+	u.unimplemented("StartFoundryCompanyResearch")
+	return nil
+}
+
+func (u Unimplemented) FinishFoundryCompanyResearch(context.Context, string, string, json.RawMessage, model.FoundryCompanyResearchSpend) error {
+	u.unimplemented("FinishFoundryCompanyResearch")
+	return nil
+}
+
+func (u Unimplemented) GetFoundryCompanyResearch(context.Context, string, string) (*model.FoundryCompanyResearch, error) {
+	u.unimplemented("GetFoundryCompanyResearch")
+	return nil, nil
 }

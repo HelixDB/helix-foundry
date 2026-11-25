@@ -2,6 +2,8 @@ package sample
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -149,5 +152,56 @@ func TestSampleMatchesTheWebsite(t *testing.T) {
 	}
 	if !strings.Contains(string(tour), fmt.Sprintf("port: %d,", DatabasePort)) {
 		t.Errorf("the sample tour's port isn't %d", DatabasePort)
+	}
+}
+
+// Every document of the sample's has its extraction shipped, recorded on Helix's default
+// models, and nothing else is shipped.
+func TestExtractions(t *testing.T) {
+	docs, err := fs.ReadDir(Documents, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shipped, err := fs.ReadDir(extractions, "acme-extractions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shipped) != len(docs) {
+		t.Fatalf("%d extractions shipped for %d documents", len(shipped), len(docs))
+	}
+	roles, _ := ai.Suggested(ai.KindAnthropic)
+	// As the agent names a model it asked: reasoning on, as Helix's default runs it (no probe
+	// turned it off).
+	models := []string{"anthropic/" + roles.Extract.Name + "@high", "anthropic/" + roles.Verify.Name + "@high"}
+	for _, doc := range docs {
+		body, err := fs.ReadFile(Documents, "acme/"+doc.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(body)
+		raw, ok := Extraction(hex.EncodeToString(sum[:]))
+		if !ok {
+			t.Errorf("no extraction is shipped for %s", doc.Name())
+			continue
+		}
+		var artifact struct {
+			Key   string `json:"key"`
+			Calls map[string]struct {
+				Outcome string `json:"outcome"`
+				Model   string `json:"model"`
+			} `json:"calls"`
+		}
+		if err := json.Unmarshal(raw, &artifact); err != nil || artifact.Key == "" || len(artifact.Calls) == 0 {
+			t.Errorf("%s's extraction is no artifact with calls (%v)", doc.Name(), err)
+			continue
+		}
+		for key, call := range artifact.Calls {
+			if call.Outcome != "reply" || !slices.Contains(models, call.Model) {
+				t.Errorf("%s's call %s is a %s of %s, not a reply of %v", doc.Name(), key, call.Outcome, call.Model, models)
+			}
+		}
+	}
+	if _, ok := Extraction(strings.Repeat("0", 64)); ok {
+		t.Error("an extraction is shipped for a document that isn't the sample's")
 	}
 }

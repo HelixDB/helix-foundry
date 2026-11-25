@@ -65,6 +65,7 @@ import {
   enrichmentLoadText,
   enrichmentQuery,
 } from "../workspace/enrichment-api";
+import { AskStart } from "./ask-start";
 import { versionFormat } from "./format";
 import {
   LOAD_LIMITS,
@@ -1014,7 +1015,9 @@ export function LoadPage({ loadId }: { loadId: string }) {
   const { id, role, notify } = useWorkspace(),
     { id: o, ontology } = useOntology(),
     qc = useQueryClient();
-  const [stopping, setStopping] = useState(false);
+  const [stopping, setStopping] = useState(false),
+    // A question asked from the page's suggestions, answered on it.
+    [asked, setAsked] = useState<string | null>(null);
   const query = useQuery(ontologyQueries.load(id, o, loadId));
   const l = query.data?.load;
   // The job the page shows: the live one, else the newest that wrote or read.
@@ -1203,6 +1206,18 @@ export function LoadPage({ loadId }: { loadId: string }) {
         }
       />
       <div className="on-stack">
+        {l.current &&
+          (l.status === "ready" || l.status === "partial") &&
+          !isLiveJob(j) && (
+            <Panel title="Ask about your data">
+              <AskStart
+                load={l}
+                where="load"
+                asked={asked}
+                onAsked={setAsked}
+              />
+            </Panel>
+          )}
         {looking && (
           <Callout
             icon={UserSearch}

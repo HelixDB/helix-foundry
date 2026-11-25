@@ -100,7 +100,9 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // Test knobs through POST /__mock/config: `askOutcome` "cannot_answer" (a
 // decline, which from 4.7.0 always says its `kind`: the missing signed_by
 // link is undeclared_relation, and an asker who reads part of the load,
-// asking about another time, is uncovered),
+// asking about another time, is uncovered; with `askGap`
+// "undeclared_property" it lacks a property instead: Contract's
+// notice_period_days),
 // "budget_exhausted" (stops at this question's cap) or "failed" (the model
 // failed); `askMarkup` puts links, an image and HTML in the answer, as a
 // misbehaving model might; `askVisuals: false` answers as a 3.10.0 engine
@@ -111,6 +113,7 @@ type Outcome = "answered" | "cannot_answer" | "budget_exhausted" | "failed";
 type Knobs = {
   askStepMs?: number;
   askOutcome?: Outcome;
+  askGap?: "undeclared_property";
   askMarkup?: boolean;
   askVisuals?: boolean;
   askSpentUsdMicros?: number;
@@ -187,6 +190,7 @@ onReset(() => {
   state.questions = [];
   delete knobs.askStepMs;
   delete knobs.askOutcome;
+  delete knobs.askGap;
   delete knobs.askMarkup;
   delete knobs.askVisuals;
   delete knobs.askSpentUsdMicros;
@@ -820,10 +824,14 @@ function answer(
     };
   if (!found) {
     const type = [...g.nodes()].find((n) => n.props.entity_key !== undefined);
-    const reason = "No link in this ontology records who signed a contract.",
-      gap =
-        "A signed_by link from Contract to the Person who signed it, filled from the contracts.",
-      kind = "undeclared_relation";
+    const property = knobs.askGap === "undeclared_property";
+    const reason = property
+        ? "No property in this ontology records a contract's notice period."
+        : "No link in this ontology records who signed a contract.",
+      gap = property
+        ? "A notice_period_days property on Contract, filled from the contracts' renewal terms."
+        : "A signed_by link from Contract to the Person who signed it, filled from the contracts.",
+      kind = property ? "undeclared_property" : "undeclared_relation";
     return {
       events: [
         ...profiled,

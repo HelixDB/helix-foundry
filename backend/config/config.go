@@ -110,6 +110,40 @@ type Foundry struct {
 	Dashboards  DashboardsConfig  `koanf:"dashboards"`
 	Automations AutomationsConfig `koanf:"automations"`
 	Slack       SlackConfig       `koanf:"slack"`
+	Onboarding  OnboardingConfig  `koanf:"onboarding"`
+}
+
+// OnboardingConfig drives what helps a person set up their first
+// ontology.
+type OnboardingConfig struct {
+	Research CompanyResearchConfig `koanf:"research"`
+}
+
+// CompanyResearchConfig bounds company research (api/company_research.go):
+// the API's model calls that read a company's website and draft a new
+// ontology's goal, at once, on the workspace's model. Each is counted
+// before it is made, and charged what it spent after, whatever came of it.
+type CompanyResearchConfig struct {
+	// PerUserPerHour is how many calls, research and goals together, one
+	// person makes in an hour.
+	PerUserPerHour int `koanf:"per_user_per_hour"`
+	// MonthlyUSD is a workspace's monthly budget for them, apart from every
+	// other: a call is made only while what the month spent plus the
+	// call's worst case fits it.
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+}
+
+// MonthlyMicros is MonthlyUSD in millionths of a US dollar.
+func (r CompanyResearchConfig) MonthlyMicros() int64 { return int64(math.Round(r.MonthlyUSD * 1e6)) }
+
+func (r CompanyResearchConfig) validate() error {
+	switch {
+	case r.PerUserPerHour < 1:
+		return fmt.Errorf("foundry.onboarding.research.per_user_per_hour must be positive")
+	case !(r.MonthlyUSD > 0) || math.IsInf(r.MonthlyUSD, 0):
+		return fmt.Errorf("foundry.onboarding.research.monthly_usd must be positive")
+	}
+	return nil
 }
 
 // AutomationsConfig drives automations (package automation,
@@ -2407,6 +2441,11 @@ func (c *Config) validateRoles(roles Roles) error {
 			return fmt.Errorf("foundry.ask.lease %s must be at least twice helix_timeout_secs (%ds)", a.Lease, a.HelixTimeoutSecs)
 		}
 	}
+	if roles.API {
+		if err := f.Onboarding.Research.validate(); err != nil {
+			return err
+		}
+	}
 	// The API checks a workspace's limits when a question is asked; the worker when it claims one.
 	if roles.API || roles.AskWorker {
 		if err := f.Ask.validate(); err != nil {
@@ -2703,6 +2742,8 @@ func Defaults() Config {
 		FollowUpAfter:  24 * time.Hour,
 		FollowUpWindow: 72 * time.Hour,
 		MaxAttempts:    5,
+	}, Onboarding: OnboardingConfig{
+		Research: CompanyResearchConfig{PerUserPerHour: 20, MonthlyUSD: 2},
 	}, Reminders: RemindersConfig{
 		MaxNewPerHour:          300,
 		MaxNewPerClientPerHour: 5,

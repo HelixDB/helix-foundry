@@ -149,14 +149,26 @@ func TestGrantsWithSharing(t *testing.T) {
 		"a table's grant, every channel shared, still never gives the table whole": {
 			targets: []access.Target{access.TableTarget("slack", "messages")}, reach: ptr(reach(&fresh, "C1", "C2")), reaches: true,
 			rows: []string{"C1", "C2"}, items: []access.ItemRef{c1, c2}},
+		"the workspace, no source narrowing it, reads everything": {
+			targets: []access.Target{access.WorkspaceTarget()}, covers: true, reaches: true, table: true, keeps: true,
+			docs: []string{"d-public", "d-private", "d-no-item", "d-unlisted", "d-upload"}},
+		"the workspace is narrowed as the connector's grant is": {
+			targets: []access.Target{access.WorkspaceTarget()}, reach: ptr(reach(&fresh, "C1")), reaches: true, keeps: true, rows: []string{"C1"},
+			docs: []string{"d-public", "d-upload"}, items: []access.ItemRef{c1}},
+		"the workspace, audiences never read, reads only the rest": {
+			targets: []access.Target{access.WorkspaceTarget()}, reach: &access.SourceReach{}, reaches: true, docs: []string{"d-upload"}},
+		"the workspace, with the connector granted too, reads no more": {
+			targets: []access.Target{access.WorkspaceTarget(), access.ConnectorTarget("slack")}, reach: ptr(reach(&fresh, "C2")), reaches: true, keeps: true,
+			rows: []string{"C2"}, docs: []string{"d-private", "d-upload"}, items: []access.ItemRef{c2}},
 		"sharing gives nothing ungranted": {
 			targets: []access.Target{access.DocumentSetTarget("contracts")}, reach: ptr(reach(&fresh, "C1", "C2")), reaches: true,
 			docs: []string{"d-upload"}},
 	} {
-		g := access.NewGrants(tc.targets)
+		reaches := map[string]access.SourceReach{}
 		if tc.reach != nil {
-			g = g.WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": *tc.reach}, kinds))
+			reaches["slack"] = *tc.reach
 		}
+		g := access.NewGrants(tc.targets).WithSharing(access.NewSharing([]string{"slack", "stripe"}, reaches, kinds))
 		assert.Equal(t, tc.covers, g.Covers(in), "%s: covers", name)
 		if tc.reach != nil {
 			assert.False(t, g.CoversSet(conversations), "%s: an audienced connector's set is never covered whole", name)
@@ -174,7 +186,7 @@ func TestGrantsWithSharing(t *testing.T) {
 		if tc.table {
 			whole = append(whole, messages)
 		}
-		if slices.Contains(tc.targets, access.ConnectorTarget("stripe")) {
+		if slices.Contains(tc.targets, access.ConnectorTarget("stripe")) || slices.Contains(tc.targets, access.WorkspaceTarget()) {
 			whole = append(whole, customers)
 		}
 		assert.Equal(t, whole, part.Tables, "%s: tables whole", name)
@@ -197,7 +209,7 @@ func TestGrantsKeeps(t *testing.T) {
 	now := time.Now()
 	conversations := access.SetRef{SetID: "conv", ConnectorID: "slack"}
 	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack"), access.ConnectorTarget("stripe")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1", "C3"}}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1", "C3"}}, now)}, kinds))
 	c1, c2, c3 := access.ItemRef{ConnectorID: "slack", Item: "C1"}, access.ItemRef{ConnectorID: "slack", Item: "C2"},
 		access.ItemRef{ConnectorID: "slack", Item: "C3"}
 	for name, tc := range map[string]struct {
@@ -231,7 +243,7 @@ func TestGrantsKeeps(t *testing.T) {
 
 func TestGrantsVisibleItems(t *testing.T) {
 	now := time.Now()
-	sharing := access.NewSharing(map[string]access.SourceReach{
+	sharing := access.NewSharing([]string{"slack", "other", "stale", "silent"}, map[string]access.SourceReach{
 		"slack":  access.ReachOf(&now, nil, access.Shared{Items: []string{"C2", "C1"}}, now),
 		"other":  access.ReachOf(&now, nil, access.Shared{Items: []string{"X"}}, now),
 		"stale":  {},
@@ -251,7 +263,7 @@ func TestGrantsVisibleItems(t *testing.T) {
 func TestSharingWithoutItemRule(t *testing.T) {
 	now := time.Now()
 	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, nil))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, nil))
 	d := access.DocumentRef{ID: "d", Set: access.SetRef{SetID: "conv", ConnectorID: "slack"}, Stream: "conversations", ExternalID: "C1:2026-11-01"}
 	assert.False(t, g.Reads(d), "with no rule to tell a document's item, it is of none")
 }
@@ -281,7 +293,7 @@ func ExampleSortItems() {
 func ExampleGrants_SeesItems() {
 	now := time.Now()
 	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
 	fmt.Println(g.SeesItems([]access.ItemRef{{ConnectorID: "slack", Item: "C1"}}), g.SeesItems([]access.ItemRef{{ConnectorID: "slack", Item: "C2"}}),
 		g.VisibleItems())
 	// Output: true false [{slack C1}]
@@ -290,7 +302,7 @@ func ExampleGrants_SeesItems() {
 func ExampleGrants_WithSharing() {
 	now := time.Now()
 	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
 	conversations := access.SetRef{SetID: "conv", ConnectorID: "slack"}
 	fmt.Println(g.CoversTable(access.TableRef{ConnectorID: "slack", Table: "messages"}), g.CoversSet(conversations),
 		g.Reaches(access.Inputs{Sets: []access.SetRef{conversations}}))
@@ -300,7 +312,7 @@ func ExampleGrants_WithSharing() {
 func ExampleGrants_Reads() {
 	now := time.Now()
 	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
 	conversations := access.SetRef{SetID: "conv", ConnectorID: "slack"}
 	fmt.Println(g.Reads(access.DocumentRef{ID: "d1", Set: conversations, Stream: "conversations", ExternalID: "C1:2026-11-01"}),
 		g.Reads(access.DocumentRef{ID: "d2", Set: conversations, Stream: "conversations", ExternalID: "C2:2026-11-01"}))
@@ -310,7 +322,7 @@ func ExampleGrants_Reads() {
 func ExampleGrants_Keeps() {
 	now := time.Now()
 	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
 	seen := access.Inputs{Sets: []access.SetRef{{SetID: "conv", ConnectorID: "slack"}}}
 	fmt.Println(g.Covers(seen), g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C1"}}),
 		g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C2"}}))

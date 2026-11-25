@@ -4,6 +4,8 @@ import type {
   ReviseOntologyVersionRequest,
   CreateLoadRequest,
   CreateOntologyRequest,
+  DraftGoalRequest,
+  DraftGoalResponse,
   FoundryLoad,
   GenerateOntologyRequest,
   GraphJob,
@@ -19,10 +21,16 @@ import type {
   OntologyResponse,
   OntologyVersionResponse,
   QuestionResponse,
+  ResearchCompanyResponse,
   SetCurrentOntologyVersionRequest,
   StopLoadEnrichmentResponse,
 } from "../../../shared/wfe";
-import { jobSeen, jobStarted, trackEvent } from "../../analytics";
+import {
+  jobSeen,
+  jobStarted,
+  trackEvent,
+  type SampleJob,
+} from "../../analytics";
 import { api, ApiError, refusalOf } from "../../api";
 import { watchJob } from "./watched-jobs";
 
@@ -216,6 +224,47 @@ export const createOntology = (ws: string, body: CreateOntologyRequest) =>
   api<OntologyResponse>(base(ws), body);
 
 /**
+ * The new-ontology wizard's company step: the WFE reads `domain`'s site and
+ * sums the company up with questions to ask (synchronous: up to about 45
+ * s). Reports its start and how it ended, never the domain.
+ */
+export const researchCompany = async (ws: string, domain: string) => {
+  trackEvent("company_research_started");
+  const r = await api<ResearchCompanyResponse>(
+    `/v1/workspaces/${enc(ws)}/foundry/company-research`,
+    { domain },
+  ).catch((e: unknown) => {
+    trackEvent("company_research_failed", { reason: refusalOf(e) });
+    throw e;
+  });
+  trackEvent("company_research_done", {
+    fetched: !!r.research?.fetched,
+    questions: r.research?.questions?.length || 0,
+  });
+  return r;
+};
+
+/**
+ * A goal and a name drafted from research `researchId`, its answers and the
+ * chosen data in plain text. Reports how it ended, never the goal.
+ */
+export const draftGoal = async (
+  ws: string,
+  researchId: string,
+  body: DraftGoalRequest,
+) => {
+  const r = await api<DraftGoalResponse>(
+    `/v1/workspaces/${enc(ws)}/foundry/company-research/${enc(researchId)}:draft-goal`,
+    body,
+  ).catch((e: unknown) => {
+    trackEvent("goal_draft_failed", { reason: refusalOf(e) });
+    throw e;
+  });
+  trackEvent("goal_drafted");
+  return r;
+};
+
+/**
  * Deletes Foundry's rows for an ontology and, in the background, its loads
  * from its database; the database's other data stays.
  */
@@ -297,11 +346,15 @@ export const setCurrentVersion = async (
   return r;
 };
 
-/** Starts a load of `versionId`; the same client token is the same load. */
+/**
+ * Starts a load of `versionId`; the same client token is the same load. The
+ * sample's tour passes `sample`, so its end is also reported as the sample's.
+ */
 export const createLoad = async (
   ws: string,
   o: string,
   body: CreateLoadRequest,
+  sample?: SampleJob,
 ) => {
   const r = await api<LoadResponse>(`${at(ws, o)}/loads`, body).catch(
     (e: unknown) => {
@@ -309,7 +362,7 @@ export const createLoad = async (
       throw e;
     },
   );
-  jobStarted({ job: "load" }, r.load.id);
+  jobStarted({ job: "load", sample }, r.load.id);
   watchJob(ws, { kind: "load", ontologyId: o, id: r.load.id });
   return r;
 };
@@ -426,11 +479,16 @@ export const questionEvents = (
     `${questions(ws, o)}/${enc(id)}/events?afterSeq=${afterSeq}`,
   );
 
-/** Asks about a load; the same client token is the same question. */
+/**
+ * Asks about a load; the same client token is the same question. The sample's
+ * tour passes `sample` for its first question, whose end is also reported as
+ * the sample's.
+ */
 export const askQuestion = async (
   ws: string,
   o: string,
   body: AskQuestionRequest,
+  sample?: SampleJob,
 ) => {
   const r = await api<QuestionResponse>(questions(ws, o), body).catch(
     (e: unknown) => {
@@ -438,7 +496,7 @@ export const askQuestion = async (
       throw e;
     },
   );
-  jobStarted({ job: "question" }, r.question.id);
+  jobStarted({ job: "question", sample }, r.question.id);
   return r;
 };
 

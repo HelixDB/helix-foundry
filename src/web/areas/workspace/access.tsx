@@ -4,7 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Bot,
   Copy,
@@ -62,9 +62,12 @@ import {
 } from "./access-api";
 import {
   addsSources,
+  EVERYTHING,
+  everythingNote,
   grantKey,
   grantsOf,
   heldGrants,
+  holdsEverything,
   leftOutBy,
   leftOutText,
   missingText,
@@ -87,17 +90,23 @@ import {
   workflowsOffBy,
   workflowsOn,
   type Grant,
+  type PickerAudience,
   type Principal,
+  type SourceTree,
 } from "./access-model";
 import { DirectoryPanel, NoSourcesNudge } from "./access-directory";
 import { membersQuery } from "./members";
 import { initials, roleLabel } from "./people";
+import { partnerApps } from "./partner-apps";
+import { installsQuery } from "./partner-apps-api";
+import { appCredentialIds } from "./partner-apps-model";
 import { slackQuery } from "./slack-api";
 
 // Settings › Access (hosted, owners and admins): what agents, people and
 // teams may read through source grants. A grant gives a connection (its
 // tables now and later, and the sets its syncs write), one table, a
-// document set, or People enrichment; whoever it is for reads the part of an
+// document set, everything in the workspace (every connection, table and
+// set, now and later), or People enrichment; whoever it is for reads the part of an
 // ontology's current load those sources hold, and asks it questions, all of it
 // once the load reads nothing else. Agents' keys reach Foundry only that way;
 // a member restricted here sees only those ontologies, in Founder (the
@@ -123,9 +132,12 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "sources", label: "Source permissions" },
 ];
 
-/** What every part of the page reads, with the names it shows. */
-function useAccessData() {
-  const { id } = useWorkspace();
+/**
+ * What every part of the page reads of workspace `id`, with the names it
+ * shows. The consent page (partner-authorize.tsx) reads the workspace it
+ * approves an app for, which needn't be the one open.
+ */
+export function useAccessData(id: string) {
   const access = useQuery(accessQuery(id)),
     ontologies = useQuery(ontologyQueries.list(id)),
     connectors = useQuery(connectorsQuery(id)),
@@ -175,10 +187,10 @@ function useAccessData() {
       ]),
   };
 }
-type AccessData = ReturnType<typeof useAccessData>;
+export type AccessData = ReturnType<typeof useAccessData>;
 
 /** "Reads Customer contracts, part of Renewals", or that it reads nothing yet. */
-function readsLine(data: AccessData, principal: Principal) {
+export function readsLine(data: AccessData, principal: Principal) {
   return readsText(
     readings(
       data.access.data || {},
@@ -189,9 +201,12 @@ function readsLine(data: AccessData, principal: Principal) {
   );
 }
 
-// What being restricted takes, said wherever saving restricts someone.
-const restrictionCost =
-  "They lose the rest of each ontology’s schema, other connections and other documents, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People.";
+// What being restricted takes, said wherever saving restricts someone:
+// with everything in the workspace, only what no source gives.
+const restrictionCost = (grants: readonly Grant[]) =>
+  holdsEverything(grants)
+    ? "They keep every connection and document set, now and later, but lose People enrichment unless it’s chosen, and Data, Settings and making ontologies, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People."
+    : "They lose the rest of each ontology’s schema, other connections and other documents, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People.";
 
 /** One source of the editor: its box, and what it is. */
 function SourceCheck({
@@ -221,13 +236,189 @@ function SourceCheck({
   );
 }
 
+/** What a connection's grant gives, said beside it. */
+const connectionNote = (audience: PickerAudience, follows: boolean) =>
+  audience === "app"
+    ? `every table it syncs and every document set it owns, including ones added later${follows ? "; only what the source shares with everyone" : ""}`
+    : !follows
+      ? "all of it, now and later"
+      : audience === "people"
+        ? SLACK_GRANT_NOTE
+        : "only what the source shares with everyone, now and later";
+
+/**
+ * The workspace's sources as checkboxes, controlled: everything in the
+ * workspace, then each connection with its tables and the sets its syncs
+ * write, the sets people made, and People enrichment. Choosing one of
+ * those replaces everything, and everything replaces them (toggle). A
+ * table or set its connection's grant covers shows chosen and can't be
+ * changed on its own. `follows` are the connections that follow their
+ * sources' permissions. `advanced` puts the sources one by one, People
+ * enrichment among them, under a disclosure, Advanced, open at first only
+ * while one of them is chosen.
+ */
+export function SourcePicker({
+  tree,
+  follows,
+  chosen,
+  onChange,
+  audience,
+  disabled,
+  advanced,
+}: {
+  tree: SourceTree;
+  follows: ReadonlySet<string | undefined>;
+  chosen: readonly Grant[];
+  onChange: (chosen: Grant[]) => void;
+  audience: PickerAudience;
+  disabled?: boolean;
+  advanced?: boolean;
+}) {
+  const flip = (g: Grant) => onChange(toggle(chosen, g));
+  const state = (g: Grant, owner?: string) => sourceState(chosen, g, owner);
+  const [open, setOpen] = useState(() =>
+    chosen.some((g) => g.kind !== "workspace"),
+  );
+  const each = (
+    <>
+      {tree.connections.length > 0 && (
+        <ul aria-label="Connections">
+          {tree.connections.map((c) => {
+            const connection: Grant = {
+              kind: "connector",
+              connectorId: c.id,
+            };
+            return (
+              <li key={c.id}>
+                <SourceCheck
+                  state={state(connection)}
+                  onToggle={() => flip(connection)}
+                >
+                  <span aria-hidden>
+                    <SourceLogo source={c.kind} size={18} />
+                  </span>
+                  <span>
+                    {c.name}
+                    <small>
+                      {" · "}
+                      {connectionNote(audience, follows.has(c.id))}
+                    </small>
+                  </span>
+                </SourceCheck>
+                {(c.tables.length > 0 || c.sets.length > 0) && (
+                  <ul
+                    className="wk-access-nested"
+                    aria-label={`${c.name} tables and sets`}
+                  >
+                    {c.tables.map((t) => {
+                      const table: Grant = {
+                        kind: "table",
+                        connectorId: c.id,
+                        table: t,
+                      };
+                      return (
+                        <li key={grantKey(table)}>
+                          <SourceCheck
+                            state={state(table)}
+                            coveredBy={c.name}
+                            onToggle={() => flip(table)}
+                          >
+                            <span className="hf-mono">{t}</span>
+                          </SourceCheck>
+                        </li>
+                      );
+                    })}
+                    {c.sets.map((s) => {
+                      const set: Grant = { kind: "set", setId: s.id };
+                      return (
+                        <li key={s.id}>
+                          <SourceCheck
+                            state={state(set, c.id)}
+                            coveredBy={c.name}
+                            onToggle={() => flip(set)}
+                          >
+                            {c.name} / {s.name}
+                          </SourceCheck>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {tree.sets.length > 0 && (
+        <ul aria-label="Document sets">
+          {tree.sets.map((s) => {
+            const set: Grant = { kind: "set", setId: s.id };
+            return (
+              <li key={s.id}>
+                <SourceCheck state={state(set)} onToggle={() => flip(set)}>
+                  {s.name}
+                  <small> · documents</small>
+                </SourceCheck>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <ul aria-label="Other sources">
+        <li>
+          <SourceCheck
+            state={state({ kind: "enrichment" })}
+            onToggle={() => flip({ kind: "enrichment" })}
+          >
+            People enrichment
+            <small> · profiles a load looked up</small>
+          </SourceCheck>
+        </li>
+      </ul>
+    </>
+  );
+  return (
+    <fieldset className="wk-access-sources" disabled={disabled}>
+      <legend>Sources</legend>
+      <ul aria-label="Everything">
+        <li>
+          <SourceCheck
+            state={state(EVERYTHING)}
+            onToggle={() => flip(EVERYTHING)}
+          >
+            <span>
+              Everything in the workspace
+              <small> · {everythingNote(audience)}</small>
+            </span>
+          </SourceCheck>
+        </li>
+      </ul>
+      {advanced ? (
+        <details
+          className="wk-access-advanced"
+          open={open}
+          onToggle={(e) => setOpen(e.currentTarget.open)}
+        >
+          <summary>Advanced</summary>
+          <p className="wk-note">
+            Choose sources one by one instead, or add People enrichment.
+          </p>
+          {each}
+        </details>
+      ) : (
+        each
+      )}
+    </fieldset>
+  );
+}
+
 /**
  * A principal's sources: the workspace's connections (each with its tables
  * and the sets its syncs write), the sets people made and People
  * enrichment, saved as one PUT; then the ontologies its grants (a member's
  * teams' too) cover, and what each other one lacks.
  */
-function GrantsDialog({
+export function GrantsDialog({
   data,
   principal,
   name,
@@ -263,8 +454,6 @@ function GrantsDialog({
       .sort()
       .join();
   const dirty = key(chosen) !== key(saved) || workflows !== savedWorkflows;
-  const flip = (g: Grant) => setChosen((c) => toggle(c, g));
-  const state = (g: Grant, owner?: string) => sourceState(chosen, g, owner);
   const teams =
     principal.kind === "KIND_USER"
       ? (access.teams || []).filter((t) =>
@@ -329,12 +518,12 @@ function GrantsDialog({
           }
           description={
             principal.kind !== "KIND_TEAM"
-              ? `They’ll see only what these sources hold. ${restrictionCost}`
+              ? `They’ll see only what these sources hold. ${restrictionCost(chosen)}`
               : [
                   restricts &&
                     `${unnamed ? "Its members" : restricting.map(nameOf).join(", ")} will see only what the team’s sources hold.`,
                   leavingText,
-                  restricts && restrictionCost,
+                  restricts && restrictionCost(chosen),
                 ]
                   .filter(Boolean)
                   .join(" ")
@@ -369,108 +558,15 @@ function GrantsDialog({
         }
       >
         <div className="wk-access-grants" data-replay-block>
-          <fieldset className="wk-access-sources">
-            <legend>Sources</legend>
-            {tree.connections.length > 0 && (
-              <ul aria-label="Connections">
-                {tree.connections.map((c) => {
-                  const connection: Grant = {
-                    kind: "connector",
-                    connectorId: c.id,
-                  };
-                  return (
-                    <li key={c.id}>
-                      <SourceCheck
-                        state={state(connection)}
-                        onToggle={() => flip(connection)}
-                      >
-                        <span aria-hidden>
-                          <SourceLogo source={c.kind} size={18} />
-                        </span>
-                        <span>
-                          {c.name}
-                          <small>
-                            {" · "}
-                            {follows.has(c.id)
-                              ? SLACK_GRANT_NOTE
-                              : "all of it, now and later"}
-                          </small>
-                        </span>
-                      </SourceCheck>
-                      {(c.tables.length > 0 || c.sets.length > 0) && (
-                        <ul
-                          className="wk-access-nested"
-                          aria-label={`${c.name} tables and sets`}
-                        >
-                          {c.tables.map((t) => {
-                            const table: Grant = {
-                              kind: "table",
-                              connectorId: c.id,
-                              table: t,
-                            };
-                            return (
-                              <li key={grantKey(table)}>
-                                <SourceCheck
-                                  state={state(table)}
-                                  coveredBy={c.name}
-                                  onToggle={() => flip(table)}
-                                >
-                                  <span className="hf-mono">{t}</span>
-                                </SourceCheck>
-                              </li>
-                            );
-                          })}
-                          {c.sets.map((s) => {
-                            const set: Grant = { kind: "set", setId: s.id };
-                            return (
-                              <li key={s.id}>
-                                <SourceCheck
-                                  state={state(set, c.id)}
-                                  coveredBy={c.name}
-                                  onToggle={() => flip(set)}
-                                >
-                                  {c.name} / {s.name}
-                                </SourceCheck>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {tree.sets.length > 0 && (
-              <ul aria-label="Document sets">
-                {tree.sets.map((s) => {
-                  const set: Grant = { kind: "set", setId: s.id };
-                  return (
-                    <li key={s.id}>
-                      <SourceCheck
-                        state={state(set)}
-                        onToggle={() => flip(set)}
-                      >
-                        {s.name}
-                        <small> · documents</small>
-                      </SourceCheck>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <ul aria-label="Other sources">
-              <li>
-                <SourceCheck
-                  state={state({ kind: "enrichment" })}
-                  onToggle={() => flip({ kind: "enrichment" })}
-                >
-                  People enrichment
-                  <small> · profiles a load looked up</small>
-                </SourceCheck>
-              </li>
-            </ul>
-          </fieldset>
+          <SourcePicker
+            tree={tree}
+            follows={follows}
+            chosen={chosen}
+            onChange={setChosen}
+            audience={
+              principal.kind === "KIND_SERVICE_CREDENTIAL" ? "key" : "people"
+            }
+          />
           <section className="wk-access-reads" aria-labelledby="access-reads">
             <h4 id="access-reads">Can read</h4>
             {reads.length ? (
@@ -736,7 +832,17 @@ function AgentsPanel({
     [editing, setEditing] = useState<ServiceCredential>(),
     [revoking, setRevoking] = useState<ServiceCredential>(),
     [pending, setPending] = useState(false);
-  const live = (keys.data || []).filter((k) => !k.revokedAt);
+  // A connected app's key is its install's, shown in Settings › Connected
+  // apps. While the installs can't be read, every key shows here.
+  const installs = useQuery({
+      ...installsQuery(id),
+      enabled: partnerApps,
+      retry: false,
+    }),
+    apps = appCredentialIds(installs.data || []);
+  const unrevoked = (keys.data || []).filter((k) => !k.revokedAt),
+    live = unrevoked.filter((k) => !apps.has(k.id)),
+    appKeys = unrevoked.length - live.length;
   useEffect(() => {
     if (!opening || !keys.data) return;
     const k = live.find((k) => k.id === opening);
@@ -781,7 +887,7 @@ function AgentsPanel({
         }
         padded={false}
       >
-        {keys.isPending ? (
+        {keys.isPending || (partnerApps && installs.isPending) ? (
           <div className="wk-pad">
             <SkeletonText lines={2} />
           </div>
@@ -858,6 +964,15 @@ function AgentsPanel({
             title="No agent keys yet"
             text="Make one for each agent, then choose what it reads."
           />
+        )}
+        {appKeys > 0 && (
+          <p className="wk-note wk-pad">
+            {appKeys > 1
+              ? `${appKeys} connected apps read through keys of their own`
+              : "A connected app reads through a key of its own"}
+            , in{" "}
+            <Link to={paths.settings("apps")}>Settings › Connected apps</Link>.
+          </p>
         )}
       </Panel>
       {making && <NewKeyDialog onClose={() => setMaking(false)} />}
@@ -1159,12 +1274,11 @@ function TeamDialog({
   );
   // Joining a team that holds sources restricts whoever isn't yet.
   const access = data.access.data || {},
+    teamGrants = team
+      ? grantsOf(access.grants || [], { kind: "KIND_TEAM", id: team.id || "" })
+      : [],
     joining =
-      team &&
-      grantsOf(access.grants || [], {
-        kind: "KIND_TEAM",
-        id: team.id || "",
-      }).length > 0
+      team && teamGrants.length > 0
         ? people.filter((m) => {
             const userId = m.user?.id || "";
             return (
@@ -1201,7 +1315,7 @@ function TeamDialog({
               ? `Restrict ${nameOf(joining[0]!)}?`
               : `Restrict ${plural(joining.length, "member")}?`
           }
-          description={`${joining.map(nameOf).join(", ")} will see only what ${team?.name || "the team"}’s sources hold. ${restrictionCost}`}
+          description={`${joining.map(nameOf).join(", ")} will see only what ${team?.name || "the team"}’s sources hold. ${restrictionCost(teamGrants)}`}
           confirmLabel="Save and restrict"
           pending={pending}
           onConfirm={() => void save()}
@@ -1604,8 +1718,9 @@ export function AccessTab() {
 }
 
 function AccessTabs() {
+  const { id } = useWorkspace();
   const [tab, setTab] = useTabParam(TABS.map((t) => t.id));
-  const data = useAccessData();
+  const data = useAccessData(id);
   // A link to a key's sources (paths.keySources) shows Agents and opens
   // them, then leaves the address.
   const [params, setParams] = useSearchParams(),

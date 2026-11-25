@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
   if (!kept) return answer({ redirectTo: signInErrorPath("verify") });
   const { config, cookie, transaction } = kept;
   // Ended, or never waiting for a code: start again.
-  const ended = (reason: "verify" | "denied" | "callback" | "sso") => {
+  const ended = (reason: "verify" | "denied" | "session_failed" | "sso") => {
     const response = answer({
       redirectTo: signInErrorPath(reason, transaction?.returnPath),
     });
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
     sso.set(response);
     return response;
   }
-  if (!(await finishSignIn(request, verified))) return ended("callback");
+  if (!(await finishSignIn(request, verified))) return ended("session_failed");
   const response = answer({ redirectTo: transaction.returnPath });
   expireCookie(response, cookie, config);
   return response;

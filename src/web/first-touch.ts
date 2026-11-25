@@ -1,9 +1,12 @@
 import { maskPath } from "../shared/usage";
+import type { SignupAttribution } from "../shared/wfe";
 
 // First-touch attribution (the hosted site's): where a visitor first came
 // from, kept in this browser for 30 days and sent with the sign-up funnel's
-// events (analytics.ts firstTouch). Only campaign tags, a referring host and
-// a masked path: never a query value beyond the utm_ tags, or anything a
+// events (analytics.ts firstTouch) and, without its path, with a new
+// workspace (signupAttribution), which the WFE keeps as the person's signup
+// source when it is the first they own. Only campaign tags, a referring host
+// and a masked path: never a query value beyond the utm_ tags, or anything a
 // person typed.
 
 /**
@@ -188,5 +191,36 @@ export function storedFirstTouch(now = Date.now()): FirstTouchProperties {
     return firstTouchProperties(readFirstTouch(localStorage.getItem(KEY), now));
   } catch {
     return {};
+  }
+}
+
+/**
+ * A first touch as a new workspace sends it (POST /v1/workspaces
+ * `attribution`): its tags without the path, undefined for none.
+ *
+ * @example
+ * signupAttribution({ source: "github", landing_path: "/", at: 0 });
+ * // { utmSource: "github" }
+ */
+export const signupAttribution = (
+  touch: FirstTouch | null,
+): SignupAttribution | undefined =>
+  touch
+    ? {
+        ...(touch.source && { utmSource: touch.source }),
+        ...(touch.medium && { utmMedium: touch.medium }),
+        ...(touch.campaign && { utmCampaign: touch.campaign }),
+        ...(touch.referrer_host && { referrerDomain: touch.referrer_host }),
+      }
+    : undefined;
+
+/** The kept first touch as a new workspace sends it, undefined for none. */
+export function storedSignupAttribution(
+  now = Date.now(),
+): SignupAttribution | undefined {
+  try {
+    return signupAttribution(readFirstTouch(localStorage.getItem(KEY), now));
+  } catch {
+    return undefined;
   }
 }

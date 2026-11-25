@@ -8,6 +8,8 @@ import {
   expect,
   finishOntology,
   mock,
+  openAdvanced,
+  reviewOntology,
   signIn,
   signInToNewWorkspace,
   startOntology,
@@ -54,17 +56,19 @@ test("creates an ontology on an existing database and explores what it holds", a
   await expect(
     panel.getByRole("link", { name: "New ontology" }),
   ).toHaveAttribute("aria-current", "page");
-  // One step at a time, the current one open, the step in the URL: name,
-  // database, sources (connected data or documents, one step), goal and
-  // review.
+  // One step at a time, the current one open, the step in the URL: the
+  // company, sources (connected data or documents, one step), goal and
+  // review, whose Advanced holds the name and the database.
   const steps = page.getByRole("list", { name: "Steps" });
-  await expect(steps.getByRole("listitem")).toHaveCount(5);
-  await expect(steps.locator('[aria-current="step"]')).toContainText("Name");
-  await page.getByLabel("Ontology name").fill("Orders");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(/\/ontology\/new\?step=database$/);
-  await expect(steps.getByRole("listitem").first()).toContainText("Orders");
+  await expect(steps.getByRole("listitem")).toHaveCount(4);
+  await expect(steps.locator('[aria-current="step"]')).toContainText(
+    "Your company",
+  );
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+  await reviewOntology(page, "Orders");
   // Every live database of every project; one ontology per database.
+  await page.getByRole("radio", { name: "Use an existing one" }).click();
   const databases = page.getByRole("list", { name: "Databases" });
   await expect(databases.getByRole("listitem")).toHaveCount(5);
   await expect(
@@ -84,14 +88,16 @@ test("creates an ontology on an existing database and explores what it holds", a
   // Back keeps what was chosen; the browser's Back and Forward too. Back is
   // a history entry of its own, so the browser's Back returns from it.
   await page.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(page).toHaveURL(/\/ontology\/new$/);
-  await expect(page.getByLabel("Ontology name")).toHaveValue("Orders");
+  await expect(page).toHaveURL(/\/ontology\/new\?step=goal$/);
   await page.goBack();
-  await expect(page).toHaveURL(/\/ontology\/new\?step=database$/);
+  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/);
+  await openAdvanced(page);
+  await expect(page.getByLabel("Ontology name")).toHaveValue("Orders");
   await expect(orders).toBeChecked();
   await page.goBack();
-  await expect(page.getByLabel("Ontology name")).toHaveValue("Orders");
+  await expect(page).toHaveURL(/\/ontology\/new\?step=goal$/);
   await page.goForward();
+  await openAdvanced(page);
   await expect(orders).toBeChecked();
   await finishOntology(page);
   expect((await sent).postDataJSON()).toEqual({
@@ -100,9 +106,11 @@ test("creates an ontology on an existing database and explores what it holds", a
     clientToken: expect.any(String),
   });
   // Its first draft, from every synced connector, no documents, no goal.
+  // A new ontology's first draft is made current and loaded once stored.
   expect((await drafted).postDataJSON()).toEqual({
     connectorIds: ["conn_acme_stripe", "conn_acme_shop"],
     documentSetIds: [],
+    loadWhenReady: true,
   });
   await page.goto(await createdOntology(page));
   await expect(
@@ -280,17 +288,15 @@ test("gives a new workspace only the wizard until its first ontology", async ({
     page.getByRole("navigation", { name: "Breadcrumb" }),
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
-  // Use my own data asks only what to draft from and the goal: no name and
-  // no database, and Back returns to the start.
-  await page.getByRole("radio", { name: "Use my own data" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
+  // Set up here walks the one wizard, from the company to the review, and
+  // Back returns to the start.
+  await page.getByRole("button", { name: "Set up here" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Your first ontology" }),
   ).toBeVisible();
   await expect(page.getByRole("list", { name: "Steps" })).toContainText(
-    /^1Connect your data or upload documents.*2Goal.*3Review and create/s,
+    /^1Your company.*2Connect your data or upload documents.*3Goal.*4Review and create/s,
   );
-  await expect(page.getByLabel("Ontology name")).toHaveCount(0);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(wizard).toBeVisible();
 
@@ -350,10 +356,9 @@ test("goes back to the wizard once the last ontology is deleted, and tells a mem
   await signIn(page, "alan@example.com");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(page.getByText("This workspace isn’t set up yet")).toBeVisible();
-  await expect(page.getByLabel("Ontology name")).toHaveCount(0);
-  await expect(
-    page.getByRole("radio", { name: "Set up with your agent" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Set up here" })).toHaveCount(
+    0,
+  );
   await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
     0,
   );
@@ -398,8 +403,8 @@ test("creates a database in a new project, on the shared cluster", async ({
   page,
 }) => {
   await signIn(page);
-  await startOntology(page, "Renewals");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
+  await startOntology(page);
+  await reviewOntology(page, "Renewals");
   await choose(
     page.getByRole("combobox", { name: /^Project/ }),
     "A new project…",
@@ -454,8 +459,8 @@ test("gives a new database a suffix when another database has its address", asyn
   page,
 }) => {
   await signIn(page);
-  await startOntology(page, "Contracts again");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
+  await startOntology(page);
+  await reviewOntology(page, "Contracts again");
   // contracts is taken on the shared cluster, which every workspace shares.
   await page.getByLabel("Database name").fill("Contracts");
   const slugs: string[] = [];
@@ -479,10 +484,11 @@ test("gives a new database a suffix when another database has its address", asyn
 test("fits the new-ontology form on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
   await signIn(page);
-  await startOntology(page, "Orders");
+  await startOntology(page);
+  await reviewOntology(page, "Orders");
   await expect(
     page.getByRole("radio", { name: "Create a new one" }),
-  ).toBeVisible();
+  ).toBeChecked();
   for (const mode of ["Use an existing one", "Create a new one"]) {
     await page.getByRole("radio", { name: mode }).click();
     expect(
@@ -497,9 +503,10 @@ test("says a new database needs a Helix plan, and offers one the workspace has",
 }) => {
   await mock.configure({ helixSubscription: false });
   await signIn(page);
-  await startOntology(page, "Pipeline");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
-  await page.getByLabel("Database name").fill("pipeline");
+  await startOntology(page);
+  await reviewOntology(page, "Pipeline");
+  // A new database, named as the ontology, by default.
+  await expect(page.getByLabel("Database name")).toHaveValue("Pipeline");
   await finishOntology(page);
   const callout = page.getByRole("alert").filter({
     hasText: "A new database needs a Helix plan",
@@ -512,7 +519,7 @@ test("says a new database needs a Helix plan, and offers one the workspace has",
   expect(
     (await mock.stats()).requests.filter((r) => r.startsWith("POST /v1/")),
   ).toContain("POST /v1/tenants 400");
-  // Back to the database step, the other choices kept.
+  // Advanced's existing databases, the other choices kept.
   await callout.getByRole("button", { name: "Use an existing one" }).click();
   await page.getByRole("radio", { name: "sandbox in Staging" }).check();
   await finishOntology(page);
@@ -548,7 +555,9 @@ test("deletes an ontology and its loads, leaving its database for another", asyn
   ).toHaveText([/^Sales graph/, /^Renewals/]);
   await page.goto("/ontology/ont_acme_contracts");
   await expect(page.getByText("This ontology doesn’t exist")).toBeVisible();
-  await startOntology(page, "Contracts");
+  await startOntology(page);
+  await reviewOntology(page, "Contracts");
+  await page.getByRole("radio", { name: "Use an existing one" }).click();
   await expect(
     page.getByRole("radio", { name: "contracts in Production" }),
   ).toBeEnabled();

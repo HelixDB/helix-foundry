@@ -561,7 +561,20 @@
           ]
         },
         {
-          "description": "The load holds all of it already, as after a fill sent again, or it states nothing of\nthe links.",
+          "description": "Written by an earlier send of the same fill, whose transaction the load holds\n([`StoreRead::landed_fill`](crate::store::StoreRead::landed_fill)), as after a retry\nwhose first answer was lost: nothing is written again, not even a review a person\nreleased since.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "landed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The load holds all of it already, or it states nothing of the links.",
           "type": "object",
           "properties": {
             "kind": {

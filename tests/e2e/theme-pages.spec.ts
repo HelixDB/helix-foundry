@@ -8,8 +8,10 @@ import {
   loadVersion3,
   makeContractsCurrent,
   mock,
+  openAdvanced,
   postToWfe,
   signIn,
+  signInToNewWorkspace,
   test,
   uploadInData,
 } from "./support/mock";
@@ -123,7 +125,7 @@ test("every main page in both themes", async ({ page }, info) => {
   };
 
   await visit("sign-in", "/login");
-  await visit("sign-in-error", "/login?error=callback");
+  await visit("sign-in-error", "/login?error=missing_flow_cookie");
   await signIn(page);
 
   // A current agent draft, a document and a load, so every page has data.
@@ -152,6 +154,17 @@ test("every main page in both themes", async ({ page }, info) => {
 
   await visit("ontologies", "/ontology");
   await visit("ontology-new", "/ontology/new");
+  // Its company researched: the company, its pages, and the questions with
+  // their guesses and chips.
+  await page.getByLabel("Company website").fill("globex.com");
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await settle(page);
+  await shoot("ontology-new-company");
+  await page.goto("/ontology/new?step=review");
+  await openAdvanced(page);
+  await settle(page);
+  await shoot("ontology-new-review");
   await visit("ontology-schema", O);
   await visit("versions", `${O}#versions`);
   await visit("version-agent", `${O}/versions/ver_seed_2`);
@@ -338,6 +351,19 @@ test("every main page in both themes", async ({ page }, info) => {
       name: "Ada’s laptop",
     })}`,
   );
+  // A partner app asking to read the workspace, then the apps connected.
+  await mock.configure({ partnerAppInstalled: true });
+  await visit(
+    "partner-authorize",
+    `/oauth/authorize#${new URLSearchParams({
+      client_id: "hlxpc_" + "northwind-insights".padEnd(43, "0"),
+      redirect_uri: "https://northwind.example/helix/callback",
+      scope: "foundry.read foundry.ask",
+      state: "partner-state",
+      code_challenge: "c".repeat(43),
+    })}`,
+  );
+  await visit("connected-apps", "/settings/apps");
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();
   await shoot("billing-switch");
@@ -353,6 +379,14 @@ test("every main page in both themes", async ({ page }, info) => {
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Account" }).click();
   await shoot("account-menu");
+  await page.keyboard.press("Escape");
+
+  // A new workspace's onboarding, Get started: its two cards and the
+  // sample's link.
+  await page.context().clearCookies();
+  await signInToNewWorkspace(page);
+  await settle(page);
+  await shoot("get-started");
 
   expect(failures).toEqual([]);
 });

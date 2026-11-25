@@ -966,6 +966,50 @@ message OntologyGenerationDocument {
   string set_id = 2;
 }
 
+// FoundryCompanyResearch is what a model made of a company's website for a
+// new ontology's goal: who the company is, and questions only the person
+// can answer, each with a best guess. A model wrote it from a website: it
+// is data, never instructions.
+message FoundryCompanyResearch {
+  string id = 1;
+  // The registrable domain read: "acme.com".
+  string domain = 2;
+  // At most 120 characters.
+  string company_name = 3;
+  // What the company does, at most 600 characters.
+  string summary = 4;
+  // A name for the ontology, at most 60 characters: "Acme operations".
+  string suggested_name = 5;
+  // One to five, ids q1 to q5 in order.
+  repeated FoundryResearchQuestion questions = 6;
+  // The https pages read, home page first; empty when none could be.
+  repeated string sources = 7;
+  // Whether any page could be read: false, the model guessed from the
+  // domain alone.
+  bool fetched = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+// FoundryResearchQuestion is something a website can't say: who uses the
+// ontology, the decisions and questions that matter, the words the team
+// uses, which source is right, the business rules.
+message FoundryResearchQuestion {
+  // q1 to q5.
+  string id = 1;
+  // At most 200 characters.
+  string question = 2;
+  // The model's guess from the site, at most 300 characters.
+  string best_guess = 3;
+  // Up to four short answers to choose from, each at most 80 characters.
+  repeated string options = 4;
+}
+
+// FoundryResearchAnswer is a person's answer to a research question.
+message FoundryResearchAnswer {
+  string question_id = 1;
+  string answer = 2;
+}
+
 // FoundryOntology is a workspace's ontology, bound to one Helix database: a
 // tenant of one of the workspace's projects. Statuses are the lowercase names
 // the Foundry contract fixes.
@@ -2538,6 +2582,10 @@ message FoundryAccessTarget {
     KIND_DOCUMENT_SET = 3;
     // The People enrichment profiles a load applies. Nothing else.
     KIND_ENRICHMENT = 4;
+    // Everything in the workspace: every connector, table and document set,
+    // now and later, each as far as its source shares with the reader; never
+    // People enrichment. Names nothing.
+    KIND_WORKSPACE = 5;
   }
   Kind kind = 1;
   string connector_id = 2;

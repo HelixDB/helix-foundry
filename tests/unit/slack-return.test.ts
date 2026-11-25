@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  APP_CLIENT_ID,
+  APP_SCOPE,
+  APP_SCOPE_MAX,
   SLACK_LINK_TOKEN_PREFIX,
   SLACK_RETURN_BOOT,
   SLACK_RETURN_TTL_MS,
@@ -517,5 +520,147 @@ describe("blocked storage", () => {
       ),
     ).toBe(false);
     expect(replace).toHaveBeenCalledWith("/slack/installed");
+  });
+});
+
+describe("a partner app's request to read a workspace", () => {
+  const CLIENT = "hlxpc_" + "n".repeat(43),
+    APP_CHALLENGE = "c".repeat(43),
+    APP_REDIRECT = "https://northwind.example/helix/callback",
+    APP_FRAGMENT = `#${new URLSearchParams({
+      client_id: CLIENT,
+      redirect_uri: APP_REDIRECT,
+      scope: "foundry.read foundry.ask",
+      state: "partner-state",
+      code_challenge: APP_CHALLENGE,
+    })}`;
+  const kept = {
+    kind: "app_authorize",
+    clientId: CLIENT,
+    redirectUri: APP_REDIRECT,
+    scope: "foundry.read foundry.ask",
+    state: "partner-state",
+    codeChallenge: APP_CHALLENGE,
+    at: NOW,
+  };
+  it("moves out of the fragment, and bares the URL", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    expect(
+      captureSlackReturn(
+        at("/oauth/authorize", "", APP_FRAGMENT),
+        storage,
+        replace,
+        NOW,
+      ),
+    ).toBe(true);
+    expect(replace).toHaveBeenCalledWith("/oauth/authorize");
+    expect(readSlackReturn(storage, "app_authorize", NOW)).toEqual(kept);
+  });
+  it("keeps an earlier request on the bare page a sign-in comes back to", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    captureSlackReturn(
+      at("/oauth/authorize", "", APP_FRAGMENT),
+      storage,
+      replace,
+      NOW,
+    );
+    expect(
+      captureSlackReturn(at("/oauth/authorize"), storage, replace, NOW),
+    ).toBe(false);
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(readSlackReturn(storage, "app_authorize", NOW)).toEqual(kept);
+  });
+  it("keeps nothing of a malformed request, and still bares the URL", () => {
+    const storage = new Memory(),
+      replace = vi.fn();
+    for (const [key, value] of [
+      ["client_id", "hlxpc_short"],
+      ["client_id", "hlxmc_" + "n".repeat(43)],
+      ["client_id", "hlxpc_" + "n".repeat(42) + "="],
+      ["code_challenge", "c".repeat(42)],
+      ["code_challenge", "c".repeat(42) + "/"],
+      ["scope", ""],
+      ["scope", "Foundry.read"],
+      ["scope", "foundry.read  foundry.ask"],
+      ["scope", "foundry.read" + " foundry.ask".repeat(5)],
+      ["state", ""],
+      ["state", "s".repeat(513)],
+      ["redirect_uri", ""],
+      ["redirect_uri", "r".repeat(513)],
+    ] as const) {
+      captureSlackReturn(
+        at("/oauth/authorize", "", APP_FRAGMENT),
+        storage,
+        vi.fn(),
+        NOW,
+      );
+      const q = new URLSearchParams(APP_FRAGMENT.slice(1));
+      q.set(key, value);
+      expect(
+        captureSlackReturn(
+          at("/oauth/authorize", "", `#${q}`),
+          storage,
+          replace,
+          NOW,
+        ),
+        `${key}=${value}`,
+      ).toBe(false);
+      expect(replace).toHaveBeenLastCalledWith("/oauth/authorize");
+      expect(readSlackReturn(storage, "app_authorize", NOW)).toBeNull();
+    }
+    // A missing parameter is as malformed.
+    const q = new URLSearchParams(APP_FRAGMENT.slice(1));
+    q.delete("code_challenge");
+    expect(
+      captureSlackReturn(
+        at("/oauth/authorize", "", `#${q}`),
+        storage,
+        replace,
+        NOW,
+      ),
+    ).toBe(false);
+  });
+  it("is read back only as written, and only while fresh", () => {
+    for (const value of [
+      { ...kept, clientId: "hlxpc_x" },
+      { ...kept, codeChallenge: "c" },
+      { ...kept, scope: "FOUNDRY" },
+      { ...kept, scope: "a.b ".repeat(20).trim() },
+      { ...kept, state: "" },
+      { ...kept, redirectUri: 1 },
+    ]) {
+      const storage = new Memory();
+      storage.setItem("foundry.slack.return.v1", JSON.stringify(value));
+      expect(readSlackReturn(storage, "app_authorize", NOW)).toBeNull();
+    }
+    const storage = new Memory();
+    storage.setItem("foundry.slack.return.v1", JSON.stringify(kept));
+    expect(readSlackReturn(storage, "app_authorize", NOW)).toEqual(kept);
+    expect(readSlackReturn(storage, "relay_link", NOW)).toBeNull();
+    expect(
+      readSlackReturn(storage, "app_authorize", NOW + SLACK_RETURN_TTL_MS + 1),
+    ).toBeNull();
+  });
+  it("moves out of the URL from the boot script, which holds the module's rules", () => {
+    const u = new URL(`/oauth/authorize${APP_FRAGMENT}`, "https://f.example"),
+      storage = new Memory(),
+      history = { state: null, replaceState: vi.fn() };
+    new Function("location", "history", "sessionStorage", SLACK_RETURN_BOOT)(
+      { pathname: u.pathname, search: u.search, hash: u.hash },
+      history,
+      storage,
+    );
+    expect(history.replaceState).toHaveBeenCalledWith(
+      null,
+      "",
+      "/oauth/authorize",
+    );
+    expect(readSlackReturn(storage, "app_authorize")?.clientId).toBe(CLIENT);
+    // The boot names nothing outside itself: its literals are the module's.
+    expect(SLACK_RETURN_BOOT).toContain(`/${APP_CLIENT_ID.source}/`);
+    expect(SLACK_RETURN_BOOT).toContain(`/${APP_SCOPE.source}/`);
+    expect(SLACK_RETURN_BOOT).toContain(`<= ${APP_SCOPE_MAX}`);
   });
 });

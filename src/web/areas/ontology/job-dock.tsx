@@ -274,7 +274,8 @@ function LoadCard({
   );
 }
 
-// A load with cards to decide points at the Review page, else at the
+// A load with cards to decide points at the Review page, else, current, at
+// its page, which asks about it in one click (./ask-start.tsx), else at the
 // Explorer. The count is the review cards index's (`counted`, the summary
 // of this load, less the walk's own choices); while the index is still
 // sorting its reviews, the link names none.
@@ -300,6 +301,8 @@ function loadEnding(
     title: l.status === "ready" ? "Data loaded" : "Data loaded, in part",
     ...(review
       ? { go: paths.review(o), label: review }
-      : { go: paths.explore(o), label: "Explore it" }),
+      : l.current
+        ? { go: paths.load(o, l.id), label: "Ask about it" }
+        : { go: paths.explore(o), label: "Explore it" }),
   };
 }

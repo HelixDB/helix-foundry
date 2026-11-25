@@ -353,6 +353,9 @@ type ReadStore interface {
 	// Suggestions for a new automation (foundry_automation_suggestions.go)
 	GetFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID string) (*model.FoundryAutomationSuggestions, error)
 	SumFoundryAssistantSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+
+	// Company research (foundry_company_research.go)
+	GetFoundryCompanyResearch(ctx context.Context, workspaceID, id string) (*model.FoundryCompanyResearch, error)
 }
 
 // Store is ReadStore plus every write.
@@ -456,9 +459,10 @@ type Store interface {
 	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
 	ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (bool, error)
 	ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error
-	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
-	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
-	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error
+	RestartFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, workspaceID, versionID string) (bool, error)
+	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, at model.FoundryFillCursor) (bool, error)
+	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string, restart bool) error
+	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID, versionID string, owed, left int64, resend *model.FoundryGraphJob) error
 	ResumeFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, resend *model.FoundryGraphJob) (bool, error)
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	SaveFoundryReviewLabel(ctx context.Context, workspaceID string, label *model.FoundryReviewLabel) error
@@ -771,6 +775,12 @@ type Store interface {
 	RenewFoundryAutomationSuggestionsLease(ctx context.Context, ontologyID, versionID, workerID string, lease time.Duration) error
 	FinishFoundryAutomationSuggestions(ctx context.Context, ontologyID, versionID, workerID string, end model.FoundryAutomationSuggestionsEnd) error
 	ChargeFoundryAutomationSuggestions(ctx context.Context, workspaceID string, usdMicros int64) error
+
+	// Company research for a new ontology's goal (foundry_company_research.go):
+	// each model call started under its limits, then finished with its spend.
+	CheckFoundryCompanyResearchHour(ctx context.Context, userID string, perUserPerHour int) error
+	StartFoundryCompanyResearch(ctx context.Context, r *model.FoundryCompanyResearch, limits model.FoundryCompanyResearchLimits) error
+	FinishFoundryCompanyResearch(ctx context.Context, workspaceID, id string, result json.RawMessage, spend model.FoundryCompanyResearchSpend) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

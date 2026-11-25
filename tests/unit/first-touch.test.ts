@@ -6,7 +6,9 @@ import {
   noteFirstTouch,
   readFirstTouch,
   sanitiseTag,
+  signupAttribution,
   storedFirstTouch,
+  storedSignupAttribution,
 } from "@/web/first-touch";
 
 // First-touch attribution (src/web/first-touch.ts): a page load's utm_ tags
@@ -182,6 +184,30 @@ describe("firstTouchProperties", () => {
   });
 });
 
+describe("signupAttribution", () => {
+  it("is the tags a new workspace sends, without the path", () => {
+    expect(
+      signupAttribution({
+        source: "github",
+        medium: "readme",
+        campaign: "launch",
+        referrer_host: "news.ycombinator.com",
+        landing_path: "/login",
+        at: 0,
+      }),
+    ).toEqual({
+      utmSource: "github",
+      utmMedium: "readme",
+      utmCampaign: "launch",
+      referrerDomain: "news.ycombinator.com",
+    });
+    expect(
+      signupAttribution({ referrer_host: "x.com", landing_path: "/", at: 0 }),
+    ).toEqual({ referrerDomain: "x.com" });
+    expect(signupAttribution(null)).toBeUndefined();
+  });
+});
+
 describe("noteFirstTouch", () => {
   let local: ReturnType<typeof fakeStorage>,
     session: ReturnType<typeof fakeStorage>;
@@ -194,6 +220,24 @@ describe("noteFirstTouch", () => {
   };
   beforeEach(() => stub());
   afterEach(() => vi.unstubAllGlobals());
+
+  it("gives a new workspace the kept touch, checked", () => {
+    expect(storedSignupAttribution(0)).toBeUndefined();
+    noteFirstTouch(
+      page("?utm_source=GitHub&utm_campaign=x", "https://x.com/"),
+      0,
+    );
+    expect(storedSignupAttribution(1)).toEqual({
+      utmSource: "github",
+      utmCampaign: "x",
+      referrerDomain: "x.com",
+    });
+    local.values.set(KEY, JSON.stringify({ source: "Bad Tag!", at: 0 }));
+    expect(storedSignupAttribution(1)).toEqual({ utmSource: "bad_tag" });
+    expect(storedSignupAttribution(FIRST_TOUCH_KEEP_MS)).toBeUndefined();
+    stub(true);
+    expect(storedSignupAttribution(1)).toBeUndefined();
+  });
 
   it("keeps the first touch, not a later one", () => {
     noteFirstTouch(page("?utm_source=github"), 0);

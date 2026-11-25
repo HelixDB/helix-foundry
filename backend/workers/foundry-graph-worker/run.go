@@ -30,6 +30,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -233,6 +234,9 @@ type attempt struct {
 	// work (stage): only such a send can settle a name in place, so only its
 	// word on a resolve is the decision's (recordDocument).
 	replayed map[string]bool
+	// sample are the staged documents that went with the sample's shipped
+	// extraction (stage).
+	sample map[string]bool
 	// keyed means the load's aliases all have their name keys
 	// (store.FillFoundryLoadNameKeys), as the alias reads need, and
 	// hasAliases that the load holds one (store.FoundryLoadHasAliases).
@@ -2236,12 +2240,15 @@ func (r *runner) budget(ctx context.Context, job *model.FoundryGraphJob, a *atte
 // keep and reads no artifact (contract 4.17.0), so those stage none. Each
 // artifact is a few kilobytes gzipped (1-5 KB for the 493 documents of a
 // real load), stored once in the bucket and staged as a file the agent
-// reads: no request carries one. The text is a text document's
-// original, or what a PDF's read stored (model.FoundryDocument.TextKey),
-// staged as ontologyagent.StageText writes it: a PDF is plain_text. A
-// document whose text is gone is left out and marked deleted: a delete that
-// removed its prefix but not the row would otherwise be owed, and merged,
-// forever. A document with no text to send is never sent, and is recorded
+// reads: no request carries one. A sample document, by its bytes' SHA-256,
+// also gets the extraction shipped with the sample (sample.Extraction) as
+// shippedArtifact, after its own, wherever saved work goes: a load of the
+// sample replays it rather than paying the model for it again. The text is
+// a text document's original, or what a PDF's read stored
+// (model.FoundryDocument.TextKey), staged as ontologyagent.StageText writes
+// it: a PDF is plain_text. A document whose text is gone is left out and
+// marked deleted: a delete that removed its prefix but not the row would
+// otherwise be owed, and merged, forever. A document with no text to send is never sent, and is recorded
 // failed, which no later job sends again: a PDF whose read failed with the
 // read's code (the document's read says why), anything else as unsupported.
 // A PDF still being read never gets here: it is not pending until its read
@@ -2319,12 +2326,29 @@ func (r *runner) stage(ctx context.Context, job *model.FoundryGraphJob, jobDir s
 			}
 			saved = append(saved, artifactPath)
 		}
+		// A sample document's shipped extraction goes wherever saved work does,
+		// last, so the document's own answers first.
+		if shipped, ok := sample.Extraction(doc.SHA256); ok && a.replayed[doc.ID] {
+			artifactPath := path.Join(jobDir, "artifacts", doc.ID, shippedArtifact)
+			if err := writeFile(filepath.Join(root, artifactPath), bytes.NewReader(shipped)); err != nil {
+				return nil, retry("could not prepare the documents; Helix will retry", err)
+			}
+			saved = append(saved, artifactPath)
+			if a.sample == nil {
+				a.sample = map[string]bool{}
+			}
+			a.sample[doc.ID] = true
+		}
 		out = append(out, ontologyagent.ExtractDocument{
 			DocID: doc.ID, Set: doc.SetID, URI: "s3://" + r.bucket + "/" + doc.S3Key, Path: docPath, MediaType: media, Artifacts: saved,
 		})
 	}
 	return out, nil
 }
+
+// shippedArtifact is the file a sample document's shipped extraction is
+// staged as: no saved artifact's (a key, document.ArtifactKey, has no dot).
+const shippedArtifact = "sample.shipped.json"
 
 // documentAliases are the aliases of job's load that a document whose staged
 // text is text writes (contract 4.23.0: an alias acts only on a document
@@ -2523,6 +2547,9 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		extraction.ArtifactKey = &key
 	}
 	extraction.SettlesNames = a.replayed[event.DocID]
+	if a.sample[event.DocID] {
+		sampleDocuments.WithLabelValues(strconv.FormatBool(u.Replayed)).Inc()
+	}
 	// What became of each name decision is the document's, kept on its row;
 	// the store also records a resolve's word on its own document on the
 	// load's copy the load waits to settle (store.SettleFoundryReviews).

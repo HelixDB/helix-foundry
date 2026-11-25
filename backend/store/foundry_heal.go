@@ -99,7 +99,8 @@ WHERE ontology_id=? AND fingerprint=? AND status='open'`, userID, ontologyID, fi
 				return err
 			}
 		}
-		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?, paused_until=NULL
+		// A moved one stops too, its collect's cursor gone with it.
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?, paused_until=NULL, `+clearFoundryFillCursor+`
 WHERE ontology_id=? AND fingerprint=? AND state='moved'`, model.FoundryFillDismissed, ontologyID, fingerprint)
 		return err
 	})
@@ -256,7 +257,8 @@ WHERE load_id=? AND document_id>? AND status='extracted' AND reviews>0 ORDER BY 
 
 // PublishFoundryHealRun stores a complete run's findings, then supersedes
 // the open findings of the kinds it measured that it didn't find, then ends
-// the run complete, recording whether it measured the rows. Each finding
+// the run complete, recording whether it measured the rows, under the
+// ontology's lock (as a dismissal, and a fill's collect). Each finding
 // becomes what FoundryHealFinding.Next makes of its row, written in
 // transactions of HealPublishBatch findings, each one statement, each of
 // which locks its rows and the run's: a dismissal waits for one. Every
@@ -307,6 +309,16 @@ func (s *mysqlDB) PublishFoundryHealRun(ctx context.Context, p model.FoundryHeal
 		afterHealPublishBatch()
 	}
 	return tx(func(q *mysqlDB) error {
+		// Under the ontology's lock, as a dismissal and every write of a
+		// fill's collect: a collect's page saved before this commits has its
+		// cursor cleared here, and one after sees its finding closed.
+		var workspaceID string
+		if err := q.db.QueryRowContext(ctx, `SELECT workspace_id FROM foundry_ontologies WHERE id=?`, p.OntologyID).Scan(&workspaceID); err != nil {
+			return fmt.Errorf("read the heal run's ontology: %w", err)
+		}
+		if _, err := q.lockFoundryOntology(ctx, workspaceID, p.OntologyID); err != nil {
+			return fmt.Errorf("lock the heal run's ontology: %w", err)
+		}
 		// Unmeasured, the rows' findings stand only for the load that
 		// measured them: an earlier load's go.
 		rows, err := q.db.QueryContext(ctx, `SELECT fingerprint FROM foundry_heal_findings
@@ -336,6 +348,14 @@ SET status='superseded', finding=JSON_REMOVE(finding, '$.signal.backing.examples
 WHERE ontology_id=? AND status='open' AND fingerprint IN (`+idPlaceholders(len(batch))+`)`,
 				append([]any{p.OntologyID}, toAnySlice(batch)...)...); err != nil {
 				return fmt.Errorf("supersede heal findings: %w", err)
+			}
+			// A fill's collect saved for a finding no longer open lists for
+			// spellings that may not be its next: it starts over if the
+			// finding opens again.
+			if _, err := q.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+`
+WHERE ontology_id=? AND state='moved' AND collect_after IS NOT NULL AND fingerprint IN (`+idPlaceholders(len(batch))+`)`,
+				append([]any{p.OntologyID}, toAnySlice(batch)...)...); err != nil {
+				return fmt.Errorf("clear superseded findings' collects: %w", err)
 			}
 		}
 		return execOrNotFound(ctx, q.db, `UPDATE foundry_heal_runs SET status='complete', pages=?, cuts=?, rows_measured=?, active_key=NULL,

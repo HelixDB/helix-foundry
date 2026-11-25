@@ -68,6 +68,10 @@ func TestValidateRoles(t *testing.T) {
 		"the door's backend":       {func(c *Config) { c.Foundry.Events.Endpoint.Backend.Address = "" }, Roles{Events: true}, "backend.address"},
 		"the API's generation cap": {func(c *Config) { c.Foundry.Ontology.PerHour = 0 }, Roles{API: true}, "foundry.ontology.per_hour"},
 		"the API's answer wait":    {func(c *Config) { c.Foundry.Ontology.AnswerDays = 0 }, Roles{API: true}, "foundry.ontology.answer_days"},
+		"company research's hour": {func(c *Config) { c.Foundry.Onboarding.Research.PerUserPerHour = 0 }, Roles{API: true},
+			"foundry.onboarding.research.per_user_per_hour"},
+		"company research's month": {func(c *Config) { c.Foundry.Onboarding.Research.MonthlyUSD = 0 }, Roles{API: true},
+			"foundry.onboarding.research.monthly_usd"},
 		"the worker's answer wait": {func(c *Config) { c.Foundry.Ontology.AnswerDays = 0 }, Roles{OntologyWorker: true}, "foundry.ontology.answer_days"},
 		"the worker's question rounds": {func(c *Config) { c.Foundry.Ontology.MaxQuestionRounds = 0 }, Roles{OntologyWorker: true},
 			"foundry.ontology.max_question_rounds"},
@@ -1345,4 +1349,19 @@ func ExampleSlackConfig_InstallAllowed() {
 	// Output:
 	// true true
 	// true false false
+}
+
+// Company research defaults to 20 calls a person an hour and $2 a
+// workspace a month, which the API checks.
+func TestCompanyResearchDefaults(t *testing.T) {
+	r := Defaults().Foundry.Onboarding.Research
+	if r != (CompanyResearchConfig{PerUserPerHour: 20, MonthlyUSD: 2}) || r.MonthlyMicros() != 2_000_000 {
+		t.Fatalf("defaults = %+v", r)
+	}
+	for _, usd := range []float64{-1, math.NaN(), math.Inf(1)} {
+		r.MonthlyUSD = usd
+		if err := r.validate(); err == nil {
+			t.Fatalf("monthly_usd %v passed", usd)
+		}
+	}
 }

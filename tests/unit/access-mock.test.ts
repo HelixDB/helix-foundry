@@ -64,6 +64,14 @@ const general: wfe.FoundryAccessTarget = {
   kind: "KIND_DOCUMENT_SET",
   documentSetId: "set_acme_general",
 };
+const everything: wfe.FoundryAccessTarget = { kind: "KIND_WORKSPACE" };
+// As the WFE answers it: the ids it doesn't name are "".
+const STORED_EVERYTHING = {
+  ...everything,
+  connectorId: "",
+  table: "",
+  documentSetId: "",
+};
 const grant = (
   principal: wfe.FoundryPrincipal,
   targets: wfe.FoundryAccessTarget[],
@@ -438,6 +446,96 @@ describe("mock source grants", () => {
     expect((await eve("GET", `${O}/documents/${doc}`)).status).toBe(404);
     await grant(user("usr_eve"), []);
     expect((await eve("GET", `${F}/ontologies`)).body.ontologies).toEqual([]);
+  });
+
+  it("gives everything in the workspace, sets made later included, and keeps it past a connector's deletion", async () => {
+    const { load, doc } = await loaded();
+    const set = await grant(user("usr_eve"), [everything]);
+    expect(set.status).toBe(200);
+    expect(
+      set.body.grants.map((g: wfe.FoundryAccessGrant) => g.target),
+    ).toEqual([STORED_EVERYTHING]);
+    // Every table and set the load holds: all of it.
+    expect(await contractsAccess()).toMatchObject({
+      loadId: load,
+      readers: [user("usr_eve")],
+      partialReaders: [],
+    });
+    expect((await eve("GET", `${A}/me`)).body).toMatchObject({
+      ontologyIds: ["ont_acme_contracts"],
+      partialOntologyIds: [],
+    });
+    expect((await eve("GET", `${F}/documents/${doc}:content`)).status).toBe(
+      200,
+    );
+    // A set made after the grant is given too.
+    const board = (await call("POST", `${F}/document-sets`, { name: "Board" }))
+      .body.set as wfe.FoundryDocumentSet;
+    expect(
+      (
+        await call("POST", `${F}/documents/${doc}:move`, {
+          setId: board.id,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await eve("GET", `${F}/documents?ids=${doc}`)).body.documents.map(
+        (d: wfe.FoundryDocument) => d.id,
+      ),
+    ).toEqual([doc]);
+    // Everything names no connector, so deleting one keeps it.
+    expect(
+      (await call("DELETE", `${F}/connectors/conn_acme_stripe`)).status,
+    ).toBe(200);
+    expect(
+      ((await call("GET", A)).body.grants as wfe.FoundryAccessGrant[])
+        .filter((g) => g.principal?.id === "usr_eve")
+        .map((g) => g.target),
+    ).toEqual([STORED_EVERYTHING]);
+    // It names nothing.
+    expect(
+      refusal(
+        await grant(user("usr_eve"), [
+          { kind: "KIND_WORKSPACE", documentSetId: "set_acme_general" },
+        ]),
+      ),
+    ).toEqual([
+      400,
+      `access: a workspace grant can't name connector "", table "" and set "set_acme_general"`,
+    ]);
+  });
+
+  it("holds every connector, table and set with everything, so narrowing it needs no check", async () => {
+    // Alan, given raw access since he was given everything.
+    Object.assign(config, { memberQueryRead: false });
+    expect((await grant(user("usr_alan"), [everything])).status).toBe(200);
+    Object.assign(config, { memberQueryRead: true });
+    expect((await grant(user("usr_alan"), [everything])).status).toBe(200);
+    // From everything to sources one by one is narrowing.
+    expect(
+      (
+        await grant(user("usr_alan"), [
+          stripe,
+          general,
+          { ...stripe, kind: "KIND_TABLE", table: "customers" },
+        ])
+      ).status,
+    ).toBe(200);
+    // Back to everything, or People enrichment beside it, is new.
+    expect(refusal(await grant(user("usr_alan"), [everything]))?.[1]).toContain(
+      "take that access away in the Helix dashboard first",
+    );
+    Object.assign(config, { memberQueryRead: false });
+    await grant(user("usr_alan"), [everything]);
+    Object.assign(config, { memberQueryRead: true });
+    expect(
+      refusal(
+        await grant(user("usr_alan"), [
+          everything,
+          { kind: "KIND_ENRICHMENT" },
+        ]),
+      )?.[1],
+    ).toContain("take that access away in the Helix dashboard first");
   });
 
   it("lets a grantee ask its load and see only its own questions", async () => {
@@ -1540,6 +1638,26 @@ describe("a source's own permissions", () => {
     await call("POST", `${F}/connectors/${id}:sync`, {});
     later(3000);
     expect(new Set(await byIds(ids))).toEqual(new Set(public_));
+  });
+
+  it("gives everything's grantee a Slack connection made later, as far as Slack shares with her", async () => {
+    await grant(user("usr_eve"), [everything]);
+    const id = await slack();
+    const { docs } = await conversations(id);
+    const ids = docs.map((d) => d.id!);
+    const channels = [...new Set(docs.map(channelOf))].sort();
+    expect(channels).toContain(LEADERSHIP);
+    // Not #leadership, which Slack doesn't share with her.
+    expect([...new Set(await byIds(ids))].sort()).toEqual(
+      channels.filter((c) => c !== LEADERSHIP),
+    );
+    // She is one of the people the connection narrows.
+    expect((await call("GET", SOURCES)).body.sources).toEqual([
+      expect.objectContaining({ connectorId: id, grantees: 1 }),
+    ]);
+    // Unknown channels give none.
+    later(8 * 86_400_000);
+    expect(await byIds(ids)).toEqual([]);
   });
 
   it("gives a grantee part of a load of Slack's, its tables by her channels' rows, and keeps her answer with its channels", async () => {

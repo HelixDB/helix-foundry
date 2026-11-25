@@ -128,6 +128,7 @@ describe("generationSources with API sources", () => {
     expect(generationSources(draft({ setIds: new Set(["g"]) }), f)).toEqual({
       state: { kind: "ready", summary: "General: 1 table file" },
       request: { noConnectors: true, documentSetIds: ["g"] },
+      tables: 1,
     });
     const replies = {
       id: "e1",
@@ -147,6 +148,7 @@ describe("generationSources with API sources", () => {
         eventSources: [{ connectorId: "e1", mode: STRUCTURED }],
         documentSetIds: [],
       },
+      tables: 1,
     });
   });
 
@@ -156,6 +158,7 @@ describe("generationSources with API sources", () => {
     expect(generationSources(draft({}), all)).toEqual({
       state: { kind: "ready", summary: "Stripe: 1 table" },
       request: { connectorIds: ["c1"], documentSetIds: [] },
+      tables: 1,
     });
     // An API source's id among the connectors chosen picks nothing.
     expect(
@@ -228,6 +231,7 @@ describe("generationSources with API sources", () => {
         eventSources: [{ connectorId: "e1", mode: STRUCTURED }],
         documentSetIds: ["g"],
       },
+      tables: 2,
     });
     // With no other connector, every synced one is none.
     expect(
@@ -260,7 +264,7 @@ describe("generationSources with API sources", () => {
         .state,
     ).toEqual({
       kind: "blocked",
-      reason: `One generation covers at most ${MAX_TABLES} tables, table files included. Choose fewer connectors or sets.`,
+      reason: `These sources hold ${MAX_TABLES + 1} tables and one draft reads at most ${MAX_TABLES}, table files included. Untick connectors or sets until it’s ${MAX_TABLES} or fewer.`,
     });
   });
 
@@ -289,7 +293,7 @@ describe("generationSources with API sources", () => {
       ).state,
     ).toEqual({
       kind: "blocked",
-      reason: `One generation covers at most ${MAX_TABLES} tables, table files included. Choose fewer connectors or sets.`,
+      reason: `These sources hold ${MAX_TABLES + 1} tables and one draft reads at most ${MAX_TABLES}, table files included. Untick connectors or sets until it’s ${MAX_TABLES} or fewer.`,
     });
   });
 
@@ -307,6 +311,7 @@ describe("generationSources with API sources", () => {
           "Choose a synced connector, an API source with pieces, or a set holding documents Foundry reads.",
       },
       request: { noConnectors: true, documentSetIds: [] },
+      tables: 0,
     });
   });
 
@@ -341,6 +346,7 @@ describe("generationSources with API sources", () => {
     ).toEqual({
       state: { kind: "ready", summary: "Stripe: 1 table" },
       request: { connectorIds: ["c1"], documentSetIds: [] },
+      tables: 1,
     });
   });
 
@@ -390,6 +396,7 @@ describe("generationSources with entity extraction", () => {
         eventSources: [{ connectorId: "e1", mode: EXTRACTION }],
         documentSetIds: [],
       },
+      tables: 0,
     });
     // Its table needn't hold rows: its documents are what it reads.
     expect(
@@ -626,6 +633,7 @@ describe("generationSources with entity extraction", () => {
         summary: "Stripe: 1 table; Team notes / Notes: 4 documents",
       },
       request: { connectorIds: ["c1"], documentSetIds: ["set_notes"] },
+      tables: 1,
     });
     expect(
       generationSources(
@@ -1062,6 +1070,7 @@ describe("generationSources with a connection's set of PDFs", () => {
     ).toEqual({
       state: { kind: "ready", summary: "Acme Drive / PDFs: 3 documents" },
       request: { noConnectors: true, documentSetIds: ["set_pdfs"] },
+      tables: 0,
     });
   });
   it("blocks on an empty one, as on any set holding nothing", () => {

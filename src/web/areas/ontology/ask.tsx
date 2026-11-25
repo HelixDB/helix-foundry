@@ -50,8 +50,13 @@ import {
 } from "../../kit";
 import { sentence } from "../../api";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
-import { useDocumentNames } from "../documents/documents-api";
+import { canManage, useWorkspace } from "../../ui";
+import { trackEvent } from "../../analytics";
+import { connectorsQuery } from "../data/data-api";
+import {
+  documentSetQueries,
+  useDocumentNames,
+} from "../documents/documents-api";
 import { formatUsd } from "../documents/model";
 import { parseEntityId } from "../explore/model";
 import { readQueries } from "../explore/reads";
@@ -81,6 +86,7 @@ import {
   citationText,
   citedEntities,
   draftGoal,
+  gapDraft,
   graphQuery,
   isEnding,
   isLiveQuestion,
@@ -111,7 +117,7 @@ import {
   NothingLoaded,
   useLoadSelection,
 } from "./load-selection";
-import { loadVersion, withLoad } from "./model";
+import { generationPicks, loadVersion, withLoad } from "./model";
 import { Callout } from "./parts";
 import { ProductionCard } from "./production";
 import {
@@ -1240,7 +1246,7 @@ function Outcome({
   reading: boolean;
 }) {
   const { id: o } = useOntology(),
-    { grantee } = useWorkspace(),
+    { grantee, role } = useWorkspace(),
     readsPart = useReadsPart();
   switch (view.kind) {
     case "waiting":
@@ -1284,7 +1290,9 @@ function Outcome({
         />
       );
     case "cannot_answer": {
-      const gap = view.result.kind;
+      const gap = view.result.kind,
+        // A property or link the ontology lacks: owners and admins add it.
+        missing = gapDraft(q.question || "", view.result);
       return (
         <Callout
           icon={FileQuestion}
@@ -1303,16 +1311,20 @@ function Outcome({
               )}{" "}
               {view.result.reason || "What it holds doesn’t say."}
               {view.result.gap && <> It lacks: {view.result.gap}</>}
-              {!grantee && (
+              {!grantee && canManage(role) && (
                 <span className="ak-draft">
-                  <ButtonLink
-                    size="sm"
-                    to={paths.generate(o, {
-                      goal: draftGoal(q.question || "", view.result),
-                    })}
-                  >
-                    Draft a new version with this
-                  </ButtonLink>
+                  {missing ? (
+                    <GapDraft draft={missing} />
+                  ) : (
+                    <ButtonLink
+                      size="sm"
+                      to={paths.generate(o, {
+                        goal: draftGoal(q.question || "", view.result),
+                      })}
+                    >
+                      Draft a new version with this
+                    </ButtonLink>
+                  )}
                 </span>
               )}
             </>
@@ -1490,6 +1502,79 @@ function Answer({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Add <property or link> to the ontology: Generate, its goal saying what the
+ * question lacked, reading what the current version reads: the connectors
+ * and API sources of the generation that drafted it (a revision's or a
+ * version without one leaves Generate's defaults) and its sets. Disabled
+ * until those are read; one that can't be read leaves Generate's default.
+ */
+function GapDraft({
+  draft,
+}: {
+  draft: NonNullable<ReturnType<typeof gapDraft>>;
+}) {
+  const { id: ws } = useWorkspace(),
+    { id: o, ontology } = useOntology(),
+    currentId = ontology.currentVersionId || "";
+  const current = useQuery({
+      ...ontologyQueries.version(ws, o, currentId),
+      enabled: !!currentId,
+    }),
+    v = current.data?.version,
+    drafted = useQuery({
+      ...ontologyQueries.generation(ws, o, v?.generationId || ""),
+      enabled: !!v?.generationId,
+    }),
+    g = drafted.data?.generation,
+    connectors = useQuery(connectorsQuery(ws)),
+    sets = useQuery(documentSetQueries.list(ws));
+  const settled =
+    !currentId ||
+    !!current.error ||
+    (!!v &&
+      (!v.generationId || !!g || !!drafted.error) &&
+      (!!connectors.data || !!connectors.error) &&
+      (!!sets.data || !!sets.error));
+  if (!settled)
+    return (
+      <Button size="sm" disabled>
+        {draft.label}
+      </Button>
+    );
+  const picks =
+    v && connectors.data && sets.data
+      ? generationPicks(
+          {
+            tables: g && !g.revision ? g.tables : [],
+            documentSetIds: v.documentSetIds,
+          },
+          connectors.data.connectors || [],
+          sets.data,
+        )
+      : undefined;
+  return (
+    <ButtonLink
+      size="sm"
+      icon={Sparkles}
+      to={paths.generate(o, {
+        goal: draft.goal,
+        ...(picks && {
+          documentSetIds: picks.documentSetIds,
+          ...(g &&
+            !g.revision && {
+              connectorIds: picks.connectorIds,
+              eventSources: picks.eventSources,
+            }),
+        }),
+      })}
+      onClick={() => trackEvent("gap_draft_opened", { kind: draft.kind })}
+    >
+      {draft.label}
+    </ButtonLink>
   );
 }
 

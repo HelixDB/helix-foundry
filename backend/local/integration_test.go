@@ -18,6 +18,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -209,4 +210,39 @@ func TestOnlyWorkspaceIsTheInstallsOne(t *testing.T) {
 	assert.Equal(t, "workspace-1", only(ctx))
 	require.NoError(t, dir.CreateWorkspace(ctx, directory.Workspace{ID: "workspace-2", Slug: "two", DisplayName: "Two", Region: "local"}))
 	assert.Empty(t, only(ctx), "two workspaces: name one")
+}
+
+// The local MCP declares the Tasks extension its Foundry tools answer with, and answers tasks/get.
+func TestLocalMCPDeclaresAndAnswersTasks(t *testing.T) {
+	token := strings.Repeat("t", MinSiteToken)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	auth, err := NewAuthenticator(token, &fakeDirectory{owner: &directory.User{ID: "owner"}}, fakeOntologies{}, logger)
+	require.NoError(t, err)
+	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, true, "http://localhost:3000", nil, logger)
+	call := func(method string, params map[string]any) map[string]any {
+		params["_meta"] = map[string]any{
+			mcp.MetaKeyProtocolVersion:    "2026-07-28",
+			mcp.MetaKeyClientInfo:         map[string]any{"name": "test", "version": "1"},
+			mcp.MetaKeyClientCapabilities: map[string]any{},
+		}
+		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+		require.NoError(t, err)
+		r := httptest.NewRequest("POST", "/mcp", strings.NewReader(string(body)))
+		r.Host = "localhost:8081"
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Accept", "application/json, text/event-stream")
+		r.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		r.Header.Set("Mcp-Method", method)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response), w.Body.String())
+		return response
+	}
+	discovered := call("server/discover", map[string]any{})["result"].(map[string]any)
+	assert.Contains(t, discovered["capabilities"].(map[string]any)["extensions"], integration.TasksExtension)
+	// An ID no tool made is Invalid params: the method is there.
+	unknown := call("tasks/get", map[string]any{"taskId": "nothing"})["error"].(map[string]any)
+	assert.EqualValues(t, -32602, unknown["code"])
 }

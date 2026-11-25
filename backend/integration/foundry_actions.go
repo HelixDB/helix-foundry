@@ -270,11 +270,23 @@ func (s *Service) AddFoundryActionTools(server *mcp.Server, identity *Identity) 
 		InputSchema: foundryOperationSchema(s, offered),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no},
 	}, s.PrepareFoundryOperation)
-	addFoundryTool(s, server, identity, &mcp.Tool{Name: toolExecuteFoundry,
-		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried.",
+	execute := &mcp.Tool{Name: toolExecuteFoundry,
+		Description: "Run the Foundry action " + toolPrepareFoundry + " prepared: the same operation, target and payload, with its confirmation. A confirmation runs once, and the action is never retried. " +
+			"A client that can ask the person asks them first, and runs it only on their yes.",
 		InputSchema: executeOperationSchema(s, offered),
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &no},
-	}, s.ExecuteFoundryOperation)
+	}
+	foundryToolSpec[ExecuteFoundryInput, FoundryOperationOutput](s, execute)
+	mcp.AddTool(server, execute, func(ctx context.Context, req *mcp.CallToolRequest, input ExecuteFoundryInput) (*mcp.CallToolResult, FoundryOperationOutput, error) {
+		_ = decodeExact(req.Params.Arguments, &input)
+		// A client that can ask its person does first: the call answers with the ask, runs nothing
+		// and is no call of the action's; the client calls again with their answer, which runs it.
+		change := fmt.Sprintf("Run the Helix Foundry action %s on %s?", input.Operation, input.Target)
+		if ask, _ := PersonConfirms(req, ConfirmMessage(change, input.Payload)); ask != nil {
+			return ask, FoundryOperationOutput{}, nil
+		}
+		return callFoundryTool(ctx, s, identity, execute.Name, req, input, s.ExecuteFoundryOperation)
+	})
 	if member {
 		return
 	}
@@ -371,6 +383,11 @@ func (s *Service) executeFoundry(
 	}
 	if input.ConfirmationID == "" || input.ConfirmationToken == "" {
 		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeInvalidArguments, message: "confirmation_id and confirmation_token are required"}
+	}
+	// A client that can ask its person asked them before this call ran (addExecuteTool); only
+	// their yes spends the confirmation.
+	if err := personAnswer(ctx); err != nil {
+		return FoundryOperationOutput{}, 0, false, err
 	}
 	err = s.Confirmations.Consume(ctx, ConfirmationBinding{
 		ID: input.ConfirmationID, Token: input.ConfirmationToken, Operation: foundryOperationPrefix + input.Operation,

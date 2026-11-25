@@ -11,7 +11,7 @@ import {
   uploadInData,
 } from "./support/mock";
 
-// A new workspace's onboarding offers the sample company. This build is the
+// A new workspace's onboarding links to the sample company. This build is the
 // dev stamp's, which has Acme Corp's database (next.config.ts), so the sample
 // opens its own page: it connects the database over TLS, uploads the
 // documents, shows the goal and the ontology made from its ready-made draft
@@ -42,8 +42,9 @@ async function openSample(page: Page) {
     page.getByRole("heading", { name: /Foundry Pro/ }),
   ).toContainText("Active", { timeout: 15_000 });
   await page.goto("/");
+  // The quiet link under Get started's two cards.
   await page
-    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .getByRole("link", { name: "Or look around a sample company first" })
     .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
@@ -95,6 +96,41 @@ test("walks a new workspace through the sample company, from its database to Ask
   await expect(
     explorer(page).getByText("Acme Corp", { exact: true }),
   ).toHaveCount(1);
+});
+
+test("holds a question asked while the sample loads, asks it the moment it is ready and opens its answer", async ({
+  page,
+}) => {
+  test.slow();
+  await openSample(page);
+  // Slow enough to ask while it loads.
+  await mock.configure({ loadStepMs: 1500 });
+  const question = "Which accounts have the most open support tickets?";
+  const ask = page.getByRole("form", { name: "Ask once loaded" });
+  await ask.getByRole("textbox", { name: "Question" }).fill(question);
+  await ask.getByRole("button", { name: "Ask once loaded" }).click();
+  const held = page.getByText(`“${question}”`);
+  await expect(held).toBeVisible();
+  // It waits in this browser: a reload keeps it.
+  await page.reload();
+  await expect(held).toBeVisible({ timeout: 30_000 });
+  // How long it usually takes.
+  await expect(page.getByText(/usually takes about 5 minutes/)).toBeVisible();
+
+  // Once loaded, it is the tour's question, and its answer opens in Ask.
+  await expect(page).toHaveURL(/\/ask\/[^?]+\?thread=q_/, {
+    timeout: 90_000,
+  });
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(question);
+  await page.goto("/ontology/sample");
+  const asked = page
+    .getByRole("list", { name: "Steps" })
+    .getByRole("article", { name: /^Question: / });
+  await expect(asked).toHaveCount(1, { timeout: 30_000 });
+  await expect(asked).toHaveAttribute("aria-label", `Question: ${question}`);
+  await expect(page.getByRole("form", { name: "Ask once loaded" })).toHaveCount(
+    0,
+  );
 });
 
 test("says it is sample data, and its link back to the tour shows every step done and makes nothing", async ({
@@ -317,7 +353,7 @@ test("keeps the sample's data out of an ontology of the user's own", async ({
 
   // Making one of the user's own offers neither, with what it would have
   // chosen left to the pickers' empty states.
-  await page.goto("/ontology/new");
+  await page.goto("/ontology/new?step=sources");
   const noConnectors = page.getByRole("heading", { name: "No connectors yet" }),
     noDocuments = page.getByRole("heading", { name: "No documents yet" }),
     steps = page.getByRole("list", { name: "Steps" }),
