@@ -120,11 +120,27 @@ type FoundryHealFill struct {
 	// every write of the collect names.
 	PausedUntil *time.Time
 	Failures    int
+	// Collect is how far a moved fill's collect got, saved page by page, so
+	// its next attempt resumes there; nil when none is saved.
+	Collect *FoundryFillCursor
 	// Link and Spellings are the suggestion's link (its finding's canonical)
 	// and its suggestions' spellings, whose reviews a fill takes: read from
 	// the finding by FoundryFillApplying alone, never stored here.
 	Link      string
 	Spellings []string
+}
+
+// FoundryFillCursor is how far a moved fill's collect listed the load's
+// reviewed documents, in document id order: past After, the last document
+// of the last page it owed, at the load's version VersionID; Owed and Left
+// are what it owed, and left past FoundryFillMaxDocuments, so far. Each page
+// saves it with that page's documents owed, so the load owes exactly Owed
+// documents while it holds. A collect resumes from it only while the load
+// still records VersionID, as a later move in place may route documents
+// another way: else it starts over.
+type FoundryFillCursor struct {
+	After, VersionID string
+	Owed, Left       int64
 }
 
 // FoundryFillCounts are a fill's documents: owed by its collect, left past
@@ -147,7 +163,8 @@ type FoundryFillDocument struct {
 	FillID     string
 	DocumentID string
 	Requests   int
-	// Outcome is written, nothing, native, or refused (Reason).
+	// Outcome is written, landed (an earlier send wrote it: counted as
+	// written), nothing, native, or refused (Reason).
 	Outcome, Reason           string
 	Facts, Held, ReviewsTaken int64
 	// What its calls spent, as its usage says.

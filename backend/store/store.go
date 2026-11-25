@@ -459,8 +459,9 @@ type Store interface {
 	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
 	ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (bool, error)
 	ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error
-	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
-	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
+	RestartFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, workspaceID string) (bool, error)
+	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, at model.FoundryFillCursor) (bool, error)
+	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string, restart bool) error
 	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error
 	ResumeFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, resend *model.FoundryGraphJob) (bool, error)
 	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error

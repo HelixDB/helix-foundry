@@ -99,7 +99,8 @@ WHERE ontology_id=? AND fingerprint=? AND status='open'`, userID, ontologyID, fi
 				return err
 			}
 		}
-		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?, paused_until=NULL
+		// A moved one stops too, its collect's cursor gone with it.
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET state='stopped', stop_reason=?, paused_until=NULL, `+clearFoundryFillCursor+`
 WHERE ontology_id=? AND fingerprint=? AND state='moved'`, model.FoundryFillDismissed, ontologyID, fingerprint)
 		return err
 	})
@@ -336,6 +337,14 @@ SET status='superseded', finding=JSON_REMOVE(finding, '$.signal.backing.examples
 WHERE ontology_id=? AND status='open' AND fingerprint IN (`+idPlaceholders(len(batch))+`)`,
 				append([]any{p.OntologyID}, toAnySlice(batch)...)...); err != nil {
 				return fmt.Errorf("supersede heal findings: %w", err)
+			}
+			// A fill's collect saved for a finding no longer open lists for
+			// spellings that may not be its next: it starts over if the
+			// finding opens again.
+			if _, err := q.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+`
+WHERE ontology_id=? AND state='moved' AND collect_after IS NOT NULL AND fingerprint IN (`+idPlaceholders(len(batch))+`)`,
+				append([]any{p.OntologyID}, toAnySlice(batch)...)...); err != nil {
+				return fmt.Errorf("clear superseded findings' collects: %w", err)
 			}
 		}
 		return execOrNotFound(ctx, q.db, `UPDATE foundry_heal_runs SET status='complete', pages=?, cuts=?, rows_measured=?, active_key=NULL,

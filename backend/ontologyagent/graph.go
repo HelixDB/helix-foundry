@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -193,8 +194,11 @@ type FoldEvent struct {
 // "document" event (contract 4.33.0): what came of filling it with links its
 // commit wasn't asked. Facts, Held and ReviewsTaken are what the document
 // states of them, the same however often it is sent, so a caller counts them
-// once per owed document. A document with no such event needed a call the
-// budget refused, or its run stopped before its fill: it stays owed.
+// once per owed document: a fill sent again after its transaction landed (a
+// retry whose first answer was lost) is "landed" (contract 4.35.0), writes
+// nothing, and carries the reviews that transaction took. A document with no
+// such event needed a call the budget refused, or its run stopped before its
+// fill: it stays owed.
 type FilledEvent struct {
 	DocID   string   `json:"doc_id"`
 	Links   []string `json:"links"`
@@ -210,6 +214,7 @@ type FilledEvent struct {
 // The kinds of FilledEvent's outcome, and its refusal reasons.
 const (
 	FillWritten     = "written"
+	FillLanded      = "landed"
 	FillNothing     = "nothing"
 	FillNative      = "native"
 	FillRefused     = "refused"
@@ -228,7 +233,7 @@ func DecodeFilledEvent(data []byte) (FilledEvent, error) {
 		return e, errors.New("a filled event names no document")
 	case e.Outcome.Kind == FillRefused && e.Outcome.Reason == "":
 		return e, errors.New("a refused fill gives no reason")
-	case e.Outcome.Kind != FillWritten && e.Outcome.Kind != FillNothing && e.Outcome.Kind != FillNative && e.Outcome.Kind != FillRefused:
+	case !slices.Contains([]string{FillWritten, FillLanded, FillNothing, FillNative, FillRefused}, e.Outcome.Kind):
 		return e, fmt.Errorf("a filled event has outcome %q", e.Outcome.Kind)
 	case e.Facts < 0 || e.Held < 0 || e.ReviewsTaken < 0:
 		return e, errors.New("a filled event counts less than nothing")

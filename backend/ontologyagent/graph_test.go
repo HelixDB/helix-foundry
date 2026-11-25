@@ -673,6 +673,15 @@ func TestDecodeFilledEvent(t *testing.T) {
 	if err != nil || e.DocID != "d1" || e.Outcome.Kind != FillWritten || e.Facts != 2 || e.Held != 1 || e.ReviewsTaken != 3 {
 		t.Fatalf("%+v %v", e, err)
 	}
+	// Sent again after its transaction landed (contract 4.35.0): what that
+	// transaction took, and nothing written.
+	landed := `{"event":"filled","doc_id":"d1","links":["mentors"],"outcome":{"kind":"landed"},"facts":2,"held":1,"reviews_taken":3}`
+	if err := contracttest.Validate(t, schema, []byte(landed)); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := DecodeFilledEvent([]byte(landed)); err != nil || e.Outcome.Kind != FillLanded || e.ReviewsTaken != 3 {
+		t.Fatalf("%+v %v", e, err)
+	}
 	refused := `{"event":"filled","doc_id":"d1","links":["mentors"],"outcome":{"kind":"refused","reason":"not_replayed"},"facts":0,"held":0,"reviews_taken":0}`
 	if err := contracttest.Validate(t, schema, []byte(refused)); err != nil {
 		t.Fatal(err)
