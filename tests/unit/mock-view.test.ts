@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { joinKey } from "../../mock/graph/extract";
 import { compile } from "../../mock/graph/rules";
 import {
   MAX_CHECKED_FACTS,
@@ -162,9 +163,11 @@ describe("a reader's view", () => {
     expect(view.partial).toEqual(
       expect.arrayContaining(["Customer", "Customer.plan", "referred_by"]),
     );
-    expect(view.holdsSource("stripe")).toBe(true);
-    expect(view.holdsSource("crm")).toBe(false);
-    expect(view.holdsSource("foundry_enrichment")).toBe(false);
+    expect(view.holdsWhole("stripe")).toBe(true);
+    expect(view.holdsWhole("crm")).toBe(false);
+    expect(view.holdsWhole("foundry_enrichment")).toBe(false);
+    expect(view.holdsRow("stripe", "customers", "c1")).toBe(true);
+    expect(view.holdsRow("crm", "crm", "c1")).toBe(false);
     expect(view.holdsDocument("held")).toBe(true);
     expect(view.holdsDocument("other")).toBe(false);
   });
@@ -355,7 +358,7 @@ description = "Worked with."
       mappings,
     );
     expect(withIt.whole).toBe(true);
-    expect(withIt.holdsSource("foundry_enrichment")).toBe(true);
+    expect(withIt.holdsWhole("foundry_enrichment")).toBe(true);
   });
 
   it("hides a link rules derive whose facts it holds only some of", () => {
@@ -581,25 +584,298 @@ describe("what a query can ask", () => {
       documentId,
       value,
     });
-    expect(settled(view, ["stripe"], [])).toEqual({ from: "stored" });
-    // A row it holds says it, whatever other rows do.
-    expect(settled(view, ["stripe", "crm"], [])).toEqual({ from: "stored" });
-    expect(settled(view, ["crm", "stripe"], [quote("held", "pro")])).toEqual({
+    const row = (source: string) => ({ source, mapping: source, rowKey: "c1" });
+    expect(settled(view, "pro", [row("stripe")], [])).toEqual({
       from: "stored",
     });
-    expect(settled(view, ["crm"], [quote("held", "pro")])).toEqual({
+    // A row it holds says it, whatever other rows do.
+    expect(settled(view, "pro", [row("stripe"), row("crm")], [])).toEqual({
+      from: "stored",
+    });
+    expect(
+      settled(view, "pro", [row("crm"), row("stripe")], [quote("held", "pro")]),
+    ).toEqual({ from: "stored" });
+    expect(settled(view, "x", [row("crm")], [quote("held", "pro")])).toEqual({
       from: "quoted",
       value: "pro",
     });
     expect(
-      settled(view, [], [quote("held", "pro"), quote("other", "free")]),
+      settled(view, "x", [], [quote("held", "pro"), quote("other", "free")]),
     ).toEqual({ from: "quoted", value: "pro" });
     expect(
-      settled(view, [], [quote("held", "pro"), quote("held", "free")]),
+      settled(view, "x", [], [quote("held", "pro"), quote("held", "free")]),
     ).toEqual({ from: "none" });
-    expect(settled(view, [], [quote("other", "pro")])).toEqual({
+    expect(settled(view, "x", [], [quote("other", "pro")])).toEqual({
       from: "none",
     });
-    expect(settled(view, [], [])).toEqual({ from: "none" });
+    expect(settled(view, "x", [], [])).toEqual({ from: "none" });
+  });
+});
+
+// A reader may hold some rows of a source (contract 4.32.0), told by one field
+// of their stored row key, as the engine's `HeldRows`: a Slack grantee holds
+// the rows of her channels.
+describe("rows held by their key", () => {
+  const ontology = `version = "v1"
+[types.Person]
+description = "Someone in Slack."
+props = { user_id = "string", real_name = "string" }
+key = ["user_id"]
+names = ["real_name"]
+[types.Channel]
+description = "A channel."
+props = { channel_id = "string", name = "string" }
+key = ["channel_id"]
+[types.Message]
+description = "A message."
+props = { message_id = "string", text = "string" }
+key = ["message_id"]
+[types.Reply]
+description = "A reply in a message's thread."
+props = { reply_id = "string" }
+key = ["reply_id"]
+[types.Day]
+description = "A channel's day."
+props = { day_id = "string" }
+key = ["day_id"]
+[links.posted_in]
+from = "Message"
+to = "Channel"
+description = "The message was posted in the channel."
+[links.member_of]
+from = "Person"
+to = "Channel"
+description = "The person is in the channel."
+`;
+  const mappings = `version = "m1"
+ontology = "v1"
+[mappings.users]
+source = "slack_users"
+row_key = ["user_id"]
+[mappings.users.bind.p]
+type = "Person"
+key = { user_id = "user_id" }
+props = { real_name = "real_name" }
+missing = "create"
+[mappings.channels]
+source = "slack_channels"
+row_key = ["channel_id"]
+[mappings.channels.bind.c]
+type = "Channel"
+key = { channel_id = "channel_id" }
+props = { name = "name" }
+missing = "create"
+[mappings.messages]
+source = "slack_messages"
+row_key = ["message_id"]
+links = [{ link = "posted_in", from = "m", to = "c" }]
+[mappings.messages.bind.m]
+type = "Message"
+key = { message_id = "message_id" }
+props = { text = "text" }
+missing = "create"
+[mappings.messages.bind.c]
+type = "Channel"
+key = { channel_id = "channel_id" }
+missing = "report"
+[mappings.replies]
+parent = "messages"
+records = "/replies"
+row_key = ["/ts"]
+[mappings.replies.bind.r]
+type = "Reply"
+key = { reply_id = "/ts" }
+missing = "create"
+[mappings.members]
+source = "slack_members"
+row_key = ["channel_id", "user_id"]
+links = [{ link = "member_of", from = "p", to = "c" }]
+[mappings.members.bind.p]
+type = "Person"
+key = { user_id = "user_id" }
+missing = "report"
+[mappings.members.bind.c]
+type = "Channel"
+key = { channel_id = "channel_id" }
+missing = "report"
+[mappings.days]
+source = "slack_days"
+[mappings.days.bind.d]
+type = "Day"
+key = { day_id = "channel_day_id" }
+missing = "create"
+`;
+  const hers: Visibility = {
+    sources: ["slack_users"],
+    rows: [
+      {
+        source: "slack_channels",
+        field: "channel_id",
+        values: [" C1 ", "a|b"],
+      },
+      { source: "slack_messages", field: "message_id", prefixes: ["C1:"] },
+      { source: "slack_members", field: "channel_id", values: ["C1"] },
+      // Its mapping names no row_key: the table's primary key, which only the
+      // catalog knows, so none of its rows.
+      { source: "slack_days", field: "channel_day_id", prefixes: ["C1:"] },
+    ],
+    documents: "all",
+    sets: [],
+    enrichment: false,
+    withheld: [],
+  };
+  const view = viewOf(hers, ontology, mappings);
+
+  it("holds the rows its items' key components name, and what they write is partial", () => {
+    expect(view.whole).toBe(false);
+    expect(view.types.get("Person")).toBe("full");
+    expect(view.types.get("Channel")).toBe("partial");
+    expect(view.types.get("Message")).toBe("partial");
+    expect(view.types.get("Reply")).toBe("partial");
+    expect(view.types.get("Day")).toBeUndefined();
+    expect(view.links.get("posted_in")).toBe("partial");
+    expect(view.links.get("member_of")).toBe("partial");
+    expect(nameUnsafe(view, "Message")).toBe(true);
+    expect(view.holdsWhole("slack_messages")).toBe(false);
+    for (const [source, mapping, rowKey, held] of [
+      ["slack_messages", "messages", "C1:1700000000.000100", true],
+      ["slack_messages", "messages", "C2:1700000000.000100", false],
+      // The prefix carries its separator: C10 is another channel.
+      ["slack_messages", "messages", "C10:1700000000.000100", false],
+      // A nested mapping's key is its root's part, a /, then its own.
+      [
+        "slack_messages",
+        "replies",
+        "C1:1700000000.000100/1700000001.000200",
+        true,
+      ],
+      [
+        "slack_messages",
+        "replies",
+        "C2:1700000000.000100/1700000001.000200",
+        false,
+      ],
+      ["slack_messages", "replies", "C1:1700000000.000100", false],
+      ["slack_channels", "channels", "C1", true],
+      ["slack_channels", "channels", "C2", false],
+      // Escaped as the key stores it: the item a|b, not a and b.
+      ["slack_channels", "channels", "a\\|b", true],
+      ["slack_channels", "channels", "a|b", false],
+      ["slack_channels", "channels", "C1\\", false],
+      ["slack_members", "members", "C1|U1", true],
+      ["slack_members", "members", "C2|U1", false],
+      ["slack_members", "members", "C1", false],
+      ["slack_days", "days", "C1:2026-11-01", false],
+      ["slack_users", "users", "U1", true],
+      ["slack_channels", "messages", "C1", false],
+      ["crm", "crm", "C1", false],
+    ] as const)
+      expect(
+        view.holdsRow(source, mapping, rowKey),
+        `${mapping} ${rowKey}`,
+      ).toBe(held);
+  });
+
+  it("reads the keys loads write, escaped as the engine joins them", () => {
+    expect(joinKey(["C1"])).toBe("C1");
+    expect(joinKey(["C1", "U1"])).toBe("C1|U1");
+    expect(joinKey(["a|b", "c/d", "e\\f"])).toBe("a\\|b|c\\/d|e\\\\f");
+    expect(view.holdsRow("slack_channels", "channels", joinKey(["a|b"]))).toBe(
+      true,
+    );
+    expect(
+      view.holdsRow("slack_members", "members", joinKey(["C1", "U|1"])),
+    ).toBe(true);
+    expect(
+      view.holdsRow("slack_members", "members", joinKey(["C1|U1", "x"])),
+    ).toBe(false);
+  });
+
+  it("holds nothing of a source with no items", () => {
+    const none = viewOf(
+      {
+        ...hers,
+        rows: [{ source: "slack_messages", field: "message_id", prefixes: [] }],
+      },
+      ontology,
+      mappings,
+    );
+    expect(none.types.get("Message")).toBeUndefined();
+    expect(none.holdsRow("slack_messages", "messages", "C1:1")).toBe(false);
+    const blank = viewOf(
+      {
+        ...hers,
+        rows: [
+          { source: "slack_channels", field: "channel_id", values: [" "] },
+        ],
+      },
+      ontology,
+      mappings,
+    );
+    expect(blank.types.get("Channel")).toBeUndefined();
+  });
+
+  it("refuses what the engine refuses", () => {
+    const rows = (r: Visibility["rows"]) => () =>
+      viewOf({ ...hers, rows: r }, ontology, mappings);
+    expect(
+      rows([{ source: "slack_users", field: "user_id", values: ["U1"] }]),
+    ).toThrow(/in sources too/);
+    expect(
+      rows([
+        { source: "slack_channels", field: "channel_id", values: ["C1"] },
+        { source: "slack_channels", field: "channel_id", values: ["C2"] },
+      ]),
+    ).toThrow(/named twice/);
+    expect(
+      rows([{ source: "foundry_enrichment", field: "x", values: ["C1"] }]),
+    ).toThrow(/enrichment/);
+    // What read_request.json refuses.
+    expect(
+      rows([{ source: "slack_messages", field: "message_id", prefixes: [""] }]),
+    ).toThrow(/visibility: .*fewer than 1 characters/);
+    expect(
+      rows([
+        {
+          source: "slack_messages",
+          field: "message_id",
+          values: ["C1"],
+          prefixes: ["C1:"],
+        } as never,
+      ]),
+    ).toThrow(/visibility: /);
+    expect(
+      rows([{ source: "slack_messages", values: ["C1"] } as never]),
+    ).toThrow(/visibility: .*field/);
+  });
+
+  it("settles a value from the rows it holds of a source held by its rows", () => {
+    const row = (rowKey: string, value?: string) => ({
+      source: "slack_channels",
+      mapping: "channels",
+      rowKey,
+      ...(value === undefined ? {} : { value }),
+    });
+    expect(settled(view, "general", [row("C1", "general")], [])).toEqual({
+      from: "stored",
+    });
+    // Another row, of a channel she doesn't hold, wrote the stored value.
+    expect(
+      settled(view, "exec", [row("C1", "general"), row("C2", "exec")], []),
+    ).toEqual({
+      from: "given",
+      value: "general",
+    });
+    expect(settled(view, "x", [row("C1", "a"), row("a\\|b", "b")], [])).toEqual(
+      {
+        from: "none",
+      },
+    );
+    // A row that kept no value gives none: it stands for the stored one,
+    // which another row may have written.
+    expect(settled(view, "exec", [row("C1")], [])).toEqual({ from: "none" });
+    expect(settled(view, "exec", [row("C2", "exec")], [])).toEqual({
+      from: "none",
+    });
   });
 });

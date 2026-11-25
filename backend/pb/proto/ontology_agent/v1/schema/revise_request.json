@@ -78,7 +78,7 @@
               "type": "object",
               "properties": {
                 "item_id": {
-                  "description": "An extraction route, rule, constraint or the People enrichment item; an existing\ntype, with new identifiers or props the enrichment item fills; or the new link its\nwork history states.",
+                  "description": "An extraction route, rule, constraint or the People enrichment item; an existing\ntype, with new identifiers or props the enrichment item fills; or a new link: the one\nits work history states, or one a route of the batch reads, its definition alone\n(`from`, `to`, `description`, `props`), as a self-healing finding's \"Add this link\"\nadds it.",
                   "type": "string"
                 },
                 "toml": {

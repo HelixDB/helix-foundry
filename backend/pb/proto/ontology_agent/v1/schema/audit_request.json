@@ -16,6 +16,13 @@
         "type": "string"
       }
     },
+    "documents_for": {
+      "description": "Relationships no link covers whose documents to list, each by its set and the spellings\nof its suggestions (a finding's): every document of the page with a review of one, in\n`documents_of`, in this order, however many back the finding. Foundry fills a link\nadded for a finding with them. A request that lists documents does only that: it groups\nand resolves nothing, so its findings are none and its page costs one read of its\nreviews.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DocumentsFor"
+      }
+    },
     "helix": {
       "description": "Where the graph is read: the backend's read-only proxy.",
       "$ref": "#/$defs/HelixTarget"
@@ -64,6 +71,32 @@
     "helix"
   ],
   "$defs": {
+    "Canonical": {
+      "description": "A suggested link's canonical form (P5 D11): lowercased, each run of characters other than\nletters and digits one `_`, none at either end. Never empty.",
+      "type": "string"
+    },
+    "DocumentsFor": {
+      "description": "A relationship no link covers whose documents an audit lists ([`AuditRequest::documents_for`]).",
+      "type": "object",
+      "properties": {
+        "set": {
+          "description": "The documents' set.",
+          "type": "string"
+        },
+        "spellings": {
+          "description": "The suggested links' canonical spellings: a review of any is the relationship's.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Canonical"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "set",
+        "spellings"
+      ]
+    },
     "HelixTarget": {
       "description": "Where the graph is written: the backend's proxy for one Helix database.",
       "type": "object",

@@ -45,9 +45,26 @@ kind only differs in what its adapter can report.
   was joined after the last read), so no grantee covers a set of an
   audienced connector whole: a load holding one is always read in part,
   document by document.
-- **Tables**: until rows can be filtered, a table of a kind that reports
-  audiences is read by full readers only. A grant of the table doesn't widen
-  that.
+- **Tables** are read by their rows (contract 4.32.0 `visibility.rows`):
+  the kind says which row-key field holds a table's item, exactly or as a
+  prefix (`Audienced.TableRows`). Slack: channels and channel_members by
+  `channel_id`, messages and channel_days by `<channel>:`; users is the
+  directory, whole for a matched non-guest person only. A table with no
+  rule, a mapping whose `row_key` lacks the field, unknown audiences, or
+  over 1,000 items (`access.MaxHeldItems`: the engine repeats every held
+  item, per mapping naming the field, in each partial entity's read, which
+  must fit Helix's 2 MiB request): full readers only. Nothing loads write changes.
+  A question or Founder graph read over such a table records every channel
+  the reader holds (up to the cap) and the directory when it read users,
+  since the engine doesn't say which rows an answer drew on: leaving any one
+  of those channels, or becoming a guest, hides that answer or thread.
+  Accepted, as for documents (a read draws on every one it could read); the
+  rows stored are at most about 1,000 per source a question or thread
+  (`foundry_question_source_items`, `foundry_agent_thread_source_items`). Narrowing it to the rows an answer
+  cited needs the engine to report them.
+  Rollout: every agent call checks the agent speaks the contract exactly,
+  so an older engine refuses all calls rather than seeing `rows`; the
+  hosted pin bumps the helixsvc and agent images (one pod) together.
 - **Freshness**: audiences are read from the source at the end of a
   successful sync, in full, whatever tables the connector syncs, at most once
   an hour (`syncer.AudienceEvery`, unless a read since failed), after the
@@ -57,9 +74,20 @@ kind only differs in what its adapter can report.
   more than a day ago with a failed read since, reads as items unknown: its
   documents go to full readers only, and the Access page says why.
 - **What was read stays with it**: a grantee's answer records the items its
-  documents were of, and a restricted member's Founder thread the items
-  shared with them as its turns ran; either is theirs only while every one
-  is still shared with them.
+  documents were of, and a restricted member's Founder thread the items of
+  what its calls read; either is theirs only while every one is still shared
+  with them. A thread's call records, once it returns: for a graph read, the
+  items of the documents and table files of its load that the reader reads
+  (`access.Grants.Part`, the part the API narrows the read to: a result names
+  only its quotes' documents, not those its rows, entities and counts came
+  from), as the load held them before the call and after (a sync may trim a
+  document out of it meanwhile); for an ask or get_question, its question's
+  items; for a list_questions, every listed question's. Its other tools
+  read no document's content and record nothing, so a thread that read
+  nothing of a channel is never hidden by losing it. Items are read on both
+  sides of each call (a helper's too): one the call drew on and the reader
+  lost during it fails the turn for good, before the result is delivered
+  (a helper's turn ends there, as the worker's does).
 
 So effective visibility of a connector's content for a grantee is:
 `granted (connector or set) ∧ visible(item)`, always partial.
@@ -89,7 +117,8 @@ So effective visibility of a connector's content for a grantee is:
   many people it narrows and which of them it has no account for or knows
   as guests, by user id. The source's directory never leaves the API.
 - `GetMyFoundryAccess` tells a grantee the items shared with it
-  (`source_items`), which Founder's worker records on the thread.
+  (`source_items`), which Founder's worker reads around each call; it
+  records on the thread only those of what the call read (`agent.drew`).
 
 ## The site
 
@@ -106,7 +135,9 @@ So effective visibility of a connector's content for a grantee is:
 ## Later layers
 
 1. Drive, GitHub, Linear, Granola, Calendar, Cal.com audiences.
-2. Row filtering (needs the engine's visibility contract to filter rows by
-   item, and possibly what loads write: approval first).
+2. Row filtering for other kinds: GitHub issues and pull requests (prefix
+   `<repoID>#`) and Google (exact) by their keys as they are; GitHub
+   comments and reviews and Linear need composite keys, a new version and a
+   reload.
 3. Narrowing every non-full reader, once the Host-only paths are closed.
 4. Source-centric policies replacing per-principal grants.

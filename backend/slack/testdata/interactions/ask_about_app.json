@@ -1,0 +1,27 @@
+{
+  "type": "message_action",
+  "action_ts": "1795000100.123456",
+  "team": {
+    "id": "T0AAA1111",
+    "domain": "acme"
+  },
+  "user": {
+    "id": "U0ADA0001",
+    "team_id": "T0AAA1111"
+  },
+  "channel": {
+    "id": "C0GEN0001",
+    "name": "general"
+  },
+  "is_enterprise_install": false,
+  "callback_id": "foundry.ask_about",
+  "trigger_id": "123.456.abc",
+  "message_ts": "1795000050.000100",
+  "message": {
+    "type": "message",
+    "subtype": "bot_message",
+    "bot_id": "B0ALERTS1",
+    "text": "Deploy failed",
+    "ts": "1795000050.000100"
+  }
+}

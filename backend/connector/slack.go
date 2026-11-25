@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -544,6 +545,24 @@ func slackAudiences(ctx context.Context, c *slackClient) (Audiences, error) {
 	}
 	return a, nil
 }
+
+// slackTableRows are how each Slack table tells its rows' channel, by the
+// row-key fields Discover keys them by (slackObjects): a channel's own row
+// and its members' (keyed channel_id, user_id) by channel_id, its messages'
+// and days' by their keys' "<channel>:" (channel IDs hold no colon). users is
+// the workspace's directory, which every person Slack shares its public
+// channels with may read, and no guest, unmatched person or agent's key.
+var slackTableRows = map[string]access.RowRule{
+	"users":           access.DirectoryRows(),
+	"channels":        access.ItemRows("channel_id"),
+	"channel_members": access.ItemRows("channel_id"),
+	"messages":        access.ItemPrefixRows("message_id", ":"),
+	"channel_days":    access.ItemPrefixRows("channel_day_id", ":"),
+}
+
+// TableRows is how a Slack table tells its rows' channel (slackTableRows);
+// none for a table Slack doesn't sync.
+func (k *slackKind) TableRows(table string) access.RowRule { return slackTableRows[table] }
 
 // ItemOfDocument is a conversations document's channel: its external id is
 // "<channel>:<day>".

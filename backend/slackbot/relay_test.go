@@ -72,6 +72,9 @@ func (w *world) deliver(install *model.SlackInstall, e any, ttl time.Duration) s
 		payload, err := slack.InteractionPayload(e)
 		require.NoError(w.t, err)
 		d.Kind, d.DedupeKey, d.Payload = model.SlackIntakeInteraction, slack.InteractionKey(e), payload
+		if _, ok := e.(slack.AskAbout); ok {
+			d.Kind = model.SlackIntakeShortcut
+		}
 	case slack.Event:
 		payload, err := slack.EventPayload(e)
 		require.NoError(w.t, err)
@@ -301,18 +304,19 @@ func TestRelayNoticeOutcomes(t *testing.T) {
 	w.slack.queue("chat.postEphemeral", 200, "", `{"ok":false,"error":"internal_error"}`)
 	assert.Equal(t, "error", notice(of(w.deliver(install, slack.Unlink{Clicked: w.clicked(ada, relayGone, "", ts(4))}, time.Hour))))
 
-	// Every click is told by who clicked where, one a second in a channel:
-	// each waits its turn.
+	// Every click, and the shortcut, is told by who clicked where, one a
+	// second in a channel: each waits its turn.
 	for _, in := range []slack.Interaction{
 		slack.Dismiss{Clicked: w.clicked(ada, general, "", ts(5)), ActionID: id.New()},
 		slack.Refresh{Clicked: w.clicked(ada, general, "", ts(5)), ActionID: id.New()},
 		slack.Review{Clicked: w.clicked(ada, general, "", ts(5)), ActionID: id.New(), PayloadHash: strings.Repeat("b", 64)},
 		slack.Run{Clicked: w.clicked(ada, general, "", ts(5)), ActionID: id.New(), PayloadHash: strings.Repeat("c", 64)},
 		slack.Stop{Clicked: w.clicked(ada, general, "", ts(5)), TurnID: id.New()},
+		slack.AskAbout{Clicked: w.clicked(ada, general, "", ts(5)), AuthorID: grace, Text: "renewals?"},
 	} {
 		assert.Equal(t, "told", notice(of(w.deliver(install, in, time.Hour))), "%T", in)
 	}
-	assert.Len(t, w.postsTo(general, "offline: your click"), 5)
+	assert.Len(t, w.postsTo(general, "offline: your click"), 6)
 
 	// Past the sweep's budget a channel's pace drops the notice; a sweep
 	// stopped while it waits ends it.

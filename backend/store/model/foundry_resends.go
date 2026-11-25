@@ -38,6 +38,40 @@ const FoundryResendDecisions FoundryResendReason = "decisions"
 // next load applies it.
 const FoundryResendName FoundryResendReason = "name"
 
+// FoundryResendMove is a move of the load in place to the version a
+// suggestion's "Add this link" made current (foundry_heal_fills, contract
+// 4.33.0's fold): it names no document (FoundryLoadResend.DocumentID is
+// empty), and a resend job sends it first, as one Extract of no documents
+// that spends nothing. Only the job's move ends it: a job that fails leaves
+// it owed (failFoundryResends), and the move sent again finds the load moved.
+const FoundryResendMove FoundryResendReason = "move"
+
+// FoundryResendLink is a document behind a self-healing suggestion's
+// reviews that the load owes a fill of the links it gained by a move in
+// place (foundry_heal_fills, contract 4.33.0): the heal worker owes it, and a
+// resend job sends it, with its saved work and the links to fill, under the
+// fill's budget. It counts as owed only while its load's fill applies and
+// isn't paused (store.foundryResendLive), so a paused fill queues no job; a
+// failed job leaves it owed and backs the fill off; a fill that stops ends
+// it.
+const FoundryResendLink FoundryResendReason = "link"
+
+// FoundryResendKnown are the reasons this binary reads. A row of another
+// reason, as a later binary owes, is never listed, sent, ended, failed or
+// counted owed here: it stays as it is, for the binary that knows it, so
+// rolling back leaves it untouched.
+var FoundryResendKnown = []FoundryResendReason{FoundryResendApproval, FoundryResendDecisions, FoundryResendName, FoundryResendMove,
+	FoundryResendLink}
+
+// FoundryResendFailEnds are the known reasons a failed resend job ends
+// (failFoundryResends): every one but a move, which waits for the job that
+// moves the load.
+var FoundryResendFailEnds = []FoundryResendReason{FoundryResendApproval, FoundryResendDecisions, FoundryResendName}
+
+// FoundryResendDocuments are the known reasons that owe a document: a resend
+// job sends each with its document. FoundryResendDecisions names none.
+var FoundryResendDocuments = []FoundryResendReason{FoundryResendApproval, FoundryResendName}
+
 // FoundryExtractKindDecisionsMax is the most decisions of one kind (resolve,
 // prop, release, withdraw, alias) one Extract takes, and
 // FoundryExtractAllDecisionsMax the most of all kinds (the engine's Decisions,

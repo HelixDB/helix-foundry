@@ -1280,6 +1280,10 @@ export type SetCurrentOntologyVersionRequest = {
   versionId: string;
   // The version the caller saw as current; empty for none.
   expectedCurrentVersionId?: string;
+  // A self-healing finding's fingerprint, from its card's Add this link:
+  // the current load then moves in place to the version, when the version
+  // only adds what none of its documents was asked (contract 4.33.0).
+  fillFinding?: string;
 };
 
 /** v1OntologyGenerationStatus */
@@ -4914,6 +4918,51 @@ export type FoundryHealFinding = {
   findingJson: string;
   dismissedByUserId?: string;
   supportAtDismissal?: string;
+  // Where its Add this link stands in the current load; unset for a finding
+  // that names no relationship to add.
+  state?: FoundryHealFindingState;
+};
+/** v1FoundryHealVersion: a version, by id and number (int64 as a string). */
+export type FoundryHealVersion = { versionId?: string; version?: string };
+/** v1FoundryFoldWhy: what needs a new load, as the engine or Foundry says it. */
+export type FoundryFoldWhy = { kind?: string; item?: string };
+/**
+ * v1FoundryHealFill: the fill of the documents behind a finding's reviews
+ * with the link the load gained (int64s as strings, dollars as numbers).
+ */
+export type FoundryHealFill = FoundryHealVersion & {
+  linksAdded?: string[];
+  docsOwed?: string;
+  docsDone?: string;
+  docsLeft?: string;
+  reviewsResolved?: string;
+  factsAdded?: string;
+  spentUsd?: number;
+  capUsd?: number;
+  // When a paused fill resumes.
+  pausedUntil?: string;
+  // stopped's reason: cap_reached, model_unavailable, dismissed or
+  // load_replaced.
+  stopReason?: string;
+  // Of docsDone, those refused, which kept their reviews.
+  docsRefused?: string;
+};
+/**
+ * v1FoundryHealFindingState: one of open (nothing done), covered (a version
+ * adds the link and isn't current), moving (the current load moves to it),
+ * moved (it did, gaining linksAdded), needsLoad (it can't, for why), and
+ * the fill after a move: applying, fixed and stopped.
+ */
+export type FoundryHealFindingState = {
+  open?: Record<string, never>;
+  covered?: FoundryHealVersion;
+  moving?: FoundryHealVersion;
+  // fillPending: self-healing fills the reviewed documents next.
+  moved?: FoundryHealVersion & { linksAdded?: string[]; fillPending?: boolean };
+  needsLoad?: FoundryHealVersion & { why?: FoundryFoldWhy[] };
+  applying?: FoundryHealFill;
+  fixed?: FoundryHealFill;
+  stopped?: FoundryHealFill;
 };
 /** v1FoundryHealRun: one audit of a load. */
 export type FoundryHealRun = {
@@ -5848,7 +5897,11 @@ export type GetMyFoundryAccessResponse = {
   ontologyIds?: string[];
   partialOntologyIds?: string[];
   workflows?: boolean;
-  /** A grantee's: the channels its sources share with it now, sorted. */
+  /**
+   * A grantee's: the channels its sources share with it now, sorted, and a
+   * source's directory of people (Slack's users) as the item `*directory`
+   * while it has a non-guest account for them.
+   */
   sourceItems?: FoundrySourceItem[];
 };
 
@@ -5861,9 +5914,10 @@ export type FoundrySourceAudienceProblem = { message?: string; at?: string };
 /**
  * v1FoundrySourceAudience: who one connection's source shares its items
  * with (a Slack connection's channels), as its last sync read it. A grantee
- * reads only the items shared with their verified email, and none of its
- * tables. `stale`: never read, or last read more than 7 days ago (a day, once
- * a read since failed), so its documents go to full readers only. `problem`:
+ * reads only the items shared with their verified email: their documents,
+ * and the rows of its tables that are of them. `stale`: never read, or last
+ * read more than 7 days ago (a day, once a read since failed), so its
+ * documents and tables go to full readers only. `problem`:
  * why the latest read failed, while none has worked since. `everyoneItems`
  * are shared with everyone the source has an account for but guests (public
  * channels), `membersItems` only with the people they list (private

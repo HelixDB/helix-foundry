@@ -340,9 +340,12 @@ export function draftFromTables(
             };
       rowLinks.push({ link, from: p.alias, to: alias });
     }
+    // The row key named even where the table's primary key would do: a
+    // reader of some rows (contract 4.32.0) is told them by the fields a
+    // mapping's row_key names, and holds none of a mapping naming none.
     const mapping = {
       source: p.source,
-      ...(keyed ? {} : { row_key: [columns[0]?.name || "id"] }),
+      row_key: keyed ? p.key : [columns[0]?.name || "id"],
       ...(rowLinks.length ? { links: rowLinks } : {}),
       bind,
     };

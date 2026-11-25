@@ -626,10 +626,21 @@ func TestRelayedInstallIntake(t *testing.T) {
 	assert.Equal(t, model.SlackIntakeInteraction, clicked.Kind)
 	assert.Equal(t, model.RelaySeen{UserIDs: []string{clicked.SlackUserID}}, r.seenBy[clicked.ID])
 
+	// So is the message shortcut, which may name the message's channel (its
+	// install asks Slack whether it is shared), its author and the users
+	// it mentions.
+	assert.EqualValues(t, http.StatusOK, receive(foundryv1.SlackRoute_SLACK_ROUTE_INTERACTIVITY, clickBody(t, "ask_about.json")))
+	require.Len(t, r.deliveries, 4)
+	asked := r.deliveries[3]
+	assert.Equal(t, model.SlackIntakeShortcut, asked.Kind)
+	assert.Equal(t, model.SlackConversation(install.ID, "C0GEN0001", "1795000000.000100", slackAda), asked.Conversation)
+	assert.Equal(t, model.RelaySeen{ChannelID: "C0GEN0001", UserIDs: []string{slackAda, "U0ALAN001", "U0GRACE01"}}, r.seenBy[asked.ID])
+	assert.Len(t, r.intake, 1)
+
 	// With the relay off nothing is kept for it.
 	f.cfg.Foundry.Slack.Relay.Enabled = false
 	assert.EqualValues(t, http.StatusOK, receive(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, fixture(t, "events/mention_in_thread.json")))
-	assert.Len(t, r.deliveries, 3)
+	assert.Len(t, r.deliveries, 4)
 	assert.Len(t, r.intake, 1)
 }
 

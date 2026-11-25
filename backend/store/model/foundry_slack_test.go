@@ -50,7 +50,7 @@ func ExampleParseFoundryAgentSurface() {
 
 // Every enum reads back what it writes and refuses anything else.
 func TestSlackEnumsParse(t *testing.T) {
-	for _, k := range []SlackIntakeKind{SlackIntakeEvent, SlackIntakeInteraction} {
+	for _, k := range []SlackIntakeKind{SlackIntakeEvent, SlackIntakeInteraction, SlackIntakeShortcut} {
 		if got, err := ParseSlackIntakeKind(string(k)); err != nil || got != k {
 			t.Fatalf("kind %q: %q, %v", k, got, err)
 		}

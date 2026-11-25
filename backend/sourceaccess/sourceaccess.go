@@ -135,32 +135,63 @@ func (r *Reads) kinds(ctx context.Context, workspaceID string) (map[string]conne
 	if err != nil {
 		return nil, fmt.Errorf("read connectors: %w", err)
 	}
-	kinds = map[string]connector.Audienced{}
-	for _, c := range connectors {
-		if kind, ok := connector.AudiencedKind(c.Kind); ok {
-			kinds[c.ID] = kind
-		}
-	}
+	kinds = Audienced(connectors)
 	r.mu.Lock()
 	r.audienced[workspaceID] = kinds
 	r.mu.Unlock()
 	return kinds, nil
 }
 
-// newSharing is reach, by audienced connector of kinds, each told its
-// documents' items by its kind.
-func newSharing(kinds map[string]connector.Audienced, reach map[string]access.SourceReach) access.Sharing {
-	return access.NewSharing(reach, func(connectorID, stream, externalID string) (string, bool) {
-		kind, ok := kinds[connectorID]
-		if !ok {
-			return "", false
+// Audienced are those of connectors whose kinds report their sources'
+// permissions (connector.AudiencedKind), by id.
+//
+//	sourceaccess.Audienced([]*model.Connector{{ID: "c1", Kind: "slack"}, {ID: "c2", Kind: "stripe"}}) // c1 alone
+func Audienced(connectors []*model.Connector) map[string]connector.Audienced {
+	kinds := map[string]connector.Audienced{}
+	for _, c := range connectors {
+		if kind, ok := connector.AudiencedKind(c.Kind); ok {
+			kinds[c.ID] = kind
 		}
-		return kind.ItemOfDocument(stream, externalID)
-	})
+	}
+	return kinds
+}
+
+// Told is targets as a grantee reads them who the API told visible are the
+// items the audienced connectors of kinds share with it now
+// (GetMyFoundryAccess's source_items, access.Grants.VisibleItems): what it
+// reads of a load's documents and rows (access.Grants.Part.Items) is what the
+// grants Of built that told it read. Founder's worker reads what a grantee's
+// call read with it. The API tells a source's directory (access.RowsDirectory)
+// as its item access.DirectoryItem, so Told reads it whole as the API did, and
+// it is one of the items of a part that read it.
+//
+//	sourceaccess.Told(kinds, targets, []access.ItemRef{{ConnectorID: "c1", Item: "C1"}}) // reads c1's #general (C1) alone
+func Told(kinds map[string]connector.Audienced, targets []access.Target, visible []access.ItemRef) access.Grants {
+	reach := make(map[string]access.SourceReach, len(kinds))
+	for id := range kinds {
+		var keys []string
+		for _, item := range visible {
+			if item.ConnectorID == id {
+				keys = append(keys, item.Item)
+			}
+		}
+		reach[id] = access.SharedReach(access.Shared{Items: keys})
+	}
+	return access.NewGrants(targets).WithSharing(newSharing(kinds, reach))
+}
+
+// newSharing is reach, by audienced connector of kinds, each told its
+// documents' and rows' items by its kind.
+func newSharing(kinds map[string]connector.Audienced, reach map[string]access.SourceReach) access.Sharing {
+	told := make(map[string]access.SourceKind, len(kinds))
+	for id, kind := range kinds {
+		told[id] = kind
+	}
+	return access.NewSharing(reach, told)
 }
 
 // unknown is sharing in which every audienced connector of workspaceID
-// reads as items unknown: its documents go to full readers only.
+// reads as items unknown: its documents and tables go to full readers only.
 func (r *Reads) unknown(ctx context.Context, workspaceID string) (access.Sharing, error) {
 	kinds, err := r.kinds(ctx, workspaceID)
 	if err != nil {
@@ -203,7 +234,7 @@ func (r *Reads) sharingFor(ctx context.Context, workspaceID string, reader *conn
 		}
 		for _, s := range stored {
 			if _, ok := reach[s.ConnectorID]; ok {
-				reach[s.ConnectorID] = access.ReachOf(s.ReadAt, s.ProblemAt, s.Visible, r.now)
+				reach[s.ConnectorID] = access.ReachOf(s.ReadAt, s.ProblemAt, access.Shared{Items: s.Visible, Member: s.Member}, r.now)
 			}
 		}
 	}

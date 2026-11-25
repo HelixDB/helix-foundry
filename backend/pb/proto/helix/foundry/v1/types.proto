@@ -2654,6 +2654,107 @@ message FoundryHealFinding {
   // Who dismissed it, and its support then; set while dismissed.
   optional string dismissed_by_user_id = 9;
   optional int64 support_at_dismissal = 10;
+  // Where its card's "Add this link" stands in the current load; unset for
+  // a finding that names no relationship to add.
+  FoundryHealFindingState state = 11;
+}
+
+// FoundryHealFindingState is where a finding's "Add this link" stands in
+// the ontology's current load, derived from the finding and the load's
+// move for it; nothing stores it.
+message FoundryHealFindingState {
+  oneof state {
+    // Nothing done yet: Add this link.
+    FoundryHealOpen open = 1;
+    // A version that adds the link exists, newer than the current one, and
+    // isn't current yet: make it current and move the load to it.
+    FoundryHealVersion covered = 2;
+    // The current load is moving to the version (a resend job owes it).
+    FoundryHealVersion moving = 3;
+    // The current load moved to the version: documents read from now on
+    // state the link. Those loaded before keep their reviews.
+    FoundryHealMoved moved = 4;
+    // The load can't move: a new load of the version is needed, for why.
+    FoundryHealNeedsLoad needs_load = 5;
+    // The load moved, and the documents behind the finding's reviews are
+    // being filled with the link it gained, each as a later transaction of
+    // that document alone (contract 4.33.0).
+    FoundryHealFill applying = 6;
+    // The fill is done and took reviews: reviews_resolved reviews went,
+    // facts_added facts were added, in the current load. A fill that took
+    // none reads as needs_load (why not_filled).
+    FoundryHealFill fixed = 7;
+    // The fill stopped before its documents were done, for stop_reason.
+    FoundryHealFill stopped = 8;
+  }
+}
+
+// FoundryHealFill is a fill of the documents behind a finding's reviews
+// with the link the load gained by its move in place.
+message FoundryHealFill {
+  string version_id = 1;
+  int64 version = 2;
+  // The links the load gained, which the documents are asked.
+  repeated string links_added = 3;
+  // The documents owed a fill, those of them done (written, nothing to
+  // write, already stating the link, or refused), and those past the most
+  // one fill takes, which a load in full asks.
+  int64 docs_owed = 4;
+  int64 docs_done = 5;
+  int64 docs_left = 6;
+  // What the fill did: reviews of the relationship that went, and facts of
+  // the link added.
+  int64 reviews_resolved = 7;
+  int64 facts_added = 8;
+  // What it spent of what it may spend, in US dollars.
+  double spent_usd = 9;
+  double cap_usd = 10;
+  // When a paused fill resumes: the ontology's fills spent the day's cap,
+  // the workspace its month's, or a job failed and the fill backs off.
+  google.protobuf.Timestamp paused_until = 11;
+  // stopped's reason: cap_reached, model_unavailable, dismissed or
+  // load_replaced.
+  string stop_reason = 12;
+  // Of docs_done, those refused (no saved work, names that differ, too
+  // large, gone or failed), which kept their reviews.
+  int64 docs_refused = 13;
+}
+
+message FoundryHealOpen {}
+
+// FoundryHealVersion names a version, by id and number.
+message FoundryHealVersion {
+  string version_id = 1;
+  int64 version = 2;
+}
+
+message FoundryHealMoved {
+  string version_id = 1;
+  int64 version = 2;
+  // The links the load gained.
+  repeated string links_added = 3;
+  // Whether self-healing fills the documents behind the finding's reviews
+  // next: true for a move pressed for the finding, false where the load's
+  // own version states the link (a rebuild of a moved load).
+  bool fill_pending = 4;
+}
+
+message FoundryHealNeedsLoad {
+  string version_id = 1;
+  int64 version = 2;
+  // What needs a new load: the engine's kind and item (contract 4.33.0's
+  // fold why, such as type_added and types.Deal), or Foundry's own:
+  // document_sets, sources (tables or table_files), not_a_draft,
+  // marker_elsewhere with the version the load holds, move_failed,
+  // load_moved, collect_failed (the documents behind the finding couldn't
+  // be listed), or not_filled (a fill took no review; item the documents
+  // refused).
+  repeated FoundryFoldWhy why = 3;
+}
+
+message FoundryFoldWhy {
+  string kind = 1;
+  string item = 2;
 }
 
 // FoundryHealRun is one audit of an ontology's load.

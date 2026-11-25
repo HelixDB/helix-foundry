@@ -7878,6 +7878,10 @@
         "expectedCurrentVersionId": {
           "type": "string",
           "description": "The version the caller saw as current; empty for none. A mismatch is FailedPrecondition."
+        },
+        "fillFinding": {
+          "type": "string",
+          "description": "A self-healing finding's fingerprint, from its card's \"Add this link\":\nthe ontology's current load then moves in place to the version, when\nthe version only adds what none of its documents was asked (a link, a\nroute reading it, descriptions no route reads), with no new load and no\nmodel call. The finding's state says how the move goes\n(FoundryHealFinding.state). Empty, the call is as before: a load is\npinned to the version it was created with. A version already current is\naccepted again, owing the move. NOT_FOUND for a fingerprint the ontology\nhas no finding of."
         }
       }
     },
@@ -11567,6 +11571,17 @@
       "default": "FOUNDRY_FILE_READ_STATE_UNSPECIFIED",
       "description": "FoundryFileReadState is what reading a document has come to.\n\n - FOUNDRY_FILE_READ_STATE_READY: Ontologies can read it: text, or a file whose read succeeded (a PDF's\ntext is then on :content).\n - FOUNDRY_FILE_READ_STATE_READING: Being read, or waiting to be (retrying says when after a failure). A\ngeneration started now leaves it out; a load waits for a PDF, and reads\nit once its read ends.\n - FOUNDRY_FILE_READ_STATE_FAILED: It can't be read: error says why, and a load records the PDF failed\nwith the same code. Upload a fixed file, or fix a connection's at its\nsource for its next sync to read again."
     },
+    "v1FoundryFoldWhy": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        }
+      }
+    },
     "v1FoundryGraphJob": {
       "type": "object",
       "properties": {
@@ -11635,6 +11650,71 @@
         }
       }
     },
+    "v1FoundryHealFill": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        },
+        "linksAdded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The links the load gained, which the documents are asked."
+        },
+        "docsOwed": {
+          "type": "string",
+          "format": "int64",
+          "description": "The documents owed a fill, those of them done (written, nothing to\nwrite, already stating the link, or refused), and those past the most\none fill takes, which a load in full asks."
+        },
+        "docsDone": {
+          "type": "string",
+          "format": "int64"
+        },
+        "docsLeft": {
+          "type": "string",
+          "format": "int64"
+        },
+        "reviewsResolved": {
+          "type": "string",
+          "format": "int64",
+          "description": "What the fill did: reviews of the relationship that went, and facts of\nthe link added."
+        },
+        "factsAdded": {
+          "type": "string",
+          "format": "int64"
+        },
+        "spentUsd": {
+          "type": "number",
+          "format": "double",
+          "description": "What it spent of what it may spend, in US dollars."
+        },
+        "capUsd": {
+          "type": "number",
+          "format": "double"
+        },
+        "pausedUntil": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a paused fill resumes: the ontology's fills spent the day's cap,\nthe workspace its month's, or a job failed and the fill backs off."
+        },
+        "stopReason": {
+          "type": "string",
+          "description": "stopped's reason: cap_reached, model_unavailable, dismissed or\nload_replaced."
+        },
+        "docsRefused": {
+          "type": "string",
+          "format": "int64",
+          "description": "Of docs_done, those refused (no saved work, names that differ, too\nlarge, gone or failed), which kept their reviews."
+        }
+      },
+      "description": "FoundryHealFill is a fill of the documents behind a finding's reviews\nwith the link the load gained by its move in place."
+    },
     "v1FoundryHealFinding": {
       "type": "object",
       "properties": {
@@ -11677,6 +11757,10 @@
         "supportAtDismissal": {
           "type": "string",
           "format": "int64"
+        },
+        "state": {
+          "$ref": "#/definitions/v1FoundryHealFindingState",
+          "description": "Where its card's \"Add this link\" stands in the current load; unset for\na finding that names no relationship to add."
         }
       },
       "description": "FoundryHealFinding is one finding, named by its fingerprint, which the\nengine keeps the same across versions, loads and pages."
@@ -11688,6 +11772,90 @@
           "$ref": "#/definitions/v1FoundryHealFinding"
         }
       }
+    },
+    "v1FoundryHealFindingState": {
+      "type": "object",
+      "properties": {
+        "open": {
+          "$ref": "#/definitions/v1FoundryHealOpen",
+          "description": "Nothing done yet: Add this link."
+        },
+        "covered": {
+          "$ref": "#/definitions/v1FoundryHealVersion",
+          "description": "A version that adds the link exists, newer than the current one, and\nisn't current yet: make it current and move the load to it."
+        },
+        "moving": {
+          "$ref": "#/definitions/v1FoundryHealVersion",
+          "description": "The current load is moving to the version (a resend job owes it)."
+        },
+        "moved": {
+          "$ref": "#/definitions/v1FoundryHealMoved",
+          "description": "The current load moved to the version: documents read from now on\nstate the link. Those loaded before keep their reviews."
+        },
+        "needsLoad": {
+          "$ref": "#/definitions/v1FoundryHealNeedsLoad",
+          "description": "The load can't move: a new load of the version is needed, for why."
+        },
+        "applying": {
+          "$ref": "#/definitions/v1FoundryHealFill",
+          "description": "The load moved, and the documents behind the finding's reviews are\nbeing filled with the link it gained, each as a later transaction of\nthat document alone (contract 4.33.0)."
+        },
+        "fixed": {
+          "$ref": "#/definitions/v1FoundryHealFill",
+          "description": "The fill is done and took reviews: reviews_resolved reviews went,\nfacts_added facts were added, in the current load. A fill that took\nnone reads as needs_load (why not_filled)."
+        },
+        "stopped": {
+          "$ref": "#/definitions/v1FoundryHealFill",
+          "description": "The fill stopped before its documents were done, for stop_reason."
+        }
+      },
+      "description": "FoundryHealFindingState is where a finding's \"Add this link\" stands in\nthe ontology's current load, derived from the finding and the load's\nmove for it; nothing stores it."
+    },
+    "v1FoundryHealMoved": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        },
+        "linksAdded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The links the load gained."
+        },
+        "fillPending": {
+          "type": "boolean",
+          "description": "Whether self-healing fills the documents behind the finding's reviews\nnext: true for a move pressed for the finding, false where the load's\nown version states the link (a rebuild of a moved load)."
+        }
+      }
+    },
+    "v1FoundryHealNeedsLoad": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryFoldWhy"
+          },
+          "description": "What needs a new load: the engine's kind and item (contract 4.33.0's\nfold why, such as type_added and types.Deal), or Foundry's own:\ndocument_sets, sources (tables or table_files), not_a_draft,\nmarker_elsewhere with the version the load holds, move_failed,\nload_moved, collect_failed (the documents behind the finding couldn't\nbe listed), or not_filled (a fill took no review; item the documents\nrefused)."
+        }
+      }
+    },
+    "v1FoundryHealOpen": {
+      "type": "object"
     },
     "v1FoundryHealRun": {
       "type": "object",
@@ -11725,6 +11893,19 @@
         }
       },
       "description": "FoundryHealRun is one audit of an ontology's load."
+    },
+    "v1FoundryHealVersion": {
+      "type": "object",
+      "properties": {
+        "versionId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryHealVersion names a version, by id and number."
     },
     "v1FoundryLabelFact": {
       "type": "object",
@@ -13609,7 +13790,7 @@
         },
         "stale": {
           "type": "boolean",
-          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, as its tables always do."
+          "description": "The items are unknown: never read, last read more than 7 days ago, or\nmore than a day ago with a failed read since. Its documents then go to\nfull readers only, and so do its tables."
         },
         "problem": {
           "$ref": "#/definitions/v1FoundrySourceAudienceProblem",
@@ -14504,7 +14685,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundrySourceItem"
           },
-          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under."
+          "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under.\nA source's directory of people (Slack's users) is the item \"*directory\",\nshared with a person the source has a non-guest account for."
         }
       }
     },

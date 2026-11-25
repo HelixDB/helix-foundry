@@ -90,6 +90,91 @@ func (u Unimplemented) FoundryLoadDecisionsOwed(context.Context, string) (*model
 	u.unimplemented("FoundryLoadDecisionsOwed")
 	return nil, nil
 }
+func (u Unimplemented) ReconcileFoundryLoadMarker(context.Context, string, string) (bool, error) {
+	u.unimplemented("ReconcileFoundryLoadMarker")
+	return false, nil
+}
+func (u Unimplemented) SetCurrentOntologyVersionFilling(context.Context, string, string, string, *string, string,
+	*model.FoundryGraphJob) (*model.FoundryHealFill, error) {
+	u.unimplemented("SetCurrentOntologyVersionFilling")
+	return nil, nil
+}
+func (u Unimplemented) FoundryLoadMoveOwed(context.Context, string) (*model.FoundryHealFill, error) {
+	u.unimplemented("FoundryLoadMoveOwed")
+	return nil, nil
+}
+func (u Unimplemented) RecordFoundryLoadMove(context.Context, string, string, *model.FoundryHealFill, model.FoundryFoldOutcome) error {
+	u.unimplemented("RecordFoundryLoadMove")
+	return nil
+}
+func (u Unimplemented) FoundryAskedApart(context.Context, string) ([]string, error) {
+	u.unimplemented("FoundryAskedApart")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryHealFills(context.Context, string) (map[string]*model.FoundryHealFill, error) {
+	u.unimplemented("ListFoundryHealFills")
+	return nil, nil
+}
+func (u Unimplemented) FoundryFillApplying(context.Context, string) (*model.FoundryHealFill, error) {
+	u.unimplemented("FoundryFillApplying")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryLinkResends(context.Context, string, int) ([]*model.FoundryLoadResend, error) {
+	u.unimplemented("ListFoundryLinkResends")
+	return nil, nil
+}
+func (u Unimplemented) RecordFoundryFillDocument(context.Context, string, string, model.FoundryFillDocument) error {
+	u.unimplemented("RecordFoundryFillDocument")
+	return nil
+}
+func (u Unimplemented) SpendFoundryFillDocument(context.Context, string, string, model.FoundryFillDocument) error {
+	u.unimplemented("SpendFoundryFillDocument")
+	return nil
+}
+func (u Unimplemented) EndFoundryFillDocument(context.Context, string, string, string, string, int, string) error {
+	u.unimplemented("EndFoundryFillDocument")
+	return nil
+}
+func (u Unimplemented) StopFoundryFill(context.Context, string, string, string, string, string) error {
+	u.unimplemented("StopFoundryFill")
+	return nil
+}
+func (u Unimplemented) PauseFoundryFill(context.Context, string, string, string, string, time.Time) error {
+	u.unimplemented("PauseFoundryFill")
+	return nil
+}
+func (u Unimplemented) SumFoundryFillSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryFillSpend")
+	return 0, nil
+}
+func (u Unimplemented) DueFoundryHealFills(context.Context, int) ([]model.FoundryFillDue, error) {
+	u.unimplemented("DueFoundryHealFills")
+	return nil, nil
+}
+func (u Unimplemented) ClaimFoundryFillCollect(context.Context, *model.FoundryHealFill, time.Duration) (bool, error) {
+	u.unimplemented("ClaimFoundryFillCollect")
+	return false, nil
+}
+func (u Unimplemented) ReleaseFoundryFillCollect(context.Context, *model.FoundryHealFill) error {
+	u.unimplemented("ReleaseFoundryFillCollect")
+	return nil
+}
+func (u Unimplemented) OweFoundryFillDocuments(context.Context, *model.FoundryHealFill, string, []string, bool) (bool, error) {
+	u.unimplemented("OweFoundryFillDocuments")
+	return false, nil
+}
+func (u Unimplemented) FailFoundryFillCollect(context.Context, *model.FoundryHealFill, string) error {
+	u.unimplemented("FailFoundryFillCollect")
+	return nil
+}
+func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, int64, int64, *model.FoundryGraphJob) error {
+	u.unimplemented("StartFoundryFill")
+	return nil
+}
+func (u Unimplemented) ResumeFoundryFill(context.Context, *model.FoundryHealFill, string, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("ResumeFoundryFill")
+	return false, nil
+}
 func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
 	u.unimplemented("EndFoundryLoadResend")
 	return nil
@@ -1910,6 +1995,11 @@ func (u Unimplemented) WakeFoundrySlackIntake(context.Context, string) (int64, e
 func (u Unimplemented) HoldFoundrySlackReply(context.Context, *model.SlackReply) (*model.SlackReply, error) {
 	u.unimplemented("HoldFoundrySlackReply")
 	return nil, nil
+}
+
+func (u Unimplemented) MoveFoundrySlackHold(context.Context, string, string, string, string, string) error {
+	u.unimplemented("MoveFoundrySlackHold")
+	return nil
 }
 
 func (u Unimplemented) ReleaseFoundrySlackHold(context.Context, string) error {

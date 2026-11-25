@@ -13,8 +13,8 @@ import (
 // Mrkdwn is text safe to send Slack as mrkdwn: every &, < and > escaped but
 // in the links it makes, which go only to Foundry's site; every other URL,
 // and anything that reads as a domain, in inline code; every code span
-// closed. Site.Text makes it from any string; Bold, Italic, Join and
-// UserMention compose it. Its zero value is empty text.
+// closed. Site.Text makes it from any string; Bold, Italic, Join,
+// UserMention and ChannelMention compose it. Its zero value is empty text.
 type Mrkdwn struct{ s string }
 
 // String is the mrkdwn as Slack is sent it.
@@ -84,6 +84,15 @@ func UserMention(userID string) Mrkdwn {
 		return Mrkdwn{s: "@" + escape(userID)}
 	}
 	return Mrkdwn{s: "<@" + userID + ">"}
+}
+
+// ChannelMention names a Slack channel as Slack shows it, by its id; an id
+// that isn't one shows as written.
+func ChannelMention(channelID string) Mrkdwn {
+	if !idRE.MatchString(channelID) {
+		return Mrkdwn{s: "#" + escape(channelID)}
+	}
+	return Mrkdwn{s: "<#" + channelID + ">"}
 }
 
 // Bold makes m bold.

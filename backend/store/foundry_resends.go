@@ -64,6 +64,16 @@ import (
 // says what it did (withdrawn, not_written, or refused). A copy the load
 // never wrote is only deleted, as before: there is nothing to take back.
 
+// foundryResendIn is the SQL condition that column (a request's reason, such
+// as w.reason) is one of reasons, which are this binary's own constants.
+func foundryResendIn(column string, reasons []model.FoundryResendReason) string {
+	quoted := make([]string, len(reasons))
+	for i, r := range reasons {
+		quoted[i] = "'" + string(r) + "'"
+	}
+	return column + " IN (" + strings.Join(quoted, ", ") + ")"
+}
+
 // foundryResendsPerInsert is the most documents one statement of
 // oweFoundryResends owes: three placeholders each, well under MySQL's 65,535
 // a statement, as every document that asks about a name (a read the engine
@@ -343,8 +353,9 @@ AND NOT EXISTS (SELECT 1 FROM foundry_load_resends WHERE load_id=? AND document_
 }
 
 // makeFoundryLoadCurrent makes loadID the ontology's current load, the load
-// reads go to, and, when it was not, asks for a full pass of its review
-// cards and brings it the resolves its list lacks
+// reads go to, and, when it was not, stops the fill the load it replaces
+// had under way (model.FoundryFillLoadReplaced), asks for a full pass of its
+// review cards and brings it the resolves its list lacks
 // (carryFoundryResolves): every path that makes a load current comes here (a
 // load job's end, SetCurrentFoundryLoad, an enrichment purge). The caller
 // holds the ontology's lock, and has locked the live job's row, if any,
@@ -358,6 +369,13 @@ func (s *mysqlDB) makeFoundryLoadCurrent(ctx context.Context, o *model.FoundryOn
 	o.CurrentLoadID = &loadID
 	if was != nil && *was == loadID {
 		return nil
+	}
+	// A fill applies to the current load only: the one it replaces stops
+	// filling, ending what it owes, so it never resumes if made current again.
+	if was != nil {
+		if err := s.stopFoundryFill(ctx, *was, "", model.FoundryFillLoadReplaced, ""); err != nil {
+			return err
+		}
 	}
 	// The decisions and stored values its review cards were built against
 	// may have changed while it was not current.
@@ -553,10 +571,15 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 	loadID := *o.CurrentLoadID
 	held := ""
 	if !unread {
-		held = ` AND NOT (w.reason='` + string(model.FoundryResendName) + `' AND ` + foundryAliasUnread + `)`
+		// After a failed resend a move waits too: queued for it alone, a
+		// move that fails would follow itself (failFoundryResends gives up
+		// on one that keeps failing).
+		held = ` AND NOT (w.reason='` + string(model.FoundryResendName) + `' AND ` + foundryAliasUnread + `) AND w.reason<>'` +
+			string(model.FoundryResendMove) + `'`
 	}
 	var owed bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=? AND w.status='owed'`+held+`)`,
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=? AND w.status='owed' AND `+
+		foundryResendIn("w.reason", model.FoundryResendKnown)+held+` AND `+foundryResendLive+`)`,
 		loadID).Scan(&owed); err != nil || !owed {
 		return false, err
 	}
@@ -635,8 +658,9 @@ WHERE load_id=? AND document_id='' AND reason=? AND status='owed'`, loadID, stri
 // again would never owe them (OweFoundryAskingResends).
 func (s *mysqlDB) ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT document_id, reason, requests FROM foundry_load_resends w
-WHERE load_id=? AND status='owed' AND reason<>? AND NOT (reason=? AND `+foundryAliasUnread+`) ORDER BY document_id, reason`,
-		loadID, string(model.FoundryResendDecisions), string(model.FoundryResendName))
+WHERE load_id=? AND status='owed' AND `+foundryResendIn("reason", model.FoundryResendDocuments)+` AND NOT (reason=? AND `+
+		foundryAliasUnread+`) ORDER BY document_id, reason`,
+		loadID, string(model.FoundryResendName))
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +686,8 @@ WHERE load_id=? AND status='owed' AND reason<>? AND NOT (reason=? AND `+foundryA
 	docRows, err := s.db.QueryContext(ctx, "SELECT "+strings.Replace(foundryDocumentColumns, "d.set_id", "m.set_id", 1)+
 		foundryLoadDocuments+`
  JOIN foundry_load_extractions e ON e.load_id=m.load_id AND e.document_id=d.id AND e.status='extracted'
- WHERE d.status='uploaded' AND EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=m.load_id AND w.document_id=d.id AND w.status='owed')
+ WHERE d.status='uploaded' AND EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=m.load_id AND w.document_id=d.id AND w.status='owed'
+   AND `+foundryResendIn("w.reason", model.FoundryResendDocuments)+`)
  ORDER BY d.external_id IS NOT NULL, d.source_at DESC, d.created_at, d.id`, loadID)
 	if err != nil {
 		return nil, err
@@ -830,7 +855,13 @@ WHERE load_id=? AND kind IN (`+kinds+`) AND doc_id=? AND applied_status IN ('pen
 // its load (FinishFoundryGraphJob), so a failure never follows itself, and
 // the next resend any later job's end or settle queues reads it. The caller
 // holds the ontology's lock.
-func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob) error {
+func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob, moveSent bool) error {
+	if err := s.failFoundryLoadMove(ctx, job, moveSent); err != nil {
+		return err
+	}
+	if err := s.failFoundryFill(ctx, job); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
 WHERE load_id=? AND kind='prop' AND applied_status IN ('pending', 'carried', 'removed')`, model.FoundryReleaseJobFailed, job.LoadID); err != nil {
 		return err
@@ -855,7 +886,8 @@ WHERE load_id=? AND kind='resolve' AND applied_status='pending'
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6), w.job_id=?
-WHERE w.load_id=? AND w.status='owed' AND NOT (w.reason=? AND `+foundryAliasUnread+`)`,
+WHERE w.load_id=? AND w.status='owed' AND `+foundryResendIn("w.reason", model.FoundryResendFailEnds)+` AND NOT (w.reason=? AND `+
+		foundryAliasUnread+`)`,
 		job.ID, job.LoadID, string(model.FoundryResendName))
 	return err
 }

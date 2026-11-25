@@ -155,3 +155,31 @@ func TestParseEnrichments(t *testing.T) {
 		})
 	}
 }
+
+func TestStatesLink(t *testing.T) {
+	ontology := "[links.ceo_of]\nfrom = \"Person\"\nto = \"Company\"\ndescription = \"Runs it.\""
+	route := func(documents, links string) string {
+		return "[extractions.notes]\ndocuments = " + documents + "\nlinks = " + links
+	}
+	for name, c := range map[string]struct {
+		ontology, mappings string
+		want               bool
+	}{
+		"routed for every set":        {ontology, route(`"all"`, `["ceo_of"]`), true},
+		"routed for the set":          {ontology, route(`["set_1", "set_2"]`, `["works_at", "ceo_of"]`), true},
+		"routed for another set":      {ontology, route(`["set_2"]`, `["ceo_of"]`), false},
+		"declared, routed by none":    {ontology, route(`"all"`, `["works_at"]`), false},
+		"routed, not declared":        {"[links.works_at]\nfrom = \"P\"\nto = \"C\"", route(`"all"`, `["ceo_of"]`), false},
+		"no routes":                   {ontology, "", false},
+		"an ontology that won't read": {"[links", route(`"all"`, `["ceo_of"]`), false},
+		"mappings that won't read":    {ontology, "[extractions", false},
+		"a link that isn't a table":   {"links = { ceo_of = 1 }", route(`"all"`, `["ceo_of"]`), false},
+		"documents of another shape":  {ontology, route(`1`, `["ceo_of"]`), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := StatesLink(c.ontology, c.mappings, "ceo_of", "set_1"); got != c.want {
+				t.Fatalf("StatesLink = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

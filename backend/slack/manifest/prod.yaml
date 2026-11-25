@@ -1,16 +1,17 @@
-# Helix's distributed Slack app "Helix Foundry", production. Create or update
-# the app from this file; slack/manifest_test.go keeps its scopes and events
-# equal to what the bot needs with prod's flags (slack.Required with
-# foundry.slack.follow on and foundry.slack.feed off): channel message events
-# and history, so a reply in a thread the bot answered reaches it without a
-# mention, but no data connector until Slack confirms it in writing. Changing
-# a flag changes this file, the test's flags and the chart together.
+# Helix's distributed Slack app "Founder", Helix Foundry's assistant in Slack,
+# production. Create or update the app from this file; slack/manifest_test.go
+# keeps its scopes and events equal to what the bot needs with prod's flags
+# (slack.Required with foundry.slack.follow on and foundry.slack.feed off):
+# channel message events and history, so a reply in a thread the bot answered
+# reaches it without a mention, but no data connector until Slack confirms it
+# in writing. Changing a flag changes this file, the test's flags and the
+# chart together.
 display_information:
-  name: Helix Foundry
+  name: Founder
   description: Ask your Foundry ontologies and act on them from Slack.
 features:
   bot_user:
-    display_name: Helix Foundry
+    display_name: Founder
     always_online: true
   app_home:
     home_tab_enabled: false
@@ -23,6 +24,11 @@ features:
         message: What can you do in Foundry?
       - title: Ask the data
         message: Which customers renewed last month?
+  shortcuts:
+    - name: Ask Founder about this
+      type: message
+      callback_id: foundry.ask_about
+      description: Ask Founder about this message
 oauth_config:
   redirect_urls:
     - https://foundry.helix-db.com/slack/installed
@@ -38,6 +44,7 @@ oauth_config:
       - channels:read
       - groups:read
       - mpim:read
+      - commands
       - channels:history
       - groups:history
 settings:

@@ -134,8 +134,8 @@ func (b *Bot) relay(ctx context.Context) {
 
 // relayNotice tells delivery d's conversation what say says of it
 // ("message" or "click"): a reply in a message's thread, where everyone in it
-// reads that the bot is offline; to a click's (or an agent session stop's)
-// clicker alone, as tell does. A post the Limiter holds back for its
+// reads that the bot is offline; to a click's (a shortcut's, or an agent
+// session stop's) clicker alone, as tell does. A post the Limiter holds back for its
 // channel's pace waits for it once, taking the wait from budget while it
 // lasts. It names how that went: told; gone (its install revoked, or Slack
 // saying the bot can't post there); limited (a rate limit); unreadable (a
@@ -162,7 +162,7 @@ func (b *Bot) relayNotice(ctx context.Context, d *model.RelayDelivery, say func(
 		case slack.SessionStopped:
 			channel, threadTS, user = e.At.ChannelID, e.At.ThreadTS, e.UserID
 		}
-	case d.Kind == model.SlackIntakeInteraction:
+	case d.Kind == model.SlackIntakeInteraction || d.Kind == model.SlackIntakeShortcut:
 		var in slack.Interaction
 		if in, err = slack.DecodeInteraction(p.Kind, p.Data); err != nil {
 			break
@@ -182,6 +182,8 @@ func (b *Bot) relayNotice(ctx context.Context, d *model.RelayDelivery, say func(
 		case slack.Stop:
 			c = in.Clicked
 		case slack.Unlink:
+			c = in.Clicked
+		case slack.AskAbout:
 			c = in.Clicked
 		}
 		channel, threadTS, user = c.ChannelID, c.ThreadTS, c.UserID

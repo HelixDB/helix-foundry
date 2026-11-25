@@ -10,6 +10,7 @@ import type { MockReply } from "../../mock/http";
 import { contractErrors } from "../../mock/agent-contract";
 import { routes } from "../../mock/routes";
 import { WORKFLOWS_OFF } from "../../mock/routes/access";
+import { connectorAudiences } from "../../mock/routes/data";
 import { handleDocumentUpload } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
 
@@ -1541,7 +1542,7 @@ describe("a source's own permissions", () => {
     expect(new Set(await byIds(ids))).toEqual(new Set(public_));
   });
 
-  it("gives a grantee part of a load of Slack's, never its tables, and keeps her answer with its channels", async () => {
+  it("gives a grantee part of a load of Slack's, its tables by her channels' rows, and keeps her answer with its channels", async () => {
     Object.assign(config, { loadStepMs: 50, ontologyStepMs: 100 });
     const id = await slack();
     const { set, docs } = await conversations(id);
@@ -1576,12 +1577,66 @@ describe("a source's own permissions", () => {
       { documentSetId: set, connectorId: id },
     ]);
 
-    // The connection gives Eve its public channels' documents, never its
-    // tables: their rows aren't told apart by channel.
+    // The connection gives Eve her channels' documents, and of its tables
+    // the rows of her channels (told by their row key) and Slack's users.
     await grant(user("usr_eve"), [
       general,
       { kind: "KIND_CONNECTOR", connectorId: id },
     ]);
+    /** Reads the load as `as`, each outcome held to read_result.json. */
+    const read = async (reads: unknown[], as = "usr_eve") => {
+      const r = await call(
+        "POST",
+        `${O}/loads/${load.id}:read`,
+        { readsJson: JSON.stringify(reads) },
+        as,
+      );
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      const body = JSON.parse(r.body.resultJson);
+      expect(contractErrors("read_result", body)).toEqual([]);
+      return body.results as any[];
+    };
+    const texts = {
+      query: {
+        start: { type: "Message" },
+        return: { rows: { columns: [{ at: 0, prop: "text" }], limit: 200 } },
+      },
+    };
+    const said = (result: any) =>
+      (result.ok.result.rows as { cells: unknown[] }[]).map((r) =>
+        String(r.cells[0]),
+      );
+    const [all] = await read([texts], "usr_ada");
+    const leadershipLines = said(all).filter((t) =>
+      /board pack|Hiring plan|acquisition talks|compensation review|draft budget/.test(
+        t,
+      ),
+    );
+    expect(leadershipLines.length).toBeGreaterThan(0);
+    const [view, hers, count, people] = await read([
+      { view: {} },
+      texts,
+      { query: { start: { type: "Message" }, return: { count: {} } } },
+      { query: { start: { type: "User" }, return: { count: {} } } },
+    ]);
+    expect(view.ok.partial).toEqual(
+      expect.arrayContaining(["Message", "Channel"]),
+    );
+    expect(view.ok.partial).not.toContain("User");
+    expect(said(hers)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /weekly metrics|all-hands|Welcome Margaret|office is closed|Q4 planning/,
+        ),
+      ]),
+    );
+    expect(said(hers).filter((t) => leadershipLines.includes(t))).toEqual([]);
+    expect(said(hers).length).toBe(said(all).length - leadershipLines.length);
+    // A count of what she holds some of would say how much she can't see.
+    expect(count.error).toMatchObject({ code: "not_visible" });
+    // Slack's directory is hers whole: Slack has an account for her.
+    expect(people.error).toBeUndefined();
+    expect(JSON.stringify(people.ok.result)).toMatch(/[1-9]/);
     const me = (await eve("GET", `${A}/me`))
       .body as wfe.GetMyFoundryAccessResponse;
     expect(me.ontologyIds).toContain("ont_acme_contracts");
@@ -1590,6 +1645,9 @@ describe("a source's own permissions", () => {
     const shared = me.sourceItems!.map((i) => i.itemKey);
     expect(shared).toEqual([...shared].sort());
     expect(shared).not.toContain(LEADERSHIP);
+    // Slack's directory is an item of hers while Slack has a non-guest
+    // account for her (access.DirectoryItem).
+    expect(shared).toContain("*directory");
     expect(shared).toEqual(
       expect.arrayContaining(
         [...new Set(docs.map(channelOf))].filter((c) => c !== LEADERSHIP),
@@ -1608,6 +1666,20 @@ describe("a source's own permissions", () => {
       })
     ).body.question as wfe.FoundryQuestion;
     expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(200);
+    // Slack makes her a guest: its directory is no longer one of her items,
+    // nor her answer, which read it, hers; made a member again, both are.
+    const eveInSlack = connectorAudiences(id)!.people!.find(
+      (p) => p.email === "eve@example.com",
+    )!;
+    eveInSlack.guest = true;
+    const asGuest = (await eve("GET", `${A}/me`))
+      .body as wfe.GetMyFoundryAccessResponse;
+    expect((asGuest.sourceItems || []).map((i) => i.itemKey)).not.toContain(
+      "*directory",
+    );
+    expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(404);
+    eveInSlack.guest = false;
+    expect((await eve("GET", `${O}/questions/${asked.id}`)).status).toBe(200);
     const listed = (await eve("GET", `${O}/documents`)).body
       .documents as wfe.FoundryDocument[];
     expect(listed.length).toBe(
@@ -1624,16 +1696,28 @@ describe("a source's own permissions", () => {
     expect((await contractsAccess())!.partialReaders).toContainEqual(
       user("usr_eve"),
     );
-    // A table alone gives her nothing of it.
+    // A table alone gives her its rows of her channels, and nothing more.
     await grant(user("usr_eve"), [
       general,
-      { kind: "KIND_TABLE", connectorId: id, table: inputs.tables![0]!.table },
+      { kind: "KIND_TABLE", connectorId: id, table: "messages" },
     ]);
     expect(
       ((await eve("GET", `${A}/me`)).body as wfe.GetMyFoundryAccessResponse)
-        .ontologyIds || [],
-    ).not.toContain("ont_acme_contracts");
-    // An agent's key is no one in Slack: the public channels, part of it.
+        .partialOntologyIds,
+    ).toContain("ont_acme_contracts");
+    const [onlyMessages, noChannels] = await read([
+      texts,
+      {
+        query: {
+          start: { type: "Channel" },
+          return: { rows: { columns: [{ at: 0 }] } },
+        },
+      },
+    ]);
+    expect(said(onlyMessages)).toEqual(said(hers));
+    expect(noChannels.ok?.result.rows ?? []).toEqual([]);
+    // An agent's key is no one in Slack: the public channels' rows, part of
+    // it, and none of Slack's users.
     await grant({ kind: "KIND_SERVICE_CREDENTIAL", id: "sc_acme_support" }, [
       { kind: "KIND_CONNECTOR", connectorId: id },
     ]);

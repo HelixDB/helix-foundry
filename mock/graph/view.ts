@@ -5,6 +5,7 @@ import type { OntologyQuery, QueryExpr } from "../../src/shared/wfe";
 const exprProps = (e: QueryExpr): string[] =>
   "days_between" in e ? e.days_between : "diff" in e ? e.diff : e.ratio;
 import { isRecord } from "../../src/shared/json";
+import { contractErrors } from "../agent-contract";
 
 // What one reader may see of a load, as the ontology agent's `mapping::view`
 // works it out: a reader's Visibility (the sources it holds) and a version's
@@ -18,12 +19,26 @@ import { isRecord } from "../../src/shared/json";
 // checking, and can't be paged: where a page ends would say how much it can't
 // see. Such a query (`narrows`) reads further than it asked (`widen`), so its
 // limit says nothing of the rows left out.
+//
+// A reader may hold some rows of a source (contract 4.32.0, `rows`): a row is
+// held when the component of its stored row key at `field`'s place in its
+// mapping's `row_key` (a nested mapping's root's part) is one of `values`,
+// trimmed, or starts with one of `prefixes` (`holdsRow`). What such a source
+// writes is partial; a mapping whose `row_key` lacks `field`, or names none
+// (a table's primary key), holds none of its rows.
 
 export type Reach = "full" | "partial";
+
+/** Some rows of one source a reader holds (read_request.json's HeldRows). */
+export type HeldRows = { source: string; field: string } & (
+  | { values: string[] }
+  | { prefixes: string[] }
+);
 
 /** What a reader holds of a load (read_request.json's Visibility). */
 export type Visibility = {
   sources: string[];
+  rows?: HeldRows[];
   documents: "all" | { only: string[] };
   sets: string[];
   enrichment: boolean;
@@ -53,7 +68,10 @@ export type View = {
   keyed: ReadonlySet<string>;
   // Types, `Type.prop`s and links it sees only some of, in that order.
   partial: string[];
-  holdsSource: (source: string) => boolean;
+  /** Whether it holds every row of a source (`View::holds_whole`). */
+  holdsWhole: (source: string) => boolean;
+  /** Whether it holds one row, by its source, mapping and stored key. */
+  holdsRow: (source: string, mapping: string, rowKey: string) => boolean;
   holdsDocument: (documentId: string) => boolean;
 };
 
@@ -75,24 +93,145 @@ function add(map: Map<string, Writers>, at: string, w: Writers) {
   map.set(at, { held: had.held || w.held, notHeld: had.notHeld || w.notHeld });
 }
 
+/**
+ * Where a mapping's stored row keys hold `field`: its root mapping (the one
+ * with a source, up its parents), how many `/`-joined parts its keys have,
+ * how many `|`-joined components the root's part has, and `field`'s place
+ * among them; undefined when the root's `row_key` doesn't name it, or names
+ * none (a table's primary key, which only the catalog knows) (`KeyAt::of`).
+ */
+type KeyAt = {
+  source: string;
+  segments: number;
+  components: number;
+  component: number;
+};
+function keyAt(
+  own: [string, Table][],
+  mapping: string,
+  field: string,
+): KeyAt | undefined {
+  let at = own.find(([n]) => n === mapping)?.[1];
+  // A parent chain longer than the mappings goes round.
+  for (let segments = 1; at && segments <= own.length; segments++) {
+    if (typeof at.source === "string") {
+      const fields = texts(at.row_key),
+        component = fields.indexOf(field);
+      return component < 0
+        ? undefined
+        : {
+            source: at.source,
+            segments,
+            components: fields.length,
+            component,
+          };
+    }
+    const parent = at.parent;
+    at = own.find(([n]) => n === parent)?.[1];
+  }
+  return undefined;
+}
+/** The root mapping's source a mapping's rows come from, if it has one. */
+function rootSource(own: [string, Table][], mapping: string) {
+  let at = own.find(([n]) => n === mapping)?.[1];
+  for (let i = 0; at && i <= own.length; i++) {
+    if (typeof at.source === "string") return at.source;
+    const parent = at.parent;
+    at = own.find(([n]) => n === parent)?.[1];
+  }
+  return undefined;
+}
+/**
+ * The component of a stored row key at `at`'s place, unescaped: the key's
+ * `/`-joined parts, the first split at unescaped `|`; undefined for a key of
+ * another shape (`KeyAt::find`).
+ */
+function itemAt(at: KeyAt, rowKey: string): string | undefined {
+  const segments: string[][] = [[""]];
+  for (let i = 0; i < rowKey.length; i++) {
+    const c = rowKey[i]!,
+      parts = segments.at(-1)!;
+    if (c === "\\") {
+      if (i + 1 >= rowKey.length) return undefined;
+      parts[parts.length - 1] += rowKey[++i];
+    } else if (c === "/") segments.push([""]);
+    else if (c === "|") parts.push("");
+    else parts[parts.length - 1] += c;
+  }
+  const root = segments[0]!;
+  return segments.length === at.segments && root.length === at.components
+    ? root[at.component]
+    : undefined;
+}
+
+/** Some rows of a source, by where each mapping's keys hold the field. */
+type SourceRows = {
+  values?: ReadonlySet<string>;
+  prefixes?: readonly string[];
+  keys: ReadonlyMap<string, KeyAt>;
+};
+
+/**
+ * The rows a reader holds of each source it holds by its rows, by source;
+ * throws what the engine refuses (INVALID_ARGUMENT) beyond the schema:
+ * People enrichment, and a source also held whole or named twice
+ * (`held_rows`).
+ */
+function heldRows(visibility: Visibility, own: [string, Table][]) {
+  const out = new Map<string, SourceRows>();
+  for (const r of visibility.rows || []) {
+    if (r.source === ENRICHMENT_SOURCE)
+      throw new Error(
+        `rows: \`${r.source}\` is held through enrichment, not by its rows`,
+      );
+    if (visibility.sources.includes(r.source))
+      throw new Error(
+        `rows: \`${r.source}\` is in sources too: a source is held whole or by its rows`,
+      );
+    if (out.has(r.source))
+      throw new Error(`rows: \`${r.source}\` is named twice`);
+    const keys = new Map(
+      own.flatMap(([name]) => {
+        const at = keyAt(own, name, r.field);
+        return at?.source === r.source ? [[name, at] as const] : [];
+      }),
+    );
+    out.set(
+      r.source,
+      "values" in r
+        ? {
+            // A row-key field is read trimmed; a blank value holds nothing.
+            values: new Set(r.values.map((v) => v.trim()).filter(Boolean)),
+            keys,
+          }
+        : { prefixes: r.prefixes, keys },
+    );
+  }
+  return out;
+}
+const someItems = (r: SourceRows) =>
+  (r.values?.size || 0) + (r.prefixes?.length || 0) > 0;
+
 /** What rows and documents write, by who could have written it. */
-function written(mappings: Table, ontology: Table, visibility: Visibility) {
+function written(
+  mappings: Table,
+  ontology: Table,
+  visibility: Visibility,
+  rows: ReadonlyMap<string, SourceRows>,
+) {
   const types = new Map<string, Writers>(),
     props = new Map<string, Writers>(),
     links = new Map<string, Writers>();
   const held = (is: boolean): Writers => ({ held: is, notHeld: !is });
   const own = entries(mappings.mappings);
-  const rootOf = (name: string) => {
-    let at = own.find(([n]) => n === name)?.[1];
-    for (let i = 0; at && i <= own.length; i++) {
-      if (typeof at.source === "string") return at.source;
-      const parent = at.parent;
-      at = own.find(([n]) => n === parent)?.[1];
-    }
-    return undefined;
-  };
   for (const [name, m] of own) {
-    const writer = held(visibility.sources.includes(rootOf(name) || ""));
+    const source = rootSource(own, name) || "",
+      part = rows.get(source);
+    // A source held by its rows, with items its key tells: some held.
+    const writer =
+      part && someItems(part) && part.keys.has(name)
+        ? { held: true, notHeld: true }
+        : held(visibility.sources.includes(source));
     for (const [, b] of entries(m.bind)) {
       const type = String(b.type);
       if (b.missing === "create") add(types, type, writer);
@@ -157,16 +296,21 @@ const heads = (datalog: string) =>
 
 /**
  * The reader's view of the version these two files are; throws what can't be
- * read of them, and the reader gets nothing.
+ * read of them or of `visibility`, and the reader gets nothing.
  */
 export function viewOf(
   visibility: Visibility,
   ontologyToml: string,
   mappingsToml: string,
 ): View {
+  // As the engine reads it: what read_request.json refuses (an empty prefix,
+  // values beside prefixes, a field it doesn't know) reads nothing.
+  const refused = contractErrors("read_request#/$defs/Visibility", visibility);
+  if (refused.length) throw new Error(`visibility: ${refused[0]}`);
   const ontology = parse(ontologyToml) as Table,
     mappings = parse(mappingsToml || "") as Table;
-  const writes = written(mappings, ontology, visibility);
+  const rows = heldRows(visibility, entries(mappings.mappings));
+  const writes = written(mappings, ontology, visibility, rows);
   const typeTables = entries(ontology.types),
     linkTables = entries(ontology.links),
     relationTables = entries(ontology.relations),
@@ -300,10 +444,20 @@ export function viewOf(
   const documents = visibility.documents;
   const holdsDocument = (d: string) =>
     documents === "all" || documents.only.includes(d);
-  const holdsSource = (s: string) =>
+  const holdsWhole = (s: string) =>
     s === ENRICHMENT_SOURCE
       ? visibility.enrichment
       : visibility.sources.includes(s);
+  const holdsRow = (source: string, mapping: string, rowKey: string) => {
+    if (holdsWhole(source)) return true;
+    const part = rows.get(source),
+      at = part?.keys.get(mapping),
+      item = at && itemAt(at, rowKey);
+    if (item === undefined) return false;
+    return part!.values
+      ? part!.values.has(item)
+      : part!.prefixes!.some((p) => item.startsWith(p));
+  };
   const partial = [
     ...[...types].filter(([, r]) => r === "partial").map(([t]) => t),
     ...[...props]
@@ -322,7 +476,8 @@ export function viewOf(
       keyed,
       partial,
       holdsDocument,
-      holdsSource,
+      holdsWhole,
+      holdsRow,
     };
 
   // The ontology without what the reader doesn't see.
@@ -395,7 +550,8 @@ export function viewOf(
     keyed,
     partial,
     holdsDocument,
-    holdsSource,
+    holdsWhole,
+    holdsRow,
   };
 }
 
@@ -551,17 +707,48 @@ export function admit(view: View, q: OntologyQuery) {
     : undefined;
 }
 
+/** A row that sets a property: its source, mapping and stored key, and the value it kept. */
+export type SettingRow = {
+  source: string;
+  mapping: string;
+  rowKey: string;
+  // The value the row gave; absent for a row that kept none (written before
+  // rows kept their values), which stands for the stored one.
+  value?: unknown;
+};
+
 /**
  * What a property of an entity is for the reader: the stored value when a row
- * it holds sets it, whatever other rows do, else what the quotes it holds agree
- * on, else nothing (`View::settled`).
+ * of a source it holds whole sets it, whatever other rows do; else the value
+ * the rows it holds of a source held by its rows gave, when they agree (the
+ * stored one when it is that), a row that kept no value giving none, since
+ * another row may have written the stored one; else what the quotes it holds
+ * agree on, else nothing (`View::settled`).
  */
 export function settled(
   view: View,
-  rows: readonly string[],
+  stored: unknown,
+  rows: readonly SettingRow[],
   quotes: readonly { documentId: string; value: unknown }[],
-): { from: "stored" } | { from: "quoted"; value: unknown } | { from: "none" } {
-  if (rows.some(view.holdsSource)) return { from: "stored" };
+):
+  | { from: "stored" }
+  | { from: "given"; value: unknown }
+  | { from: "quoted"; value: unknown }
+  | { from: "none" } {
+  const same = (a: unknown, b: unknown) =>
+    JSON.stringify(a) === JSON.stringify(b);
+  const held = rows.filter(
+    (r) =>
+      view.holdsRow(r.source, r.mapping, r.rowKey) &&
+      (r.value !== undefined || view.holdsWhole(r.source)),
+  );
+  if (held.some((r) => view.holdsWhole(r.source))) return { from: "stored" };
+  if (held.length)
+    return !held.every((r) => same(r.value, held[0]!.value))
+      ? { from: "none" }
+      : same(held[0]!.value, stored)
+        ? { from: "stored" }
+        : { from: "given", value: held[0]!.value };
   const said = quotes
     .filter((q) => view.holdsDocument(q.documentId))
     .map((q) => q.value);

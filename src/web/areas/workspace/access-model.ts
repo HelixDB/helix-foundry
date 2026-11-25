@@ -770,6 +770,13 @@ export const SLACK_GRANT_NOTE =
 const NAMES_LISTED = 5;
 
 /**
+ * The most channels a restricted person may be shared and still read a
+ * Slack connection's tables by their rows (access.MaxHeldItems): past it,
+ * they read only its documents.
+ */
+export const MAX_HELD_ITEMS = 1_000;
+
+/**
  * Names, the first NAMES_LISTED of them, then how many more.
  *
  *     listNames(["Ada", "Eve"]) // "Ada, Eve"
@@ -785,7 +792,9 @@ export const listNames = (names: readonly string[]) =>
  * follows (its tag), a line of when its permissions were read (`relative`
  * words a time), what they share and how many of the people it narrows
  * Slack has an account for, then notes: who it hasn't (named by `name`,
- * from their user id), its guests, and why the last read failed.
+ * from their user id), its guests, that it lists more channels than a
+ * restricted person may read the tables of (MAX_HELD_ITEMS), and why the
+ * last read failed.
  *
  *     sourcePermissions({ readAt, everyoneItems: 5, membersItems: 1, grantees: 3 }, name, formatRelative)
  *     // { follows: "Follows Slack channel membership", line: "Read 2h ago · 5 public channels, 1 private · 3 of 3 restricted people matched", notes: [] }
@@ -819,9 +828,12 @@ export function sourcePermissions(
       .join(" · "),
     notes: [
       unmatched.length > 0 &&
-        `Not in Slack by their email: ${listNames(unmatched.map(name))}. Restricted, they read none of its channels.`,
+        `Not in Slack by their email: ${listNames(unmatched.map(name))}. Restricted, they read none of its channels, and none of its users.`,
       guests.length > 0 &&
-        `${guests.length > 1 ? "Guests" : "A guest"} in Slack: ${listNames(guests.map(name))}. Restricted, they read only the private channels that list them.`,
+        `${guests.length > 1 ? "Guests" : "A guest"} in Slack: ${listNames(guests.map(name))}. Restricted, they read only the private channels that list them, and none of its users.`,
+      read.kind !== "never" &&
+        (a.everyoneItems || 0) + (a.membersItems || 0) > MAX_HELD_ITEMS &&
+        `Over ${formatNumber(MAX_HELD_ITEMS)} channels: someone restricted who is in more than ${formatNumber(MAX_HELD_ITEMS)} reads its documents, but none of its tables.`,
       a.problem?.message &&
         `The last read of who it shares what with failed: ${a.problem.message}.`,
     ].filter((n): n is string => !!n),

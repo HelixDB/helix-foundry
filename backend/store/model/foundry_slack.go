@@ -222,12 +222,15 @@ const (
 	SlackIntakeEvent SlackIntakeKind = "event"
 	// SlackIntakeInteraction is a click (block_actions).
 	SlackIntakeInteraction SlackIntakeKind = "interaction"
+	// SlackIntakeShortcut is the message shortcut, "Ask Founder about this"
+	// (a message_action): a message to the bot about another message.
+	SlackIntakeShortcut SlackIntakeKind = "shortcut"
 )
 
 // ParseSlackIntakeKind reads a kind, refusing any other.
 func ParseSlackIntakeKind(s string) (SlackIntakeKind, error) {
 	switch k := SlackIntakeKind(s); k {
-	case SlackIntakeEvent, SlackIntakeInteraction:
+	case SlackIntakeEvent, SlackIntakeInteraction, SlackIntakeShortcut:
 		return k, nil
 	}
 	return "", fmt.Errorf("unknown Slack intake kind %q", s)
@@ -260,7 +263,8 @@ type SlackIntake struct {
 	// DedupeKey is SlackEventDedupe's or SlackClickDedupe's.
 	DedupeKey string
 	Kind      SlackIntakeKind
-	// Conversation is SlackConversation's for a message, "" for a click: a
+	// Conversation is SlackConversation's for a message, or a shortcut's in
+	// the thread of the message it asks about, "" for a click: a
 	// conversation's rows are claimed one at a time, oldest first.
 	Conversation string
 	SlackUserID  string

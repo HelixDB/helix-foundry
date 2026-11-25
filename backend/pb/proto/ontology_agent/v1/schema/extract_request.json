@@ -11,6 +11,13 @@
         "auto": false
       }
     },
+    "asked_apart": {
+      "description": "Links asked apart from the others, in calls of their own: the links a load moved to\nthis version gained ([`Fold`]). Every other call is made as if the ontology lacked them,\nso it replays what the documents' saved work holds. Each must be declared. Which a\ndocument is asked is what its saved work for its text holds (`artifacts`): a document\nasked before a move is asked none of them, so a rebuild of a moved load costs nothing\nand holds what it held; a document with no saved work for its text is asked all of them,\nin one pass of its own chunked as every link pass is, with its own verification. A\nreply no link covered that a stated fact of one of them covers (the same section, quotes\nthat overlap) is not reviewed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "certified_acceptance": {
       "description": "Whether a fact is accepted, or held, by people's labels of its cell (its link, evidence\nshape and score tenth) rather than by the verifier's score alone: `\"off\"`, the default,\nor `{\"on\": certificate}`. A certificate judges only the claims of its `ontology_version`\nscored by its `verifier` under its `prompt_version`, all three the run's; any other is\nlogged and judges nothing. One whose version is the request's and that names a link\n`ontology_toml` lacks refuses the request. The document transactions of a run that\njudges under one record the certificate's id, and the artifact key names it.",
       "$ref": "#/$defs/CertifiedAcceptance",
@@ -36,6 +43,17 @@
       "description": "Read the store but write nothing.",
       "type": "boolean",
       "default": false
+    },
+    "fold": {
+      "description": "Moves the load in place from the version it was written with to `ontology_version`,\nbefore anything else, if the change only adds what none of its documents was asked\n([`heal::fold::classify`]): links that are neither required nor derive anything nor are\nstated by rows, routes gaining exactly them, and descriptions no route reads. Its\n`fold` event says what came of it. It takes no documents, no `remove` and no decisions, and\ndoes nothing else: the version's labels recorded, the run ends `done`. The load's\nmarker must record `fold.from_version`, which it then records `ontology_version` in place\nof (`moved`), or `ontology_version` already, as after a run that moved it (`moved`\nagain, writing nothing); any other is `marker_elsewhere`, and the run ends\n`load_mismatch`. One that adds anything else writes nothing (`not_additive`, with why),\nand the run ends `done` with nothing done. Absent, a load stays at the version it was\nwritten with.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Fold"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "helix": {
       "description": "Where the graph is written.",
@@ -135,6 +153,10 @@
           "const": "0.9"
         }
       ]
+    },
+    "Canonical": {
+      "description": "A suggested link's canonical form (P5 D11): lowercased, each run of characters other than\nletters and digits one `_`, none at either end. Never empty.",
+      "type": "string"
     },
     "Certificate": {
       "description": "The labels of facts of one ontology version, judged by one verifier model under one prompt\nversion, by cell. No cell is in it twice, no cell's counts overflow, and its id is the hash\nof what it holds.",
@@ -582,6 +604,20 @@
           "description": "The backend's document id, which the graph records it by.",
           "type": "string"
         },
+        "fill": {
+          "description": "Links to fill the document with, which its commit wasn't asked: links of the request's\n`asked_apart`, each routed for its set. Of a document the load holds, its saved work for\nits text replays with them asked apart (only their calls are asked, with the budget),\nand what a commit asked them would write beside what its commit wrote is written, in one\ntransaction of its own (origin `fill`): their facts, quotes and held claims, the ends\nthey create, and the reviews of a relationship no link covered whose quote a stated fact\nof them overlaps, which go. Its `filled` event, before its `document` event, says what\ncame of it. What the load holds of it already (a fill sent again) is not written twice,\nand a document whose commit was asked them is `native`. With no saved work of its text it\nis refused `not_replayed`, and asks nothing. Of a document the load doesn't hold, they\nare asked apart at its commit, which is `native`. A document whose id holds U+001F\ncan't be filled, as a fill's anchor names it.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fill_spellings": {
+          "description": "The canonical spellings of the suggestions whose reviews a fill takes (a finding's):\na review of a relationship no link covered goes only if its suggestion's canonical\nspelling is one of these and a stated fact of `fill` overlaps its quote. A review of\nanother relationship in the same sentence stays. Required with `fill`, and only with it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Canonical"
+          }
+        },
         "media_type": {
           "description": "How the text is written.",
           "$ref": "#/$defs/MediaType"
@@ -659,6 +695,30 @@
         "endpoint",
         "extract",
         "verify"
+      ]
+    },
+    "Fold": {
+      "description": "The version a load is moved from in place ([`ExtractRequest::fold`]).",
+      "type": "object",
+      "properties": {
+        "from_mappings_toml": {
+          "description": "That version's `mappings.toml`.",
+          "type": "string"
+        },
+        "from_ontology_toml": {
+          "description": "That version's `ontology.toml`.",
+          "type": "string"
+        },
+        "from_version": {
+          "description": "The version the load's marker records now.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from_version",
+        "from_ontology_toml",
+        "from_mappings_toml"
       ]
     },
     "HelixTarget": {

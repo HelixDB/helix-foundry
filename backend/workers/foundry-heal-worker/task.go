@@ -30,6 +30,11 @@
 //     database's plan rate limit is 1 request a second: audits get no
 //     boost. A run stops at maxRunTime, so a load whose audit takes longer
 //     never completes.
+//   - Fills: a suggestion's "Add this link" moves the load in place to the
+//     version that adds the link; the worker then collects the documents
+//     behind the suggestion's reviews (fill.go) and owes each a fill, which
+//     resend jobs send. A collect publishes nothing, so no graph job stales
+//     it, and runs once a fill.
 //   - Busy ontologies: a run stops once a graph job starts on its ontology,
 //     so one whose jobs come more often than an audit takes (a connector
 //     syncing changes every few minutes) may never complete. Audits that
@@ -92,6 +97,14 @@ type healStore interface {
 	FoundryHealLoadChanged(ctx context.Context, runID, ontologyID, loadID string) (bool, error)
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetFoundryGraphJob(ctx context.Context, ontologyID, id string) (*model.FoundryGraphJob, error)
+	ReconcileFoundryLoadMarker(ctx context.Context, loadID, storedVersion string) (bool, error)
+	DueFoundryHealFills(ctx context.Context, limit int) ([]model.FoundryFillDue, error)
+	ClaimFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, lease time.Duration) (bool, error)
+	ReleaseFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill) error
+	OweFoundryFillDocuments(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, documentIDs []string, fresh bool) (bool, error)
+	FailFoundryFillCollect(ctx context.Context, fill *model.FoundryHealFill, why string) error
+	StartFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, owed, left int64, resend *model.FoundryGraphJob) error
+	ResumeFoundryFill(ctx context.Context, fill *model.FoundryHealFill, workspaceID string, resend *model.FoundryGraphJob) (bool, error)
 }
 
 // auditor is the ontology agent sidecar.
@@ -204,11 +217,16 @@ func (t *Task) Stop(ctx context.Context) error {
 	return errors.Join(t.worker.Stop(ctx), t.closeAgent())
 }
 
-// tick audits the loads due, one at a time, the stalest first, until its
-// list is older than the poll interval: the next tick lists them again, so
-// a load just made current waits for one run at most, not every one
-// queued.
+// tick acts on the fills due first (fills, for a poll interval at most),
+// then audits the loads due, one at a time, the stalest first, until its
+// list is older than the poll interval: the next tick lists them again, so a
+// load just made current waits for one run at most, not every one queued,
+// and collects never keep every audit waiting.
 func (r *runner) tick(ctx context.Context) {
+	// Off, the binary is the rollback floor: no fill runs, as none shows.
+	if r.cfg.AddInPlace {
+		r.fills(ctx)
+	}
 	listed := time.Now()
 	due, err := r.db.DueFoundryHealOntologies(ctx, r.cfg.Every, r.cfg.RetryAfter, dueBatch)
 	if err != nil {

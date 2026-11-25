@@ -2,6 +2,7 @@ package ontologyagent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -113,6 +114,15 @@ type ExtractDocument struct {
 	// request it finds in any of them and pays only for the rest, so a route
 	// edit re-pays only the calls it changes. Never nil.
 	Artifacts []string `json:"artifacts"`
+	// Fill are links of the request's AskedApart to fill a document the load
+	// holds with (contract 4.33.0): its saved work replays with them asked
+	// apart, and what they state is written as a later transaction of the
+	// document. A "filled" event says what came of it (FilledEvent).
+	Fill []string `json:"fill,omitempty"`
+	// FillSpellings are the spellings of the suggestion whose reviews the
+	// fill takes (its finding's): a review of another relationship in the
+	// same words stays. Sent with Fill, and only with it.
+	FillSpellings []string `json:"fill_spellings,omitempty"`
 }
 
 // ExtractLimits are the hard caps on one Extract.
@@ -148,7 +158,90 @@ type ExtractRequest struct {
 	// Remove are documents to take out of the load before Documents are
 	// extracted; one the load doesn't hold is nothing to remove.
 	Remove []string `json:"remove,omitempty"`
+	// Fold moves the load in place from the version its marker records to
+	// OntologyVersion first, when the change only adds (contract 4.33.0): it
+	// takes no Documents and no Remove, and a "fold" event says what came of
+	// it (FoldEvent).
+	Fold *ExtractFold `json:"fold,omitempty"`
+	// AskedApart are the links a load gained by moves in place along its
+	// version's chain (FoundryAskedApart): every other call leaves them out,
+	// so the documents loaded before replay, and new text is asked them in a
+	// pass of their own (contract 4.33.0).
+	AskedApart []string `json:"asked_apart,omitempty"`
 }
+
+// ExtractFold is the version a load moves from in place (ExtractRequest.Fold).
+type ExtractFold struct {
+	FromVersion      string `json:"from_version"`
+	FromOntologyTOML string `json:"from_ontology_toml"`
+	FromMappingsTOML string `json:"from_mappings_toml"`
+}
+
+// FoldEvent is an Extract's "fold" event: what came of moving the load in
+// place. Outcome.Kind is moved (LinksAdded), not_additive (Why) or
+// marker_elsewhere (Version, the version the load's marker records).
+type FoldEvent struct {
+	Outcome struct {
+		Kind       string                 `json:"kind"`
+		LinksAdded []string               `json:"links_added"`
+		Why        []model.FoundryFoldWhy `json:"why"`
+		Version    string                 `json:"version"`
+	} `json:"outcome"`
+}
+
+// FilledEvent is an Extract's "filled" event, just before the document's
+// "document" event (contract 4.33.0): what came of filling it with links its
+// commit wasn't asked. Facts, Held and ReviewsTaken are what the document
+// states of them, the same however often it is sent, so a caller counts them
+// once per owed document. A document with no such event needed a call the
+// budget refused, or its run stopped before its fill: it stays owed.
+type FilledEvent struct {
+	DocID   string   `json:"doc_id"`
+	Links   []string `json:"links"`
+	Outcome struct {
+		Kind   string `json:"kind"`
+		Reason string `json:"reason"`
+	} `json:"outcome"`
+	Facts        int64 `json:"facts"`
+	Held         int64 `json:"held"`
+	ReviewsTaken int64 `json:"reviews_taken"`
+}
+
+// The kinds of FilledEvent's outcome, and its refusal reasons.
+const (
+	FillWritten     = "written"
+	FillNothing     = "nothing"
+	FillNative      = "native"
+	FillRefused     = "refused"
+	FillNotReplayed = "not_replayed"
+)
+
+// DecodeFilledEvent reads a "filled" event, refusing one with no document
+// or an outcome it doesn't know.
+func DecodeFilledEvent(data []byte) (FilledEvent, error) {
+	var e FilledEvent
+	if err := json.Unmarshal(data, &e); err != nil {
+		return e, fmt.Errorf("read filled event: %w", err)
+	}
+	switch {
+	case e.DocID == "":
+		return e, errors.New("a filled event names no document")
+	case e.Outcome.Kind == FillRefused && e.Outcome.Reason == "":
+		return e, errors.New("a refused fill gives no reason")
+	case e.Outcome.Kind != FillWritten && e.Outcome.Kind != FillNothing && e.Outcome.Kind != FillNative && e.Outcome.Kind != FillRefused:
+		return e, fmt.Errorf("a filled event has outcome %q", e.Outcome.Kind)
+	case e.Facts < 0 || e.Held < 0 || e.ReviewsTaken < 0:
+		return e, errors.New("a filled event counts less than nothing")
+	}
+	return e, nil
+}
+
+// The kinds of FoldEvent's outcome.
+const (
+	FoldMoved           = "moved"
+	FoldNotAdditive     = "not_additive"
+	FoldMarkerElsewhere = "marker_elsewhere"
+)
 
 // AliasDecision is the wire kind of an alias (contract 4.22.0): a name of a
 // type that a person linked to an entity, by a resolve decision of one
@@ -575,6 +668,20 @@ type DocumentUsage struct {
 	InputTokens  uint64 `json:"input_tokens"`
 	OutputTokens uint64 `json:"output_tokens"`
 	Replayed     bool   `json:"replayed"`
+	// Phases are its calls by phase: asked of a model, and replayed from
+	// its saved work at no cost.
+	Phases struct {
+		Entity     PhaseUsage `json:"entity"`
+		Link       PhaseUsage `json:"link"`
+		Verify     PhaseUsage `json:"verify"`
+		Adjudicate PhaseUsage `json:"adjudicate"`
+	} `json:"phases"`
+}
+
+// PhaseUsage is a document's calls of one phase.
+type PhaseUsage struct {
+	Calls    uint64 `json:"calls"`
+	Replayed uint64 `json:"replayed"`
 }
 
 // Artifact is a document's model output, sent before its commit.

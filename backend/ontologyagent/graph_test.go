@@ -659,3 +659,45 @@ func TestEnrichmentApplied(t *testing.T) {
 		}
 	}
 }
+
+// A fill's word on a document (contract 4.33.0), as the schema says it; one
+// with no document, an outcome it doesn't know, a refusal with no reason or
+// a count below nothing is refused.
+func TestDecodeFilledEvent(t *testing.T) {
+	schema := contracttest.Schema(t, "extract_event.json")
+	ok := `{"event":"filled","doc_id":"d1","links":["mentors"],"outcome":{"kind":"written"},"facts":2,"held":1,"reviews_taken":3}`
+	if err := contracttest.Validate(t, schema, []byte(ok)); err != nil {
+		t.Fatal(err)
+	}
+	e, err := DecodeFilledEvent([]byte(ok))
+	if err != nil || e.DocID != "d1" || e.Outcome.Kind != FillWritten || e.Facts != 2 || e.Held != 1 || e.ReviewsTaken != 3 {
+		t.Fatalf("%+v %v", e, err)
+	}
+	refused := `{"event":"filled","doc_id":"d1","links":["mentors"],"outcome":{"kind":"refused","reason":"not_replayed"},"facts":0,"held":0,"reviews_taken":0}`
+	if err := contracttest.Validate(t, schema, []byte(refused)); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := DecodeFilledEvent([]byte(refused)); err != nil || e.Outcome.Reason != FillNotReplayed {
+		t.Fatalf("%+v %v", e, err)
+	}
+	for name, bad := range map[string]string{
+		"no document":       `{"event":"filled","links":["m"],"outcome":{"kind":"written"},"facts":0,"held":0,"reviews_taken":0}`,
+		"an unknown kind":   `{"event":"filled","doc_id":"d1","links":["m"],"outcome":{"kind":"later"},"facts":0,"held":0,"reviews_taken":0}`,
+		"a bare refusal":    `{"event":"filled","doc_id":"d1","links":["m"],"outcome":{"kind":"refused"},"facts":0,"held":0,"reviews_taken":0}`,
+		"less than nothing": `{"event":"filled","doc_id":"d1","links":["m"],"outcome":{"kind":"nothing"},"facts":-1,"held":0,"reviews_taken":0}`,
+		"not json":          `{`,
+	} {
+		if _, err := DecodeFilledEvent([]byte(bad)); err == nil {
+			t.Fatalf("%s: read", name)
+		}
+	}
+	// A document sent to be filled says so on the wire, and only then.
+	body, err := json.Marshal(ExtractDocument{DocID: "d1", Set: "s", URI: "u", Path: "p", MediaType: "markdown", Artifacts: []string{}, Fill: []string{"mentors"}})
+	if err != nil || !strings.Contains(string(body), `"fill":["mentors"]`) {
+		t.Fatalf("%s %v", body, err)
+	}
+	body, _ = json.Marshal(ExtractDocument{DocID: "d1", Artifacts: []string{}})
+	if strings.Contains(string(body), `"fill"`) {
+		t.Fatalf("an unfilled document sends fill: %s", body)
+	}
+}
