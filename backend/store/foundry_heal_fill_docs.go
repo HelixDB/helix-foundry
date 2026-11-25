@@ -726,7 +726,10 @@ func (s *mysqlDB) lockFoundryLoadFills(ctx context.Context, loadID string) error
 	if err != nil {
 		return err
 	}
-	return rows.Close()
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+	}
+	return rows.Err()
 }
 
 // foundryDocumentReviewed reports whether load loadID holds document docID

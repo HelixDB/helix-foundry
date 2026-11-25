@@ -235,6 +235,10 @@ func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, lef
 			return owed, left, pages, fmt.Errorf("the audit listed %d relationships' documents, not 1", len(result.DocumentsOf))
 		}
 		docs := result.DocumentsOf[0]
+		// After a rewind a page lists documents owed already, which take a
+		// share of what is left under the cap and, at the cap, count as
+		// left: near the cap a rewound collect may stop a little early and
+		// overstate left. It owes nothing twice.
 		take := docs[:min(int64(len(docs)), max(0, model.FoundryFillMaxDocuments-owed))]
 		next := model.FoundryFillCursor{After: ids[len(ids)-1], VersionID: at.VersionID,
 			Owed: owed + int64(len(take)), Left: left + int64(len(docs)-len(take))}
