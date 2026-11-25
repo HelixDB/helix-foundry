@@ -462,8 +462,9 @@ test("reads an answer from before visuals as text, its queries' results not kept
   await expect(signed).toContainText("Its result wasn’t kept with the answer.");
 });
 
-test("drafts a new version from a question the ontology can't answer", async ({
+test("adds the link or property a declined question lacked, for owners and admins only", async ({
   page,
+  context,
 }) => {
   await mock.configure({
     loadStepMs: 200,
@@ -492,15 +493,48 @@ test("drafts a new version from a question the ontology can't answer", async ({
   await expect(
     question.getByRole("list", { name: "Steps" }).getByRole("listitem").last(),
   ).toHaveText("Couldn’t answer");
-  await question
+  // The link it lacks, named from the gap; Generate reads what the current
+  // version reads: its generation's Stripe tables and its General set.
+  const add = question
     .getByRole("status")
     .filter({ hasText: "This ontology can’t answer that" })
-    .getByRole("link", { name: "Draft a new version with this" })
-    .click();
+    .getByRole("link", { name: "Add signed_by to the ontology" });
+  await expect(add).toHaveAttribute(
+    "href",
+    /\/generate\?goal=.+&connectors=conn_acme_stripe&event_sources=&sets=set_acme_general$/,
+  );
+  await add.click();
   await expect(page).toHaveURL(/\/generate\?goal=/);
   await expect(page.getByLabel("Goal")).toHaveValue(
-    /Make the ontology able to answer: “Who signed each contract for the customer\?”\nIt lacks: A signed_by link/,
+    /^Add the signed_by link to the ontology, so it can answer: “Who signed each contract for the customer\?”\nWhat’s missing: A signed_by link/,
   );
+
+  // A property it lacks.
+  await mock.configure({ askGap: "undeclared_property" });
+  const notice = await ask(page, "How long is each contract's notice period?");
+  await expect(notice.locator(".hf-tag")).toHaveText("Property not defined", {
+    timeout: 10_000,
+  });
+  await notice
+    .getByRole("link", { name: "Add notice_period_days to the ontology" })
+    .click();
+  await expect(page.getByLabel("Goal")).toHaveValue(
+    /^Add the notice_period_days property to the ontology/,
+  );
+
+  // A member reads why, with nothing to draft.
+  await context.clearCookies();
+  await signIn(page, "alan@example.com");
+  const theirs = await ask(page, "Who signed the services agreement?");
+  await expect(theirs).toContainText("It lacks: A notice_period_days", {
+    timeout: 10_000,
+  });
+  await expect(theirs.getByRole("link", { name: /to the ontology$/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    theirs.getByRole("link", { name: "Draft a new version with this" }),
+  ).toHaveCount(0);
 });
 
 // An interval with an end, and a malformed one, injected at the browser

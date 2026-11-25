@@ -22,6 +22,8 @@ import {
   citedEntities,
   NOTHING_KNOWN,
   draftGoal,
+  gapDraft,
+  startQuestions,
   graphQuery,
   knownOf,
   parseAskEvent,
@@ -2635,5 +2637,142 @@ describe("workedFor", () => {
     expect(workedFor(undefined, at(0))).toBe("");
     expect(workedFor("not a time", at(0))).toBe("");
     expect(workedFor(at(1000), at(0))).toBe("");
+  });
+});
+
+describe("startQuestions", () => {
+  it("starts from the version's competency questions", () => {
+    expect(startQuestions({ id: "v3", definition: contractsBundle })).toEqual({
+      source: "competency",
+      questions: [
+        "Which customers are under contract, and which contracts are they signed with?",
+        "What is each customer under contract billed?",
+      ],
+    });
+  });
+
+  it("derives safe questions from a schema without any: counts, then the most linked types' links", () => {
+    expect(
+      startQuestions({
+        id: "v1",
+        format: "ONTOLOGY_FORMAT_FOUNDRY_V1",
+        definition: {
+          entities: [{ name: "Invoice" }, { name: "Customer" }, { name: "Note" }],
+          relationships: [
+            { name: "billed_to", from: "Invoice", to: "Customer" },
+            { name: "about", from: "Note", to: "Invoice" },
+            { name: "mentions", from: "Note", to: "Customer" },
+            // A link to its own type says nothing about another.
+            { name: "replaces", from: "Invoice", to: "Invoice" },
+            // A link to a type the version lacks is left out.
+            { name: "owes", from: "Invoice", to: "Ghost" },
+          ],
+        },
+      }),
+    ).toEqual({
+      source: "schema",
+      questions: [
+        "How many records of each type does this load hold?",
+        "Which Invoice records have the most Note records linked to them?",
+        "Which Customer records have the most Invoice records linked to them?",
+        "Which Customer records have the most Note records linked to them?",
+      ],
+    });
+  });
+
+  it("counts the most linked type when there is no link, and an agent draft's types without questions", () => {
+    expect(
+      startQuestions({
+        id: "v",
+        format: "ONTOLOGY_FORMAT_AGENT_BUNDLE",
+        definition: {
+          format: "agent_bundle",
+          ontology_toml:
+            'version = "draft"\n\n[types.Customer]\nprops = { id = "string" }\nkey = ["id"]\n',
+        },
+      }),
+    ).toEqual({
+      source: "schema",
+      questions: [
+        "How many records of each type does this load hold?",
+        "How many Customer records are there?",
+      ],
+    });
+  });
+
+  it("has none for a version not read, or one without a type", () => {
+    expect(startQuestions(undefined)).toBe(undefined);
+    expect(startQuestions(null)).toBe(undefined);
+    expect(
+      startQuestions({ id: "v", format: "ONTOLOGY_FORMAT_FOUNDRY_V1" }),
+    ).toBe(undefined);
+  });
+});
+
+describe("gapDraft", () => {
+  const declined = (
+    kind: Parameters<typeof gapDraft>[1]["kind"],
+    gap = "A **signed_by** link from Contract to the Person who signed it.",
+    reason = "No link records who signed it.",
+  ): Parameters<typeof gapDraft>[1] => ({
+    status: "cannot_answer",
+    ...(kind ? { kind } : {}),
+    gap,
+    reason,
+    queries: [],
+    usage: USAGE,
+  });
+
+  it("adds the link a question lacked, named from its gap", () => {
+    expect(
+      gapDraft(" Who signed it? ", declined("undeclared_relation")),
+    ).toEqual({
+      kind: "undeclared_relation",
+      name: "signed_by",
+      label: "Add signed_by to the ontology",
+      goal: "Add the signed_by link to the ontology, so it can answer: “Who signed it?”\nWhat’s missing: A signed_by link from Contract to the Person who signed it.\nWhy it couldn’t: No link records who signed it.",
+    });
+  });
+
+  it("adds a property, named in backticks or not named at all", () => {
+    expect(
+      gapDraft(
+        "Q",
+        declined("undeclared_property", "The `noticePeriod` of a contract.", ""),
+      ),
+    ).toEqual({
+      kind: "undeclared_property",
+      name: "noticePeriod",
+      label: "Add noticePeriod to the ontology",
+      goal: "Add the noticePeriod property to the ontology, so it can answer: “Q”\nWhat’s missing: The noticePeriod of a contract.",
+    });
+    // Backticks around words aren't a name.
+    expect(
+      gapDraft(
+        "Q",
+        declined("undeclared_property", "The `notice period` of a contract."),
+      ),
+    ).toMatchObject({
+      label: "Add the missing property to the ontology",
+      goal: expect.stringMatching(/^Add the missing property to the ontology/),
+    });
+    expect(gapDraft("Q", declined("undeclared_relation", "", ""))).toEqual({
+      kind: "undeclared_relation",
+      label: "Add the missing link to the ontology",
+      goal: "Add the missing link to the ontology, so it can answer: “Q”",
+    });
+  });
+
+  it("keeps the goal within Generate's limit", () => {
+    const goal = gapDraft(
+      "x".repeat(5000),
+      declined("undeclared_relation"),
+    )!.goal;
+    expect([...goal]).toHaveLength(2000);
+  });
+
+  it("offers nothing for a gap in the data, or one of unknown kind", () => {
+    for (const kind of ["uncovered", "after_as_of", "absent", undefined] as const)
+      expect(gapDraft("Q", declined(kind))).toBe(undefined);
   });
 });

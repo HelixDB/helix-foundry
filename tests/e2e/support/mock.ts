@@ -135,6 +135,8 @@ export const mock = {
     // month spent on questions before.
     askStepMs?: number;
     askOutcome?: "answered" | "cannot_answer" | "budget_exhausted" | "failed";
+    // With cannot_answer: the decline lacks a property, not a link.
+    askGap?: "undeclared_property";
     askMarkup?: boolean;
     // false: answers as a 3.10.0 engine did, without outputs or visuals.
     askVisuals?: boolean;
