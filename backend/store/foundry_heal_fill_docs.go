@@ -717,27 +717,25 @@ func (s *mysqlDB) foundryDocumentReviewed(ctx context.Context, loadID, docID str
 // again, or a review taken back. A collect pages forward from its cursor,
 // so it would never list the document: it starts over instead
 // (RestartFoundryFillCollect ends what it owed), and one still running
-// saves nothing more (OweFoundryFillDocuments). A job's write of the
-// document calls it, holding the job's row before the fill's, the order a
-// fill's start takes them. A document that becomes reviewed while a
-// collect's page is listed and not yet saved, at or before that page's
-// last document, is still missed: the window of one Audit call.
+// saves nothing more (OweFoundryFillDocuments). The cursors are read as
+// they stand (the UPDATE's current read, waiting for a page being saved),
+// never from the transaction's snapshot, which could miss one saved since.
+// A job's write of the document calls it, holding the job's row before the
+// fills', the order a fill's start takes them. A document that becomes
+// reviewed after its page was listed and before that page is saved is
+// still missed: the window of one Audit call.
 func (s *mysqlDB) restartFoundryFillCollectsBehind(ctx context.Context, loadID, docID string, reviewed bool) error {
 	if reviewed {
 		return nil
 	}
-	// Most writes meet no cursor: a plain read first, so they lock no fill.
-	// One saved since this transaction's snapshot listed after the document
-	// was written, or waits on its row below.
-	var behind bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_heal_fills WHERE load_id=? AND state='moved' AND collect_after>=?)`,
-		loadID, docID).Scan(&behind); err != nil || !behind {
+	switch now, err := s.foundryDocumentReviewed(ctx, loadID, docID); {
+	case err != nil:
 		return err
+	case !now:
+		return nil
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+`
-WHERE load_id=? AND state='moved' AND collect_after>=?
-  AND EXISTS (SELECT 1 FROM foundry_load_extractions e WHERE e.load_id=? AND e.document_id=? AND e.status='extracted' AND e.reviews>0)`,
-		loadID, docID, loadID, docID)
+WHERE load_id=? AND state='moved' AND collect_after>=?`, loadID, docID)
 	return err
 }
 
