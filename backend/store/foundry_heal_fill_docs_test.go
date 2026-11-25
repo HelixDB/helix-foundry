@@ -842,9 +842,11 @@ func TestFoundryFillCollectFailureKeepsItsCursor(t *testing.T) {
 	assert.Equal(t, 2, got.Failures)
 	assert.Nil(t, got.Collect)
 	assert.Zero(t, f.linksOwed(t))
-	// A fresh collect of the load clears another fill's cursor with the rows.
+	// A fresh collect of the load clears another fill's cursor with the rows:
+	// one of a version the load moved on from (one at the load's version
+	// keeps every other fill's collect from being claimed).
 	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET collect_after=?, collect_version_id=?, collect_owed=1, paused_until=NULL WHERE id=?`,
-		f.a, fill.ToVersionID, fill.ID)
+		f.a, id26("V-OLD"), fill.ID)
 	require.NoError(t, err)
 	_, err = testDB.Exec(`UPDATE foundry_load_resends SET status='owed', ended_at=NULL WHERE load_id=? AND document_id=? AND reason='link'`, f.load, f.a)
 	require.NoError(t, err)
