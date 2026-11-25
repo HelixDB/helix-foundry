@@ -98,6 +98,41 @@ test("walks a new workspace through the sample company, from its database to Ask
   ).toHaveCount(1);
 });
 
+test("holds a question asked while the sample loads, asks it the moment it is ready and opens its answer", async ({
+  page,
+}) => {
+  test.slow();
+  await openSample(page);
+  // Slow enough to ask while it loads.
+  await mock.configure({ loadStepMs: 1500 });
+  const question = "Which accounts have the most open support tickets?";
+  const ask = page.getByRole("form", { name: "Ask once loaded" });
+  await ask.getByRole("textbox", { name: "Question" }).fill(question);
+  await ask.getByRole("button", { name: "Ask once loaded" }).click();
+  const held = page.getByText(`“${question}”`);
+  await expect(held).toBeVisible();
+  // It waits in this browser: a reload keeps it.
+  await page.reload();
+  await expect(held).toBeVisible({ timeout: 30_000 });
+  // How long it usually takes.
+  await expect(page.getByText(/usually takes about 5 minutes/)).toBeVisible();
+
+  // Once loaded, it is the tour's question, and its answer opens in Ask.
+  await expect(page).toHaveURL(/\/ask\/[^?]+\?thread=q_/, {
+    timeout: 90_000,
+  });
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(question);
+  await page.goto("/ontology/sample");
+  const asked = page
+    .getByRole("list", { name: "Steps" })
+    .getByRole("article", { name: /^Question: / });
+  await expect(asked).toHaveCount(1, { timeout: 30_000 });
+  await expect(asked).toHaveAttribute("aria-label", `Question: ${question}`);
+  await expect(page.getByRole("form", { name: "Ask once loaded" })).toHaveCount(
+    0,
+  );
+});
+
 test("says it is sample data, and its link back to the tour shows every step done and makes nothing", async ({
   page,
 }) => {

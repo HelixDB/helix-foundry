@@ -185,6 +185,30 @@ describe("custom events of API calls", () => {
       [{ job: "question" }, "q_1"],
       "question_refused",
     ],
+    [
+      "the sample's load",
+      () =>
+        createLoad(
+          "ws",
+          "o",
+          { versionId: "v", clientToken: "t" },
+          { since: "2026-11-24T10:00:00Z" },
+        ),
+      [{ job: "load", sample: { since: "2026-11-24T10:00:00Z" } }, "load_1"],
+      "load_refused",
+    ],
+    [
+      "the sample's first question",
+      () =>
+        askQuestion(
+          "ws",
+          "o",
+          { loadId: "l", question: "?", clientToken: "t" },
+          {},
+        ),
+      [{ job: "question", sample: {} }, "q_1"],
+      "question_refused",
+    ],
   ];
 
   it.each(jobs)("starts %s once it is accepted", async (_, run, started) => {

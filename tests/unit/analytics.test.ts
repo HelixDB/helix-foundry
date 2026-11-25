@@ -579,6 +579,93 @@ describe("jobs", () => {
     expect(sent()).toHaveLength(ids.length + 5);
   });
 
+  it("reports the sample's load and first answer once, timed by Helix, from any later read", async () => {
+    const a = await load();
+    const since = "2026-11-24T10:00:00Z";
+    a.jobStarted({ job: "load", sample: { since } }, "load_s");
+    a.jobStarted({ job: "question", sample: { since } }, "q_s");
+    a.jobStarted({ job: "question", sample: {} }, "q_t");
+    // The tour's other questions aren't the sample's.
+    a.jobStarted({ job: "question" }, "q_o");
+    // A later visit, after a reload: only what storage kept.
+    const b = await (async () => {
+      const kept = local.values.get(PENDING)!;
+      const next = await load();
+      local.values.set(PENDING, kept);
+      return next;
+    })();
+    sdk.track.mockClear();
+    const ready = {
+      id: "load_s",
+      status: "ready" as const,
+      createdAt: "2026-11-24T10:01:00Z",
+      finishedAt: "2026-11-24T10:06:00Z",
+      jobs: [
+        {
+          kind: "load",
+          createdAt: "2026-11-24T10:01:00Z",
+          startedAt: "2026-11-24T10:01:02Z",
+        },
+      ],
+    };
+    b.jobSeen("load", [{ id: "load_s", status: "running" }]);
+    b.jobSeen("load", [ready]);
+    b.jobSeen("load", [ready]);
+    b.jobSeen("question", [
+      {
+        id: "q_s",
+        status: "answered",
+        createdAt: "2026-11-24T10:06:10Z",
+        finishedAt: "2026-11-24T10:06:40Z",
+      },
+      { id: "q_t", status: "cannot_answer" },
+      { id: "q_o", status: "answered" },
+    ]);
+    b.jobSeen("question", [{ id: "q_s", status: "answered" }]);
+    expect(sent()).toEqual([
+      ["load_ready", { status: "ready" }],
+      [
+        "sample_loaded",
+        { seconds: 300, queued_seconds: 2, total_seconds: 360 },
+      ],
+      ["question_answered", undefined],
+      ["sample_answered", { seconds: 30, total_seconds: 400 }],
+      ["question_unanswered", { status: "cannot_answer" }],
+      ["sample_answered", { seconds: undefined, total_seconds: undefined }],
+      ["question_answered", undefined],
+    ]);
+  });
+
+  it("reads the sample's mark from storage without trusting it", async () => {
+    const a = await load();
+    local.values.set(
+      PENDING,
+      JSON.stringify({
+        l1: { job: "load", sample: { since: 7 }, at: Date.now() },
+        l2: { job: "load", sample: "yes", at: Date.now() },
+        q1: { job: "question", sample: null, at: Date.now() },
+      }),
+    );
+    a.jobSeen("load", [
+      { id: "l1", status: "partial", finishedAt: "2026-11-24T10:06:00Z" },
+      { id: "l2", status: "ready" },
+    ]);
+    a.jobSeen("question", [{ id: "q1", status: "failed" }]);
+    expect(sent()).toEqual([
+      ["load_ready", { status: "partial" }],
+      [
+        "sample_loaded",
+        {
+          seconds: undefined,
+          queued_seconds: undefined,
+          total_seconds: undefined,
+        },
+      ],
+      ["load_ready", { status: "ready" }],
+      ["question_unanswered", { status: "failed" }],
+    ]);
+  });
+
   it("reports an answered question, and nothing for one that wasn't", async () => {
     const a = await load();
     a.jobStarted({ job: "question" }, "q_1");

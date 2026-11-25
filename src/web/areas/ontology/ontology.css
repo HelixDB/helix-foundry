@@ -1357,6 +1357,33 @@
 .ak-suggestions.on-tour-asks {
   margin: 0 0 14px;
 }
+/* The tour's question while its load runs (./sample-ask.tsx): Ask's
+   composer, or the question held until the load is ready. */
+.on-tour-wait {
+  margin-bottom: 20px;
+}
+.on-tour-wait .ak-suggestions {
+  margin-top: 10px;
+}
+.on-tour-held {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.on-tour-held > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-text-2);
+}
+.on-tour-held span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.on-tour-held small {
+  color: var(--hf-text-2);
+}
 
 /* A job's bar (job-progress.tsx): its step, a bar and the time left. An
    unmeasured stretch (a load's tables) shimmers across the bar. */
