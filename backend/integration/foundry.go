@@ -1087,6 +1087,18 @@ func addFoundryTool[In, Out any](
 	s *Service, server *mcp.Server, identity *Identity, t *mcp.Tool,
 	handle func(context.Context, *Identity, *Call, In) (Out, int, error),
 ) {
+	foundryToolSpec[In, Out](s, t)
+	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
+		// The SDK checked the arguments and read them through float64s, which round a large integer
+		// (in a read's filter, say). Read them again, each number as written.
+		_ = decodeExact(req.Params.Arguments, &input)
+		return callFoundryTool(ctx, s, identity, t.Name, req, input, handle)
+	})
+}
+
+// foundryToolSpec completes t as every Foundry tool is listed: its schemas, title, and the
+// visibility that keeps views from calling it.
+func foundryToolSpec[In, Out any](s *Service, t *mcp.Tool) {
 	if !s.Events {
 		// A tool's own output schema, else the SDK's for Out.
 		schema, _ := t.OutputSchema.(*jsonschema.Schema)
@@ -1109,30 +1121,35 @@ func addFoundryTool[In, Out any](
 		t.Meta = mcp.Meta{}
 	}
 	t.Meta["ui"] = ui
-	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
-		// The SDK checked the arguments and read them through float64s, which round a large integer
-		// (in a read's filter, say). Read them again, each number as written.
-		_ = decodeExact(req.Params.Arguments, &input)
-		result, value, err := s.Run(ctx, t.Name, func(ctx context.Context, call *Call) (any, int, error) {
-			if in, scoped := any(&input).(WorkspaceInput); scoped && *in.Workspace() == "" {
-				if *in.Workspace() = identity.onlyWorkspace(ctx); *in.Workspace() == "" {
-					return nil, 0, errWorkspaceRequired
-				}
+}
+
+// callFoundryTool runs one call of a Foundry tool under runTool, as tools/call does and as a
+// task's tasks/get does again (tasks.go). The handler's ctx carries the call's request, whose
+// person's answer a handler may read (personSaid).
+func callFoundryTool[In, Out any](
+	ctx context.Context, s *Service, identity *Identity, name string, req *mcp.CallToolRequest, input In,
+	handle func(context.Context, *Identity, *Call, In) (Out, int, error),
+) (*mcp.CallToolResult, Out, error) {
+	ctx = context.WithValue(ctx, toolRequestKey{}, req)
+	result, value, err := s.Run(ctx, name, func(ctx context.Context, call *Call) (any, int, error) {
+		if in, scoped := any(&input).(WorkspaceInput); scoped && *in.Workspace() == "" {
+			if *in.Workspace() = identity.onlyWorkspace(ctx); *in.Workspace() == "" {
+				return nil, 0, errWorkspaceRequired
 			}
-			return handle(ctx, identity, call, input)
-		})
-		var out Out
-		if value != nil {
-			out = value.(Out)
 		}
-		if viewed, ok := any(out).(viewOutput); ok && result != nil {
-			if result.Meta == nil {
-				result.Meta = mcp.Meta{}
-			}
-			result.Meta[appMetaKey] = viewed.appView()
-		}
-		return result, out, err
+		return handle(ctx, identity, call, input)
 	})
+	var out Out
+	if value != nil {
+		out = value.(Out)
+	}
+	if viewed, ok := any(out).(viewOutput); ok && result != nil {
+		if result.Meta == nil {
+			result.Meta = mcp.Meta{}
+		}
+		result.Meta[appMetaKey] = viewed.appView()
+	}
+	return result, out, err
 }
 
 // errWorkspaceRequired refuses an empty workspace_id from a caller who doesn't belong to exactly
@@ -1656,13 +1673,16 @@ func (s *Service) GetFoundryQuestion(
 	return out, 1, nil
 }
 
-// WaitForQuestion waits for the question to be done.
+// WaitForQuestion waits for the question to be done, or hands it to a task when the call's client
+// takes tasks.
 func (s *Service) WaitForQuestion(ctx context.Context, started time.Time, req *foundryv1.GetFoundryQuestionRequest, question *foundryv1.FoundryQuestion) (*foundryv1.FoundryQuestion, error) {
-	return waitWhile(ctx, s, started, question, func(q *foundryv1.FoundryQuestion) bool { return !QuestionDone(q.GetStatus()) },
+	return waitOrTask(ctx, s, started, question, func(q *foundryv1.FoundryQuestion) bool { return !QuestionDone(q.GetStatus()) },
 		func(ctx context.Context) (*foundryv1.FoundryQuestion, error) {
 			response, err := s.Foundry.GetFoundryQuestion(ctx, req)
 			return response.GetQuestion(), err
-		})
+		},
+		questionTask{req.GetWorkspaceId(), req.GetOntologyId(), req.GetId()},
+		func(q *foundryv1.FoundryQuestion) string { return "Question " + q.GetStatus() })
 }
 
 // waitWhile gets what it waits on again while live holds of it, after each of s.Polls in
@@ -1738,10 +1758,13 @@ func (s *Service) GetFoundryGeneration(
 	}
 	generation, err := get(ctx)
 	if err == nil && input.Wait {
-		generation, err = waitWhile(ctx, s, started, generation, func(g *foundryv1.OntologyGeneration) bool {
+		generation, err = waitOrTask(ctx, s, started, generation, func(g *foundryv1.OntologyGeneration) bool {
 			return g.GetStatus() == foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_QUEUED ||
 				g.GetStatus() == foundryv1.OntologyGenerationStatus_ONTOLOGY_GENERATION_STATUS_RUNNING
-		}, get)
+		}, get, generationTask{input.WorkspaceID, input.OntologyID, input.GenerationID},
+			func(g *foundryv1.OntologyGeneration) string {
+				return "Generation " + EnumName(g.GetStatus().String(), "ONTOLOGY_GENERATION_STATUS_")
+			})
 	}
 	if err != nil {
 		return GetFoundryGenerationOutput{}, 0, FoundryError(err)
@@ -1776,11 +1799,12 @@ func (s *Service) GetFoundryLoad(
 	load, err := get(ctx)
 	if err == nil && input.Wait {
 		// A ready load still changes while an extract adds documents to it.
-		load, err = waitWhile(ctx, s, started, load, func(l *foundryv1.FoundryLoad) bool {
+		load, err = waitOrTask(ctx, s, started, load, func(l *foundryv1.FoundryLoad) bool {
 			return l.GetStatus() == "writing" || slices.ContainsFunc(l.GetJobs(), func(job *foundryv1.FoundryGraphJob) bool {
 				return job.GetStatus() == "queued" || job.GetStatus() == "running"
 			})
-		}, get)
+		}, get, loadTask{input.WorkspaceID, input.OntologyID, input.LoadID},
+			func(l *foundryv1.FoundryLoad) string { return "Load " + l.GetStatus() })
 	}
 	if err != nil {
 		return GetFoundryLoadOutput{}, 0, FoundryError(err)
@@ -2071,10 +2095,13 @@ func (s *Service) GetFoundrySync(
 		return GetFoundrySyncOutput{}, 0, errCodeNotFound
 	}
 	if err == nil && input.Wait {
-		sync, err = waitWhile(ctx, s, started, sync, func(sync *foundryv1.ConnectorSync) bool {
+		sync, err = waitOrTask(ctx, s, started, sync, func(sync *foundryv1.ConnectorSync) bool {
 			return sync.GetStatus() == foundryv1.ConnectorSyncStatus_CONNECTOR_SYNC_STATUS_QUEUED ||
 				sync.GetStatus() == foundryv1.ConnectorSyncStatus_CONNECTOR_SYNC_STATUS_RUNNING
-		}, get)
+		}, get, syncTask{input.WorkspaceID, input.ConnectorID, input.SyncID},
+			func(sync *foundryv1.ConnectorSync) string {
+				return "Sync " + EnumName(sync.GetStatus().String(), "CONNECTOR_SYNC_STATUS_")
+			})
 	}
 	if err != nil {
 		return GetFoundrySyncOutput{}, 0, FoundryError(err)
