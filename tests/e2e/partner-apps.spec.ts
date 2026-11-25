@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import type { Browser, Page } from "@playwright/test";
-import { APP_ORIGIN, expect, mock, signIn, test } from "./support/mock";
+import {
+  APP_ORIGIN,
+  csrfToken,
+  expect,
+  mock,
+  signIn,
+  test,
+} from "./support/mock";
 
 // Connected apps against the mock (mock/routes/partner-apps.ts): a partner
 // app's request, kept through a sign-in, approved by an owner for the
@@ -410,6 +417,47 @@ test("a second consent starts from what the app reads, and replaces it", async (
   await expect(
     dialog.getByRole("checkbox", { name: /^Stripe ·/ }),
   ).not.toBeChecked();
+});
+
+test("a second consent after the install's only source was deleted starts from everything", async ({
+  page,
+}) => {
+  await mock.configure({ partnerAppInstalled: true });
+  await signIn(page);
+  await answerAsApp(page);
+  await page.goto("/settings/apps");
+  // Stripe, all the install reads, goes: its grant goes with it.
+  const res = await page.request.delete(
+    "/papi/v1/workspaces/ws_acme/foundry/connectors/conn_acme_stripe",
+    {
+      headers: {
+        origin: new URL(page.url()).origin,
+        "x-helix-csrf": await csrfToken(page),
+      },
+    },
+  );
+  expect(res.status(), await res.text()).toBe(200);
+  await page.goto(authorizePath());
+  const form = consent(page);
+  await expect(form).toContainText(
+    "Northwind Insights is already connected to Acme. Approving replaces what it can read.",
+  );
+  await expect(
+    form.getByRole("checkbox", { name: /^Everything in the workspace ·/ }),
+  ).toBeChecked();
+  // Advanced starts closed while nothing in it is chosen.
+  await expect(
+    form.getByRole("checkbox", { name: /^Shop database ·/ }),
+  ).toBeHidden();
+  await expect(form.getByText("Choose at least one source.")).toHaveCount(0);
+  const approved = page.waitForRequest((r) =>
+    r.url().endsWith("/partner-apps/authorization:approve"),
+  );
+  await form.getByRole("button", { name: "Approve" }).click();
+  expect((await approved).postDataJSON().targets).toEqual([
+    { kind: "KIND_WORKSPACE" },
+  ]);
+  await page.waitForURL((url) => url.origin === "https://northwind.example");
 });
 
 test("a failed read of the installs offers Retry, and nothing to approve until they read", async ({

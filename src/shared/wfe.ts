@@ -6430,7 +6430,8 @@ export type FoundrySourceTarget = FoundryAccessTarget;
  * WfeServiceApprovePartnerAppAuthorizationBody: POST
  * .../partner-apps/authorization:approve, owners and admins on the Foundry
  * site. `scopes` is what the person allowed, a non-empty subset of the
- * app's; `targets` 1 to 1000 sources. It stores a one-time code (5 minutes)
+ * app's; `targets` 1 to 1000 sources (everything in the workspace,
+ * KIND_WORKSPACE, counts as one). It stores a one-time code (5 minutes)
  * the app trades for tokens; NOT_FOUND "One of the sources you chose was
  * deleted".
  */

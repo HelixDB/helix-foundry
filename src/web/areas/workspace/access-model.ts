@@ -825,13 +825,24 @@ export const SLACK_GRANT_NOTE =
   "only the channels each person is in, now and later";
 
 /**
- * What a grant of everything in the workspace gives, said beside it: for
- * people and agents' keys (`app` false), each person's channels of a Slack
- * connection; for a partner app's install, what each source shares with
- * everyone.
+ * Who a source is given to, for what its grant says it gives: people
+ * (members and teams), who read a connection that follows its source's
+ * permissions as far as each of them is let in; an agent's key, or a
+ * partner app's install (an outside app), which reads one only as far as
+ * the source shares with everyone.
  */
-export const everythingNote = (app: boolean) =>
-  `every connection, table and document set, including ones added later; a connection that follows its source’s permissions (Slack) gives only ${app ? "what the source shares with everyone" : "the channels each person is in"}; not People enrichment`;
+export type PickerAudience = "people" | "key" | "app";
+
+/**
+ * What a grant of everything in the workspace gives, said beside it: for
+ * people, each person's channels of a Slack connection; for a key or an
+ * app, what each source shares with everyone.
+ *
+ *     everythingNote("key").includes("what the source shares with everyone") // true
+ *     everythingNote("people").includes("the channels each person is in") // true
+ */
+export const everythingNote = (audience: PickerAudience) =>
+  `every connection, table and document set, including ones added later; a connection that follows its source’s permissions (Slack) gives only ${audience === "people" ? "the channels each person is in" : "what the source shares with everyone"}; not People enrichment`;
 
 /** How many names a note lists before it counts the rest. */
 const NAMES_LISTED = 5;

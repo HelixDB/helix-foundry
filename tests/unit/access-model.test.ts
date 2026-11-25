@@ -265,14 +265,20 @@ describe("the editor's sources", () => {
     expect(toggle([EVERYTHING, enrichment], EVERYTHING)).toEqual([enrichment]);
   });
 
-  it("says what everything gives, to people and to an app", () => {
-    expect(everythingNote(false)).toContain("including ones added later");
-    expect(everythingNote(false)).toContain("the channels each person is in");
-    expect(everythingNote(true)).toContain(
-      "what the source shares with everyone",
+  it("says what everything gives, to people, to a key and to an app", () => {
+    expect(everythingNote("people")).toContain("including ones added later");
+    expect(everythingNote("people")).toContain(
+      "the channels each person is in",
     );
-    for (const app of [true, false])
-      expect(everythingNote(app)).toContain("not People enrichment");
+    // A key, like an app, reads only what a source shares with everyone.
+    for (const audience of ["key", "app"] as const) {
+      expect(everythingNote(audience)).toContain(
+        "what the source shares with everyone",
+      );
+      expect(everythingNote(audience)).not.toContain("each person");
+    }
+    for (const audience of ["people", "key", "app"] as const)
+      expect(everythingNote(audience)).toContain("not People enrichment");
   });
 });
 

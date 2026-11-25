@@ -349,13 +349,16 @@ function ConsentSources({
         </div>
       </>
     );
+  // An install whose grants are gone (its only source deleted) starts from
+  // everything, as a first consent does, with Advanced closed.
   const existing = existingInstall(installs.data || [], app.clientId),
-    prefill = existing
+    held = existing
       ? grantsOf(data.access.data?.grants || [], {
           kind: "KIND_SERVICE_CREDENTIAL",
           id: existing.credentialId,
         })
-      : [EVERYTHING],
+      : [],
+    prefill = held.length ? held : [EVERYTHING],
     sources = chosen ?? prefill;
   const sets = data.sets.data || [],
     tree = sourceTree(data.connectors.data?.connectors || [], sets),

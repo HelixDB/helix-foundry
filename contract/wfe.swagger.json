@@ -1098,10 +1098,11 @@
         "KIND_CONNECTOR",
         "KIND_TABLE",
         "KIND_DOCUMENT_SET",
-        "KIND_ENRICHMENT"
+        "KIND_ENRICHMENT",
+        "KIND_WORKSPACE"
       ],
       "default": "KIND_UNSPECIFIED",
-      "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else."
+      "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else.\n - KIND_WORKSPACE: Everything in the workspace: every connector (its tables and its\ndocument sets), every table and every document set, now and later,\neach as far as its source shares; never People enrichment. Names\nnothing."
     },
     "WfeServiceApprovePartnerAppAuthorizationBody": {
       "type": "object",
@@ -1131,7 +1132,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundrySourceTarget"
           },
-          "description": "The sources it reads, 1 to 1000."
+          "description": "The sources it reads, 1 to 1000; everything in the workspace\n(KIND_WORKSPACE) counts as one."
         }
       },
       "description": "An owner or admin allows the app to read the workspace: the response is\nwhere to send the browser, the redirect URI with the code, state and iss."

@@ -90,6 +90,7 @@ import {
   workflowsOffBy,
   workflowsOn,
   type Grant,
+  type PickerAudience,
   type Principal,
   type SourceTree,
 } from "./access-model";
@@ -235,21 +236,15 @@ function SourceCheck({
   );
 }
 
-/**
- * Who a source is given to, for what its grant says it gives: people and
- * agents' keys of the workspace, or a partner app's install (an outside
- * app, which reads a connection that follows its source's permissions only
- * as far as the source shares with everyone).
- */
-export type PickerAudience = "people" | "app";
-
 /** What a connection's grant gives, said beside it. */
 const connectionNote = (audience: PickerAudience, follows: boolean) =>
   audience === "app"
     ? `every table it syncs and every document set it owns, including ones added later${follows ? "; only what the source shares with everyone" : ""}`
-    : follows
-      ? SLACK_GRANT_NOTE
-      : "all of it, now and later";
+    : !follows
+      ? "all of it, now and later"
+      : audience === "people"
+        ? SLACK_GRANT_NOTE
+        : "only what the source shares with everyone, now and later";
 
 /**
  * The workspace's sources as checkboxes, controlled: everything in the
@@ -393,7 +388,7 @@ export function SourcePicker({
           >
             <span>
               Everything in the workspace
-              <small> · {everythingNote(audience === "app")}</small>
+              <small> · {everythingNote(audience)}</small>
             </span>
           </SourceCheck>
         </li>
@@ -568,7 +563,9 @@ export function GrantsDialog({
             follows={follows}
             chosen={chosen}
             onChange={setChosen}
-            audience="people"
+            audience={
+              principal.kind === "KIND_SERVICE_CREDENTIAL" ? "key" : "people"
+            }
           />
           <section className="wk-access-reads" aria-labelledby="access-reads">
             <h4 id="access-reads">Can read</h4>

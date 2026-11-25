@@ -177,9 +177,12 @@ test("everything in the workspace gives what is loaded later, and a source chose
     name: /^Everything in the workspace ·/,
   });
   await expect(everything).not.toBeChecked();
+  // A key reads a source that follows its permissions only as far as it
+  // shares with everyone, as an app does.
   await expect(key).toContainText(
-    "the channels each person is in; not People enrichment",
+    "gives only what the source shares with everyone; not People enrichment",
   );
+  await expect(key).not.toContainText("the channels each person is in");
   await everything.check();
   // The sources one by one show off, to be chosen in its place.
   await expect(
@@ -1530,6 +1533,15 @@ test("a grantee given Slack reads only the channels she's in, and Source permiss
   await sources.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   await sources.getByRole("button", { name: "Close" }).first().click();
+
+  // A key given it reads only what Slack shares with everyone.
+  const key = await openSources(page, "agents", "Support agent");
+  await expect(
+    key.getByRole("checkbox", { name: /^Acme Slack ·/ }),
+  ).toHaveAccessibleName(
+    /only what the source shares with everyone, now and later/,
+  );
+  await key.getByRole("button", { name: "Close" }).first().click();
 
   // The connection's page says what it follows.
   await page.goto(`/data/connections/${connector.id}`);
