@@ -372,6 +372,12 @@ func (s *Service) executeFoundry(
 	if input.ConfirmationID == "" || input.ConfirmationToken == "" {
 		return FoundryOperationOutput{}, 0, false, detailedToolError{code: errCodeInvalidArguments, message: "confirmation_id and confirmation_token are required"}
 	}
+	// A client that can ask its person does, before the confirmation is spent: the call answers
+	// with the ask, and runs when the client calls again with their yes.
+	change := fmt.Sprintf("Run the Helix Foundry action %s on %s?", input.Operation, input.Target)
+	if asked, err := askPerson(ctx, ConfirmMessage(change, input.Payload)); asked || err != nil {
+		return FoundryOperationOutput{}, 0, false, err
+	}
 	err = s.Confirmations.Consume(ctx, ConfirmationBinding{
 		ID: input.ConfirmationID, Token: input.ConfirmationToken, Operation: foundryOperationPrefix + input.Operation,
 		Target: input.Target, Audience: s.ResourceURI,
