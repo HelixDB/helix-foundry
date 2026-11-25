@@ -107,6 +107,13 @@ test("explains a sign-in that did not finish", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("offers the demo without an account", async ({ page }) => {
+  await page.goto("/login");
+  await expect(
+    page.getByRole("link", { name: "See it without an account" }),
+  ).toHaveAttribute("href", "https://demo.foundry.invalid/");
+});
+
 test.describe("in an app's built-in browser", () => {
   const notice = (page: Page) =>
     page.getByRole("status").filter({ hasText: "Open in your browser" });

@@ -277,10 +277,34 @@ export function SignInPage() {
         ))}
       </div>
       <PasswordSignIn returnTo={returnTo} disabled={!!pending} />
+      {DEMO_URL && (
+        <p className="hf-gate-fine">
+          Not ready to sign in?{" "}
+          <a
+            href={DEMO_URL}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+                return trackEvent("demo_clicked");
+              e.preventDefault();
+              void trackBeforeLeaving("demo_clicked").then(() =>
+                window.location.assign(DEMO_URL),
+              );
+            }}
+          >
+            See it without an account
+          </a>
+        </p>
+      )}
       <Terms />
     </GatePage>
   );
 }
+
+/**
+ * The stamp's public sample demo (next.config.ts): none yet, and never in a
+ * local build, which hides the link.
+ */
+const DEMO_URL = process.env.NEXT_PUBLIC_FOUNDRY_DEMO_URL || "";
 
 /**
  * Asks a reader in an app's built-in browser to sign in from their own: by

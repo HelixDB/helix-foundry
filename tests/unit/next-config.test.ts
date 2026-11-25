@@ -187,6 +187,29 @@ describe("next.config.ts", () => {
     },
   );
 
+  it.each([
+    { name: "dev", appEnv: "dev", mode: undefined, url: "" },
+    { name: "prod", appEnv: "prod", mode: undefined, url: "" },
+    { name: "an unset app env", appEnv: undefined, mode: undefined, url: "" },
+    {
+      name: "the mock",
+      appEnv: "mock",
+      mode: undefined,
+      url: "https://demo.foundry.invalid/",
+    },
+    { name: "local mode against the mock", appEnv: "mock", mode: "local", url: "" },
+    { name: "local mode", appEnv: undefined, mode: "local", url: "" },
+  ])(
+    "sets NEXT_PUBLIC_FOUNDRY_DEMO_URL for $name",
+    async ({ appEnv, mode, url }) => {
+      const env = await load({
+        NEXT_PUBLIC_APP_ENV: appEnv,
+        NEXT_PUBLIC_FOUNDRY_MODE: mode,
+      });
+      expect(env.NEXT_PUBLIC_FOUNDRY_DEMO_URL).toBe(url);
+    },
+  );
+
   it("sends no referrer from a published dashboard's page, and keeps it from search and caches", async () => {
     const built = await config({ NEXT_PUBLIC_APP_ENV: "prod" });
     const share = ((await built.headers?.()) ?? []).find(
