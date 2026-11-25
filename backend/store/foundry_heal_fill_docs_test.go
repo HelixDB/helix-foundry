@@ -560,8 +560,8 @@ func TestFoundryFillCollectLeased(t *testing.T) {
 	assert.Nil(t, got.PausedUntil, "a fill started holds no lease")
 }
 
-// A collect given up on ends what it owed, and the link its move added
-// stays the load's: its Extracts still ask it apart, and an earlier move's
+// A collect given up on ends what it owed and its cursor, and the link its
+// move added stays the load's: its Extracts still ask it apart, and an earlier move's
 // fill, whose version the given-up move moved on from, is still due.
 func TestFoundryFillCollectGivenUpKeepsWhatItsMoveAdded(t *testing.T) {
 	ctx := context.Background()
@@ -583,11 +583,16 @@ func TestFoundryFillCollectGivenUpKeepsWhatItsMoveAdded(t *testing.T) {
 	ok, err := f.db.OweFoundryFillDocuments(ctx, given, f.ontology.WorkspaceID, []string{f.a}, pageAt(given, []string{f.a}))
 	require.NoError(t, err)
 	require.True(t, ok)
+	// A page saved starts its failures from none: this one failed as often
+	// since.
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET failures=? WHERE id=?`, len(model.FoundryFillBackoff), id26("HF-FILLKB"))
+	require.NoError(t, err)
 	require.NoError(t, f.db.FailFoundryFillCollect(ctx, given, "agent down", false))
 	got := f.fill(t, "FILLKB")
 	require.Equal(t, model.FoundryFillNeedsLoad, got.State)
 	assert.Equal(t, []string{"advises"}, got.LinksAdded)
 	assert.Zero(t, f.linksOwed(t), "what it owed ends with it")
+	assert.Nil(t, got.Collect, "and its cursor")
 	asked, err := f.db.FoundryAskedApart(ctx, f.load)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"advises", "mentors"}, asked, "the load still asks the link it gained apart")
