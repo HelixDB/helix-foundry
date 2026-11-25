@@ -16,11 +16,16 @@ import {
 } from "@/web/areas/ontology/model";
 import {
   SAMPLE,
+  SAMPLE_LOAD_MINUTES,
+  heldQuestionKey,
   isSampleSet,
+  parseHeldQuestion,
   sampleAnswerTiming,
   sampleInView,
   sampleLoadTiming,
+  sampleLoadWait,
   secondsBetween,
+  tourFirstAsk,
 } from "@/web/areas/ontology/sample";
 import { askSuggestions } from "@/web/areas/ontology/ask-model";
 import acme from "../../backend/sample/acme.json";
@@ -593,6 +598,112 @@ describe("the sample tour's timings", () => {
     expect(sampleAnswerTiming(question, "2026-11-12T10:00:00Z")).toEqual({
       seconds: 40,
       total_seconds: 341,
+    });
+  });
+});
+
+// While the load runs the tour says how long it usually takes, and holds a
+// question until the load is ready: then it is asked once, its answer opening
+// in Ask (src/web/areas/ontology/sample-tour.tsx).
+describe("the sample tour's wait", () => {
+  const start = "2026-11-24T10:00:00Z",
+    at = (seconds: number) => Date.parse(start) + seconds * 1000;
+
+  it("says the minutes left within the usual time, then that it is late, then slow", () => {
+    expect(sampleLoadWait(undefined, at(0))).toEqual({ kind: "not_started" });
+    expect(sampleLoadWait("soon", at(0))).toEqual({ kind: "not_started" });
+    expect(sampleLoadWait(start, at(0))).toEqual({
+      kind: "usual",
+      minutes: SAMPLE_LOAD_MINUTES.usual,
+    });
+    expect(sampleLoadWait(start, at(70))).toEqual({
+      kind: "usual",
+      minutes: 4,
+    });
+    // Never "0 minutes left" while it is within its usual time.
+    expect(sampleLoadWait(start, at(290))).toEqual({
+      kind: "usual",
+      minutes: 1,
+    });
+    // A clock behind Helix's reads as just started.
+    expect(sampleLoadWait(start, at(-30))).toEqual({
+      kind: "usual",
+      minutes: SAMPLE_LOAD_MINUTES.usual,
+    });
+    expect(sampleLoadWait(start, at(SAMPLE_LOAD_MINUTES.usual * 60))).toEqual({
+      kind: "late",
+    });
+    expect(sampleLoadWait(start, at(SAMPLE_LOAD_MINUTES.most * 60))).toEqual({
+      kind: "slow",
+    });
+  });
+
+  it("reads a held question back from storage, trusting nothing", () => {
+    expect(heldQuestionKey("ws_1")).toBe("foundry.sample.question.v1:ws_1");
+    expect(
+      parseHeldQuestion('{"question":" Who renews? ","clientToken":"t1"}'),
+    ).toEqual({ question: "Who renews?", clientToken: "t1" });
+    for (const raw of [
+      null,
+      "",
+      "not json",
+      "null",
+      '"Who renews?"',
+      '{"question":"  ","clientToken":"t1"}',
+      '{"question":"Who renews?"}',
+      '{"question":"Who renews?","clientToken":""}',
+      '{"question":7,"clientToken":"t1"}',
+    ])
+      expect(parseHeldQuestion(raw), String(raw)).toBeUndefined();
+  });
+
+  const held = { question: "Which renewals are at risk?", clientToken: "h1" };
+  const base = {
+    loaded: true,
+    questions: 0,
+    suggestion: "Which accounts renew next?",
+    clientToken: "t1",
+  };
+
+  it("waits for the load, and for a read of its questions that has ended", () => {
+    expect(tourFirstAsk({ ...base, held, loaded: false })).toEqual({
+      kind: "wait",
+    });
+    expect(tourFirstAsk({ ...base, held, questions: undefined })).toEqual({
+      kind: "wait",
+    });
+  });
+
+  it("asks the held question first, as the tour's when there is none yet", () => {
+    expect(tourFirstAsk({ ...base, held })).toEqual({
+      kind: "ask",
+      question: held.question,
+      clientToken: "h1",
+      held: true,
+      first: true,
+    });
+    // An earlier page may have asked it and not lived to forget it: its
+    // client token asks it once.
+    expect(tourFirstAsk({ ...base, held, questions: 1 })).toEqual({
+      kind: "ask",
+      question: held.question,
+      clientToken: "h1",
+      held: true,
+      first: false,
+    });
+  });
+
+  it("asks the draft's first question when nothing is held and nothing was asked", () => {
+    expect(tourFirstAsk(base)).toEqual({
+      kind: "ask",
+      question: base.suggestion,
+      clientToken: "t1",
+      held: false,
+      first: true,
+    });
+    expect(tourFirstAsk({ ...base, questions: 2 })).toEqual({ kind: "none" });
+    expect(tourFirstAsk({ ...base, suggestion: undefined })).toEqual({
+      kind: "none",
     });
   });
 });

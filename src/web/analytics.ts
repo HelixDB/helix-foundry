@@ -25,6 +25,7 @@ import type {
 import { cannotAnswerKind } from "../shared/foundry-ask";
 import { LOCAL } from "../shared/deployment";
 import type { WizardStepId } from "./areas/ontology/model";
+import { sampleAnswerTiming, sampleLoadTiming } from "./areas/ontology/sample";
 import type { AgentOperation } from "./areas/agent/model";
 import type { TemplateId } from "./areas/automations/model";
 import type { Decidable, RuleId } from "./areas/reviews/advice";
@@ -121,8 +122,8 @@ export type AutomationCall =
  * How long a step of the sample company's tour took, in whole seconds: the
  * step's own time (`seconds`), for its load the wait for a worker to pick the
  * load up (`queued_seconds`), and the sample's whole time to the step's end
- * from its database's connection (`total_seconds`). A page that didn't watch
- * the step end (one opened later) sends none, nor a time Helix didn't give.
+ * from its database's connection (`total_seconds`), all from Helix's times:
+ * none it didn't give.
  */
 export type SampleTiming = {
   seconds?: number;
@@ -220,13 +221,18 @@ export type AnalyticsEvents = {
 
   // The sample company: Use the sample, then its tour reaching each step,
   // with how long each took: its data (by the page's clock), its draft made
-  // into a version, and its load (by Helix's).
+  // into a version, and its load (by Helix's). Its load and its first
+  // question are jobs: each ends once per ontology, reported by whichever
+  // read in this browser sees it first (jobSeen), the tour open or not.
   sample_clicked: undefined;
   sample_data_ready: SampleTiming;
   sample_ontology_ready: SampleTiming;
   sample_loaded: SampleTiming;
   sample_ask_opened: undefined;
-  // The tour's first question answered, then Connect your own data.
+  // A question typed or picked while the load ran, held until it is ready.
+  sample_question_held: undefined;
+  // The tour's first question answered (or found it couldn't be), then
+  // Connect your own data.
   sample_answered: SampleTiming;
   sample_own_data_clicked: undefined;
 
@@ -794,12 +800,17 @@ export type Started =
   | { job: "sync"; from: SyncFrom }
   // An uploaded table file or PDF that Foundry reads.
   | { job: "read" }
-  | { job: "load" }
-  | { job: "question" }
+  // The sample's tour's load and first question carry `sample`, with when
+  // its database was connected, so their ends also report sample_loaded and
+  // sample_answered.
+  | { job: "load"; sample?: SampleJob }
+  | { job: "question"; sample?: SampleJob }
   // A message to the Assistant, from the section it was sent in, and where
   // its thread runs.
   | { job: "agent_turn"; section: AgentSection; runtime: AgentRuntime };
 type Job = Started["job"];
+/** The sample's job: `since`, when its database was connected (Helix's time). */
+export type SampleJob = { since?: string };
 
 /** What a read of each job gives: its status, and what its end reports. */
 type Seen = {
@@ -821,9 +832,23 @@ type Seen = {
   load: {
     id?: string;
     status?: LoadStatus;
-    jobs?: readonly { status?: JobStatus; error?: string }[];
+    createdAt?: string | null;
+    finishedAt?: string | null;
+    jobs?: readonly {
+      kind?: string;
+      status?: JobStatus;
+      error?: string;
+      createdAt?: string | null;
+      startedAt?: string | null;
+    }[];
   };
-  question: { id?: string; status?: QuestionStatus; resultJson?: string };
+  question: {
+    id?: string;
+    status?: QuestionStatus;
+    resultJson?: string;
+    createdAt?: string | null;
+    finishedAt?: string | null;
+  };
   agent_turn: { id?: string; status?: FoundryAgentTurnStatus; steps?: number };
 };
 type Status = { [J in Job]: NonNullable<Seen[J]["status"]> };
@@ -834,6 +859,12 @@ type Pending = Started & { at: number };
 // Read back from storage, so `source` and `mode` are checked, not trusted.
 const sourceOf = (p: Pending): GenerationSource =>
   "source" in p && p.source === "sample" ? "sample" : "ai";
+// The sample's job, or undefined for any other.
+const sampleOf = (p: Pending): SampleJob | undefined => {
+  if (!("sample" in p) || !p.sample || typeof p.sample !== "object") return;
+  const since: unknown = p.sample.since;
+  return typeof since === "string" ? { since } : {};
+};
 const modeOf = (p: Pending): RevisionMode =>
   "mode" in p && p.mode === "preview" ? "preview" : "save";
 const SECTIONS: readonly AgentSection[] = [
@@ -882,6 +913,18 @@ const agentTurnEnded = (
     steps: t.steps || 0,
   });
 
+function loadReady(p: Pending, l: Seen["load"], status: "ready" | "partial") {
+  trackEvent("load_ready", { status });
+  const sample = sampleOf(p);
+  if (sample) trackEvent("sample_loaded", sampleLoadTiming(l, sample.since));
+}
+
+function sampleAnswered(p: Pending, q: Seen["question"]) {
+  const sample = sampleOf(p);
+  if (sample)
+    trackEvent("sample_answered", sampleAnswerTiming(q, sample.since));
+}
+
 /**
  * What each job's statuses report once it has ended: an event, or nothing
  * (null). A status not listed is a job still running.
@@ -924,8 +967,8 @@ const ENDS: {
       }),
   },
   load: {
-    ready: () => trackEvent("load_ready", { status: "ready" }),
-    partial: () => trackEvent("load_ready", { status: "partial" }),
+    ready: (p, l) => loadReady(p, l, "ready"),
+    partial: (p, l) => loadReady(p, l, "partial"),
     // Its newest job says why: a spending cap, its tables synced again
     // while it ran (the WFE's words, as loads.tsx reads them), or else.
     failed: (_, l) => {
@@ -941,8 +984,11 @@ const ENDS: {
     },
   },
   question: {
-    answered: () => trackEvent("question_answered"),
-    cannot_answer: (_, q) => {
+    answered: (p, q) => {
+      trackEvent("question_answered");
+      sampleAnswered(p, q);
+    },
+    cannot_answer: (p, q) => {
       let kind: CannotAnswerKind | undefined;
       try {
         const result: unknown = JSON.parse(q.resultJson || "");
@@ -961,6 +1007,7 @@ const ENDS: {
         status: "cannot_answer",
         ...(kind ? { kind } : {}),
       });
+      sampleAnswered(p, q);
     },
     failed: () => trackEvent("question_unanswered", { status: "failed" }),
     cancelled: null,

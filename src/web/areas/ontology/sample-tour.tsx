@@ -6,6 +6,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { Database, FileText, RotateCcw, TriangleAlert } from "lucide-react";
+import type { JobPhase } from "../../../shared/wfe";
 import {
   Button,
   ButtonLink,
@@ -14,6 +15,7 @@ import {
   PageHeader,
   formatNumber,
   plural,
+  useNow,
 } from "../../kit";
 import { trackEvent } from "../../analytics";
 import { paths } from "../../paths";
@@ -39,11 +41,13 @@ import { askSuggestions } from "./ask-model";
 import { createDatabase, createProject, databasesQuery } from "./databases-api";
 import {
   agentGraph,
+  loadSteps,
   loadUnreadText,
   newDatabase,
   readAgentBundle,
   slugify,
 } from "./model";
+import { DataFeed, type FeedItem } from "./ontology-scene";
 import { ProgressBar, useLoadJobProgress } from "./job-progress";
 import { Callout, FlowStep } from "./parts";
 import {
@@ -60,12 +64,16 @@ import {
 } from "./queries";
 import {
   SAMPLE,
+  heldQuestionKey,
   isSampleSet,
-  sampleAnswerTiming,
+  parseHeldQuestion,
   sampleDatabaseConfig,
-  sampleLoadTiming,
+  sampleLoadWait,
   secondsBetween,
+  tourFirstAsk,
+  type HeldQuestion,
 } from "./sample";
+import { SampleAskWhileLoading } from "./sample-ask";
 import { InOntology } from "./scope";
 import { OntologySchema } from "./suggested-ontology";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -85,8 +93,10 @@ import { useSampleOntology } from "./use-sample-ontology";
 //     tables are synced and the documents uploaded, made current, and drawn;
 //  4. its load: Acme Corp's records and their links written into the
 //     database, then its documents read with AI;
-//  5. Ask: the draft's first question, asked once the load is written, and
-//     its answer; its other questions, which a click asks in Ask;
+//  5. Ask: a question asked while the load ran (held in this browser and
+//     asked the moment it is ready, its answer then opening in Ask), else
+//     the draft's first question, asked once the load is written, and its
+//     answer; its other questions, which a click asks in Ask;
 //  6. on to the user's own data.
 // It first finds what an earlier visit made. An ontology with a current version
 // or the sample's draft under way has its data behind it, whatever has been
@@ -239,6 +249,14 @@ async function sideBySide<T extends readonly unknown[]>(
   ];
 }
 
+// A load job's phases, in order.
+const PHASES: readonly JobPhase[] = [
+  "provisioning",
+  "ingest",
+  "documents",
+  "finishing",
+];
+
 // "checking" until the first reads say what an earlier visit made.
 const STAGES = ["checking", "data", "ontology", "load"] as const;
 type Stage = (typeof STAGES)[number];
@@ -299,6 +317,9 @@ export function SampleTour() {
             (c) => c.kind === "postgres" && c.name === SAMPLE.database.name,
           );
       setMade((m) => ({ ...m, connectorId: named?.id }));
+      // When the sample's database was connected: what its load's and first
+      // answer's events time the whole sample from.
+      let since = named?.createdAt ?? undefined;
 
       if (!versionId && !generation) {
         // 1. Acme Corp's database, connected and synced, and its documents
@@ -322,6 +343,7 @@ export function SampleTour() {
               ).connector;
             if (!connector.lastSync)
               await syncConnector(id, connector.id, "sample");
+            since = connector.createdAt ?? undefined;
             setMade((m) => ({ ...m, connectorId: connector.id }));
             await until(
               stop,
@@ -437,7 +459,12 @@ export function SampleTour() {
       setMade((m) => ({ ...m, versionId }));
       setStage("load");
       if (!loads?.length)
-        await createLoad(id, o, { versionId, clientToken: token.current });
+        await createLoad(
+          id,
+          o,
+          { versionId, clientToken: token.current },
+          { since },
+        );
       await qc.invalidateQueries({ queryKey: [id, "ontology", o, "loads"] });
       // The workspace has an ontology now: the shell offers every page.
       await qc.invalidateQueries({ queryKey: [id, "ontologies"] });
@@ -489,26 +516,59 @@ export function SampleTour() {
     progress = useLoadJobProgress(
       !loaded && job && isLiveJob(job) ? job : undefined,
     );
-  // How long the load and the first answer took, said only by a page that
-  // watched them end: one opened later would count the time it was away.
-  const watchedLoad = useRef(false),
-    watchedAnswer = useRef(false);
-  useEffect(() => {
-    if (load && !loaded) watchedLoad.current = true;
-  }, [load, loaded]);
-  useEffect(() => {
-    if (loaded)
-      trackEvent(
-        "sample_loaded",
-        watchedLoad.current && load
-          ? sampleLoadTiming(load, connector?.createdAt)
-          : {},
-      );
-  }, [loaded]);
+  // What the load reads, as it goes: the tables, then the documents.
+  const at = PHASES.indexOf(job?.phase || "provisioning"),
+    feedStatus = (p: "ingest" | "documents"): FeedItem["status"] =>
+      job?.status === "succeeded" ||
+      (job?.status === "running" && at > PHASES.indexOf(p))
+        ? "ready"
+        : job?.status === "running" && at === PHASES.indexOf(p)
+          ? "loading"
+          : "pending";
+  const feed: FeedItem[] = [
+    ...(connector?.tables || []).map((t) => ({
+      id: t.name || "",
+      name: t.name || "",
+      source: "postgres",
+      group: SAMPLE.database.name,
+      rows: Number(t.rowCount || 0),
+      status: feedStatus("ingest"),
+    })),
+    ...SAMPLE.documents.map((name) => ({
+      id: name,
+      name,
+      source: "upload",
+      group: "Documents",
+      status: feedStatus("documents"),
+    })),
+  ];
+  // The load against its usual time, by the minute.
+  const now = useNow(loaded ? 600_000 : 15_000),
+    wait = sampleLoadWait(load?.createdAt, now);
   const suggestions = useMemo(() => askSuggestions(version), [version]);
-  // 5. Once the load is written, the draft's first question is asked, unless
-  // the ontology has questions already (a reload, or Ask's): the oldest is
-  // the tour's. The others are asked with a click, in Ask.
+  // A question asked while the load runs waits in this browser, so the tour
+  // asks it even if the reader left and came back.
+  const heldKey = heldQuestionKey(id);
+  const [held, setHeld] = useState<HeldQuestion | undefined>(() => {
+    try {
+      return parseHeldQuestion(localStorage.getItem(heldKey));
+    } catch {
+      return undefined;
+    }
+  });
+  const keepHeld = (h: HeldQuestion | undefined) => {
+    setHeld(h);
+    try {
+      if (h) localStorage.setItem(heldKey, JSON.stringify(h));
+      else localStorage.removeItem(heldKey);
+    } catch {
+      // Storage blocked: it waits for this visit only.
+    }
+  };
+  // 5. Once the load is written, the held question is asked and its answer
+  // opens in Ask; else the draft's first question is asked here, unless the
+  // ontology has questions already (a reload, or Ask's): the oldest is the
+  // tour's. The others are asked with a click, in Ask.
   const navigate = useNavigate();
   const questionList = useQuery({
       ...questionQueries.list(id, o),
@@ -521,18 +581,25 @@ export function SampleTour() {
   }).data?.ontology;
   const first = questions?.questions?.at(-1);
   const [askError, setAskError] = useState(""),
-    [asking, setAsking] = useState(false);
+    [asking, setAsking] = useState(false),
+    // Try again after a failed first ask, which is asked once until then.
+    [tries, setTries] = useState(0);
   const firstAsked = useRef(false),
     firstToken = useRef(crypto.randomUUID());
-  const ask = async (question: string, clientToken: string) => {
+  const ask = async (
+    question: string,
+    clientToken: string,
+    sample?: { since?: string },
+  ) => {
     setAskError("");
     setAsking(true);
     try {
-      const { question: q } = await askQuestion(id, o, {
-        loadId: load!.id,
-        question,
-        clientToken,
-      });
+      const { question: q } = await askQuestion(
+        id,
+        o,
+        { loadId: load!.id, question, clientToken },
+        sample,
+      );
       await qc.invalidateQueries({
         queryKey: [id, "ontology", o, "questions"],
       });
@@ -543,35 +610,32 @@ export function SampleTour() {
       setAsking(false);
     }
   };
+  // A list from the cache may be older than the question an earlier visit
+  // asked: only a read that has ended says there is none.
+  const next = tourFirstAsk({
+    loaded: loaded && !!load,
+    questions:
+      questions && !questionList.isFetching
+        ? questions.questions?.length || 0
+        : undefined,
+    held,
+    suggestion: suggestions[0],
+    clientToken: firstToken.current,
+  });
   useEffect(() => {
-    // A list from the cache may be older than the question an earlier visit
-    // asked: only a read that has ended says there is none.
-    if (
-      !loaded ||
-      !load ||
-      !questions ||
-      questionList.isFetching ||
-      !suggestions[0] ||
-      firstAsked.current
-    )
-      return;
+    if (next.kind !== "ask" || firstAsked.current) return;
     firstAsked.current = true;
-    if (!questions.questions?.length)
-      void ask(suggestions[0], firstToken.current);
-  }, [loaded, load, questions, questionList.isFetching, suggestions]);
+    void ask(
+      next.question,
+      next.clientToken,
+      next.first ? { since: connector?.createdAt ?? undefined } : undefined,
+    ).then((asked) => {
+      if (!asked || !next.held) return;
+      keepHeld(undefined);
+      navigate(paths.ask(o, { thread: asked.threadId || asked.id }));
+    });
+  }, [next.kind, tries]);
   const answered = !!first && !isLiveQuestion(first);
-  useEffect(() => {
-    if (first && !answered) watchedAnswer.current = true;
-  }, [first, answered]);
-  useEffect(() => {
-    if (answered)
-      trackEvent(
-        "sample_answered",
-        watchedAnswer.current && first
-          ? sampleAnswerTiming(first, connector?.createdAt)
-          : {},
-      );
-  }, [answered]);
   // The banner's link opens this page on its last step. What sits above that
   // arrives when it arrives (the steps as the walk reads them, then an answer's
   // charts and names, read once near the view), so the page stays on it until
@@ -641,6 +705,17 @@ export function SampleTour() {
               Try again
             </Button>
           }
+        />
+      )}
+      {stage !== "checking" && !loaded && load?.status !== "failed" && (
+        <SampleAskWhileLoading
+          held={held?.question}
+          suggestions={suggestions}
+          wait={wait}
+          onHold={(question) =>
+            keepHeld({ question, clientToken: crypto.randomUUID() })
+          }
+          onDrop={() => keepHeld(undefined)}
         />
       )}
       <ol className="on-wizard" aria-label="Steps">
@@ -779,6 +854,13 @@ export function SampleTour() {
               label="Progress of the sample’s load"
             />
           )}
+          {job && !loaded && load?.status !== "failed" && (
+            <DataFeed
+              items={feed}
+              steps={loadSteps(job, connector?.tables?.length || 0)}
+              unit={{ one: "source", many: "sources" }}
+            />
+          )}
         </FlowStep>
         <FlowStep
           number={5}
@@ -804,11 +886,23 @@ export function SampleTour() {
             </div>
           ) : askError ? (
             <p className="hf-form-error" role="alert">
-              {askError}
+              {askError}{" "}
+              {!first && (
+                <Button
+                  size="sm"
+                  icon={RotateCcw}
+                  onClick={() => {
+                    firstAsked.current = false;
+                    setTries((n) => n + 1);
+                  }}
+                >
+                  Try again
+                </Button>
+              )}
             </p>
           ) : (
-            suggestions[0] && (
-              <p className="on-muted">Asking “{suggestions[0]}”…</p>
+            next.kind === "ask" && (
+              <p className="on-muted">Asking “{next.question}”…</p>
             )
           )}
           {answered && suggestions.length > 1 && (

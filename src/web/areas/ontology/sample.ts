@@ -149,10 +149,10 @@ export function secondsBetween(from?: string | null, to?: string | null) {
 }
 
 /**
- * How the sample's load went, as its tour reports it once it watched the load
- * end: how long it took, how long its load job waited for a worker before its
- * first attempt, and the sample's whole time to then from `since`, when its
- * database was connected.
+ * How the sample's load went, as sample_loaded reports it once a read sees
+ * the load end (src/web/analytics.ts jobSeen): how long it took, how long its
+ * load job waited for a worker before its first attempt, and the sample's
+ * whole time to then from `since`, when its database was connected.
  *
  * @example
  * sampleLoadTiming(
@@ -162,7 +162,13 @@ export function secondsBetween(from?: string | null, to?: string | null) {
  * ); // { seconds: 180, queued_seconds: 4, total_seconds: 300 }
  */
 export function sampleLoadTiming(
-  load: FoundryLoad,
+  load: Pick<FoundryLoad, "createdAt" | "finishedAt"> & {
+    jobs?: readonly {
+      kind?: string;
+      createdAt?: string | null;
+      startedAt?: string | null;
+    }[];
+  },
   since?: string | null,
 ): SampleTiming {
   // Newest first: an extract an upload queues comes after the load's own job.
@@ -175,12 +181,12 @@ export function sampleLoadTiming(
 }
 
 /**
- * How the tour's first question went, as the tour reports it once it watched
- * the question end: how long its answer took, and the sample's whole time to
- * then from `since`, when its database was connected.
+ * How the tour's first question went, as sample_answered reports it once a
+ * read sees the question end: how long its answer took, and the sample's
+ * whole time to then from `since`, when its database was connected.
  */
 export function sampleAnswerTiming(
-  question: FoundryQuestion,
+  question: Pick<FoundryQuestion, "createdAt" | "finishedAt">,
   since?: string | null,
 ): SampleTiming {
   return {
@@ -202,4 +208,145 @@ export async function sampleDatabaseConfig(): Promise<ConnectorConfig> {
   if (!res.ok)
     throw new Error("couldn’t read the sample database’s certificate");
   return { postgres: { host, ...login, ca: await res.text() } };
+}
+
+// ---------------------------------------------------------------- the wait
+
+/**
+ * How long the sample's load takes, in minutes, from Helix's times on the
+ * hosted stamps (30 days to 2026-11-24): half are done within `usual`, nine
+ * in ten within `most`; the queue adds almost nothing.
+ */
+export const SAMPLE_LOAD_MINUTES = { usual: 5, most: 8 } as const;
+
+/** Where the sample's load is against its usual time (sampleLoadWait). */
+export type SampleLoadWait =
+  // No load yet: it starts once the data and the draft are in.
+  | { kind: "not_started" }
+  // Within its usual time: about `minutes` left, at least 1.
+  | { kind: "usual"; minutes: number }
+  // Past its usual time, within most loads'.
+  | { kind: "late" }
+  // Past most loads' time.
+  | { kind: "slow" };
+
+/**
+ * Where the sample's load, created at `createdAt` (Helix's time), is at
+ * `now` against SAMPLE_LOAD_MINUTES.
+ *
+ * @example
+ * sampleLoadWait(undefined, 0); // { kind: "not_started" }
+ * sampleLoadWait("2026-11-24T10:00:00Z", Date.parse("2026-11-24T10:01:10Z")); // { kind: "usual", minutes: 4 }
+ * sampleLoadWait("2026-11-24T10:00:00Z", Date.parse("2026-11-24T10:06:00Z")); // { kind: "late" }
+ * sampleLoadWait("2026-11-24T10:00:00Z", Date.parse("2026-11-24T10:09:00Z")); // { kind: "slow" }
+ */
+export function sampleLoadWait(
+  createdAt: string | null | undefined,
+  now: number,
+): SampleLoadWait {
+  const start = Date.parse(createdAt || "");
+  if (!Number.isFinite(start)) return { kind: "not_started" };
+  const minutes = Math.max(0, now - start) / 60_000;
+  return minutes < SAMPLE_LOAD_MINUTES.usual
+    ? {
+        kind: "usual",
+        minutes: Math.max(1, Math.round(SAMPLE_LOAD_MINUTES.usual - minutes)),
+      }
+    : minutes < SAMPLE_LOAD_MINUTES.most
+      ? { kind: "late" }
+      : { kind: "slow" };
+}
+
+/**
+ * A question asked on the tour before its load is ready, held in this browser
+ * (`heldQuestionKey`) until the load is: then it is the tour's first question,
+ * asked with `clientToken`, so a page that asks it twice (a reload, another
+ * tab) asks it once.
+ */
+export type HeldQuestion = { question: string; clientToken: string };
+
+/** Where a workspace's held question is kept: one sample per workspace. */
+export const heldQuestionKey = (ws: string) =>
+  `foundry.sample.question.v1:${ws}`;
+
+/**
+ * A held question as stored, or undefined for anything else: storage is
+ * read, not trusted.
+ *
+ * @example
+ * parseHeldQuestion('{"question":" Who renews? ","clientToken":"t1"}'); // { question: "Who renews?", clientToken: "t1" }
+ * parseHeldQuestion('{"question":"  ","clientToken":"t1"}'); // undefined
+ * parseHeldQuestion("not json"); // undefined
+ */
+export function parseHeldQuestion(
+  raw: string | null | undefined,
+): HeldQuestion | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw || "");
+  } catch {
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const { question, clientToken } = value as Record<string, unknown>;
+  return typeof question === "string" &&
+    question.trim() &&
+    typeof clientToken === "string" &&
+    clientToken
+    ? { question: question.trim(), clientToken }
+    : undefined;
+}
+
+/** What the tour asks once its load is ready (tourFirstAsk). */
+export type TourAsk =
+  // Not yet: the load isn't ready, or its questions aren't read yet.
+  | { kind: "wait" }
+  // Ask `question` now: the held one (`held`), whose answer then opens in
+  // Ask, else the draft's first suggestion, answered on the tour. `first`
+  // when the ontology has no question yet: it is the tour's.
+  | {
+      kind: "ask";
+      question: string;
+      clientToken: string;
+      held: boolean;
+      first: boolean;
+    }
+  // Nothing: the ontology has its question, and nothing is held.
+  | { kind: "none" };
+
+/**
+ * What the tour asks once its load is ready: a held question (asked again
+ * with its client token even if a question exists, since an earlier page may
+ * have asked it and not lived to forget it), else, on an ontology with no
+ * question yet, the draft's first suggestion with `clientToken`.
+ * `questions` is how many the ontology has, undefined until a read has ended.
+ *
+ * @example
+ * tourFirstAsk({ loaded: false, questions: 0, suggestion: "Q?", clientToken: "t" }); // { kind: "wait" }
+ * tourFirstAsk({ loaded: true, questions: 0, suggestion: "Q?", clientToken: "t" }); // { kind: "ask", question: "Q?", clientToken: "t", held: false, first: true }
+ * tourFirstAsk({ loaded: true, questions: 1, suggestion: "Q?", clientToken: "t" }); // { kind: "none" }
+ */
+export function tourFirstAsk({
+  loaded,
+  questions,
+  held,
+  suggestion,
+  clientToken,
+}: {
+  loaded: boolean;
+  questions: number | undefined;
+  held?: HeldQuestion;
+  suggestion?: string;
+  clientToken: string;
+}): TourAsk {
+  if (!loaded || questions === undefined) return { kind: "wait" };
+  if (held) return { kind: "ask", ...held, held: true, first: !questions };
+  if (questions || !suggestion) return { kind: "none" };
+  return {
+    kind: "ask",
+    question: suggestion,
+    clientToken,
+    held: false,
+    first: true,
+  };
 }
