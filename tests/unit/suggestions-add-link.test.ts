@@ -348,10 +348,10 @@ describe("a fill of the documents behind a finding", () => {
       "3 reviews resolved, 2 facts added in the current load (version 8). Reviews stay in 1 document that couldn't be filled.",
     );
     expect(stateText({ kind: "fixed", version: 8, ...counted, left: 3 })).toBe(
-      "3 reviews resolved, 2 facts added in the current load (version 8). 3 more documents have reviews of it: a new load asks them.",
+      "3 reviews resolved, 2 facts added in the current load (version 8). At least 3 more documents have reviews of it: a new load asks them.",
     );
     expect(stateText({ kind: "fixed", version: 8, ...counted, left: 1 })).toBe(
-      "3 reviews resolved, 2 facts added in the current load (version 8). 1 more document has reviews of it: a new load asks them.",
+      "3 reviews resolved, 2 facts added in the current load (version 8). At least 1 more document has reviews of it: a new load asks them.",
     );
     expect(
       stateText({

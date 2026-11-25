@@ -76,7 +76,11 @@ func (r *runner) fills(ctx context.Context) {
 		}
 		switch {
 		case errors.Is(err, errFillChanged):
+			// Its lease goes with it (nothing, if another holds it now): a
+			// collect started over, by its load's move or a document
+			// reviewed behind its cursor, is due at once.
 			fillRuns.WithLabelValues("changed").Inc()
+			release()
 			continue
 		case err != nil && ctx.Err() != nil:
 			// Stopping: the lease goes, so the next worker collects it at
@@ -98,7 +102,13 @@ func (r *runner) fills(ctx context.Context) {
 			}
 			continue
 		}
-		switch err := r.db.StartFoundryFill(ctx, d.Fill, d.Due.WorkspaceID, owed, left, &model.FoundryGraphJob{ID: r.newID()}); {
+		switch err := r.db.StartFoundryFill(ctx, d.Fill, d.Due.WorkspaceID, d.Due.Load.VersionID, owed, left, &model.FoundryGraphJob{ID: r.newID()}); {
+		case errors.Is(err, store.ErrStale):
+			// The load moved, or the collect was started over, since it
+			// listed: the next collect starts over, at once.
+			fillRuns.WithLabelValues("changed").Inc()
+			logger.Info("start fill refused", "err", err)
+			release()
 		case errors.Is(err, store.ErrConflict):
 			// What it owed isn't what the load owes, or the fill changed:
 			// counted as a failed collect that starts over, which ends what
@@ -110,8 +120,11 @@ func (r *runner) fills(ctx context.Context) {
 				logger.Error("record failed collect", "err", err)
 			}
 		case err != nil:
+			// Nothing changed: the cursor its pages saved resumes, at the
+			// next tick rather than when the lease would run out.
 			fillRuns.WithLabelValues("failed").Inc()
 			logger.Error("start fill failed", "err", err)
+			release()
 		default:
 			fillRuns.WithLabelValues("started").Inc()
 			logger.Info("fill started", "owed", owed, "left", left)
@@ -137,7 +150,9 @@ const collectLeaseSlack = 5 * time.Minute
 // version that cursor listed at; else it starts over
 // (store.RestartFoundryFillCollect), ending what an earlier collect of the
 // load owed. The pages are the load's documents with reviews, as an
-// audit's; a page the agent's wall cuts is read again at half the size. A
+// audit's; a page the agent's wall cuts is read again at half the size. The
+// first page with documents past model.FoundryFillMaxDocuments ends it, so
+// left is a lower bound: the rest are never listed only to be counted. A
 // move that didn't add the suggestion's link (its finding's canonical) owes
 // none: there is nothing of it to fill.
 func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, left int64, pages int, err error) {
@@ -155,7 +170,7 @@ func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, lef
 	load := d.Due.Load
 	at := d.Fill.Collect
 	if at == nil || at.VersionID != load.VersionID {
-		switch ok, err := r.db.RestartFoundryFillCollect(ctx, d.Fill, d.Due.WorkspaceID); {
+		switch ok, err := r.db.RestartFoundryFillCollect(ctx, d.Fill, d.Due.WorkspaceID, load.VersionID); {
 		case err != nil:
 			return 0, 0, 0, err
 		case !ok:
@@ -226,7 +241,9 @@ func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, lef
 			return owed, left, pages, errFillChanged
 		}
 		owed, left, pages = next.Owed, next.Left, pages+1
-		if len(ids) < size {
+		// Past the most one fill takes, left is at least what it counted:
+		// listing the rest would only count them, an Audit call a page.
+		if len(ids) < size || left > 0 {
 			return owed, left, pages, nil
 		}
 		after, size = next.After, min(r.pageSize, 2*size)

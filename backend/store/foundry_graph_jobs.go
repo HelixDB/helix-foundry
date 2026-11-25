@@ -320,6 +320,10 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 		if err != nil {
 			return err
 		}
+		reviewed, err := tx.foundryDocumentReviewed(ctx, loadID, e.DocumentID)
+		if err != nil {
+			return err
+		}
 		verb, onDuplicate := "INSERT", extractionUpsert
 		if !keepExisting && e.Status == model.FoundryExtractionFailed {
 			var status string
@@ -390,6 +394,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 			return fmt.Errorf("record foundry document extraction: %w", err)
 		}
 		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.DocumentID, e.Releases, keepExisting); err != nil {
+			return err
+		}
+		if err := tx.restartFoundryFillCollectsBehind(ctx, loadID, e.DocumentID, reviewed); err != nil {
 			return err
 		}
 		// What the load holds of the document changed: its review cards are

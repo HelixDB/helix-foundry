@@ -257,7 +257,8 @@ WHERE load_id=? AND document_id>? AND status='extracted' AND reviews>0 ORDER BY 
 
 // PublishFoundryHealRun stores a complete run's findings, then supersedes
 // the open findings of the kinds it measured that it didn't find, then ends
-// the run complete, recording whether it measured the rows. Each finding
+// the run complete, recording whether it measured the rows, under the
+// ontology's lock (as a dismissal, and a fill's collect). Each finding
 // becomes what FoundryHealFinding.Next makes of its row, written in
 // transactions of HealPublishBatch findings, each one statement, each of
 // which locks its rows and the run's: a dismissal waits for one. Every
@@ -308,6 +309,16 @@ func (s *mysqlDB) PublishFoundryHealRun(ctx context.Context, p model.FoundryHeal
 		afterHealPublishBatch()
 	}
 	return tx(func(q *mysqlDB) error {
+		// Under the ontology's lock, as a dismissal and every write of a
+		// fill's collect: a collect's page saved before this commits has its
+		// cursor cleared here, and one after sees its finding closed.
+		var workspaceID string
+		if err := q.db.QueryRowContext(ctx, `SELECT workspace_id FROM foundry_ontologies WHERE id=?`, p.OntologyID).Scan(&workspaceID); err != nil {
+			return fmt.Errorf("read the heal run's ontology: %w", err)
+		}
+		if _, err := q.lockFoundryOntology(ctx, workspaceID, p.OntologyID); err != nil {
+			return fmt.Errorf("lock the heal run's ontology: %w", err)
+		}
 		// Unmeasured, the rows' findings stand only for the load that
 		// measured them: an earlier load's go.
 		rows, err := q.db.QueryContext(ctx, `SELECT fingerprint FROM foundry_heal_findings

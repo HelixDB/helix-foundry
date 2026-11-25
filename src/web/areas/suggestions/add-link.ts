@@ -312,9 +312,10 @@ export function stateText(s: CardState): string | undefined {
     }
     case "fixed": {
       // Past the documents one fill takes: they have reviews of the link,
-      // not statements of it.
+      // not statements of it. The collect stops listing at the first page
+      // past them, so it counts at least these.
       const left = s.left
-        ? ` ${plural(s.left, "more document")} ${s.left === 1 ? "has" : "have"} reviews of it: a new load asks them.`
+        ? ` At least ${plural(s.left, "more document")} ${s.left === 1 ? "has" : "have"} reviews of it: a new load asks them.`
         : "";
       const refused = s.refused
         ? ` Reviews stay in ${plural(s.refused, "document")} that couldn't be filled.`

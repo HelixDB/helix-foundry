@@ -50,8 +50,9 @@ const (
 // The fill's bounds. A fill spends at most FoundryFillCapUSD, an ontology's
 // fills FoundryFillDailyCapUSD a day (its resend jobs' spend, as only fills
 // spend there); both sit inside the graph worker's own job and month caps.
-// One collect owes at most FoundryFillMaxDocuments documents, the rest
-// counted as left (a load in full asks them); a resend job sends at most
+// One collect owes at most FoundryFillMaxDocuments documents, those of the
+// first page past them counted as left (at least that many; a load in full
+// asks them), the rest never listed; a resend job sends at most
 // FoundryFillDocsPerJob of them, FoundryFillDocsPerExtract an Extract, for
 // at most FoundryFillJobWall, then ends, so syncs, approvals and loads take
 // their turn between. A job that fails backs the fill off by
@@ -144,7 +145,7 @@ type FoundryFillCursor struct {
 }
 
 // FoundryFillCounts are a fill's documents: owed by its collect, left past
-// FoundryFillMaxDocuments, and how each owed one ended; and what its
+// FoundryFillMaxDocuments (a lower bound), and how each owed one ended; and what its
 // documents' fills took and added.
 type FoundryFillCounts struct {
 	Owed, Left, Filled, Nothing, Refused, Native int64
