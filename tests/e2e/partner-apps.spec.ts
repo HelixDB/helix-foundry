@@ -478,10 +478,9 @@ test("says so where Helix offers no connected apps", async ({ page }) => {
   await expect(
     page.getByRole("alert").filter({ hasText: "This app can’t connect" }),
   ).toContainText("Connected apps aren't offered here.");
+  // Listing doesn't check, as the WFE's doesn't: the tab lists nothing.
   await page.goto("/settings/apps");
   await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "Connected apps aren't offered here." }),
+    page.getByRole("heading", { name: "No apps are connected" }),
   ).toBeVisible();
 });

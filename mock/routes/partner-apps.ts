@@ -316,13 +316,8 @@ function manager(workspaceId: string, userId: string) {
     );
   return m;
 }
-/** A manager where connected apps are offered (list and revoke). */
-function offeredManager(workspaceId: string, userId: string) {
-  const m = manager(workspaceId, userId);
-  if (isReply(m)) return m;
-  if (!offered()) return fail("FAILED_PRECONDITION", NOT_OFFERED);
-  return m;
-}
+/** A string's length as Go's len() counts it, in UTF-8 bytes. */
+const byteLength = (value: string) => new TextEncoder().encode(value).length;
 
 const viewOf = (i: Install): PartnerAppInstall => {
   const app = apps.find((a) => a.clientId === i.clientId)!;
@@ -348,7 +343,7 @@ export const partnerAppRoutes: MockRoute[] = [
       if (refused(app)) return app;
       // No state is fine here: the site keeps it in the browser.
       const s = query.get("state") || "";
-      if (s.length > MAX_STATE)
+      if (byteLength(s) > MAX_STATE)
         return fail("INVALID_ARGUMENT", "state is too long");
       const scopes = scopesOf(app, query.get("scope"));
       if (typeof scopes === "string") return fail("INVALID_ARGUMENT", scopes);
@@ -376,7 +371,7 @@ export const partnerAppRoutes: MockRoute[] = [
       if (refused(app)) return app;
       if (typeof req.state !== "string" || !req.state)
         return fail("INVALID_ARGUMENT", "state is required");
-      if (req.state.length > MAX_STATE)
+      if (byteLength(req.state) > MAX_STATE)
         return fail("INVALID_ARGUMENT", "state is too long");
       const asked = Array.isArray(req.scopes) ? req.scopes : [];
       if (!asked.length || asked.some((s) => !app.scopes.includes(s as Scope)))
@@ -429,7 +424,8 @@ export const partnerAppRoutes: MockRoute[] = [
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/partner-apps/installs",
     handle: ({ params, principal: { user } }) => {
-      const m = offeredManager(params.workspaceId!, user.id);
+      // As the WFE: only Get and Approve check that apps are offered.
+      const m = manager(params.workspaceId!, user.id);
       if (isReply(m)) return m;
       const used = (i: Install) => i.lastUsedAt || i.approvedAt;
       return ok({
@@ -444,7 +440,8 @@ export const partnerAppRoutes: MockRoute[] = [
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/partner-apps/installs/{installId}",
     handle: ({ params, principal: { user } }) => {
-      const m = offeredManager(params.workspaceId!, user.id);
+      // As the WFE: only Get and Approve check that apps are offered.
+      const m = manager(params.workspaceId!, user.id);
       if (isReply(m)) return m;
       const i = state.installs.find(
         (x) =>

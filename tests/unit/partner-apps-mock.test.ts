@@ -299,6 +299,8 @@ describe("approving", () => {
     await refused({ state: undefined }, 400, "state is required");
     await refused({ state: "s".repeat(513) }, 400, "state is too long");
     expect((await approve({ state: "s".repeat(512) })).status).toBe(200);
+    // Counted in bytes, as Go's len(): 257 two-byte characters are 514.
+    await refused({ state: "é".repeat(257) }, 400, "state is too long");
     await refused(
       { scopes: [] },
       400,
@@ -615,8 +617,9 @@ describe("an install", () => {
       (await call("GET", `/v1/workspaces/ws_other/partner-apps/installs`))
         .status,
     ).toBe(403);
+    // As the WFE: listing doesn't check that apps are offered.
     config({ partnerAppsAvailable: false });
-    expect((await call("GET", `${W}/partner-apps/installs`)).status).toBe(400);
+    expect((await call("GET", `${W}/partner-apps/installs`)).status).toBe(200);
   });
   it("is seeded on Acme with `partnerAppInstalled`: Northwind reading Stripe", async () => {
     const { config, installs, keyGrants } = await setup();
