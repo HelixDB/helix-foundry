@@ -22,9 +22,11 @@ const (
 	// TargetWorkspace is everything in the workspace: every connector (its
 	// tables and the document sets it owns), every table and every document
 	// set, uploaded or a connector's, now and later. It names nothing. It
-	// never gives People enrichment (TargetEnrichment), and the source of an
-	// audienced connector narrows it as it narrows that connector's grant: it
-	// reads only what each source shares with the reader (WithSharing).
+	// never gives People enrichment (TargetEnrichment), nor a connector's
+	// tables and sets once it is deleted (WithSharing knows which are live),
+	// and the source of an audienced connector narrows it as it narrows that
+	// connector's grant: it reads only what each source shares with the
+	// reader (WithSharing).
 	TargetWorkspace
 )
 
@@ -131,7 +133,9 @@ type Inputs struct {
 // what the sources of those targets share with it (WithSharing): a grant of
 // a connector whose source reports its permissions gives only the items the
 // source shares with the reader. A workspace grant (TargetWorkspace) gives
-// every connector, table and set as their own grants would.
+// every uploaded set, and each live connector's tables and sets, as their own
+// grants would: a connector the Sharing doesn't know live (deleted, or no
+// WithSharing at all) gives it nothing.
 type Grants struct {
 	connectors map[string]bool
 	tables     map[TableRef]bool
@@ -163,17 +167,30 @@ func NewGrants(targets []Target) Grants {
 }
 
 // WithSharing is g narrowed by what the sources of its connectors share with
-// the reader (plans/SOURCE_ACLS.md): neither a table nor a set of an
+// the reader (plans/SOURCE_ACLS.md), and its workspace grant by which of the
+// workspace's connectors are live: neither a table nor a set of an
 // audienced connector is ever covered whole, so a load holding one is always
 // read in part: a table's rows (ReadsTable) and a set's documents (Reads)
 // only while the source shares their item.
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1", "C2"}}, at)}, kinds))
+//		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1", "C2"}}, at)}, kinds))
 //	g.CoversTable(access.TableRef{ConnectorID: "slack", Table: "messages"}) // false, though it reads every channel listed
 func (g Grants) WithSharing(s Sharing) Grants {
 	g.sharing = s
+	return g
+}
+
+// WithoutConnector is g as it reads once connectorID is deleted: a workspace
+// grant gives none of its tables and sets, and nothing its source shared is
+// read. Its own grants, and its sets', go with the connector in the store,
+// so a caller drops them from the targets.
+//
+//	g := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(access.NewSharing([]string{"stripe"}, nil, nil))
+//	g.WithoutConnector("stripe").CoversTable(access.TableRef{ConnectorID: "stripe", Table: "customers"}) // false
+func (g Grants) WithoutConnector(connectorID string) Grants {
+	g.sharing = g.sharing.without(connectorID)
 	return g
 }
 
@@ -211,18 +228,29 @@ func (g Grants) Holds(targets []Target) bool {
 }
 
 // CoversTable reports whether the grants cover a table: it is granted, by
-// itself, its connector or the workspace, and its connector's source doesn't
-// report its permissions. A table of one that does is never covered whole: its rows may
-// be of items the last read of the source's permissions didn't list, so a
-// grantee reads only the rows of the items shared with it (ReadsTable).
+// itself, its connector or the workspace (while its connector is live), and
+// its connector's source doesn't report its permissions. A table of one that
+// does is never covered whole: its rows may be of items the last read of the
+// source's permissions didn't list, so a grantee reads only the rows of the
+// items shared with it (ReadsTable).
 func (g Grants) CoversTable(t TableRef) bool {
-	return (g.workspace || g.connectors[t.ConnectorID] || g.tables[t]) && !g.sharing.audienced(t.ConnectorID)
+	return g.givesTable(t) && !g.sharing.audienced(t.ConnectorID)
+}
+
+// givesTable reports whether a grant gives table t, whatever its source
+// shares: its own, its connector's, or the workspace's while its connector is
+// live. A deleted connector's grants go with it, and so does what its source
+// shared, so the workspace's would give its table whole.
+func (g Grants) givesTable(t TableRef) bool {
+	return g.workspace && g.sharing.isLive(t.ConnectorID) || g.connectors[t.ConnectorID] || g.tables[t]
 }
 
 // givesSet reports whether a grant gives set s, whatever its source shares: a
-// set gone (no SetID) is no one's, even under a workspace grant.
+// set gone (no SetID) is no one's, even under a workspace grant, which gives
+// a connector's set only while the connector is live (as givesTable).
 func (g Grants) givesSet(s SetRef) bool {
-	return s.SetID != "" && (g.workspace || g.sets[s.SetID] || (s.ConnectorID != "" && g.connectors[s.ConnectorID]))
+	workspace := g.workspace && (s.ConnectorID == "" || g.sharing.isLive(s.ConnectorID))
+	return s.SetID != "" && (workspace || g.sets[s.SetID] || (s.ConnectorID != "" && g.connectors[s.ConnectorID]))
 }
 
 // CoversSet reports whether the grants cover every document in set s: it is
@@ -291,7 +319,7 @@ func (g Grants) Covers(in Inputs) bool {
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
+//		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
 //	seen := access.Inputs{Sets: []access.SetRef{{SetID: "conversations", ConnectorID: "slack"}}}
 //	g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
 //	g.Keeps(seen, []access.ItemRef{{ConnectorID: "slack", Item: "C2"}}) // false: C2 isn't shared with them now
@@ -309,7 +337,7 @@ func (g Grants) Keeps(seen Inputs, items []ItemRef) bool {
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
+//		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
 //	g.SeesItems([]access.ItemRef{{ConnectorID: "slack", Item: "C1"}}) // true
 func (g Grants) SeesItems(items []ItemRef) bool {
 	return !slices.ContainsFunc(items, func(i ItemRef) bool { return !g.sharing.sees(i) })

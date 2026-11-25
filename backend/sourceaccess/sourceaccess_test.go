@@ -320,7 +320,7 @@ func TestToldReadsALoadAsTheGrantsItWasToldFrom(t *testing.T) {
 			var asked int
 			g, err := sourceaccess.New(store, people{asked: &asked}, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
 			require.NoError(t, err)
-			told := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, g.VisibleItems())
+			told := sourceaccess.Told(store.connectors, targets, g.VisibleItems())
 			assert.Equal(t, g.Part(holdings), told.Part(holdings))
 		})
 	}
@@ -334,19 +334,80 @@ func TestToldReadsALoadAsTheGrantsItWasToldFrom(t *testing.T) {
 		var asked int
 		g, err := sourceaccess.New(store, people{asked: &asked}, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: ada})
 		require.NoError(t, err)
-		told := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, g.VisibleItems())
+		told := sourceaccess.Told(store.connectors, targets, g.VisibleItems())
 		withUsers := access.Holdings{Tables: append([]access.TableRef{{ConnectorID: "conn-slack", Table: "users"}}, holdings.Tables...), Documents: holdings.Documents}
 		assert.Equal(t, []access.TableRef{{ConnectorID: "conn-slack", Table: "users"}}, g.Part(withUsers).Tables)
 		assert.Equal(t, g.Part(withUsers), told.Part(withUsers))
 		assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: access.DirectoryItem}, {ConnectorID: "conn-slack", Item: "C1"}},
 			told.Part(withUsers).Items)
-		guest := sourceaccess.Told(sourceaccess.Audienced(store.connectors), targets, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}})
+		guest := sourceaccess.Told(store.connectors, targets, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}})
 		assert.Empty(t, guest.Part(withUsers).Tables, "told no directory, she reads none")
 		assert.False(t, guest.SeesItems(told.Part(withUsers).Items))
 	})
 	t.Run("both channels of one load", func(t *testing.T) {
-		told := sourceaccess.Told(sourceaccess.Audienced(newStore().connectors), []access.Target{access.ConnectorTarget("conn-slack")},
+		told := sourceaccess.Told(newStore().connectors, []access.Target{access.ConnectorTarget("conn-slack")},
 			[]access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}})
 		assert.Equal(t, []access.ItemRef{{ConnectorID: "conn-slack", Item: "C1"}, {ConnectorID: "conn-slack", Item: "C2"}}, told.Part(holdings).Items)
+	})
+}
+
+// A workspace grant gives a connector's tables and sets only while it is one
+// of the workspace's live connectors, however a grantee's grants are built
+// (Grants, Of, Told): a deleted Slack connection's grants and what its source
+// shared go with it, but a load still holds its tables and its documents
+// keep its Conversations set.
+func TestWorkspaceGrantReadsOnlyLiveConnectors(t *testing.T) {
+	ctx := context.Background()
+	messages := access.TableRef{ConnectorID: "conn-slack", Table: "messages"}
+	customers := access.TableRef{ConnectorID: "conn-stripe", Table: "customers"}
+	public := access.DocumentRef{ID: "d1", Set: conv, Stream: "conversations", ExternalID: "C1:2026-11-01"}
+	private := access.DocumentRef{ID: "d2", Set: conv, Stream: "conversations", ExternalID: "C2:2026-11-01"}
+	upload := access.DocumentRef{ID: "d3", Set: access.SetRef{SetID: "set-contracts"}}
+	holdings := access.Holdings{Tables: []access.TableRef{messages, customers}, Documents: []access.DocumentRef{public, private, upload}}
+	workspace := []access.Target{access.WorkspaceTarget()}
+	build := func(store *fakeStore, people ports.People, reader access.Principal) map[string]access.Grants {
+		g, err := sourceaccess.New(store, people, now).Grants(ctx, access.Grantee{WorkspaceID: "ws-1", Principal: reader})
+		require.NoError(t, err)
+		of, err := sourceaccess.New(store, people, now).Of(ctx, "ws-1", reader, workspace)
+		require.NoError(t, err)
+		return map[string]access.Grants{"grants": g, "of": of, "told": sourceaccess.Told(store.connectors, workspace, g.VisibleItems())}
+	}
+	t.Run("Slack deleted", func(t *testing.T) {
+		store := newStore(workspace...)
+		store.connectors = store.connectors[:1]
+		// What Slack shared is deleted with it; were a read left, it is no one's.
+		store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1", "C2"), "agent": shared("C1")}
+		var asked int
+		for _, tc := range []struct {
+			people ports.People
+			reader access.Principal
+		}{{people{asked: &asked}, ada}, {people{asked: &asked}, key}, {nil, ada}} {
+			for how, g := range build(store, tc.people, tc.reader) {
+				name := fmt.Sprintf("%s, %s", tc.reader.ID, how)
+				assert.False(t, g.ReadsTable(messages), "%s: the deleted connector's table", name)
+				assert.False(t, g.ReachesSet(conv), "%s: its Conversations set", name)
+				assert.False(t, g.Reads(public) || g.Reads(private), "%s: its channels' days", name)
+				assert.False(t, g.Covers(access.Inputs{Tables: []access.TableRef{customers}, Sets: []access.SetRef{conv}}), "%s: a load holding them", name)
+				assert.True(t, g.CoversTable(customers), "%s: a live connector's table", name)
+				assert.True(t, g.Reads(upload), "%s: an uploaded set", name)
+				part := g.Part(holdings)
+				assert.Equal(t, []access.TableRef{customers}, part.Tables, name)
+				assert.Equal(t, []string{"d3"}, part.Documents, name)
+				assert.Empty(t, part.Items, name)
+			}
+		}
+	})
+	t.Run("Slack live: narrowed as its connector's grant", func(t *testing.T) {
+		store := newStore(workspace...)
+		store.sharing = map[string][]model.FoundrySourceSharing{"ada@example.com": shared("C1")}
+		var asked int
+		for how, g := range build(store, people{asked: &asked}, ada) {
+			assert.True(t, g.Reads(public), how)
+			assert.False(t, g.Reads(private), "%s: a channel Slack doesn't share with her", how)
+			assert.False(t, g.CoversSet(conv), "%s: never whole", how)
+			assert.True(t, g.ReadsTable(messages), "%s: the messages of her channels", how)
+			assert.False(t, g.CoversTable(messages), "%s: never whole", how)
+			assert.Equal(t, []string{"d1", "d3"}, g.Part(holdings).Documents, how)
+		}
 	})
 }

@@ -557,6 +557,8 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 	}
 	after := map[string]access.Inputs{}
 	keep := func(foundrymodel.FoundryAccessGrant) bool { return true }
+	// deleted is the connector the change deletes, if it does.
+	var deleted string
 	switch change := req.GetChange().GetChange().(type) {
 	case *foundryv1.FoundryAccessChange_LoadVersion_:
 		in, err := s.versionInputs(ctx, ws, change.LoadVersion.GetOntologyId(), change.LoadVersion.GetVersionId())
@@ -586,6 +588,8 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 		keep = func(gr foundrymodel.FoundryAccessGrant) bool {
 			return gr.Target.ConnectorID() != connector.ID && !slices.Contains(owned, gr.Target.DocumentSetID())
 		}
+		// A workspace grant stays, and gives none of its tables and sets.
+		deleted = connector.ID
 		after = before
 	case *foundryv1.FoundryAccessChange_MoveDocument_:
 		set, err := s.deps.DB.GetFoundryDocumentSet(ctx, ws, change.MoveDocument.GetDocumentSetId())
@@ -634,6 +638,9 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 		next, err := s.principalGrants(ctx, ws, p, heldAfter[p])
 		if err != nil {
 			return nil, err
+		}
+		if deleted != "" {
+			next = next.WithoutConnector(deleted)
 		}
 		narrowed[p] = readAs{then, next}
 	}

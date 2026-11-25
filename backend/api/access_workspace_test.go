@@ -20,6 +20,10 @@ import (
 // connector goes. It names nothing.
 func TestWorkspaceGrant(t *testing.T) {
 	s, store := accessService(t)
+	// A workspace grant gives a connector's tables and sets while it is live.
+	for _, id := range []string{"conn-pg", "conn-later"} {
+		store.rows[id] = &foundrymodel.Connector{ID: id, WorkspaceID: "ws-1", Kind: "postgres"}
+	}
 	ctx := ports.WithActor(context.Background(), person)
 	key := &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_SERVICE_CREDENTIAL, Id: "cred-1"}
 	everything := []*foundryv1.FoundryAccessTarget{{Kind: foundryv1.FoundryAccessTarget_KIND_WORKSPACE}}
@@ -86,16 +90,36 @@ func TestWorkspaceGrant(t *testing.T) {
 		}
 	})
 
-	t.Run("a connector deleted costs it nothing", func(t *testing.T) {
+	// A deleted connector's grants and its source's permissions go with it,
+	// but a load still holds its tables and its documents keep its sets: the
+	// workspace grant gives them no longer, so they aren't read unnarrowed.
+	t.Run("a connector deleted takes its tables and sets with it", func(t *testing.T) {
 		got, err := s.PreviewFoundryAccessChange(ctx, &foundryv1.PreviewFoundryAccessChangeRequest{WorkspaceId: "ws-1",
 			Change: &foundryv1.FoundryAccessChange{Change: &foundryv1.FoundryAccessChange_DeleteConnector{DeleteConnector: "conn-1"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
+		lost := map[string]bool{}
 		for _, l := range got.GetLosses() {
 			if l.GetPrincipal().GetId() == "cred-1" {
-				t.Fatalf("the workspace grant loses %s", l.GetOntologyId())
+				lost[l.GetOntologyId()] = l.GetKeepsPart()
 			}
+		}
+		if keepsPart, ok := lost["ont-1"]; !ok || !keepsPart || len(lost) != 1 {
+			t.Fatalf("the workspace grant loses Billing whole, keeping its uploaded set, and nothing else: %v", lost)
+		}
+
+		stripe := store.rows["conn-1"]
+		delete(store.rows, "conn-1")
+		defer func() { store.rows["conn-1"] = stripe }()
+		if whole, part := readers(t); whole["ont-1"] || !part["ont-1"] || !whole["ont-3"] {
+			t.Fatalf("deleted, Billing's Stripe table is no one's: whole %v, part %v", whole, part)
+		}
+		store.documents = append(store.documents, &foundrymodel.FoundryDocument{ID: "doc-gone", WorkspaceID: "ws-1", SetID: "set-deleted-notes",
+			Name: "#exec, 2026-11-01", MediaType: foundrymodel.FoundryMediaMarkdown})
+		got2, err := client.ListFoundryDocuments(as(agent), &foundryv1.ListFoundryDocumentsRequest{WorkspaceId: "ws-1", Ids: []string{"doc-gone"}})
+		if err != nil || len(got2.GetDocuments()) != 0 {
+			t.Fatalf("a document of a deleted set is in none, which no grant gives: %+v, %v", got2, err)
 		}
 	})
 

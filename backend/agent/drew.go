@@ -136,15 +136,14 @@ func drew(ctx context.Context, db Store, workspaceID, name string, input json.Ra
 	if err != nil {
 		return nil, err
 	}
-	kinds := sourceaccess.Audienced(connectors)
-	if len(kinds) == 0 {
+	if len(sourceaccess.Audienced(connectors)) == 0 {
 		return nil, nil
 	}
 	holdings, err := db.FoundryLoadHoldings(ctx, workspaceID, read.LoadID)
 	if err != nil {
 		return nil, err
 	}
-	grants := sourceaccess.Told(kinds, targets, visible)
+	grants := sourceaccess.Told(connectors, targets, visible)
 	items := grants.Part(holdings).Items
 	if before.id == read.LoadID {
 		items = slices.Concat(items, grants.Part(before.holdings).Items)

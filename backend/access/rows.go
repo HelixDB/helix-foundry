@@ -120,7 +120,7 @@ const (
 // apart, no item shared or more than MaxHeldItems of them hold nothing.
 func (g Grants) table(t TableRef) (tableHold, TableRows) {
 	switch {
-	case !g.workspace && !g.connectors[t.ConnectorID] && !g.tables[t]:
+	case !g.givesTable(t):
 		return holdsNone, TableRows{}
 	case !g.sharing.audienced(t.ConnectorID):
 		return holdsWhole, TableRows{}
@@ -149,7 +149,7 @@ func (g Grants) table(t TableRef) (tableHold, TableRows) {
 //
 //	at := time.Now()
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-//		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
+//		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&at, nil, access.Shared{Items: []string{"C1"}}, at)}, kinds))
 //	g.ReadsTable(access.TableRef{ConnectorID: "slack", Table: "messages"}) // true: #general's (C1)
 func (g Grants) ReadsTable(t TableRef) bool {
 	hold, _ := g.table(t)
