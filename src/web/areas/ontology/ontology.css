@@ -109,6 +109,22 @@
 .on-card-actions {
   align-self: center;
 }
+
+/* Questions to ask a ready load in one click (ask-start.tsx): in the
+   setup's Explore or ask step, or a panel of the overview and a load's page. */
+.on-ask-start {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-15);
+  min-width: 0;
+}
+.on-ask-start > p {
+  margin: 0;
+}
+.on-ask-start .ak-inline {
+  padding-top: var(--hf-space-1);
+  border-top: 1px solid var(--hf-border);
+}
 .on-card-actions {
   display: flex;
   flex-wrap: wrap;

@@ -462,6 +462,44 @@ test("reads an answer from before visuals as text, its queries' results not kept
   await expect(signed).toContainText("Its result wasn’t kept with the answer.");
 });
 
+test("asks a ready load's suggested questions in one click, on its page and in the setup", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200, askStepMs: 100 });
+  await signIn(page);
+  await uploadAndLoadContract(page);
+  // The current load's page offers the questions its version was drafted
+  // to answer (version 3's competency questions).
+  const suggested = [
+    "Which customers are under contract, and which contracts are they signed with?",
+    "What is each customer under contract billed?",
+  ];
+  const onLoad = page.getByRole("region", { name: "Ask about your data" });
+  await expect(
+    onLoad.getByRole("group", { name: "Suggested questions" }).getByRole("button"),
+  ).toHaveText(suggested);
+
+  // The overview's setup is at Explore or ask, which offers them too.
+  await page.goto("/ontology/ont_acme_contracts");
+  const steps = page.getByRole("list", { name: "Setup steps" });
+  const start = steps.getByRole("region", { name: "Ask about your data" });
+  await expect(start.getByRole("link", { name: "Open the Explorer" })).toBeVisible();
+  // One click asks, and the answer shows in place, its thread a link away.
+  await start.getByRole("button", { name: suggested[0] }).click();
+  const question = page.getByRole("article", {
+    name: `Question: ${suggested[0]}`,
+  });
+  await expect(question.getByRole("region", { name: "Answer" })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    page.getByRole("link", { name: "Open the full answer" }),
+  ).toHaveAttribute("href", /\/ask\/ont_acme_contracts\?thread=/);
+  // A question asked ends the setup: the answer stays, above the schema.
+  await expect(steps).toHaveCount(0);
+  await expect(question).toBeVisible();
+});
+
 test("adds the link or property a declined question lacked, for owners and admins only", async ({
   page,
   context,
