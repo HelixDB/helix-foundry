@@ -2657,7 +2657,11 @@ describe("startQuestions", () => {
         id: "v1",
         format: "ONTOLOGY_FORMAT_FOUNDRY_V1",
         definition: {
-          entities: [{ name: "Invoice" }, { name: "Customer" }, { name: "Note" }],
+          entities: [
+            { name: "Invoice" },
+            { name: "Customer" },
+            { name: "Note" },
+          ],
           relationships: [
             { name: "billed_to", from: "Invoice", to: "Customer" },
             { name: "about", from: "Note", to: "Invoice" },
@@ -2738,7 +2742,11 @@ describe("gapDraft", () => {
     expect(
       gapDraft(
         "Q",
-        declined("undeclared_property", "The `noticePeriod` of a contract.", ""),
+        declined(
+          "undeclared_property",
+          "The `noticePeriod` of a contract.",
+          "",
+        ),
       ),
     ).toEqual({
       kind: "undeclared_property",
@@ -2772,7 +2780,12 @@ describe("gapDraft", () => {
   });
 
   it("offers nothing for a gap in the data, or one of unknown kind", () => {
-    for (const kind of ["uncovered", "after_as_of", "absent", undefined] as const)
+    for (const kind of [
+      "uncovered",
+      "after_as_of",
+      "absent",
+      undefined,
+    ] as const)
       expect(gapDraft("Q", declined(kind))).toBe(undefined);
   });
 });

@@ -476,14 +476,18 @@ test("asks a ready load's suggested questions in one click, on its page and in t
   ];
   const onLoad = page.getByRole("region", { name: "Ask about your data" });
   await expect(
-    onLoad.getByRole("group", { name: "Suggested questions" }).getByRole("button"),
+    onLoad
+      .getByRole("group", { name: "Suggested questions" })
+      .getByRole("button"),
   ).toHaveText(suggested);
 
   // The overview's setup is at Explore or ask, which offers them too.
   await page.goto("/ontology/ont_acme_contracts");
   const steps = page.getByRole("list", { name: "Setup steps" });
   const start = steps.getByRole("region", { name: "Ask about your data" });
-  await expect(start.getByRole("link", { name: "Open the Explorer" })).toBeVisible();
+  await expect(
+    start.getByRole("link", { name: "Open the Explorer" }),
+  ).toBeVisible();
   // One click asks, and the answer shows in place, its thread a link away.
   await start.getByRole("button", { name: suggested[0] }).click();
   const question = page.getByRole("article", {
@@ -567,9 +571,9 @@ test("adds the link or property a declined question lacked, for owners and admin
   await expect(theirs).toContainText("It lacks: A notice_period_days", {
     timeout: 10_000,
   });
-  await expect(theirs.getByRole("link", { name: /to the ontology$/ })).toHaveCount(
-    0,
-  );
+  await expect(
+    theirs.getByRole("link", { name: /to the ontology$/ }),
+  ).toHaveCount(0);
   await expect(
     theirs.getByRole("link", { name: "Draft a new version with this" }),
   ).toHaveCount(0);

@@ -116,8 +116,7 @@ export function AskStart({
               ))}
             </div>
           ) : (
-            version.isPending &&
-            !!load.versionId && <SkeletonText lines={2} />
+            version.isPending && !!load.versionId && <SkeletonText lines={2} />
           )}
           <AiRefusal
             action="Asking questions"
