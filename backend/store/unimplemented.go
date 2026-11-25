@@ -159,7 +159,7 @@ func (u Unimplemented) ReleaseFoundryFillCollect(context.Context, *model.Foundry
 	u.unimplemented("ReleaseFoundryFillCollect")
 	return nil
 }
-func (u Unimplemented) RestartFoundryFillCollect(context.Context, *model.FoundryHealFill, string) (bool, error) {
+func (u Unimplemented) RestartFoundryFillCollect(context.Context, *model.FoundryHealFill, string, string) (bool, error) {
 	u.unimplemented("RestartFoundryFillCollect")
 	return false, nil
 }
@@ -171,7 +171,7 @@ func (u Unimplemented) FailFoundryFillCollect(context.Context, *model.FoundryHea
 	u.unimplemented("FailFoundryFillCollect")
 	return nil
 }
-func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, int64, int64, *model.FoundryGraphJob) error {
+func (u Unimplemented) StartFoundryFill(context.Context, *model.FoundryHealFill, string, string, int64, int64, *model.FoundryGraphJob) error {
 	u.unimplemented("StartFoundryFill")
 	return nil
 }
