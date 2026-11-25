@@ -147,7 +147,8 @@ type FoundryFillDocument struct {
 	FillID     string
 	DocumentID string
 	Requests   int
-	// Outcome is written, nothing, native, or refused (Reason).
+	// Outcome is written, landed (an earlier send wrote it: counted as
+	// written), nothing, native, or refused (Reason).
 	Outcome, Reason           string
 	Facts, Held, ReviewsTaken int64
 	// What its calls spent, as its usage says.

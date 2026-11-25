@@ -158,6 +158,47 @@ func TestFoundryFillCollectsSendsAndEnds(t *testing.T) {
 	assert.Zero(t, spent, "only jobs since")
 }
 
+// A job that crashed between the engine's write of a document's fill and
+// its record of it: the document stays owed, the fill backs off, and the job
+// that sends it again hears "landed" (contract 4.35.0) with what the landed
+// transaction took. That counts as filled, once, with its reviews, so the
+// suggestion reads fixed, not needing a load as a fill that took none would.
+func TestFoundryFillLandedAfterACrashCountsAsFilled(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t, "FILLC")
+	fill := f.collecting(t, f.moved(t, "FILLC"))
+	_, err := f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, []string{f.a}, false)
+	require.NoError(t, err)
+	require.NoError(t, f.db.StartFoundryFill(ctx, fill, f.ontology.WorkspaceID, 1, 0, &model.FoundryGraphJob{ID: id26("RS-FILLC")}))
+	factsA, reviewsA := f.extraction(t, f.a)
+	// The engine wrote it, then the job died: no word recorded.
+	crashed := f.claim(t)
+	f.end(t, crashed, "the worker died", model.FoundryGraphJobFailed)
+	assert.Equal(t, 1, f.linksOwed(t), "still owed")
+	got := f.fill(t, "FILLC")
+	require.Equal(t, model.FoundryFillApplying, got.State)
+	assert.Zero(t, got.Counts.Done())
+	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET paused_until=NOW(6) - INTERVAL 1 SECOND WHERE load_id=?`, f.load)
+	require.NoError(t, err)
+	due, err := f.db.DueFoundryHealFills(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	queued, err := f.db.ResumeFoundryFill(ctx, due[0].Fill, f.ontology.WorkspaceID, &model.FoundryGraphJob{ID: id26("RS-FILLC2")})
+	require.NoError(t, err)
+	require.True(t, queued)
+	job := f.claim(t)
+	landed := model.FoundryFillDocument{FillID: fill.ID, DocumentID: f.a, Requests: 1, Outcome: "landed", Facts: 2, Held: 1, ReviewsTaken: 3}
+	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, landed))
+	require.NoError(t, f.db.RecordFoundryFillDocument(ctx, job.ID, f.worker, landed))
+	got = f.fill(t, "FILLC")
+	assert.Equal(t, model.FoundryFillFilled, got.State)
+	assert.Equal(t, model.FoundryFillCounts{Owed: 1, Filled: 1, ReviewsTaken: 3, FactsAdded: 2}, got.Counts)
+	facts, reviews := f.extraction(t, f.a)
+	assert.Equal(t, factsA+2, facts)
+	assert.Equal(t, max(reviewsA+1-3, 0), reviews)
+	assert.IsType(t, model.FoundryFindingFixed{}, model.FoundryFindingStateOf(got, nil))
+}
+
 // A fill that owes nothing, its reviews gone, is filled at once.
 func TestFoundryFillWithNothingOwedIsFilled(t *testing.T) {
 	ctx := context.Background()

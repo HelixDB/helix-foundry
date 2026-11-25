@@ -212,8 +212,11 @@ WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(unsendable))+`)`, ap
 // fill added, a review more for each claim it held and one fewer for each
 // it took), and its review cards owed a rebuild. So an event sent again, by
 // a retry after one was lost, counts once: the engine says the same numbers
-// each time. The fill ends filled once it owes no document. An outcome the
-// binary doesn't know counts as refused.
+// each time, and a fill sent again after its transaction landed, whose
+// answer this never recorded (a crash between the engine's write and this
+// record), is "landed" with what that transaction took (contract 4.35.0),
+// counted as filled. The fill ends filled once it owes no document. An
+// outcome the binary doesn't know counts as refused.
 func (s *mysqlDB) RecordFoundryFillDocument(ctx context.Context, jobID, workerID string, d model.FoundryFillDocument) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -239,7 +242,7 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 		}
 		column := "docs_refused"
 		switch d.Outcome {
-		case "written":
+		case "written", "landed":
 			column = "docs_filled"
 		case "nothing":
 			column = "docs_nothing"
@@ -247,7 +250,7 @@ WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`
 			column = "docs_native"
 		}
 		facts, held, taken := d.Facts, d.Held, d.ReviewsTaken
-		if d.Outcome != "written" && d.Outcome != "nothing" {
+		if d.Outcome != "written" && d.Outcome != "landed" && d.Outcome != "nothing" {
 			// A native document's commit counted what it states; a refused one
 			// wrote nothing.
 			facts, held, taken = 0, 0, 0
