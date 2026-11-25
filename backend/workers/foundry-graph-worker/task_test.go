@@ -5,10 +5,13 @@ import (
 	"cmp"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net"
@@ -42,6 +45,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/namewords"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -1374,6 +1378,44 @@ func TestLoad(t *testing.T) {
 		}
 		if got := extract.Documents[1].Artifacts; got == nil || len(got) != 0 {
 			t.Fatalf("a document without artifacts sends [] = %v", got)
+		}
+	})
+
+	// A sample document, known by its bytes' SHA-256, also goes with the
+	// extraction shipped with the sample, after its own saved work; any other
+	// document goes with its own alone.
+	t.Run("replays a sample document's shipped extraction", func(t *testing.T) {
+		h := newHarness(t)
+		sum, shipped := sampleDocument(t)
+		h.store.pending[0].SHA256, h.store.pending[1].SHA256 = sum, strings.Repeat("0", 64)
+		h.bucket.put("ws/ws-1/documents/doc-a/extractions/key_a.json.gz", []byte(`{"saved":true}`))
+		var staged []byte
+		h.agent.extract = func(req string, stream agentv1.Agent_ExtractServer) error {
+			staged, _ = os.ReadFile(filepath.Join(h.workDir, "jobs/job-2/artifacts/doc-a/sample.shipped.json"))
+			return extractAll(req, stream)
+		}
+		counted := func() float64 {
+			return testutil.ToFloat64(sampleDocuments.WithLabelValues("true")) + testutil.ToFloat64(sampleDocuments.WithLabelValues("false"))
+		}
+		before := counted()
+		outcome := h.run(t, extractJob())
+		if got := counted() - before; got != 1 {
+			t.Fatalf("%v sample documents counted, want doc-a alone", got)
+		}
+		_, extracts := h.agent.calls()
+		if outcome.Status != model.FoundryGraphJobSucceeded || len(extracts) != 1 {
+			t.Fatalf("outcome = %+v after %d extracts", outcome, len(extracts))
+		}
+		extract := decodeExtract(t, extracts[0])
+		want := []string{"jobs/job-2/artifacts/doc-a/key_a.json", "jobs/job-2/artifacts/doc-a/sample.shipped.json"}
+		if !slices.Equal(extract.Documents[0].Artifacts, want) {
+			t.Fatalf("artifacts = %v, want %v", extract.Documents[0].Artifacts, want)
+		}
+		if !bytes.Equal(staged, shipped) {
+			t.Fatalf("the agent found %d bytes, not the %d shipped", len(staged), len(shipped))
+		}
+		if got := extract.Documents[1].Artifacts; len(got) != 0 {
+			t.Fatalf("a document that isn't the sample's sends %v", got)
 		}
 	})
 
@@ -4429,4 +4471,20 @@ func (s *memStore) ListFoundryLoadUnread(_ context.Context, loadIDs []string) (m
 		out[id] = u
 	}
 	return out, nil
+}
+
+// sampleDocument is the SHA-256 of a document of the sample's, as uploaded,
+// and the extraction shipped for it.
+func sampleDocument(t *testing.T) (string, []byte) {
+	t.Helper()
+	body, err := fs.ReadFile(sample.Documents, "acme/Pinecrest QBR 2026-09-15.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	shipped, ok := sample.Extraction(hex.EncodeToString(sum[:]))
+	if !ok {
+		t.Fatal("no extraction is shipped for the sample's document")
+	}
+	return hex.EncodeToString(sum[:]), shipped
 }
