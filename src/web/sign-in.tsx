@@ -5,7 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Check } from "lucide-react";
 import { signInStarted, trackBeforeLeaving, trackEvent } from "./analytics";
 import { signOut } from "./api";
-import { Button, useTitle } from "./kit";
+import { Button, ButtonAnchor, useTitle } from "./kit";
+import { chromeIntent, inAppBrowser, type InAppBrowser } from "./in-app-browser";
 import { PasswordSignIn } from "./password";
 import { whoamiQuery } from "./workspaces";
 import { LOCAL } from "../shared/deployment";
@@ -218,9 +219,21 @@ export function SignInPage() {
   const code = params.get("error"),
     error = isSignInError(code) ? errors[code] : undefined,
     returnTo = parseReturnPath(params.get("return_to"));
+  // An app's built-in browser can lose the sign-in on its way back.
+  const [inApp] = useState(() =>
+    LOCAL ? null : inAppBrowser(navigator.userAgent),
+  );
   useEffect(() => {
     if (isSignInError(code)) trackEvent("sign_in_failed", { reason: code });
   }, [code]);
+  useEffect(() => {
+    if (inApp)
+      trackEvent("in_app_browser_shown", {
+        app: inApp.app,
+        os: inApp.os,
+        failed: isSignInError(code),
+      });
+  }, [inApp, code]);
   // Already signed in: go straight on.
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
@@ -247,6 +260,7 @@ export function SignInPage() {
           <span>{error.text}</span>
         </div>
       )}
+      {inApp && <InAppNotice inApp={inApp} />}
       <div className="hf-gate-body">
         {providers.map((p) => (
           <Button
@@ -265,6 +279,68 @@ export function SignInPage() {
       <PasswordSignIn returnTo={returnTo} disabled={!!pending} />
       <Terms />
     </GatePage>
+  );
+}
+
+/**
+ * Asks a reader in an app's built-in browser to sign in from their own: by
+ * Chrome's intent on Android, the app's menu on iOS, or the copied link.
+ */
+function InAppNotice({ inApp }: { inApp: InAppBrowser }) {
+  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
+  // This page, without the failure it came back with.
+  const here = new URL(location.href);
+  here.searchParams.delete("error");
+  const left = (via: "chrome" | "copy_link") =>
+    trackBeforeLeaving("in_app_browser_left", {
+      app: inApp.app,
+      os: inApp.os,
+      via,
+    });
+  return (
+    <div role="status" className="hf-gate-notice">
+      <strong>Open in your browser to sign in</strong>
+      <span>
+        {inApp.name ? `${inApp.name}’s` : "This app’s"} built-in browser can
+        lose your sign-in before it finishes.
+        {inApp.os === "ios" &&
+          " Tap ··· or the share button, then Open in Safari (or Open in browser)."}
+      </span>
+      <div className="hf-gate-notice-actions">
+        {inApp.os === "android" && (
+          <ButtonAnchor
+            variant="primary"
+            size="sm"
+            href={chromeIntent(here)}
+            onClick={() => void left("chrome")}
+          >
+            Open in Chrome
+          </ButtonAnchor>
+        )}
+        <Button
+          size="sm"
+          onClick={() =>
+            // A web view may have no clipboard at all.
+            void Promise.resolve()
+              .then(() => navigator.clipboard.writeText(here.href))
+              .then(
+              () => {
+                setCopy("copied");
+                void left("copy_link");
+              },
+              () => setCopy("failed"),
+            )
+          }
+        >
+          {copy === "copied" ? "Link copied" : "Copy link"}
+        </Button>
+      </div>
+      {copy === "failed" && (
+        <span>
+          Copy this address into your browser: <code>{here.href}</code>
+        </span>
+      )}
+    </div>
   );
 }
 

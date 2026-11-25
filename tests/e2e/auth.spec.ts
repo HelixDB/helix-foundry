@@ -107,6 +107,65 @@ test("explains a sign-in that did not finish", async ({ page }) => {
   ).toBeVisible();
 });
 
+test.describe("in an app's built-in browser", () => {
+  const notice = (page: Page) =>
+    page.getByRole("status").filter({ hasText: "Open in your browser" });
+
+  test.describe("on Android", () => {
+    test.use({
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/TQ3A.230805.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.144 Mobile Safari/537.36 TwitterAndroid",
+    });
+
+    test("opens the page in Chrome, without its failure", async ({ page }) => {
+      await page.goto("/login?error=missing_flow_cookie&return_to=%2Fdata");
+      await expect(notice(page)).toContainText(
+        "X’s built-in browser can lose your sign-in",
+      );
+      await expect(
+        page.getByRole("link", { name: "Open in Chrome" }),
+      ).toHaveAttribute(
+        "href",
+        `intent://${new URL(APP_ORIGIN).host}/login?return_to=%2Fdata#Intent;scheme=http;package=com.android.chrome;end`,
+      );
+      // Sign-in stays on offer.
+      await expect(
+        page.getByRole("button", { name: "Continue with Google" }),
+      ).toBeEnabled();
+    });
+  });
+
+  test.describe("on iOS", () => {
+    test.use({
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [LinkedInApp]/9.29.6406",
+    });
+
+    test("says to open it in Safari, and copies its link", async ({
+      page,
+      context,
+    }) => {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await page.goto("/login?return_to=%2Fdata");
+      await expect(notice(page)).toContainText("Open in Safari");
+      await expect(page.getByRole("link", { name: "Open in Chrome" })).toHaveCount(0);
+      await page.getByRole("button", { name: "Copy link" }).click();
+      await expect(page.getByRole("button", { name: "Link copied" })).toBeVisible();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+        `${APP_ORIGIN}/login?return_to=%2Fdata`,
+      );
+    });
+  });
+
+  test("never shows in a browser of its own", async ({ page }) => {
+    await page.goto("/login");
+    await expect(
+      page.getByRole("button", { name: "Continue with Google" }),
+    ).toBeVisible();
+    await expect(notice(page)).toHaveCount(0);
+  });
+});
+
 test("explains a sign-in that could not start", async ({ page }) => {
   await page.goto("/auth/login?provider=nope&return_to=%2Fdata");
   await expect(page).toHaveURL(/\/login\?error=request$/);
