@@ -6,7 +6,10 @@ import {
   audienceRead,
   listNames,
   covered,
+  EVERYTHING,
+  everythingNote,
   grantKey,
+  holdsEverything,
   SLACK_GRANT_NOTE,
   grantOf,
   granteeRedirect,
@@ -59,10 +62,21 @@ const eve: wfe.FoundryPrincipal = { kind: "KIND_USER", id: "usr_eve" };
 
 describe("grants and targets", () => {
   it("reads each target kind and writes it back", () => {
-    for (const g of [stripe, invoices, general, enrichment])
+    for (const g of [EVERYTHING, stripe, invoices, general, enrichment])
       expect(grantOf(targetOf(g))).toEqual(g);
+    expect(targetOf(EVERYTHING)).toEqual({ kind: "KIND_WORKSPACE" });
     expect(grantKey(invoices)).toBe("table:conn_stripe:invoices");
     expect(grantKey(enrichment)).toBe("enrichment");
+    expect(grantKey(EVERYTHING)).toBe("workspace");
+    // The WFE fills the ids it doesn't name with "".
+    expect(
+      grantOf({
+        kind: "KIND_WORKSPACE",
+        connectorId: "",
+        table: "",
+        documentSetId: "",
+      }),
+    ).toEqual(EVERYTHING);
   });
 
   it("drops a target this build doesn't know or that misses what it names", () => {
@@ -71,6 +85,10 @@ describe("grants and targets", () => {
       { kind: "KIND_CONNECTOR" },
       { kind: "KIND_TABLE", connectorId: "c" },
       { kind: "KIND_DOCUMENT_SET", documentSetId: "" },
+      // Everything names nothing.
+      { kind: "KIND_WORKSPACE", connectorId: "c" },
+      { kind: "KIND_WORKSPACE", table: "t" },
+      { kind: "KIND_WORKSPACE", documentSetId: "s" },
       { kind: "KIND_LATER" },
       {},
     ] as wfe.FoundryAccessTarget[])
@@ -133,6 +151,22 @@ describe("grants and targets", () => {
       targetOf(invoices),
       targetOf(notes),
     ]);
+  });
+
+  it("saves everything in the workspace alone, with People enrichment if chosen", () => {
+    const owners = new Map<string, string>();
+    expect(
+      targetsOf(
+        [stripe, EVERYTHING, invoices, general, enrichment, enrichment],
+        owners,
+      ),
+    ).toEqual([{ kind: "KIND_WORKSPACE" }, { kind: "KIND_ENRICHMENT" }]);
+    expect(targetsOf([EVERYTHING, EVERYTHING], owners)).toEqual([
+      { kind: "KIND_WORKSPACE" },
+    ]);
+    expect(holdsEverything([stripe, EVERYTHING])).toBe(true);
+    expect(holdsEverything([stripe, enrichment])).toBe(false);
+    expect(holdsEverything([])).toBe(false);
   });
 });
 
@@ -203,6 +237,49 @@ describe("the editor's sources", () => {
     expect(toggle([general], stripe)).toEqual([general, stripe]);
     expect(toggle([general, stripe], general)).toEqual([stripe]);
   });
+
+  it("replaces everything with a source chosen, and the sources with everything", () => {
+    // Everything leaves each source off, to be chosen in its place.
+    expect(sourceState([EVERYTHING], EVERYTHING)).toBe("chosen");
+    expect(sourceState([], EVERYTHING)).toBe("off");
+    expect(sourceState([EVERYTHING], stripe)).toBe("off");
+    expect(sourceState([EVERYTHING], invoices)).toBe("off");
+    expect(sourceState([EVERYTHING], notes, "conn_stripe")).toBe("off");
+    expect(sourceState([EVERYTHING], enrichment)).toBe("off");
+    // Choosing everything drops connectors, tables and sets, not enrichment.
+    expect(toggle([stripe, invoices, general, enrichment], EVERYTHING)).toEqual(
+      [enrichment, EVERYTHING],
+    );
+    expect(toggle([], EVERYTHING)).toEqual([EVERYTHING]);
+    // Choosing a connector, table or set drops everything.
+    expect(toggle([EVERYTHING, enrichment], stripe)).toEqual([
+      enrichment,
+      stripe,
+    ]);
+    expect(toggle([EVERYTHING], invoices)).toEqual([invoices]);
+    expect(toggle([EVERYTHING], general)).toEqual([general]);
+    // People enrichment goes beside it either way.
+    expect(toggle([EVERYTHING], enrichment)).toEqual([EVERYTHING, enrichment]);
+    expect(toggle([EVERYTHING, enrichment], enrichment)).toEqual([EVERYTHING]);
+    // Turning everything off leaves People enrichment alone.
+    expect(toggle([EVERYTHING, enrichment], EVERYTHING)).toEqual([enrichment]);
+  });
+
+  it("says what everything gives, to people, to a key and to an app", () => {
+    expect(everythingNote("people")).toContain("including ones added later");
+    expect(everythingNote("people")).toContain(
+      "the channels each person is in",
+    );
+    // A key, like an app, reads only what a source shares with everyone.
+    for (const audience of ["key", "app"] as const) {
+      expect(everythingNote(audience)).toContain(
+        "what the source shares with everyone",
+      );
+      expect(everythingNote(audience)).not.toContain("each person");
+    }
+    for (const audience of ["people", "key", "app"] as const)
+      expect(everythingNote(audience)).toContain("not People enrichment");
+  });
 });
 
 describe("coverage", () => {
@@ -252,6 +329,40 @@ describe("coverage", () => {
       missing([stripe], { documentSets: [{ documentSetId: "" }] }).sets,
     ).toEqual([{ setId: "", connectorId: "" }]);
     expect(covered(missing([stripe], { uncoverable: true }))).toBe(false);
+  });
+
+  it("gives every table and set with everything, never People enrichment", () => {
+    // Any connector's tables and sets, uploaded or a connection's, ones it
+    // has never seen included.
+    expect(missing([EVERYTHING], inputs)).toEqual({
+      ...none,
+      enrichment: true,
+    });
+    expect(covered(missing([EVERYTHING, enrichment], inputs))).toBe(true);
+    expect(
+      missing([EVERYTHING], {
+        tables: [{ connectorId: "conn_added_later", table: "t" }],
+        documentSets: [
+          { documentSetId: "set_added_later", connectorId: "conn_added_later" },
+        ],
+      }),
+    ).toEqual(none);
+    // A document in no set, and a load nothing covers, stay uncovered.
+    expect(
+      missing([EVERYTHING], { documentSets: [{ documentSetId: "" }] }).sets,
+    ).toEqual([{ setId: "", connectorId: "" }]);
+    expect(covered(missing([EVERYTHING], { uncoverable: true }))).toBe(false);
+    expect(holdsAny([EVERYTHING], { uncoverable: true, tables: [{}] })).toBe(
+      false,
+    );
+    // An enrichment load is read in part.
+    expect(holdsAny([EVERYTHING], inputs)).toBe(true);
+    expect(holdsAny([EVERYTHING], { enrichment: true })).toBe(false);
+    expect(
+      readings({ ontologies: [{ ontologyId: "o", inputs }] }, [EVERYTHING]).map(
+        (r) => r.reach,
+      ),
+    ).toEqual(["part"]);
   });
 
   it("says what is missing in words", () => {
@@ -570,6 +681,11 @@ describe("teams synced from a directory", () => {
     expect(addsSources([stripe], [invoices])).toBe(false);
     expect(addsSources([invoices], [stripe])).toBe(true);
     expect(addsSources([general], [general, notes])).toBe(true);
+    // Everything holds every connector, table and set, never enrichment.
+    expect(addsSources([EVERYTHING], [stripe, invoices, general])).toBe(false);
+    expect(addsSources([EVERYTHING], [EVERYTHING])).toBe(false);
+    expect(addsSources([EVERYTHING], [enrichment])).toBe(true);
+    expect(addsSources([stripe, general], [EVERYTHING])).toBe(true);
   });
 });
 
@@ -626,6 +742,9 @@ describe("restricted mode", () => {
       "/nowhere",
       // Settings › Slack: the install, and unlinking their own account.
       "/settings/slack",
+      // A partner app's consent page, which tells them only owners and
+      // admins connect apps.
+      "/oauth/authorize",
     ])
       expect(granteeRedirect(path), path).toBeUndefined();
     for (const path of [
@@ -633,6 +752,7 @@ describe("restricted mode", () => {
       "/data/connections/c",
       "/settings",
       "/settings/access",
+      "/settings/apps",
       "/settings/members",
       "/settings/slack/more",
       "/ontology/new",

@@ -61,6 +61,26 @@ describe("next.config.ts", () => {
     expect(env.NEXT_PUBLIC_FOUNDRY_ASSISTANT).toBe(on);
   });
 
+  it.each([
+    { name: "dev", appEnv: "dev", mode: undefined, on: "1" },
+    { name: "the mock", appEnv: "mock", mode: undefined, on: "1" },
+    {
+      name: "an unset app env (e2e)",
+      appEnv: undefined,
+      mode: undefined,
+      on: "1",
+    },
+    { name: "prod", appEnv: " Prod ", mode: undefined, on: "" },
+    { name: "local mode", appEnv: undefined, mode: "local", on: "" },
+    { name: "local mode on dev", appEnv: "dev", mode: "local", on: "" },
+  ])("offers connected apps in $name: '$on'", async ({ appEnv, mode, on }) => {
+    const env = await load({
+      NEXT_PUBLIC_APP_ENV: appEnv,
+      NEXT_PUBLIC_FOUNDRY_MODE: mode,
+    });
+    expect(env.NEXT_PUBLIC_FOUNDRY_APPS).toBe(on);
+  });
+
   // Databuddy's client id: each stamp's, only in a build for its own origin.
   // The "Foundry Dev" and "Foundry" sites in Databuddy.
   const DEV_ID = "a4288db1-0535-4fdd-8cae-bc525f19a172",

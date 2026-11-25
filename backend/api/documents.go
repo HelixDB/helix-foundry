@@ -329,16 +329,20 @@ func (s *Service) granteeDocuments(ctx context.Context, g access.Grantee, byID m
 	if err != nil {
 		return status.Errorf(codes.Internal, "list sets: %v", err)
 	}
+	// Each live set's owner, nil for an upload's set.
 	owners := map[string]*foundrymodel.FoundryDocumentSetOwner{}
 	for _, set := range sets {
-		if set.Owner != nil {
-			owners[set.ID] = set.Owner
-		}
+		owners[set.ID] = set.Owner
 	}
 	for id, d := range byID {
-		ref := access.DocumentRef{ID: d.ID, Set: access.SetRef{SetID: d.SetID}}
-		if owner := owners[d.SetID]; owner != nil {
-			ref.Set.ConnectorID, ref.Stream = owner.ConnectorID, owner.Stream
+		// A document of a set gone (a deleted connector's, say) is in none,
+		// which no grant gives: its set would read as an upload's otherwise.
+		ref := access.DocumentRef{ID: d.ID}
+		if owner, live := owners[d.SetID]; live {
+			ref.Set.SetID = d.SetID
+			if owner != nil {
+				ref.Set.ConnectorID, ref.Stream = owner.ConnectorID, owner.Stream
+			}
 		}
 		if d.Source != nil {
 			ref.ExternalID = d.Source.ExternalID

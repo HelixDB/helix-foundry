@@ -28,6 +28,9 @@ import { SlackTab } from "./slack";
 import { SlackInstalledPage } from "./slack-installed";
 import { SlackLinkPage } from "./slack-link";
 import { RelayLinkPage } from "./relay-link";
+import { partnerApps } from "./partner-apps";
+import { PartnerAppsTab } from "./partner-apps-tab";
+import { PartnerAuthorizePage } from "./partner-authorize";
 import { DASHBOARD_URL, MembersTab } from "./members";
 import type { SettingsTab } from "./paths";
 import { roleLabel } from "./people";
@@ -94,6 +97,10 @@ const tabs: { id: Tab; label: string }[] = [
     : [
         { id: "members" as const, label: "Members" },
         { id: "access" as const, label: "Access" },
+        // Partner apps reading the workspace, where the build offers them.
+        ...(partnerApps
+          ? [{ id: "apps" as const, label: "Connected apps" }]
+          : []),
         { id: "billing" as const, label: "Plan & billing" },
         { id: "enrichment" as const, label: "People enrichment" },
       ]),
@@ -105,12 +112,15 @@ const tabs: { id: Tab; label: string }[] = [
 function SettingsPage({ tab }: { tab: Tab }) {
   const { name, role, grantee } = useWorkspace(),
     navigate = useNavigate();
-  // Access is owners' and admins'. A grantee reaches only Slack, to see the
-  // install and unlink their own account (granteeRedirect).
+  // Access and Connected apps are owners' and admins'. A grantee reaches
+  // only Slack, to see the install and unlink their own account
+  // (granteeRedirect).
   const shown = tabs.filter((t) =>
     grantee
       ? t.id === "slack"
-      : t.id !== "access" || canManage(role) || tab === "access",
+      : (t.id !== "access" && t.id !== "apps") ||
+        canManage(role) ||
+        tab === t.id,
   );
   return (
     <Page>
@@ -148,6 +158,8 @@ function SettingsPage({ tab }: { tab: Tab }) {
           <MembersTab />
         ) : tab === "access" ? (
           <AccessTab />
+        ) : tab === "apps" ? (
+          <PartnerAppsTab />
         ) : tab === "billing" ? (
           <BillingTab />
         ) : tab === "sharing" ? (
@@ -163,6 +175,7 @@ function SettingsPage({ tab }: { tab: Tab }) {
 }
 
 // /settings, /settings/ai, /settings/members, /settings/access,
+// /settings/apps where the build offers connected apps,
 // /settings/billing (where Stripe Checkout returns) and
 // /settings/enrichment, /settings/slack, and /settings/sharing where the
 // build has public dashboard links; only /settings, /settings/ai and
@@ -176,6 +189,9 @@ export function SettingsRoutes() {
         <>
           <Route path="members" element={<SettingsPage tab="members" />} />
           <Route path="access" element={<SettingsPage tab="access" />} />
+          {partnerApps && (
+            <Route path="apps" element={<SettingsPage tab="apps" />} />
+          )}
           <Route path="billing" element={<SettingsPage tab="billing" />} />
           <Route
             path="enrichment"
@@ -211,6 +227,18 @@ export function RelayRoutes() {
   return (
     <Routes>
       <Route path="link" element={<RelayLinkPage />} />
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+}
+
+// /oauth/authorize (hosted, where the build offers connected apps): a
+// partner app asks to read one of the caller's workspaces (main.tsx mounts
+// it, while onboarding too).
+export function OAuthRoutes() {
+  return (
+    <Routes>
+      <Route path="authorize" element={<PartnerAuthorizePage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

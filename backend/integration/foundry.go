@@ -158,6 +158,8 @@ type FoundryBackendAPI interface {
 	GetOntologyGeneration(context.Context, *foundryv1.GetOntologyGenerationRequest, ...grpc.CallOption) (*foundryv1.OntologyGenerationResponse, error)
 	ListFoundryDocuments(context.Context, *foundryv1.ListFoundryDocumentsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error)
 	ListFoundryOntologyDocuments(context.Context, *foundryv1.ListFoundryOntologyDocumentsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentsResponse, error)
+	GetFoundryOntologyDocument(context.Context, *foundryv1.GetFoundryOntologyDocumentRequest, ...grpc.CallOption) (*foundryv1.FoundryDocumentResponse, error)
+	GetFoundryDocumentContent(context.Context, *foundryv1.GetFoundryDocumentContentRequest, ...grpc.CallOption) (*foundryv1.GetFoundryDocumentContentResponse, error)
 	ListFoundryQuestions(context.Context, *foundryv1.ListFoundryQuestionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryQuestionsResponse, error)
 	ListFoundryReviewDecisions(context.Context, *foundryv1.ListFoundryReviewDecisionsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewDecisionsResponse, error)
 	ListFoundryReviews(context.Context, *foundryv1.ListFoundryReviewsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryReviewsResponse, error)
@@ -258,6 +260,12 @@ type ListFoundryDocumentsInput struct {
 	OntologyInput
 	SetID     string `json:"set_id,omitempty" jsonschema:"Every document of this document set of the workspace, without extraction; when empty, the documents the ontology reads, each with its extraction."`
 	PageToken string `json:"page_token,omitempty" jsonschema:"Opaque continuation token from the previous call."`
+}
+
+// GetFoundryDocumentTextInput names one document the ontology reads.
+type GetFoundryDocumentTextInput struct {
+	OntologyInput
+	DocumentID string `json:"document_id" jsonschema:"The document's id, as a document list returned it."`
 }
 
 type ListFoundryQuestionsInput struct {
@@ -644,6 +652,17 @@ type ListFoundryDocumentsOutput struct {
 	ContentTrust string                  `json:"content_trust"`
 	Documents    []FoundryDocumentOutput `json:"documents"`
 	NextPage     string                  `json:"next_page_token,omitempty"`
+}
+
+// GetFoundryDocumentTextOutput is a document the ontology reads, with what the current load made
+// of it, and its text as ontologies read it.
+type GetFoundryDocumentTextOutput struct {
+	ContentTrust string                `json:"content_trust"`
+	Document     FoundryDocumentOutput `json:"document"`
+	// Text is its text as uploaded, a table file's (CSV, TSV, JSON, JSONL) included, at most its
+	// type's cap; a PDF's is its pages' text with a form feed between pages, once read. Parquet
+	// has none, nor a PDF not yet read, and the call is then refused.
+	Text string `json:"text"`
 }
 
 type FoundryQuestionBudgetOutput struct {
@@ -1849,6 +1868,39 @@ func (s *Service) ListFoundryDocuments(
 		out.Documents = append(out.Documents, FoundryDocument(doc))
 	}
 	return out, len(out.Documents), nil
+}
+
+// GetFoundryDocumentText reads one document of the ontology with its text. A grantee reads one
+// that a load its grants cover holds, as the backend checks; a key's grant is on the ontology's
+// project, so it reaches only a document of a set that ontology reads.
+func (s *Service) GetFoundryDocumentText(
+	ctx context.Context, identity *Identity, call *Call, input GetFoundryDocumentTextInput,
+) (GetFoundryDocumentTextOutput, int, error) {
+	call.ResourceKind, call.ResourceID = "ontology", input.OntologyID
+	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID, input.DocumentID}) {
+		return GetFoundryDocumentTextOutput{}, 0, errCodeInvalidArguments
+	}
+	req := &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, Id: input.DocumentID}
+	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
+		"GetFoundryOntologyDocument", "GetFoundryDocumentContent"); err != nil {
+		return GetFoundryDocumentTextOutput{}, 0, err
+	}
+	doc, err := s.Foundry.GetFoundryOntologyDocument(ctx, req)
+	if err != nil {
+		return GetFoundryDocumentTextOutput{}, 0, FoundryError(err)
+	}
+	if identity.ServiceKey && (identity.IsGrantee == nil || !identity.IsGrantee(ctx)) {
+		if err := s.requireSetReadBy(ctx, input.WorkspaceID, doc.GetDocument().GetSetId(), input.OntologyID); err != nil {
+			return GetFoundryDocumentTextOutput{}, 0, err
+		}
+	}
+	content, err := s.Foundry.GetFoundryDocumentContent(ctx, &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: input.WorkspaceID, Id: input.DocumentID})
+	if err != nil {
+		return GetFoundryDocumentTextOutput{}, 0, FoundryError(err)
+	}
+	return GetFoundryDocumentTextOutput{
+		ContentTrust: contentTrustUntrusted, Document: FoundryDocument(doc.GetDocument()), Text: content.GetText(),
+	}, 1, nil
 }
 
 // requireSetReadBy refuses a set the ontology doesn't read as not_found, as every denial is.

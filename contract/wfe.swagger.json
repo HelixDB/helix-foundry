@@ -340,6 +340,55 @@
         ]
       }
     },
+    "/v1/partner-apps/authorization": {
+      "get": {
+        "operationId": "WfeService_GetPartnerAppAuthorization",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetPartnerAppAuthorizationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "redirectUri",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "scope",
+            "description": "Space-delimited; empty asks for every scope the app holds.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
     "/v1/projects": {
       "get": {
         "operationId": "WfeService_ListProjects",
@@ -832,6 +881,111 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/partner-apps/authorization:approve": {
+      "post": {
+        "operationId": "WfeService_ApprovePartnerAppAuthorization",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ApprovePartnerAppAuthorizationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WfeServiceApprovePartnerAppAuthorizationBody"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/partner-apps/installs": {
+      "get": {
+        "operationId": "WfeService_ListPartnerAppInstalls",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ListPartnerAppInstallsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/partner-apps/installs/{installId}": {
+      "delete": {
+        "operationId": "WfeService_RevokePartnerAppInstall",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "installId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/service-credentials": {
       "get": {
         "operationId": "WfeService_ListServiceCredentials",
@@ -937,6 +1091,52 @@
     }
   },
   "definitions": {
+    "FoundrySourceTargetKind": {
+      "type": "string",
+      "enum": [
+        "KIND_UNSPECIFIED",
+        "KIND_CONNECTOR",
+        "KIND_TABLE",
+        "KIND_DOCUMENT_SET",
+        "KIND_ENRICHMENT",
+        "KIND_WORKSPACE"
+      ],
+      "default": "KIND_UNSPECIFIED",
+      "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else.\n - KIND_WORKSPACE: Everything in the workspace: every connector (its tables and its\ndocument sets), every table and every document set, now and later,\neach as far as its source shares; never People enrichment. Names\nnothing."
+    },
+    "WfeServiceApprovePartnerAppAuthorizationBody": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "redirectUri": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "codeChallenge": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What the person allowed: a non-empty subset of the app's."
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundrySourceTarget"
+          },
+          "description": "The sources it reads, 1 to 1000; everything in the workspace\n(KIND_WORKSPACE) counts as one."
+        }
+      },
+      "description": "An owner or admin allows the app to read the workspace: the response is\nwhere to send the browser, the redirect URI with the code, state and iss."
+    },
     "WfeServiceInviteWorkspaceMemberBody": {
       "type": "object",
       "properties": {
@@ -1061,6 +1261,18 @@
         },
         "contentType": {
           "type": "string"
+        }
+      }
+    },
+    "helixwfev1ListPartnerAppInstallsResponse": {
+      "type": "object",
+      "properties": {
+        "installs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1PartnerAppInstallView"
+          }
         }
       }
     },
@@ -1249,6 +1461,14 @@
         "API_KEY_TYPE_TENANT"
       ],
       "default": "API_KEY_TYPE_UNSPECIFIED"
+    },
+    "v1ApprovePartnerAppAuthorizationResponse": {
+      "type": "object",
+      "properties": {
+        "redirectUrl": {
+          "type": "string"
+        }
+      }
     },
     "v1AuthApplication": {
       "type": "string",
@@ -1452,6 +1672,47 @@
       "default": "FEEDBACK_CATEGORY_UNSPECIFIED",
       "description": "FeedbackCategory names what feedback is about.\n\n - FEEDBACK_CATEGORY_BUG: Something doesn't work as it should.\n - FEEDBACK_CATEGORY_MISSING_CAPABILITY: Something the person needed isn't there.\n - FEEDBACK_CATEGORY_CONFUSING_RESULT: A result, answer or page didn't make sense.\n - FEEDBACK_CATEGORY_CONNECTOR_REQUEST: A data source the person wants a connector for, which the message names."
     },
+    "v1FoundrySourceTarget": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/FoundrySourceTargetKind"
+        },
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "documentSetId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundrySourceTarget is one source a partner app's install reads, as\nFoundry's FoundryAccessTarget names it (the same JSON), so the Foundry site\nsends its access targets as they are. Each kind names what it needs and\nleaves the rest empty."
+    },
+    "v1GetPartnerAppAuthorizationResponse": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "$ref": "#/definitions/v1PublicPartnerApp"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What the app asks for, canonical order: foundry.read, foundry.ask."
+        },
+        "redirectOrigin": {
+          "type": "string",
+          "description": "Where the browser goes after: the redirect URI's scheme and host."
+        },
+        "denyUrl": {
+          "type": "string",
+          "description": "The redirect URI with error=access_denied, state and iss: Cancel. Denying\nrecords nothing, so it has no RPC."
+        }
+      }
+    },
     "v1LegacyReportServiceCredentialOwner": {
       "type": "object",
       "properties": {
@@ -1467,6 +1728,45 @@
         }
       },
       "description": "LegacyReportServiceCredentialOwner describes old multi-workspace report\ntokens. No API may mint this owner variant or expand its read-only scopes."
+    },
+    "v1PartnerAppInstallView": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "app": {
+          "$ref": "#/definitions/v1PublicPartnerApp"
+        },
+        "credentialId": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approvedByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approvedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastUsedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "appDisabled": {
+          "type": "boolean",
+          "description": "Helix suspended the app: it reads nothing until Helix turns it on again."
+        }
+      }
     },
     "v1PasswordAuthResponse": {
       "type": "object",
@@ -1551,6 +1851,28 @@
         }
       },
       "description": "ProjectAccess is the canonical workspace-member project policy persisted as\nprotobuf JSON. Version 2 keeps resource management and database query scopes\nindependent so project visibility never implies database-data access."
+    },
+    "v1PublicPartnerApp": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "homepageUrl": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Helix checked who publishes it."
+        }
+      },
+      "description": "What the consent page shows of an app."
     },
     "v1ReportKeyScope": {
       "type": "object",

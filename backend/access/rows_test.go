@@ -22,7 +22,7 @@ func TestGrantsTableRows(t *testing.T) {
 	holdings := access.Holdings{Tables: []access.TableRef{users, channels, members, messages, reactions}}
 	grants := func(reach access.SourceReach) access.Grants {
 		return access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": reach}, kinds))
+			WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": reach}, kinds))
 	}
 	byItem := func(t access.TableRef, items ...string) access.TableRows {
 		return access.TableRows{Table: t, Rule: access.ItemRows("channel_id"), Items: items}
@@ -58,16 +58,26 @@ func TestGrantsTableRows(t *testing.T) {
 			assert.True(t, g.Keeps(access.Inputs{Tables: []access.TableRef{r.Table}}, part.Items), "%s: keeps %s", name, r.Table.Table)
 		}
 	}
+	t.Run("a workspace grant reads the rows a connector's does", func(t *testing.T) {
+		reach := access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C2"}, Member: true}, now)
+		sharing := access.NewSharing([]string{"slack", "stripe"}, map[string]access.SourceReach{"slack": reach}, kinds)
+		workspace := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(sharing)
+		assert.Equal(t, grants(reach).Part(holdings), workspace.Part(holdings))
+		assert.False(t, workspace.CoversTable(messages), "never whole")
+		assert.False(t, workspace.CoversSet(access.SetRef{SetID: "conv", ConnectorID: "slack"}), "never whole")
+		assert.True(t, workspace.ReachesSet(access.SetRef{SetID: "conv", ConnectorID: "slack"}))
+		assert.True(t, workspace.CoversTable(access.TableRef{ConnectorID: "stripe", Table: "customers"}), "a source no one narrows is whole")
+	})
 	t.Run("a table not granted gives no rows", func(t *testing.T) {
 		g := access.NewGrants([]access.Target{access.TableTarget("slack", "channels")}).
-			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, kinds))
+			WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, kinds))
 		part := g.Part(holdings)
 		assert.Empty(t, part.Tables, "the directory is granted as any table")
 		assert.Equal(t, []access.TableRows{byItem(channels, "C1")}, part.Rows)
 	})
 	t.Run("a kind Sharing isn't told reads no table", func(t *testing.T) {
 		g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, nil))
+			WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, nil))
 		assert.False(t, g.ReadsTable(channels))
 		assert.False(t, g.ReadsTable(users))
 	})
@@ -90,7 +100,7 @@ func TestGrantsTableRowsCap(t *testing.T) {
 	doc := access.DocumentRef{ID: "d", Set: conversations, Stream: "conversations", ExternalID: "C1:2026-11-01"}
 	for n, held := range map[int]bool{access.MaxHeldItems: true, access.MaxHeldItems + 1: false} {
 		g := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: items(n)}, now)}, kinds))
+			WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: items(n)}, now)}, kinds))
 		assert.Equal(t, held, g.ReadsTable(channels), "%d items", n)
 		part := g.Part(access.Holdings{Tables: []access.TableRef{channels}, Documents: []access.DocumentRef{doc}})
 		assert.Equal(t, held, len(part.Rows) == 1, "%d items", n)
@@ -144,9 +154,9 @@ func ExampleTableRows_Held() {
 func ExampleGrants_ReadsTable() {
 	now := time.Now()
 	asAda := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, kinds))
 	asKey := access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-		WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
+		WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}}, now)}, kinds))
 	messages, users := access.TableRef{ConnectorID: "slack", Table: "messages"}, access.TableRef{ConnectorID: "slack", Table: "users"}
 	fmt.Println(asAda.ReadsTable(messages), asAda.ReadsTable(users), asKey.ReadsTable(messages), asKey.ReadsTable(users))
 	fmt.Println(asAda.Part(access.Holdings{Tables: []access.TableRef{messages, users}}).Items)
@@ -164,7 +174,7 @@ func TestDirectoryItem(t *testing.T) {
 	directory, general := access.ItemRef{ConnectorID: "slack", Item: access.DirectoryItem}, access.ItemRef{ConnectorID: "slack", Item: "C1"}
 	grants := func(reach access.SourceReach) access.Grants {
 		return access.NewGrants([]access.Target{access.ConnectorTarget("slack")}).
-			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": reach}, kinds))
+			WithSharing(access.NewSharing([]string{"slack"}, map[string]access.SourceReach{"slack": reach}, kinds))
 	}
 	member := grants(access.ReachOf(&now, nil, access.Shared{Items: []string{"C1"}, Member: true}, now))
 	assert.Equal(t, []access.ItemRef{directory, general}, member.VisibleItems())

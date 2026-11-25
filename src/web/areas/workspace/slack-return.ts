@@ -5,7 +5,11 @@
 // (/slack/link?workspace=<id>#t=<token>), a local install's request to link
 // it to Helix (the hosted site's /relay/link?state=&code_challenge=
 // &redirect_uri=&name=), and Helix's answer to that request back on the
-// local install (/settings/slack?code=&state=, or ?error= when cancelled).
+// local install (/settings/slack?code=&state=, or ?error= when cancelled),
+// and a partner app's request to read a workspace, which the MCP host sends
+// with its parameters in the fragment (/oauth/authorize#client_id=
+// &redirect_uri=&scope=&state=&code_challenge=), so they never reach the
+// server either.
 // The root layout runs SLACK_RETURN_BOOT in <head>, before any of the
 // site's scripts, so a sign-in on the way (which returns to the page without
 // its query or fragment) loses none of them, and none reaches the server's
@@ -42,7 +46,16 @@ export type SlackReturn =
       at: number;
     }
   | { kind: "relay_return"; code: string; state: string; at: number }
-  | { kind: "relay_error"; error: string; at: number };
+  | { kind: "relay_error"; error: string; at: number }
+  | {
+      kind: "app_authorize";
+      clientId: string;
+      redirectUri: string;
+      scope: string;
+      state: string;
+      codeChallenge: string;
+      at: number;
+    };
 
 const fits = (v: unknown): v is string =>
   typeof v === "string" && v.length > 0 && v.length <= MAX;
@@ -52,6 +65,12 @@ const ERROR_CODE = /^[a-z_]{1,64}$/;
 const RELAY_STATE = /^[A-Za-z0-9._~-]{16,256}$/;
 /** An S256 PKCE challenge: 43 base64url characters. */
 const RELAY_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** A partner app's client id: "hlxpc_" and 32 bytes of base64url (partneroauth). */
+export const APP_CLIENT_ID = /^hlxpc_[A-Za-z0-9_-]{43}$/;
+/** The scopes an app asks for, space-delimited, canonical (the MCP host's). */
+export const APP_SCOPE = /^[a-z.]+( [a-z.]+)*$/;
+/** The longest scope list kept. */
+export const APP_SCOPE_MAX = 64;
 
 /**
  * Keeps what a way back from Slack or Helix carried in `storage` and
@@ -126,6 +145,36 @@ export function captureSlackReturn(
           }
         : null;
     replace("/relay/link");
+  } else if (url.pathname === "/oauth/authorize") {
+    // A bare page (back from signing in) keeps what an earlier one kept.
+    if (!url.hash) return false;
+    const q = new URLSearchParams(url.hash.slice(1)),
+      clientId = q.get("client_id"),
+      redirectUri = q.get("redirect_uri"),
+      scope = q.get("scope"),
+      state = q.get("state"),
+      codeChallenge = q.get("code_challenge");
+    kept =
+      ok(clientId) &&
+      /^hlxpc_[A-Za-z0-9_-]{43}$/.test(clientId) &&
+      ok(redirectUri) &&
+      ok(scope) &&
+      scope.length <= 64 &&
+      /^[a-z.]+( [a-z.]+)*$/.test(scope) &&
+      ok(state) &&
+      ok(codeChallenge) &&
+      /^[A-Za-z0-9_-]{43}$/.test(codeChallenge)
+        ? {
+            kind: "app_authorize",
+            clientId,
+            redirectUri,
+            scope,
+            state,
+            codeChallenge,
+            at: now,
+          }
+        : null;
+    replace("/oauth/authorize");
   } else if (url.pathname === "/settings/slack") {
     const q = new URLSearchParams(url.search),
       code = q.get("code"),
@@ -202,14 +251,24 @@ export function readSlackReturn<K extends SlackReturn["kind"]>(
         ? fits(r.error) &&
           ERROR_CODE.test(r.error) &&
           (r.kind === "relay_error" || r.state === undefined || fits(r.state))
-        : r.kind === "relay_link"
-          ? fits(r.state) &&
-            RELAY_STATE.test(r.state) &&
-            fits(r.codeChallenge) &&
-            RELAY_CHALLENGE.test(r.codeChallenge) &&
+        : r.kind === "app_authorize"
+          ? fits(r.clientId) &&
+            APP_CLIENT_ID.test(r.clientId) &&
             fits(r.redirectUri) &&
-            fits(r.name)
-          : fits(r.token) && r.token.startsWith(SLACK_LINK_TOKEN_PREFIX);
+            fits(r.scope) &&
+            r.scope.length <= APP_SCOPE_MAX &&
+            APP_SCOPE.test(r.scope) &&
+            fits(r.state) &&
+            fits(r.codeChallenge) &&
+            RELAY_CHALLENGE.test(r.codeChallenge)
+          : r.kind === "relay_link"
+            ? fits(r.state) &&
+              RELAY_STATE.test(r.state) &&
+              fits(r.codeChallenge) &&
+              RELAY_CHALLENGE.test(r.codeChallenge) &&
+              fits(r.redirectUri) &&
+              fits(r.name)
+            : fits(r.token) && r.token.startsWith(SLACK_LINK_TOKEN_PREFIX);
   return well ? (r as Extract<SlackReturn, { kind: K }>) : null;
 }
 

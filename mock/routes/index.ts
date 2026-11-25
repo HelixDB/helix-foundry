@@ -18,6 +18,7 @@ import { feedbackRoutes } from "./feedback";
 import { reviewCardRoutes } from "./review-cards";
 import { reviewRoutes } from "./reviews";
 import { signInRoutes } from "./sign-ins";
+import { partnerAppRoutes } from "./partner-apps";
 import { relayRoutes } from "./relay";
 import { slackRoutes } from "./slack";
 import { loadRoutes } from "./loads";
@@ -63,4 +64,5 @@ export const routes: MockRoute[] = [
   ...directoryRoutes,
   ...slackRoutes,
   ...relayRoutes,
+  ...partnerAppRoutes,
 ].map(guarded);

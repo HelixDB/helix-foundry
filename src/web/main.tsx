@@ -23,6 +23,7 @@ import {
 } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { LOCAL } from "../shared/deployment";
+import { partnerApps } from "./areas/workspace/partner-apps";
 import type { WhoamiResponse } from "../shared/wfe";
 import { signInPath } from "../shared/return-path";
 import {
@@ -98,7 +99,9 @@ const SettingsRoutes = area(workspace, "SettingsRoutes"),
   // Slack's return from adding Helix Foundry, and its link to a person.
   SlackRoutes = area(workspace, "SlackRoutes"),
   // Helix's page that links a local install to a workspace (hosted).
-  RelayRoutes = area(workspace, "RelayRoutes");
+  RelayRoutes = area(workspace, "RelayRoutes"),
+  // A partner app's request to read a workspace (hosted, where offered).
+  OAuthRoutes = area(workspace, "OAuthRoutes");
 // Data, Ontology, Dashboards and Automations (Workflows, at /workflows) own
 // their whole URL prefix, and the
 // Ontology area also the Explorer's and Ask's: each *Routes component holds
@@ -168,7 +171,8 @@ function ToWorkflows() {
 // documents in place, the pages of the ontology it creates (they open
 // before the list has it), Settings, for the plan a database connection
 // needs, the callback of a sign-in started from the wizard, and Slack's
-// return and link pages (hosted). One table either way, so a page open as
+// return and link pages (hosted), and a partner app's request to read the
+// workspace (/oauth/authorize, where offered). One table either way, so a page open as
 // the first ontology arrives stays mounted. A grantee (restricted to what
 // source grants give) is never onboarding, and stays on Ask, its
 // ontologies' overviews, Slack's link page and Settings › Slack
@@ -205,6 +209,7 @@ function WorkspaceRoutes({
       <Route path="/settings/*" element={<SettingsRoutes />} />
       <Route path="/slack/*" element={<SlackRoutes />} />
       {!LOCAL && <Route path="/relay/*" element={<RelayRoutes />} />}
+      {partnerApps && <Route path="/oauth/*" element={<OAuthRoutes />} />}
       <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="/connect/github" element={<ConnectGitHub />} />
       <Route path="*" element={offered(<NotFound />)} />

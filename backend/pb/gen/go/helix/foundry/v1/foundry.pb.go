@@ -9560,8 +9560,8 @@ func (x *ListFoundryAccessResponse) GetWorkflowsOff() []*FoundryPrincipal {
 }
 
 // SetFoundryAccessGrantsRequest replaces a principal's grants with targets,
-// none to take them all away. Every target must be of a live connector or
-// set of the workspace (NOT_FOUND otherwise).
+// none to take them all away. Every connector or set a target names must be
+// live in the workspace (NOT_FOUND otherwise).
 type SetFoundryAccessGrantsRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

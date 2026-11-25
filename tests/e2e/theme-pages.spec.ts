@@ -338,6 +338,19 @@ test("every main page in both themes", async ({ page }, info) => {
       name: "Ada’s laptop",
     })}`,
   );
+  // A partner app asking to read the workspace, then the apps connected.
+  await mock.configure({ partnerAppInstalled: true });
+  await visit(
+    "partner-authorize",
+    `/oauth/authorize#${new URLSearchParams({
+      client_id: "hlxpc_" + "northwind-insights".padEnd(43, "0"),
+      redirect_uri: "https://northwind.example/helix/callback",
+      scope: "foundry.read foundry.ask",
+      state: "partner-state",
+      code_challenge: "c".repeat(43),
+    })}`,
+  );
+  await visit("connected-apps", "/settings/apps");
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();
   await shoot("billing-switch");
