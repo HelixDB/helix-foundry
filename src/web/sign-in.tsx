@@ -5,7 +5,12 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Check } from "lucide-react";
 import { signInStarted, trackBeforeLeaving, trackEvent } from "./analytics";
 import { signOut } from "./api";
-import { Button, useTitle } from "./kit";
+import { Button, ButtonAnchor, useTitle } from "./kit";
+import {
+  chromeIntent,
+  inAppBrowser,
+  type InAppBrowser,
+} from "./in-app-browser";
 import { PasswordSignIn } from "./password";
 import { whoamiQuery } from "./workspaces";
 import { LOCAL } from "../shared/deployment";
@@ -25,6 +30,10 @@ const providers: Provider[] = [
   { id: "microsoft", label: "Microsoft" },
 ];
 
+// Why sign-in came back here, one reason per cause, as sign_in_failed reports
+// it: /auth/login's (`request`, `unavailable`), /login/callback's (the
+// provider, the callback's link, this browser's cookie and the WFE's code
+// exchange) and /auth/verify-email's.
 const errors = {
   request: {
     title: "Sign-in couldn’t start.",
@@ -34,9 +43,49 @@ const errors = {
     title: "Sign-in is unavailable right now.",
     text: "Helix couldn’t start sign-in. Try again in a moment.",
   },
-  callback: {
+  provider_error: {
+    title: "Sign-in was cancelled.",
+    text: "The provider didn’t sign you in. Choose a way to sign in to try again.",
+  },
+  missing_code: {
+    title: "Sign-in didn’t finish.",
+    text: "The sign-in link came back incomplete. Try again.",
+  },
+  invalid_state: {
+    title: "Sign-in didn’t finish.",
+    text: "The sign-in link came back incomplete. Try again.",
+  },
+  missing_flow_cookie: {
+    title: "Sign-in didn’t finish.",
+    text: "This browser lost the sign-in it started: it took over 10 minutes, or an app’s built-in browser dropped it. Try again in your browser.",
+  },
+  flow_cookie_invalid: {
+    title: "Sign-in ran out of time.",
+    text: "Start again: a sign-in lasts 10 minutes.",
+  },
+  login_session_unknown: {
+    title: "Sign-in ran out of time.",
+    text: "Helix no longer holds that sign-in. Start again.",
+  },
+  state_mismatch: {
+    title: "Sign-in didn’t finish.",
+    text: "The sign-in link isn’t the one this browser started. Try again in one tab.",
+  },
+  code_exchange_failed: {
     title: "Sign-in didn’t finish.",
     text: "The sign-in link expired or was already used. Try again.",
+  },
+  exchange_unavailable: {
+    title: "Sign-in didn’t finish.",
+    text: "Helix couldn’t reach sign-in. Try again in a moment.",
+  },
+  verify_start_failed: {
+    title: "Sign-in didn’t finish.",
+    text: "Helix couldn’t start checking your email. Try again, or choose another way to sign in.",
+  },
+  session_failed: {
+    title: "Sign-in didn’t finish.",
+    text: "Helix couldn’t open your session. Try again in a moment.",
   },
   denied: {
     title: "This account can’t sign in here.",
@@ -52,7 +101,7 @@ const errors = {
   },
 } satisfies Record<string, { title: string; text: string }>;
 
-/** Why sign-in came back here: /login/callback's ?error=. */
+/** Why sign-in came back here: the ?error= of /auth/login and /login/callback. */
 export type SignInError = keyof typeof errors;
 const isSignInError = (code: string | null): code is SignInError =>
   !!code && Object.hasOwn(errors, code);
@@ -174,9 +223,21 @@ export function SignInPage() {
   const code = params.get("error"),
     error = isSignInError(code) ? errors[code] : undefined,
     returnTo = parseReturnPath(params.get("return_to"));
+  // An app's built-in browser can lose the sign-in on its way back.
+  const [inApp] = useState(() =>
+    LOCAL ? null : inAppBrowser(navigator.userAgent),
+  );
   useEffect(() => {
     if (isSignInError(code)) trackEvent("sign_in_failed", { reason: code });
   }, [code]);
+  useEffect(() => {
+    if (inApp)
+      trackEvent("in_app_browser_shown", {
+        app: inApp.app,
+        os: inApp.os,
+        failed: isSignInError(code),
+      });
+  }, [inApp, code]);
   // Already signed in: go straight on.
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
@@ -203,6 +264,7 @@ export function SignInPage() {
           <span>{error.text}</span>
         </div>
       )}
+      {inApp && <InAppNotice inApp={inApp} />}
       <div className="hf-gate-body">
         {providers.map((p) => (
           <Button
@@ -219,8 +281,94 @@ export function SignInPage() {
         ))}
       </div>
       <PasswordSignIn returnTo={returnTo} disabled={!!pending} />
+      {DEMO_URL && (
+        <p className="hf-gate-fine">
+          Not ready to sign in?{" "}
+          <a
+            href={DEMO_URL}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+                return trackEvent("demo_clicked");
+              e.preventDefault();
+              void trackBeforeLeaving("demo_clicked").then(() =>
+                window.location.assign(DEMO_URL),
+              );
+            }}
+          >
+            See it without an account
+          </a>
+        </p>
+      )}
       <Terms />
     </GatePage>
+  );
+}
+
+/**
+ * The stamp's public sample demo (next.config.ts): none yet, and never in a
+ * local build, which hides the link.
+ */
+const DEMO_URL = process.env.NEXT_PUBLIC_FOUNDRY_DEMO_URL || "";
+
+/**
+ * Asks a reader in an app's built-in browser to sign in from their own: by
+ * Chrome's intent on Android, the app's menu on iOS, or the copied link.
+ */
+function InAppNotice({ inApp }: { inApp: InAppBrowser }) {
+  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
+  // This page, without the failure it came back with.
+  const here = new URL(location.href);
+  here.searchParams.delete("error");
+  const left = (via: "chrome" | "copy_link") =>
+    trackBeforeLeaving("in_app_browser_left", {
+      app: inApp.app,
+      os: inApp.os,
+      via,
+    });
+  return (
+    <div role="status" className="hf-gate-notice">
+      <strong>Open in your browser to sign in</strong>
+      <span>
+        {inApp.name ? `${inApp.name}’s` : "This app’s"} built-in browser can
+        lose your sign-in before it finishes.
+        {inApp.os === "ios" &&
+          " Tap ··· or the share button, then Open in Safari (or Open in browser)."}
+      </span>
+      <div className="hf-gate-notice-actions">
+        {inApp.os === "android" && (
+          <ButtonAnchor
+            variant="primary"
+            size="sm"
+            href={chromeIntent(here)}
+            onClick={() => void left("chrome")}
+          >
+            Open in Chrome
+          </ButtonAnchor>
+        )}
+        <Button
+          size="sm"
+          onClick={() =>
+            // A web view may have no clipboard at all.
+            void Promise.resolve()
+              .then(() => navigator.clipboard.writeText(here.href))
+              .then(
+                () => {
+                  setCopy("copied");
+                  void left("copy_link");
+                },
+                () => setCopy("failed"),
+              )
+          }
+        >
+          {copy === "copied" ? "Link copied" : "Copy link"}
+        </Button>
+      </div>
+      {copy === "failed" && (
+        <span>
+          Copy this address into your browser: <code>{here.href}</code>
+        </span>
+      )}
+    </div>
   );
 }
 

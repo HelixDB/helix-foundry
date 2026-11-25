@@ -69,6 +69,33 @@
 .hf-gate-alert strong {
   font-weight: 600;
 }
+/* An app's built-in browser: open the page in the phone's own. */
+.hf-gate-notice {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--hf-space-3);
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--hf-info) 25%, transparent);
+  border-radius: var(--hf-radius);
+  background: var(--hf-info-soft);
+  color: var(--hf-info-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.hf-gate-notice strong {
+  font-weight: 600;
+}
+.hf-gate-notice code {
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+}
+.hf-gate-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
 .hf-gate-fine {
   margin: var(--hf-space-3) 0 0;
   color: var(--hf-muted);

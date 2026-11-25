@@ -40,6 +40,7 @@ import type {
 } from "./areas/workspace/relay-api";
 import type { FeedbackKind } from "./feedback";
 import type { SignInError } from "./sign-in";
+import type { InApp, InAppBrowser } from "./in-app-browser";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
 import type { SignInFailureCode } from "./areas/data/sign-ins";
 import * as localUsage from "./local-usage";
@@ -171,6 +172,17 @@ export type AnalyticsEvents = {
     method: "github" | "google" | "microsoft" | "password" | "password_sign_up";
   } & FirstTouchProperties;
   sign_in_failed: { reason: SignInError };
+  // The sign-in page in an app's built-in browser (./in-app-browser.ts):
+  // shown (`failed` when a sign-in came back failed), and left for the
+  // phone's browser by Chrome's intent or a copied link.
+  in_app_browser_shown: { app: InApp; os: InAppBrowser["os"]; failed: boolean };
+  in_app_browser_left: {
+    app: InApp;
+    os: InAppBrowser["os"];
+    via: "chrome" | "copy_link";
+  };
+  // Sign-in's "See it without an account": the stamp's public demo.
+  demo_clicked: undefined;
   // WorkOS emailed a code before it signs the address in (/login/verify):
   // shown, a code refused or not checked, and a right one.
   email_verification_shown: undefined;

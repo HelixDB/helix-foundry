@@ -188,6 +188,43 @@ export function signInErrorPath(reason: SignInError, returnPath?: string) {
 }
 
 /**
+ * Why ExchangeAuthCode refused the callback's code, from grpc-gateway's
+ * status and body: `denied` an email this stamp doesn't let in
+ * (PERMISSION_DENIED), `exchange_unavailable` the WFE or WorkOS being away,
+ * `login_session_unknown` a pending login the WFE no longer holds (expired,
+ * used, or held by another replica), `state_mismatch` a state that isn't the
+ * pending login's, and `code_exchange_failed` WorkOS refusing the code. The
+ * last three are all UNAUTHENTICATED: the WFE's messages tell them apart.
+ *
+ * @example
+ * exchangeFailure(401, { code: 16, message: "state mismatch" }); // "state_mismatch"
+ * exchangeFailure(403, { code: 7 }); // "denied"
+ */
+export function exchangeFailure(
+  status: number,
+  body: unknown,
+): Extract<
+  SignInError,
+  | "denied"
+  | "exchange_unavailable"
+  | "login_session_unknown"
+  | "state_mismatch"
+  | "code_exchange_failed"
+> {
+  const { code, message } =
+    body && typeof body === "object"
+      ? (body as { code?: unknown; message?: unknown })
+      : {};
+  if (status === 403 || code === 7) return "denied";
+  if (status >= 500 || code === 14) return "exchange_unavailable";
+  if (code !== 16 || typeof message !== "string") return "code_exchange_failed";
+  if (message.startsWith("login session expired or unknown"))
+    return "login_session_unknown";
+  if (message === "state mismatch") return "state_mismatch";
+  return "code_exchange_failed";
+}
+
+/**
  * Why VerifyEmail refused a code, from grpc-gateway's status and the gRPC
  * code in its body: `code` a wrong code (INVALID_ARGUMENT, the session
  * kept for another try), `unavailable` WorkOS or the WFE being away (the

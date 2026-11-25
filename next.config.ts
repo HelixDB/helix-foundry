@@ -86,6 +86,13 @@ const nextConfig: NextConfig = {
         : appEnv === "prod"
           ? "https://ingest.helix-db.com"
           : "https://ingest.dev.helix-db.com",
+    // A public sample demo, sign-in's "See it without an account": none on
+    // any stamp yet, so the link hides; never in local mode; the mock's,
+    // for e2e.
+    NEXT_PUBLIC_FOUNDRY_DEMO_URL:
+      mode !== "local" && appEnv === "mock"
+        ? "https://demo.foundry.invalid/"
+        : "",
     NEXT_PUBLIC_DATABUDDY_CLIENT_ID:
       mode === "local"
         ? appEnv === "mock"
