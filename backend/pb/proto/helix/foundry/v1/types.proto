@@ -2538,6 +2538,10 @@ message FoundryAccessTarget {
     KIND_DOCUMENT_SET = 3;
     // The People enrichment profiles a load applies. Nothing else.
     KIND_ENRICHMENT = 4;
+    // Everything in the workspace: every connector, table and document set,
+    // now and later, each as far as its source shares with the reader; never
+    // People enrichment. Names nothing.
+    KIND_WORKSPACE = 5;
   }
   Kind kind = 1;
   string connector_id = 2;

@@ -393,12 +393,9 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 		heldTargets[i] = g.Target
 	}
 	covered := access.NewGrants(heldTargets)
-	if slices.ContainsFunc(targets, func(t access.Target) bool {
-		if t.Kind() == access.TargetTable {
-			return !covered.CoversTable(access.TableRef{ConnectorID: t.ConnectorID(), Table: t.Table()})
-		}
-		return !slices.Contains(heldTargets, t)
-	}) {
+	// A target the held grants already give (a table of a granted connector,
+	// anything but People enrichment under a workspace grant) is nothing new.
+	if slices.ContainsFunc(targets, func(t access.Target) bool { return !covered.Holds([]access.Target{t}) }) {
 		if synced, err = s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
 			return nil, err
 		}
@@ -690,6 +687,7 @@ var targetKindToProto = map[access.TargetKind]foundryv1.FoundryAccessTarget_Kind
 	access.TargetTable:       foundryv1.FoundryAccessTarget_KIND_TABLE,
 	access.TargetDocumentSet: foundryv1.FoundryAccessTarget_KIND_DOCUMENT_SET,
 	access.TargetEnrichment:  foundryv1.FoundryAccessTarget_KIND_ENRICHMENT,
+	access.TargetWorkspace:   foundryv1.FoundryAccessTarget_KIND_WORKSPACE,
 }
 
 // targetKindNames are the proto's kinds by the names ParseTarget reads; an

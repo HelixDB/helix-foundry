@@ -194,6 +194,36 @@ func TestABotReadsByItsKeysGrantsAlone(t *testing.T) {
 	require.ErrorAs(t, err, &f)
 }
 
+// A thread run under everything in the workspace is read on only while its
+// reader still holds everything: a connector's grant alone doesn't hold it,
+// and fails the turn for good; one run under a connector goes on under
+// everything, which holds it.
+func TestAThreadUnderTheWorkspaceGrant(t *testing.T) {
+	key := access.Principal{Kind: access.PrincipalServiceCredential, ID: botKey}
+	stripe, workspace := access.ConnectorTarget("stripe"), access.WorkspaceTarget()
+
+	h := newHarness(t, say("Hello."), say("Hello again."))
+	h.db.grants = []model.FoundryAccessGrant{{Principal: key, Target: workspace}}
+	_, err := h.runner.Run(context.Background(), botMessage("Hi"))
+	require.NoError(t, err)
+	thread, err := h.db.GetFoundryAgentThread(context.Background(), ws, "thread1")
+	require.NoError(t, err)
+	require.NotNil(t, thread.Granted)
+	assert.Equal(t, []access.Target{workspace}, thread.Granted.Targets)
+
+	h.db.grants = []model.FoundryAccessGrant{{Principal: key, Target: stripe}}
+	_, err = h.runner.Run(context.Background(), botMessage("Still there?"))
+	var f *Failure
+	require.ErrorAs(t, err, &f)
+	assert.True(t, f.Permanent, "a connector's grant doesn't hold everything")
+
+	h = newHarness(t, say("Hello."))
+	h.db.thread("thread1").Granted = &model.FoundryAgentThreadGrants{Targets: []access.Target{stripe}}
+	h.db.grants = []model.FoundryAccessGrant{{Principal: key, Target: workspace}}
+	_, err = h.runner.Run(context.Background(), botMessage("Hi"))
+	require.NoError(t, err, "everything holds the connector the thread ran under")
+}
+
 // A bot's grants are read again around each tool call, as a restricted
 // member's: a grant taken away during one fails the turn for good.
 func TestABotsGrantsAreReadAroundEachCall(t *testing.T) {
