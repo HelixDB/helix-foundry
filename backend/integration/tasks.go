@@ -212,10 +212,13 @@ func fieldsOf(offer *taskOffer, now time.Time) taskFields {
 	}
 }
 
-// addFoundryTasks makes server answer for Foundry's tasks: a tools/call whose client takes tasks
-// answers with one in place of a wait, and tasks/get, tasks/update and tasks/cancel act on them
-// as identity, each through the tool it names, so each is authorized as that tool's call is.
-func (s *Service) addFoundryTasks(server *mcp.Server, identity *Identity) {
+// AddTasks makes server answer for Foundry's tasks: a tools/call whose client takes tasks answers
+// with one in place of a wait, and tasks/get, tasks/update and tasks/cancel act on them as
+// identity, each through the tool it names, so each is authorized as that tool's call is. A host
+// adds it beside AddTools on the MCP server it serves its users' clients, whose capabilities it
+// declares with AddExtensions; never on a server whose calls it relays and inspects itself (the
+// Assistant's helpers), which would see tasks it doesn't follow.
+func (s *Service) AddTasks(server *mcp.Server, identity *Identity) {
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			call, ok := req.(*mcp.CallToolRequest)

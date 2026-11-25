@@ -69,23 +69,25 @@ func ConfirmMessage(change string, payload any) string {
 	return fmt.Sprintf("%s\n\n%s", change, encoded)
 }
 
-// foundryCall is what a Foundry tool's handler may need of its call beyond its input: the
-// request, whose client may ask its person (PersonConfirms), and where to put that ask.
-type foundryCall struct {
-	request *mcp.CallToolRequest
-	ask     *mcp.CallToolResult
-}
+// toolRequestKey carries a Foundry tool call's request to its handler (callFoundryTool).
+type toolRequestKey struct{}
 
-type foundryCallKey struct{}
+// errNotAsked refuses to run, on a call whose client asks its person, an action they weren't
+// asked about: the call never asked them, or they haven't answered.
+var errNotAsked = detailedToolError{code: errCodeFailedPrecondition,
+	message: "the person hasn't confirmed this in their client yet: call again to ask them"}
 
-// askPerson is PersonConfirms for a handler under callFoundryTool: an ask goes to the call,
-// which answers with it, and the handler returns nothing (asked is true).
-func askPerson(ctx context.Context, message string) (asked bool, err error) {
-	call, _ := ctx.Value(foundryCallKey{}).(*foundryCall)
-	if call == nil || call.request == nil || call.request.Params == nil {
-		return false, nil
+// personAnswer is what the person of the call in ctx said to its confirmation: nil once they
+// accepted, or when their client can't ask (or ctx is no tool call's, such as a click that runs
+// an action); ErrDeclined; or errNotAsked.
+func personAnswer(ctx context.Context) error {
+	req, _ := ctx.Value(toolRequestKey{}).(*mcp.CallToolRequest)
+	if req == nil || req.Params == nil {
+		return nil
 	}
-	ask, err := PersonConfirms(call.request, message)
-	call.ask = ask
-	return ask != nil, err
+	ask, err := PersonConfirms(req, "")
+	if ask != nil {
+		return errNotAsked
+	}
+	return err
 }

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -54,16 +55,32 @@ func TestExecuteAsksThePersonFirst(t *testing.T) {
 	assert.Equal(t, 1, b.synced)
 }
 
-// Execute validates before it asks: the person is never asked about an action that would be
-// refused.
-func TestExecuteRefusesBeforeItAsks(t *testing.T) {
+// Execute asks before it validates, as nothing runs on the ask: an action refused after the
+// person's yes runs nothing and spends nothing.
+func TestExecuteRefusesAfterTheYesAndRunsNothing(t *testing.T) {
 	b := newJobsBackend()
 	w := newWire(t, jobsService(b), jobsIdentity(), formClient)
 	args := prepareSync(t, w)
 	args["target"] = "connector:workspace-2/connector-1"
-	refused := w.tool(toolExecuteFoundry, args, nil)
+	assert.Equal(t, "input_required", w.tool(toolExecuteFoundry, args, nil)["resultType"])
+	refused := w.tool(toolExecuteFoundry, args, map[string]any{confirmInput: map[string]any{"action": "accept", "content": map[string]any{}}})
 	assert.Equal(t, true, refused["isError"])
-	assert.NotContains(t, refused, "inputRequests")
+	assert.Equal(t, 0, b.synced)
+}
+
+// What the person answered reaches the action only through the call that carries it: a call whose
+// client asks, but which carries no answer, never runs (the ask always comes first).
+func TestPersonAnswerNeedsTheAnswer(t *testing.T) {
+	request := func(responses mcp.InputResponseMap) context.Context {
+		return context.WithValue(context.Background(), toolRequestKey{}, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+			InputResponses: responses,
+			Meta:           mcp.Meta{mcp.MetaKeyProtocolVersion: "2026-07-28", mcp.MetaKeyClientCapabilities: formClient},
+		}})
+	}
+	assert.ErrorIs(t, personAnswer(request(nil)), errNotAsked)
+	assert.ErrorIs(t, personAnswer(request(mcp.InputResponseMap{confirmInput: &mcp.ElicitResult{Action: "decline"}})), ErrDeclined)
+	assert.NoError(t, personAnswer(request(mcp.InputResponseMap{confirmInput: &mcp.ElicitResult{Action: "accept"}})))
+	assert.NoError(t, personAnswer(context.Background()), "an action a person runs with a click is no tool call")
 }
 
 // A client that can't ask through a form (none, URL only, or an older protocol) runs on the

@@ -28,6 +28,7 @@ func newWire(t *testing.T, s *Service, identity *Identity, caps map[string]any) 
 		AddExtensions(capabilities)
 		server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, &mcp.ServerOptions{Capabilities: capabilities})
 		s.AddTools(server, identity)
+		s.AddTasks(server, identity)
 		return server
 	}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	return &wire{t: t, handler: handler, caps: caps, version: "2026-07-28"}

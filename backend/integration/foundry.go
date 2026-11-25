@@ -940,7 +940,6 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		return ""
 	}
 	if browse {
-		s.addFoundryTasks(server, identity)
 		addFoundryTool(s, server, identity, tool(toolFoundryListOntologies,
 			"Start here to use what a business knows: Helix Foundry holds its customers, accounts, people, deals, documents and the facts that link them, "+
 				"matched across its systems into ontologies whose every fact names its source. "+
@@ -1088,6 +1087,18 @@ func addFoundryTool[In, Out any](
 	s *Service, server *mcp.Server, identity *Identity, t *mcp.Tool,
 	handle func(context.Context, *Identity, *Call, In) (Out, int, error),
 ) {
+	foundryToolSpec[In, Out](s, t)
+	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
+		// The SDK checked the arguments and read them through float64s, which round a large integer
+		// (in a read's filter, say). Read them again, each number as written.
+		_ = decodeExact(req.Params.Arguments, &input)
+		return callFoundryTool(ctx, s, identity, t.Name, req, input, handle)
+	})
+}
+
+// foundryToolSpec completes t as every Foundry tool is listed: its schemas, title, and the
+// visibility that keeps views from calling it.
+func foundryToolSpec[In, Out any](s *Service, t *mcp.Tool) {
 	if !s.Events {
 		// A tool's own output schema, else the SDK's for Out.
 		schema, _ := t.OutputSchema.(*jsonschema.Schema)
@@ -1110,39 +1121,25 @@ func addFoundryTool[In, Out any](
 		t.Meta = mcp.Meta{}
 	}
 	t.Meta["ui"] = ui
-	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
-		// The SDK checked the arguments and read them through float64s, which round a large integer
-		// (in a read's filter, say). Read them again, each number as written.
-		_ = decodeExact(req.Params.Arguments, &input)
-		return callFoundryTool(ctx, s, identity, t.Name, req, input, handle)
-	})
 }
 
 // callFoundryTool runs one call of a Foundry tool under runTool, as tools/call does and as a
-// task's tasks/get does again (tasks.go). A handler that asks its person (askPerson) returns
-// nothing, and the call answers with the ask.
+// task's tasks/get does again (tasks.go). The handler's ctx carries the call's request, whose
+// person's answer a handler may read (personSaid).
 func callFoundryTool[In, Out any](
 	ctx context.Context, s *Service, identity *Identity, name string, req *mcp.CallToolRequest, input In,
 	handle func(context.Context, *Identity, *Call, In) (Out, int, error),
 ) (*mcp.CallToolResult, Out, error) {
-	asking := &foundryCall{request: req}
-	ctx = context.WithValue(ctx, foundryCallKey{}, asking)
+	ctx = context.WithValue(ctx, toolRequestKey{}, req)
 	result, value, err := s.Run(ctx, name, func(ctx context.Context, call *Call) (any, int, error) {
 		if in, scoped := any(&input).(WorkspaceInput); scoped && *in.Workspace() == "" {
 			if *in.Workspace() = identity.onlyWorkspace(ctx); *in.Workspace() == "" {
 				return nil, 0, errWorkspaceRequired
 			}
 		}
-		out, count, err := handle(ctx, identity, call, input)
-		if asking.ask != nil {
-			return nil, 0, nil
-		}
-		return out, count, err
+		return handle(ctx, identity, call, input)
 	})
 	var out Out
-	if asking.ask != nil && err == nil {
-		return asking.ask, out, nil
-	}
 	if value != nil {
 		out = value.(Out)
 	}
