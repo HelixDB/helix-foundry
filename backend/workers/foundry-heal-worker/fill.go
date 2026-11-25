@@ -77,8 +77,8 @@ func (r *runner) fills(ctx context.Context) {
 		switch {
 		case errors.Is(err, errFillChanged):
 			// Its lease goes with it (nothing, if another holds it now): a
-			// collect started over, by its load's move or a document
-			// reviewed behind its cursor, is due at once.
+			// collect whose load moved, or whose cursor a document reviewed
+			// behind it rewound, is due again at once.
 			fillRuns.WithLabelValues("changed").Inc()
 			release()
 			continue
@@ -103,9 +103,9 @@ func (r *runner) fills(ctx context.Context) {
 			continue
 		}
 		switch err := r.db.StartFoundryFill(ctx, d.Fill, d.Due.WorkspaceID, d.Due.Load.VersionID, owed, left, &model.FoundryGraphJob{ID: r.newID()}); {
-		case errors.Is(err, store.ErrStale):
-			// The load moved, or the collect was started over, since it
-			// listed: the next collect starts over, at once.
+		case errors.Is(err, store.ErrFillCollectMoved):
+			// The load moved, or the cursor was rewound or cleared, since it
+			// listed: the next collect starts over, or resumes, at once.
 			fillRuns.WithLabelValues("changed").Inc()
 			logger.Info("start fill refused", "err", err)
 			release()
@@ -207,6 +207,10 @@ func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, lef
 		DocumentsFor: []ontologyagent.AuditDocumentsFor{{Set: finding.Signal.Set, Spellings: finding.Signal.Spellings}},
 	}
 	owed, left = at.Owed, at.Left
+	if left > 0 {
+		// Past the cap already: a start that failed after it.
+		return owed, left, pages, nil
+	}
 	for after, size := at.After, r.pageSize; ; {
 		ids, err := r.db.ListFoundryHealDocuments(ctx, load.ID, after, size)
 		if err != nil {
@@ -240,7 +244,9 @@ func (r *runner) collect(ctx context.Context, d model.FoundryFillDue) (owed, lef
 		case !ok:
 			return owed, left, pages, errFillChanged
 		}
-		owed, left, pages = next.Owed, next.Left, pages+1
+		// The cursor saved counts the rows the load owes: after a rewind,
+		// a page owes some again.
+		owed, left, pages = d.Fill.Collect.Owed, d.Fill.Collect.Left, pages+1
 		// Past the most one fill takes, left is at least what it counted:
 		// listing the rest would only count them, an Audit call a page.
 		if len(ids) < size || left > 0 {

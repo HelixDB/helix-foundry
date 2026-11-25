@@ -435,20 +435,22 @@ func TestHealFillCollectWhileTheLoadMoves(t *testing.T) {
 }
 
 // A document that becomes reviewed behind a collect's cursor between its
-// windows (a partial load's document extracted) starts the collect over:
-// the next window lists it, and the fill owes it.
+// windows (a failed document of the load extracted again) rewinds the
+// cursor to the document before it: the next window lists from there, not
+// from the start, and the fill owes it, each document counted once.
 func TestHealFillDocumentReviewedBehindTheCursor(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
-	load := w.load(5)
+	load := w.load(7)
 	w.movedFor(load, "fd")
 	exec(t, `UPDATE foundry_load_extractions SET status='failed', error_code='model', error_retryable=TRUE, reviews=0 WHERE load_id=? AND document_id=?`,
-		load, id26("D000"))
+		load, id26("D003"))
 	agent := &windowed{fakeAgent: &fakeAgent{t: t, respond: listing}, pages: 1}
 	r := w.runnerOf(nil, 2)
 	r.agent, r.maxRun = agent, 300*time.Millisecond
 	r.fills(ctx)
-	if after, owed := cursor(t, load); after != id26("D002") || owed != 1 {
+	r.fills(ctx)
+	if after, owed := cursor(t, load); after != id26("D004") || owed != 2 {
 		t.Fatalf("cursor after %q owing %d", after, owed)
 	}
 	// The failed document's retry, by a job of the load, extracts it with
@@ -460,18 +462,22 @@ func TestHealFillDocumentReviewedBehindTheCursor(t *testing.T) {
 	job := id26("JRETRY")
 	exec(t, `INSERT INTO foundry_load_jobs (id, workspace_id, ontology_id, version_id, load_id, kind, status, phase, active_key, lease_owner, lease_until)
 VALUES (?, ?, ?, ?, ?, 'extract', 'running', 'documents', 1, 'w', NOW(6) + INTERVAL 1 HOUR)`, job, w.workspace, w.ontology, version, load)
-	exec(t, `INSERT INTO foundry_load_documents (load_id, document_id, set_id) VALUES (?, ?, ?)`, load, id26("D000"), id26("SET"))
-	if err := w.db.RecordFoundryDocumentExtraction(ctx, job, "w", &model.FoundryDocumentExtraction{DocumentID: id26("D000"),
+	exec(t, `INSERT INTO foundry_load_documents (load_id, document_id, set_id) VALUES (?, ?, ?)`, load, id26("D003"), id26("SET"))
+	if err := w.db.RecordFoundryDocumentExtraction(ctx, job, "w", &model.FoundryDocumentExtraction{DocumentID: id26("D003"),
 		Status: model.FoundryExtractionExtracted, Counts: model.FoundryExtractionCounts{Sections: 1, Reviews: 2}}, false); err != nil {
 		t.Fatal(err)
 	}
 	exec(t, `UPDATE foundry_load_jobs SET status='succeeded', active_key=NULL, lease_owner=NULL, finished_at=NOW(6) WHERE id=?`, job)
-	if after, _ := cursor(t, load); after != "" {
-		t.Fatalf("the cursor %q stays past a document reviewed behind it", after)
+	if after, owed := cursor(t, load); after != id26("D002") || owed != 2 {
+		t.Fatalf("cursor after %q owing %d, want rewound to D002", after, owed)
 	}
 	agent.pages = 10
 	r.fills(ctx)
-	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed' AND document_id=?`, load, id26("D000")); n != 1 {
+	sent := agent.sent()
+	if len(sent) != 4 || sent[2].DocIDs[0] != id26("D003") {
+		t.Fatalf("after the rewind the collect listed %d pages, the last from %v", len(sent), sent[len(sent)-1].DocIDs)
+	}
+	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed' AND document_id=?`, load, id26("D003")); n != 1 {
 		t.Fatal("the document reviewed behind the cursor isn't owed")
 	}
 	var state string
@@ -479,8 +485,8 @@ VALUES (?, ?, ?, ?, ?, 'extract', 'running', 'documents', 1, 'w', NOW(6) + INTER
 	if err := testDB.QueryRow(`SELECT state, docs_owed FROM foundry_heal_fills WHERE load_id=?`, load).Scan(&state, &owed); err != nil {
 		t.Fatal(err)
 	}
-	if state != "applying" || owed != 3 {
-		t.Fatalf("fill %s owing %d, want applying owing 3", state, owed)
+	if state != "applying" || owed != 4 {
+		t.Fatalf("fill %s owing %d, want applying owing 4", state, owed)
 	}
 }
 

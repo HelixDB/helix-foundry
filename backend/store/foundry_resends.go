@@ -1058,7 +1058,7 @@ func (s *mysqlDB) RecordFoundryReleaseOutcomes(ctx context.Context, jobID, worke
 		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, docID, outcomes, true); err != nil {
 			return err
 		}
-		if err := tx.restartFoundryFillCollectsBehind(ctx, loadID, docID, reviewed); err != nil {
+		if err := tx.rewindFoundryFillCollectsBehind(ctx, loadID, docID, reviewed); err != nil {
 			return err
 		}
 		// A withdraw taken back, or a name settled, changed the document's

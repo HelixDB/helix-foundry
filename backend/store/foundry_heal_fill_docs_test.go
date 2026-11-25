@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -940,6 +942,24 @@ WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='foundry_loads' AND COLUMN_NAME<>'i
 	assert.False(t, ok, "not the current load")
 }
 
+// waitsOnLock waits until a transaction waits for a row lock of table in
+// the test schema, as InnoDB reports it: failing if finished says the
+// transaction that should wait ended first, or none waits in 10 s.
+func waitsOnLock(t *testing.T, table string, finished func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		require.False(t, finished(), "it ended without waiting for a lock of %s", table)
+		var waits int
+		require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM performance_schema.data_lock_waits w
+JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID
+WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME=?`, table).Scan(&waits))
+		if waits > 0 {
+			return
+		}
+	}
+	t.Fatalf("nothing waited for a lock of %s", table)
+}
+
 // A collect's page saved while a later audit supersedes its finding: the
 // page's transaction holds the ontology's lock, so the publish waits for
 // it, then clears the cursor it saved. The cursor that once outlived its
@@ -968,11 +988,7 @@ func TestFoundryFillSupersedeWaitsForAPageSaved(t *testing.T) {
 		published <- f.db.PublishFoundryHealRun(ctx, model.FoundryHealPublish{RunID: run.ID, OntologyID: f.ontology.ID, LoadID: f.load,
 			VersionID: at, Pages: 1, Findings: []model.FoundryHealSeen{unmatchedSeen("other", 3, 3)}})
 	}()
-	select {
-	case err := <-published:
-		t.Fatalf("the publish didn't wait for the ontology's lock: %v", err)
-	case <-time.After(500 * time.Millisecond):
-	}
+	waitsOnLock(t, "foundry_ontologies", func() bool { return len(published) > 0 })
 	_, err = page.ExecContext(ctx, `UPDATE foundry_heal_fills SET collect_after=?, collect_version_id=?, collect_owed=1 WHERE id=?`,
 		f.a, fill.ToVersionID, fill.ID)
 	require.NoError(t, err)
@@ -1007,11 +1023,7 @@ func TestFoundryFillPageWaitsForItsFindingClosing(t *testing.T) {
 		ok, err := f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, []string{f.a}, pageAt(fill, []string{f.a}))
 		saved <- result{ok, err}
 	}()
-	select {
-	case r := <-saved:
-		t.Fatalf("the page didn't wait for its finding: %+v", r)
-	case <-time.After(500 * time.Millisecond):
-	}
+	waitsOnLock(t, "foundry_heal_findings", func() bool { return len(saved) > 0 })
 	require.NoError(t, closing.Commit())
 	r := <-saved
 	require.NoError(t, r.err)
@@ -1057,7 +1069,7 @@ func TestFoundryFillCollectClearedUnderIt(t *testing.T) {
 	_, err = testDB.Exec(`UPDATE foundry_heal_fills SET collect_after=NULL, collect_version_id=NULL, collect_owed=0 WHERE id=?`, fill.ID)
 	require.NoError(t, err)
 	assert.ErrorIs(t, f.db.StartFoundryFill(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID, 1, 0, &model.FoundryGraphJob{ID: id26("RS-FILLCU2")}),
-		store.ErrStale)
+		store.ErrFillCollectMoved)
 	ok, err = f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, []string{f.b}, pageAt(fill, []string{f.b}))
 	require.NoError(t, err)
 	assert.False(t, ok)
@@ -1091,7 +1103,7 @@ func TestFoundryFillCollectWhileTheLoadMoves(t *testing.T) {
 	assert.False(t, ok, "a page listed at the old version")
 	assert.Equal(t, 1, f.linksOwed(t))
 	assert.ErrorIs(t, f.db.StartFoundryFill(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID, 1, 0, &model.FoundryGraphJob{ID: id26("RS-FILLMV")}),
-		store.ErrStale)
+		store.ErrFillCollectMoved)
 	assert.Equal(t, model.FoundryFillMoved, f.fill(t, "FILLMV").State)
 	ok, err = f.db.RestartFoundryFillCollect(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID)
 	require.NoError(t, err)
@@ -1109,9 +1121,11 @@ func TestFoundryFillCollectWhileTheLoadMoves(t *testing.T) {
 }
 
 // A document that becomes one of the load's reviewed documents behind a
-// collect's cursor (a partial load's document extracted) clears the
-// cursor, so the collect starts over and lists it: pages go forward from
-// a cursor. One ahead of the cursor, or reviewed already, clears nothing.
+// collect's cursor (a partial load's document extracted) rewinds the
+// cursor to the document before it, so the collect lists it next rather
+// than never (pages go forward from a cursor) and doesn't start over; a
+// page that owes a document again counts it once. One ahead of the
+// cursor, or reviewed already, moves nothing.
 func TestFoundryFillDocumentReviewedBehindTheCursor(t *testing.T) {
 	ctx := context.Background()
 	f := newResendFixture(t, "FILLBH")
@@ -1130,21 +1144,42 @@ func TestFoundryFillDocumentReviewedBehindTheCursor(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, reviewed(ahead), false))
 	assert.Equal(t, &first, f.collectAt(t, "FILLBH"), "a document ahead of the cursor is listed when it gets there")
-	last := model.FoundryFillCursor{After: strings.Repeat("Z", 26), VersionID: fill.ToVersionID, Owed: 2}
+	last := model.FoundryFillCursor{After: strings.Repeat("Z", 26), VersionID: fill.ToVersionID, Owed: 2, Left: 3}
 	ok, err = f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, []string{f.b}, last)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(f.a), true))
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, reviewed(ahead), true))
-	assert.Equal(t, &last, f.collectAt(t, "FILLBH"), "a document reviewed already, or with none, clears nothing")
+	assert.Equal(t, &last, f.collectAt(t, "FILLBH"), "a document reviewed already, or with none, moves nothing")
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, reviewed(behind), false))
-	assert.Nil(t, f.collectAt(t, "FILLBH"), "started over")
-	assert.ErrorIs(t, f.db.StartFoundryFill(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID, 2, 0, &model.FoundryGraphJob{ID: id26("RS-FILLBH")}),
-		store.ErrStale)
-	ok, err = f.db.RestartFoundryFillCollect(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID)
+	var before string
+	err = testDB.QueryRow(`SELECT document_id FROM foundry_load_extractions WHERE load_id=? AND document_id<? ORDER BY document_id DESC LIMIT 1`,
+		f.load, behind).Scan(&before)
+	if !errors.Is(err, sql.ErrNoRows) {
+		require.NoError(t, err)
+	}
+	rewound := &model.FoundryFillCursor{After: before, VersionID: fill.ToVersionID, Owed: 2}
+	assert.Equal(t, rewound, f.collectAt(t, "FILLBH"), "rewound to the document before it, left from none")
+	assert.Equal(t, 2, f.linksOwed(t), "what the pages owed stays owed")
+	// The collect running saves nothing past it, and starts nothing.
+	assert.ErrorIs(t, f.db.StartFoundryFill(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID, 2, 3, &model.FoundryGraphJob{ID: id26("RS-FILLBH")}),
+		store.ErrFillCollectMoved)
+	ok, err = f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, []string{f.a}, pageAt(fill, []string{f.a}))
+	require.NoError(t, err)
+	assert.False(t, ok)
+	// The next resumes from it, owing the document and, again, those after
+	// it: each counts once.
+	fill.Collect = rewound
+	again := []string{behind, f.a, f.b}
+	ok, err = f.db.OweFoundryFillDocuments(ctx, fill, f.ontology.WorkspaceID, again,
+		model.FoundryFillCursor{After: slices.Max(again), VersionID: fill.ToVersionID, Owed: 5})
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Zero(t, f.linksOwed(t), "what the cursor's pages owed ends")
+	assert.Equal(t, 3, f.linksOwed(t))
+	assert.Equal(t, int64(3), fill.Collect.Owed, "the cursor counts the rows owed")
+	assert.Equal(t, int64(3), f.collectAt(t, "FILLBH").Owed)
+	require.NoError(t, f.db.StartFoundryFill(ctx, fill, f.ontology.WorkspaceID, fill.ToVersionID, 3, 0, &model.FoundryGraphJob{ID: id26("RS-FILLBH")}))
+	assert.Equal(t, model.FoundryFillApplying, f.fill(t, "FILLBH").State)
 }
 
 // A collect that saved a page, then fails again and again with none saved,
