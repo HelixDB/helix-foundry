@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -103,5 +104,21 @@ AND table_name = 'foundry_heal_fills' AND column_name LIKE 'collect%'`).Scan(&co
 	}
 	if err := goose.UpTo(db, ".", foundryHealFillCollectCursor); err != nil {
 		t.Fatalf("up again: %v", err)
+	}
+}
+
+// A deploy request carries the schema alone: the migration writes no row.
+func TestFoundryHealFillCollectCursorMigrationIsDDLOnly(t *testing.T) {
+	raw, err := FS.ReadFile("20261225000000_foundry_heal_fill_collect_cursor.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		if up := strings.ToUpper(line); strings.Contains(up, "DELETE FROM") || strings.Contains(up, "UPDATE FOUNDRY") || strings.Contains(up, "INSERT INTO") {
+			t.Fatalf("DML in the migration: %s", line)
+		}
 	}
 }
