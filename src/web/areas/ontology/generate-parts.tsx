@@ -1,6 +1,13 @@
 import "../data/data.css";
 import "../documents/documents.css";
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type Ref,
+  type SetStateAction,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Braces,
@@ -68,12 +75,19 @@ import {
   documentSetQueries,
 } from "../documents/documents-api";
 import { fileReadLabel, formatBytes, setLabel } from "../documents/model";
-import { goalPrompt, promptDocuments, promptEventSource } from "./goal-prompt";
+import {
+  goalPrompt,
+  promptDocuments,
+  promptEventSource,
+  type GoalPromptInput,
+} from "./goal-prompt";
 import {
   DOCUMENTS_PER_SET,
   MAX_GENERATION_SETS,
   MAX_GOAL,
+  MAX_TABLES,
   eventSourceReadiness,
+  generationSources,
   isEventSourceSet,
   pickerSets,
   setRoom,
@@ -129,11 +143,73 @@ const toggle = (set: ReadonlySet<string>, key: string) => {
 };
 
 /**
- * "What do you want to understand?": the goal, counted in characters as the WFE does,
- * and a prompt to copy for the user's own AI agent (./goal-prompt.ts) that
- * describes the ontology's chosen connectors, API sources and sets
- * (`chosen` as ConnectorPicker's, `chosenEvents` as EventSourcePicker's,
- * `chosenSets` as SetPicker's) and has it write the goal.
+ * What a goal prompt says of the data (./goal-prompt.ts's inventory): the
+ * workspace's connectors, API sources and sets (never an API source's own,
+ * read as its line's extraction), each marked chosen as `chosen`
+ * (ConnectorPicker's), `chosenEvents` (EventSourcePicker's) and
+ * `chosenSets` (SetPicker's) say; the sample's left out unless
+ * `keepSample`. null until the connectors are read.
+ */
+export function useGoalSources({
+  chosen,
+  chosenEvents,
+  chosenSets,
+  keepSample = false,
+}: {
+  chosen: ReadonlySet<string> | null;
+  chosenEvents: ReadonlyMap<string, FoundryEventSourceMode> | null;
+  chosenSets: ReadonlySet<string> | null;
+  keepSample?: boolean;
+}): Pick<GoalPromptInput, "connectors" | "eventSources" | "sets"> | null {
+  const { id } = useWorkspace();
+  const connectors = useQuery(connectorsQuery(id)),
+    sets = useQuery(documentSetQueries.list(id)),
+    documents = useQuery(documentQueries.workspace(id));
+  // Waits for all three, so a draft from it misses nothing; a set or
+  // document read that failed counts as none.
+  if (!connectors.data || sets.isPending || documents.isPending) return null;
+  const list = (connectors.data.connectors || []).filter(
+    (c) => keepSample || !isSampleConnector(c),
+  );
+  return {
+    connectors: list
+      .filter((c) => !isEventSource(c.kind))
+      .map((c) => ({
+        name: c.name || connectorLabel(c.kind || ""),
+        kind: connectorLabel(c.kind || ""),
+        tables: c.tables || [],
+        chosen: !chosen || chosen.has(c.id),
+      })),
+    eventSources: list
+      .filter((c) => isEventSource(c.kind))
+      .map((c) => ({
+        ...promptEventSource(c, chosenEvents?.get(c.id)),
+        chosen: !!chosenEvents?.has(c.id),
+      })),
+    sets: setFolders(
+      (sets.data || []).filter(
+        (s) => !isEventSourceSet(s) && (keepSample || !isSampleSet(s)),
+      ),
+      documents.data || [],
+    ).map((f) => ({
+      name: setLabel(f.set),
+      description: f.set.description,
+      // A connector's set is counted by the set: its documents (text, or a
+      // Drive PDFs set's PDFs, read or not) aren't among the uploads.
+      ...(f.set.connector
+        ? { documents: f.set.documents || 0, names: [], files: [] }
+        : promptDocuments(f.documents)),
+      chosen: !!chosenSets?.has(f.set.id),
+    })),
+  };
+}
+
+/**
+ * "What do you want to understand?": the goal, counted in characters as the
+ * WFE does, and a prompt to copy for the user's own AI agent
+ * (./goal-prompt.ts) that describes the ontology's chosen data
+ * (useGoalSources) and has it write the goal. `children` go under the field
+ * (the wizard's drafting from the company's research).
  */
 export function GoalPanel({
   goal,
@@ -143,9 +219,11 @@ export function GoalPanel({
   chosenEvents,
   chosenSets,
   keepSample = false,
+  fieldRef,
+  children,
 }: {
-  // null while the goal it starts from is read: the field waits, so what
-  // is typed never races it.
+  // null while the goal it starts from is read (or written): the field
+  // waits, so what is typed never races it.
   goal: string | null;
   setGoal: (goal: string) => void;
   // Its name; "" while it has none.
@@ -154,53 +232,18 @@ export function GoalPanel({
   chosenEvents: ReadonlyMap<string, FoundryEventSourceMode> | null;
   chosenSets: ReadonlySet<string> | null;
   keepSample?: boolean;
+  // The goal's field, for a caller to focus once the goal is written.
+  fieldRef?: Ref<HTMLTextAreaElement>;
+  children?: ReactNode;
 }) {
-  const { id, name, notify } = useWorkspace();
-  const connectors = useQuery(connectorsQuery(id)),
-    sets = useQuery(documentSetQueries.list(id)),
-    documents = useQuery(documentQueries.workspace(id));
-  const chars = [...(goal ?? "").trim()].length,
-    list = (connectors.data?.connectors || []).filter(
-      (c) => keepSample || !isSampleConnector(c),
-    );
+  const { name, notify } = useWorkspace();
+  const data = useGoalSources({ chosen, chosenEvents, chosenSets, keepSample });
+  const chars = [...(goal ?? "").trim()].length;
   const copyPrompt = () =>
+    data &&
     navigator.clipboard
       .writeText(
-        goalPrompt({
-          workspace: name,
-          ontology,
-          goal: goal ?? "",
-          connectors: list
-            .filter((c) => !isEventSource(c.kind))
-            .map((c) => ({
-              name: c.name || connectorLabel(c.kind || ""),
-              kind: connectorLabel(c.kind || ""),
-              tables: c.tables || [],
-              chosen: !chosen || chosen.has(c.id),
-            })),
-          eventSources: list
-            .filter((c) => isEventSource(c.kind))
-            .map((c) => ({
-              ...promptEventSource(c, chosenEvents?.get(c.id)),
-              chosen: !!chosenEvents?.has(c.id),
-            })),
-          // An API source's own set is its line's, read by extraction.
-          sets: setFolders(
-            (sets.data || []).filter(
-              (s) => !isEventSourceSet(s) && (keepSample || !isSampleSet(s)),
-            ),
-            documents.data || [],
-          ).map((f) => ({
-            name: setLabel(f.set),
-            description: f.set.description,
-            // A connector's set is counted by the set: its documents (text,
-            // or a Drive PDFs set's PDFs, read or not) aren't among the uploads.
-            ...(f.set.connector
-              ? { documents: f.set.documents || 0, names: [], files: [] }
-              : promptDocuments(f.documents)),
-            chosen: !!chosenSets?.has(f.set.id),
-          })),
-        }),
+        goalPrompt({ workspace: name, ontology, goal: goal ?? "", ...data }),
       )
       .then(() =>
         notify(
@@ -213,12 +256,7 @@ export function GoalPanel({
       title="What do you want to understand?"
       subtitle="For help, copy the prompt into your AI agent."
       actions={
-        <Button
-          size="sm"
-          icon={Copy}
-          disabled={!connectors.data}
-          onClick={copyPrompt}
-        >
+        <Button size="sm" icon={Copy} disabled={!data} onClick={copyPrompt}>
           Copy prompt for your agent
         </Button>
       }
@@ -226,6 +264,7 @@ export function GoalPanel({
       <label className="hf-field on-goal">
         <span className="hf-sr-only">Goal</span>
         <textarea
+          ref={fieldRef}
           rows={4}
           placeholder="e.g. Trace each order from the customer through its shipments and returns"
           value={goal ?? ""}
@@ -240,6 +279,7 @@ export function GoalPanel({
             : `Optional. ${formatNumber(MAX_GOAL - chars)} characters left.`}
         </small>
       </label>
+      {children}
     </Panel>
   );
 }
@@ -253,10 +293,13 @@ export function GoalPanel({
 export function ConnectorPicker({
   chosen,
   setChosen,
+  tables,
   keepSample = false,
 }: {
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
+  // What the chosen sources hold toward MAX_TABLES (generationSources').
+  tables: number;
   keepSample?: boolean;
 }) {
   const { id, notify } = useWorkspace(),
@@ -387,7 +430,24 @@ export function ConnectorPicker({
   return (
     <Panel
       title="Tables"
-      subtitle="Choose connectors: every table they have synced goes in."
+      subtitle={
+        <>
+          Choose connectors: every table they have synced goes in.
+          {tables > 0 && (
+            <>
+              {" "}
+              <span
+                className={cx(
+                  "on-table-count",
+                  tables > MAX_TABLES && "is-over",
+                )}
+              >
+                {formatNumber(tables)} of {MAX_TABLES} tables
+              </span>
+            </>
+          )}
+        </>
+      }
       padded={false}
       actions={
         list.length > 0 && (
@@ -522,7 +582,8 @@ export function ConnectorPicker({
 /**
  * Connect your data or upload documents: the connectors, the API sources
  * and the document sets a generation drafts from, each picked as
- * ConnectorPicker, EventSourcePicker and SetPicker pick them.
+ * ConnectorPicker, EventSourcePicker and SetPicker pick them, with what
+ * they hold toward MAX_TABLES in the connectors' head.
  */
 export function SourcesPicker({
   chosen,
@@ -543,11 +604,30 @@ export function SourcesPicker({
   failed?: { error: Error; retry: () => void } | null;
   keepSample?: boolean;
 }) {
+  const { id } = useWorkspace();
+  const connectors = useQuery(connectorsQuery(id)),
+    sets = useQuery(documentSetQueries.list(id)),
+    documents = useQuery(documentQueries.workspace(id));
+  const { tables } = generationSources(
+    {
+      connectorIds: chosen,
+      eventSources: chosenEvents || new Map(),
+      setIds: chosenSets || new Set(),
+    },
+    {
+      connectors: connectors.data?.connectors?.filter(
+        (c) => keepSample || !isSampleConnector(c),
+      ),
+      sets: sets.data?.filter((s) => keepSample || !isSampleSet(s)),
+      documents: documents.data,
+    },
+  );
   return (
     <div className="on-stack">
       <ConnectorPicker
         chosen={chosen}
         setChosen={setChosen}
+        tables={tables}
         keepSample={keepSample}
       />
       <EventSourcePicker chosen={chosenEvents} setChosen={setChosenEvents} />

@@ -11,7 +11,7 @@ import {
   uploadInData,
 } from "./support/mock";
 
-// A new workspace's onboarding offers the sample company. This build is the
+// A new workspace's onboarding links to the sample company. This build is the
 // dev stamp's, which has Acme Corp's database (next.config.ts), so the sample
 // opens its own page: it connects the database over TLS, uploads the
 // documents, shows the goal and the ontology made from its ready-made draft
@@ -42,8 +42,9 @@ async function openSample(page: Page) {
     page.getByRole("heading", { name: /Foundry Pro/ }),
   ).toContainText("Active", { timeout: 15_000 });
   await page.goto("/");
+  // The quiet link under Get started's two cards.
   await page
-    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .getByRole("link", { name: "Or look around a sample company first" })
     .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
@@ -317,7 +318,7 @@ test("keeps the sample's data out of an ontology of the user's own", async ({
 
   // Making one of the user's own offers neither, with what it would have
   // chosen left to the pickers' empty states.
-  await page.goto("/ontology/new");
+  await page.goto("/ontology/new?step=sources");
   const noConnectors = page.getByRole("heading", { name: "No connectors yet" }),
     noDocuments = page.getByRole("heading", { name: "No documents yet" }),
     steps = page.getByRole("list", { name: "Steps" }),

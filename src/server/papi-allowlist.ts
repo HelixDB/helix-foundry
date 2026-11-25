@@ -337,6 +337,18 @@ export const papiRoutes = [
     method: "DELETE",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}",
   },
+  // The new-ontology wizard's company step: research a company's site, then
+  // draft a goal and a name from it and the answers.
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/company-research",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/company-research/{researchId}:draft-goal",
+  },
   // Per-item revision; the generated route returns a polled generation.
   {
     area: "ontology",

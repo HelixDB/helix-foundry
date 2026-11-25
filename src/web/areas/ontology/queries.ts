@@ -4,6 +4,8 @@ import type {
   ReviseOntologyVersionRequest,
   CreateLoadRequest,
   CreateOntologyRequest,
+  DraftGoalRequest,
+  DraftGoalResponse,
   FoundryLoad,
   GenerateOntologyRequest,
   GraphJob,
@@ -19,6 +21,7 @@ import type {
   OntologyResponse,
   OntologyVersionResponse,
   QuestionResponse,
+  ResearchCompanyResponse,
   SetCurrentOntologyVersionRequest,
   StopLoadEnrichmentResponse,
 } from "../../../shared/wfe";
@@ -214,6 +217,47 @@ export const ontologyQueries = {
 /** Creates an ontology on a database; the same client token is the same ontology. */
 export const createOntology = (ws: string, body: CreateOntologyRequest) =>
   api<OntologyResponse>(base(ws), body);
+
+/**
+ * The new-ontology wizard's company step: the WFE reads `domain`'s site and
+ * sums the company up with questions to ask (synchronous: up to about 45
+ * s). Reports its start and how it ended, never the domain.
+ */
+export const researchCompany = async (ws: string, domain: string) => {
+  trackEvent("company_research_started");
+  const r = await api<ResearchCompanyResponse>(
+    `/v1/workspaces/${enc(ws)}/foundry/company-research`,
+    { domain },
+  ).catch((e: unknown) => {
+    trackEvent("company_research_failed", { reason: refusalOf(e) });
+    throw e;
+  });
+  trackEvent("company_research_done", {
+    fetched: !!r.research?.fetched,
+    questions: r.research?.questions?.length || 0,
+  });
+  return r;
+};
+
+/**
+ * A goal and a name drafted from research `researchId`, its answers and the
+ * chosen data in plain text. Reports how it ended, never the goal.
+ */
+export const draftGoal = async (
+  ws: string,
+  researchId: string,
+  body: DraftGoalRequest,
+) => {
+  const r = await api<DraftGoalResponse>(
+    `/v1/workspaces/${enc(ws)}/foundry/company-research/${enc(researchId)}:draft-goal`,
+    body,
+  ).catch((e: unknown) => {
+    trackEvent("goal_draft_failed", { reason: refusalOf(e) });
+    throw e;
+  });
+  trackEvent("goal_drafted");
+  return r;
+};
 
 /**
  * Deletes Foundry's rows for an ontology and, in the background, its loads

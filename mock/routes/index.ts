@@ -7,6 +7,7 @@ import { authRoutes } from "./auth";
 import { automationRoutes } from "./automations";
 import { automationSuggestionRoutes } from "./automation-suggestions";
 import { billingRoutes } from "./billing";
+import { companyResearchRoutes } from "./company-research";
 import { dataRoutes } from "./data";
 import { dashboardRoutes } from "./dashboards";
 import { dataLayoutRoutes } from "./data-layout";
@@ -46,6 +47,7 @@ export const routes: MockRoute[] = [
   ...dataLayoutRoutes,
   ...ontologiesRoutes,
   ...ontologyRoutes,
+  ...companyResearchRoutes,
   ...documentRoutes,
   ...reviewRoutes,
   ...reviewCardRoutes,

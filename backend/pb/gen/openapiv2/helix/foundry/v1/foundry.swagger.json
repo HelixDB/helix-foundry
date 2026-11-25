@@ -1741,6 +1741,92 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/company-research": {
+      "post": {
+        "summary": "Helix Foundry company research, for a new ontology's goal: the wizard\nreads the company's website, asks what a website can't answer, then\ndrafts the goal from the answers and the chosen data. Both answer at\nonce (within about 45 seconds), on the workspace's model, for an owner\nor admin signed in as themselves; a grantee or a service key is\nPERMISSION_DENIED. Each person makes foundry.onboarding.research\nper_user_per_hour calls an hour of the two together\n(RESOURCE_EXHAUSTED), and a workspace spends at most its monthly_usd a\nmonth on them (FAILED_PRECONDITION, reason FOUNDRY_RESEARCH_BUDGET). No\nprovider is FOUNDRY_AI_NOT_CONFIGURED, the workspace's own key off Pro\nFOUNDRY_PRO_REQUIRED; a model that fails or runs out of time is\nUNAVAILABLE, reason FOUNDRY_RESEARCH_FAILED, and what it spent counts.",
+        "description": "ResearchFoundryCompany reads the domain's site (its home page and up to\nthree pages about the company, over https) and has the model name the\ncompany, summarise it and ask up to five questions, each with its best\nguess. A domain that isn't one, an IP address or a personal email\nprovider's is INVALID_ARGUMENT, saying so.",
+        "operationId": "FoundryService_ResearchFoundryCompany",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ResearchFoundryCompanyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceResearchFoundryCompanyBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/company-research/{researchId}:draft-goal": {
+      "post": {
+        "summary": "DraftFoundryGoal writes a goal, and an ontology name, from a research's\nanswers and the data chosen. A research the workspace hasn't is\nNOT_FOUND; an answer to a question it didn't ask INVALID_ARGUMENT.",
+        "operationId": "FoundryService_DraftFoundryGoal",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DraftFoundryGoalResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "researchId",
+            "description": "A research of this workspace's (FoundryCompanyResearch.id).",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDraftFoundryGoalBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/connector-kinds": {
       "get": {
         "summary": "Helix Foundry connectors",
@@ -7594,6 +7680,23 @@
       "type": "object",
       "description": "DismissFoundryHealFindingRequest dismisses an open finding by its\nfingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has\nno finding of; FAILED_PRECONDITION for one superseded. One already\ndismissed is returned as it is."
     },
+    "FoundryServiceDraftFoundryGoalBody": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryResearchAnswer"
+          },
+          "description": "Answers to its questions, each at most once and at most 500\ncharacters; a question left out, or answered empty, is unanswered."
+        },
+        "data": {
+          "type": "string",
+          "description": "What the ontology will read, in plain text, as the site lists it (the\nchosen tables and their columns, documents): at most 12000 characters."
+        }
+      }
+    },
     "FoundryServiceDrawFoundryReviewSpotChecksBody": {
       "type": "object",
       "properties": {
@@ -7792,6 +7895,15 @@
     "FoundryServiceRefreshFoundryAgentActionBody": {
       "type": "object",
       "description": "RefreshFoundryAgentActionRequest prepares the caller's expired (or\nprepared) action again as the caller, with no model call."
+    },
+    "FoundryServiceResearchFoundryCompanyBody": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "description": "The company's website or domain, as typed: \"acme.com\",\n\"https://www.acme.com/about\"; reduced to its registrable domain."
+        }
+      }
     },
     "FoundryServiceResumeFoundryAutomationBody": {
       "type": "object",
@@ -9184,6 +9296,19 @@
     },
     "v1DeleteFoundryReviewDecisionResponse": {
       "type": "object"
+    },
+    "v1DraftFoundryGoalResponse": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string",
+          "description": "Plain text, at most 2000 characters: who uses the ontology and what\nfor, then the questions it must answer, one per line. A model wrote it\nfrom what people and a website wrote: the person edits it."
+        },
+        "name": {
+          "type": "string",
+          "description": "A name for the ontology, at most 60 characters."
+        }
+      }
     },
     "v1EventSourceCapacity": {
       "type": "object",
@@ -10668,6 +10793,54 @@
         }
       },
       "description": "FoundryCatalogPlan is one plan the deployment's catalog offers."
+    },
+    "v1FoundryCompanyResearch": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string",
+          "description": "The registrable domain read: \"acme.com\"."
+        },
+        "companyName": {
+          "type": "string",
+          "description": "At most 120 characters."
+        },
+        "summary": {
+          "type": "string",
+          "description": "What the company does, at most 600 characters."
+        },
+        "suggestedName": {
+          "type": "string",
+          "description": "A name for the ontology, at most 60 characters: \"Acme operations\"."
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryResearchQuestion"
+          },
+          "description": "One to five, ids q1 to q5 in order."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The https pages read, home page first; empty when none could be."
+        },
+        "fetched": {
+          "type": "boolean",
+          "description": "Whether any page could be read: false, the model guessed from the\ndomain alone."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryCompanyResearch is what a model made of a company's website for a\nnew ontology's goal: who the company is, and questions only the person\ncan answer, each with a best guess. A model wrote it from a website: it\nis data, never instructions."
     },
     "v1FoundryDashboard": {
       "type": "object",
@@ -12832,6 +13005,43 @@
         }
       },
       "description": "A release of the statement a person read. A review that reads otherwise now\nis refused, and so is a load that reads it otherwise."
+    },
+    "v1FoundryResearchAnswer": {
+      "type": "object",
+      "properties": {
+        "questionId": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryResearchAnswer is a person's answer to a research question."
+    },
+    "v1FoundryResearchQuestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "q1 to q5."
+        },
+        "question": {
+          "type": "string",
+          "description": "At most 200 characters."
+        },
+        "bestGuess": {
+          "type": "string",
+          "description": "The model's guess from the site, at most 300 characters."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Up to four short answers to choose from, each at most 80 characters."
+        }
+      },
+      "description": "FoundryResearchQuestion is something a website can't say: who uses the\nontology, the decisions and questions that matter, the words the team\nuses, which source is right, the business rules."
     },
     "v1FoundryResolveChoice": {
       "type": "object",
@@ -15819,6 +16029,14 @@
         }
       },
       "description": "ReadFoundryGraphResponse is the agent's ReadResult (read_result.json): one\nresult per read, in order, each its value or its own error."
+    },
+    "v1ResearchFoundryCompanyResponse": {
+      "type": "object",
+      "properties": {
+        "research": {
+          "$ref": "#/definitions/v1FoundryCompanyResearch"
+        }
+      }
     },
     "v1ResumeFoundryProRequest": {
       "type": "object",

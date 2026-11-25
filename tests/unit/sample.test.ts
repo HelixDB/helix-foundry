@@ -11,8 +11,8 @@ import { fileProblem } from "@/web/areas/documents/model";
 import {
   MAX_GOAL,
   MAX_TABLES,
-  firstOntologyWizard,
   generationSources,
+  newOntologyWizard,
 } from "@/web/areas/ontology/model";
 import {
   SAMPLE,
@@ -26,7 +26,7 @@ import { askSuggestions } from "@/web/areas/ontology/ask-model";
 import acme from "../../backend/sample/acme.json";
 import { readPdfText } from "../../mock/pdf-text";
 
-// The sample company the first ontology's wizard offers is what
+// The sample company onboarding links to is what
 // scripts/sample-company.mjs wrote: every document it lists is served and
 // uploadable, its tables are acme.sql's, and its tables and documents name
 // each other's rows, so a draft from them has links to find.
@@ -489,9 +489,13 @@ describe("the sample's sources", () => {
       });
     });
 
-    it("names a first ontology from what is left", async () => {
-      const wizard = firstOntologyWizard(
+    it("names a new ontology from what is left", async () => {
+      const wizard = newOntologyWizard(
         {
+          company: null,
+          draftedName: "",
+          name: "",
+          database: null,
           connectorIds: null,
           eventSources: new Map(),
           setIds: new Set([set.id, general.id]),

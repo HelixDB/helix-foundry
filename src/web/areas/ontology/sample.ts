@@ -24,7 +24,8 @@ const DOCUMENTS = [
 ] as const;
 
 /**
- * The sample company the first ontology's wizard offers (./try-sample.tsx):
+ * The sample company onboarding links to under its two cards
+ * (./new-ontology.tsx):
  * Acme Corp, a made-up field-service software company, as its own records
  * hold it. scripts/sample-company.mjs writes its documents into public/,
  * served at `base`, and its tables into local/acme/acme.sql.

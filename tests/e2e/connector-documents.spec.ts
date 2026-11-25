@@ -258,7 +258,7 @@ test("picks a connection's sets in Generate, grouped under it", async ({
 test("uploads into a new General where a connection's sets are the only ones", async ({
   page,
 }) => {
-  // A new workspace is onboarding: Use my own data opens the sources,
+  // A new workspace is onboarding: Set up here opens the sources,
   // which connect data and upload documents in place.
   await signInToNewWorkspace(page);
   await startFirstOntology(page);

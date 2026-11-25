@@ -71,8 +71,8 @@ import { OntologySchema } from "./suggested-ontology";
 import { useSampleOntology } from "./use-sample-ontology";
 
 // /ontology/sample: the sample company, Acme Corp, step by step, wherever its
-// database runs: a local install's acme-db, or the stamp's (./try-sample.tsx
-// opens it).
+// database runs: a local install's acme-db, or the stamp's (Get started's
+// link opens it, ./new-ontology.tsx).
 // Opening it runs the whole setup with no AI draft to wait for:
 //  1. Acme Corp's data: its PostgreSQL database (a local stack's acme-db,
 //     or the stamp's) connected and synced, and its documents uploaded and

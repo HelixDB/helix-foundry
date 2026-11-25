@@ -6,6 +6,7 @@ import type {
   AgentRuleCounts,
   AgentTurnStatus,
   Connector,
+  FoundryCompanyResearch,
   FoundryDefinition,
   FoundryDocument,
   FoundryDocumentSet,
@@ -2728,21 +2729,13 @@ export function isNoSubscription(error: unknown): boolean {
 
 // ---------------------------------------------------------------- New ontology
 
-/** The steps of /ontology/new, in order. */
-export const WIZARD_STEPS = [
-  "name",
-  "database",
-  "sources",
-  "goal",
-  "review",
-] as const;
-export type WizardStepId = (typeof WIZARD_STEPS)[number];
 /**
- * The steps of a workspace's first ontology of its own (the sample's
- * doesn't count): its name and its new database come from what it drafts
- * from (firstOntologyWizard), so it asks only that and the goal.
+ * The steps of /ontology/new, in order: the user's company (researched from
+ * its site, optional), what to draft from, the goal, then the review, which
+ * holds the name and database under Advanced.
  */
-export const FIRST_WIZARD_STEPS = ["sources", "goal", "review"] as const;
+export const WIZARD_STEPS = ["company", "sources", "goal", "review"] as const;
+export type WizardStepId = (typeof WIZARD_STEPS)[number];
 
 /**
  * The steps that draft an existing ontology's first version on its
@@ -2803,6 +2796,62 @@ export function newDatabase(
   };
 }
 
+/** What an earlier attempt at /ontology/new made, for a retry to reuse. */
+export type MadeResources = {
+  project?: { id: string; name: string };
+  database?: { id: string; projectId: string; name: string };
+};
+
+/**
+ * How Create gets its database: one to use, or one to create, in a project
+ * the workspace has or a new one.
+ */
+export type DatabasePlan =
+  | { kind: "use"; tenantId: string }
+  | {
+      kind: "create";
+      project: { kind: "existing"; id: string } | { kind: "new"; name: string };
+      name: string;
+    };
+
+/**
+ * How Create gets the database `pick` names, reusing what an earlier
+ * attempt made (`made`): its database whatever it is called while Advanced
+ * leaves the database at its default (`chosen` false: the default's name
+ * follows the goal and the research, which may have changed since), else
+ * only for the same project and name; its new project while the name stands.
+ *
+ * @example
+ * const made = { project: { id: "p1", name: "Acme" }, database: { id: "t1", projectId: "p1", name: "Stripe" } };
+ * const pick = { kind: "new", project: { kind: "new", name: "Acme" }, name: "Globex operations" } as const;
+ * databasePlan(pick, made, false); // { kind: "use", tenantId: "t1" }
+ * databasePlan(pick, made, true);
+ * // { kind: "create", project: { kind: "existing", id: "p1" }, name: "Globex operations" }
+ * databasePlan({ kind: "existing", tenantId: "t2" }, made, true); // { kind: "use", tenantId: "t2" }
+ */
+export function databasePlan(
+  pick: DatabasePick,
+  made: MadeResources,
+  chosen: boolean,
+): DatabasePlan {
+  if (pick.kind === "existing") return { kind: "use", tenantId: pick.tenantId };
+  const p = pick.project,
+    projectId =
+      p.kind === "existing"
+        ? p.id
+        : made.project?.name === p.name
+          ? made.project.id
+          : undefined;
+  const m = made.database;
+  if (m && (!chosen || (m.projectId === projectId && m.name === pick.name)))
+    return { kind: "use", tenantId: m.id };
+  return {
+    kind: "create",
+    project: projectId ? { kind: "existing", id: projectId } : p,
+    name: pick.name,
+  };
+}
+
 /** What a generation's steps (its sources and goal) have chosen so far. */
 export type DraftChoices = {
   // The connectors chosen; null is every synced one. Never an API source's:
@@ -2814,11 +2863,321 @@ export type DraftChoices = {
   goal: string;
 };
 
-/** What /ontology/new has chosen so far. */
+/**
+ * The company step's outcome: its site's research and the answers to its
+ * questions, by question id (each starts as its best guess).
+ */
+export type CompanyChoice = {
+  research: FoundryCompanyResearch;
+  answers: ReadonlyMap<string, string>;
+};
+
+/**
+ * What /ontology/new has chosen so far: the company researched (null while
+ * none is), the sources and goal, the name a goal drafted from the research
+ * came with ("" for none), and Advanced's overrides: a name ("" takes the
+ * derived one) and a database (null takes a new one, newDatabase).
+ */
 export type WizardDraft = DraftChoices & {
+  company: CompanyChoice | null;
+  draftedName: string;
   name: string;
   database: DatabasePick | null;
 };
+
+/**
+ * Consumer mail providers, as the backend's enrichment gate lists them
+ * (backend/enrichment/gate.go freeMailDomains): an address there says
+ * nothing of its owner's company.
+ */
+const FREE_MAIL = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "ymail.com",
+  "rocketmail.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "proton.me",
+  "protonmail.com",
+  "protonmail.ch",
+  "pm.me",
+  "web.de",
+  "mail.com",
+  "email.com",
+  "mail.ru",
+  "bk.ru",
+  "inbox.ru",
+  "list.ru",
+  "qq.com",
+  "163.com",
+  "126.com",
+  "sina.com",
+  "zoho.com",
+  "fastmail.com",
+  "hey.com",
+  "tutanota.com",
+  "tuta.io",
+  "comcast.net",
+  "verizon.net",
+  "att.net",
+  "sbcglobal.net",
+  "btinternet.com",
+  "orange.fr",
+  "free.fr",
+  "laposte.net",
+  "libero.it",
+  "seznam.cz",
+  "naver.com",
+  "daum.net",
+  "rediffmail.com",
+  "t-online.de",
+  "freenet.de",
+  "wp.pl",
+  "o2.pl",
+  "interia.pl",
+  "abv.bg",
+  "rambler.ru",
+]);
+// Providers under many country domains (yahoo.co.uk, gmx.de), by the
+// domain's first label (gate.go freeMailBrands).
+const FREE_MAIL_BRANDS = new Set([
+  "yahoo",
+  "hotmail",
+  "outlook",
+  "live",
+  "msn",
+  "aol",
+  "gmx",
+  "yandex",
+]);
+
+// Second-level labels a country code registers names under (co.uk, com.au,
+// ac.uk, co.jp, ne.jp): with one, the suffix is two labels. The site has no
+// public suffix list, so this stands in for the backend's.
+const SECOND_LEVEL = new Set([
+  "co",
+  "com",
+  "ac",
+  "org",
+  "net",
+  "gov",
+  "edu",
+  "ne",
+  "or",
+]);
+
+/**
+ * The part of a host a registrant owns, as the backend's RegistrableDomain
+ * reads it (backend/enrichment/gate.go): its suffix plus one label,
+ * lowercased, without a trailing dot, so a subdomain and www. go. A suffix
+ * is one label, or two under a country code (SECOND_LEVEL). "" for a host
+ * that isn't dotted, is an IP address or is a suffix alone.
+ *
+ * @example
+ * registrableDomain("www.Globex.com."); // "globex.com"
+ * registrableDomain("mail.acme.co.uk"); // "acme.co.uk"
+ * registrableDomain("co.uk"); // ""
+ * registrableDomain("10.0.0.1"); // ""
+ */
+export function registrableDomain(host: string): string {
+  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h)) return "";
+  const labels = h.split("."),
+    tld = labels[labels.length - 1]!;
+  if (!/^[a-z]/.test(tld)) return "";
+  const suffix =
+    tld.length === 2 && SECOND_LEVEL.has(labels[labels.length - 2]!) ? 2 : 1;
+  return labels.length > suffix ? labels.slice(-suffix - 1).join(".") : "";
+}
+
+/**
+ * The company domain an email address names, for the company step to start
+ * from: its registrable domain (registrableDomain), or "" for a consumer
+ * provider's (FREE_MAIL, or a FREE_MAIL_BRANDS first label, as gate.go's
+ * FreeMail) or an address without a dotted domain (a local install's
+ * owner@localhost).
+ *
+ * @example
+ * companyDomain("grace@eu.Globex-Industries.com"); // "globex-industries.com"
+ * companyDomain("jo@live.ucl.ac.uk"); // "ucl.ac.uk"
+ * companyDomain("grace@gmail.com"); // ""
+ * companyDomain("grace@mail.yahoo.co.uk"); // ""
+ * companyDomain("owner@localhost"); // ""
+ */
+export function companyDomain(email: string): string {
+  const at = email.lastIndexOf("@"),
+    domain = at < 0 ? "" : registrableDomain(email.slice(at + 1));
+  return domain &&
+    !FREE_MAIL.has(domain) &&
+    !FREE_MAIL_BRANDS.has(domain.split(".")[0]!)
+    ? domain
+    : "";
+}
+
+/** Where the company step's research stands: the domain asked for while it runs, or why it failed. */
+export type ResearchRun =
+  | { kind: "idle" }
+  | { kind: "pending"; domain: string }
+  | { kind: "failed"; error: unknown };
+
+/**
+ * Where drafting a goal from the research stands: the research it drafts
+ * from while it runs, `done` once a draft has just landed (the page says so
+ * and focuses the goal), or why it failed.
+ */
+export type GoalDraftRun =
+  | { kind: "idle" }
+  | { kind: "pending"; researchId: string }
+  | { kind: "done" }
+  | { kind: "failed"; error: unknown };
+
+/**
+ * The new-ontology wizard's company and goal: the domain as typed, the
+ * research and its answers, the goal, the goal and name a draft from the
+ * research wrote (null until one is), the research and draft running, and
+ * the research the goal step last drafted for on its own (`autoDrafted`, so
+ * it does once per research).
+ */
+export type CompanyFlow = {
+  domain: string;
+  company: CompanyChoice | null;
+  goal: string;
+  drafted: { goal: string; name: string } | null;
+  research: ResearchRun;
+  draft: GoalDraftRun;
+  autoDrafted: string | null;
+};
+
+export type CompanyFlowAction =
+  | { type: "domain"; domain: string }
+  | { type: "research-start" }
+  | { type: "research-done"; domain: string; research: FoundryCompanyResearch }
+  | { type: "research-failed"; domain: string; error: unknown }
+  | { type: "answer"; questionId: string; answer: string }
+  | { type: "goal"; goal: string }
+  // `auto`: the goal step drafting on its own, only into an empty goal and
+  // once per research; else Write it again.
+  | { type: "draft-start"; auto: boolean }
+  | { type: "draft-done"; researchId: string; goal: string; name: string }
+  | { type: "draft-failed"; researchId: string; error: unknown };
+
+/**
+ * The company flow after `action`, or `flow` itself when it doesn't apply,
+ * so a caller starts a call only when its start changed the flow:
+ *
+ * - `domain` drops the research, abandoning one running (its answer is then
+ *   dropped), and a goal a draft from it wrote and nobody edited.
+ * - `research-start` needs a domain and none running; its answer
+ *   (`research-done`, `research-failed`) applies only while it still runs for
+ *   that domain. New research starts each answer as its best guess and drops
+ *   the last research's unedited goal, as `domain` does.
+ * - `draft-start` needs research and no draft running; `auto` also needs an
+ *   empty goal and a research not drafted for on its own yet. Its answer
+ *   applies only while it runs for the research chosen: `draft-done` writes
+ *   the goal (`done` until the goal is edited).
+ *
+ * @example
+ * const flow: CompanyFlow = { domain: "globex.com", company: null, goal: "", drafted: null, research: { kind: "idle" }, draft: { kind: "idle" }, autoDrafted: null };
+ * companyFlow(flow, { type: "research-start" }).research; // { kind: "pending", domain: "globex.com" }
+ * const typed = companyFlow(companyFlow(flow, { type: "research-start" }), { type: "domain", domain: "initech.com" });
+ * companyFlow(typed, { type: "research-done", domain: "globex.com", research: { id: "r1" } }) === typed; // true
+ */
+export function companyFlow(
+  flow: CompanyFlow,
+  action: CompanyFlowAction,
+): CompanyFlow {
+  // A new research (or none): the goal drafted from the last one goes
+  // unless edited, and a draft running for it is dropped.
+  const switched = (company: CompanyChoice | null): CompanyFlow => ({
+    ...flow,
+    company,
+    goal: flow.drafted && flow.goal === flow.drafted.goal ? "" : flow.goal,
+    drafted: null,
+    draft: { kind: "idle" },
+  });
+  const research = flow.research,
+    draft = flow.draft,
+    id = flow.company?.research.id;
+  switch (action.type) {
+    case "domain":
+      return {
+        ...(flow.company ? switched(null) : flow),
+        domain: action.domain,
+        research: { kind: "idle" },
+      };
+    case "research-start": {
+      const domain = flow.domain.trim();
+      return !domain || research.kind === "pending"
+        ? flow
+        : { ...flow, research: { kind: "pending", domain } };
+    }
+    case "research-done":
+      return research.kind === "pending" && research.domain === action.domain
+        ? {
+            ...switched({
+              research: action.research,
+              answers: new Map(
+                (action.research.questions || []).map((q) => [
+                  q.id,
+                  q.bestGuess || "",
+                ]),
+              ),
+            }),
+            research: { kind: "idle" },
+          }
+        : flow;
+    case "research-failed":
+      return research.kind === "pending" && research.domain === action.domain
+        ? { ...flow, research: { kind: "failed", error: action.error } }
+        : flow;
+    case "answer":
+      return flow.company
+        ? {
+            ...flow,
+            company: {
+              ...flow.company,
+              answers: new Map(flow.company.answers).set(
+                action.questionId,
+                action.answer,
+              ),
+            },
+          }
+        : flow;
+    case "goal":
+      return {
+        ...flow,
+        goal: action.goal,
+        draft: draft.kind === "done" ? { kind: "idle" } : draft,
+      };
+    case "draft-start":
+      return !id ||
+        draft.kind === "pending" ||
+        (action.auto && (!!flow.goal.trim() || flow.autoDrafted === id))
+        ? flow
+        : {
+            ...flow,
+            draft: { kind: "pending", researchId: id },
+            autoDrafted: action.auto ? id : flow.autoDrafted,
+          };
+    case "draft-done":
+    case "draft-failed":
+      if (
+        draft.kind !== "pending" ||
+        draft.researchId !== action.researchId ||
+        id !== action.researchId
+      )
+        return flow;
+      return action.type === "draft-done"
+        ? {
+            ...flow,
+            goal: action.goal,
+            drafted: { goal: action.goal, name: action.name },
+            draft: { kind: "done" },
+          }
+        : { ...flow, draft: { kind: "failed", error: action.error } };
+  }
+}
 
 /**
  * What a draft is checked against, each undefined while it loads: the
@@ -2895,7 +3254,10 @@ type Walk<Id extends string> = {
 };
 
 export type Wizard = Walk<WizardStepId> & {
-  // Set once every step before the review is ready or skipped.
+  // What it is called unless Advanced names it: Advanced's placeholder.
+  derivedName: string;
+  // Set once every step before the review is ready or skipped, and
+  // Advanced's choices hold.
   request: WizardRequest | null;
 };
 
@@ -2913,10 +3275,9 @@ export const STEP_COPY: Record<
   WizardStepId | DraftStepId | OntologyStepId,
   { title: string; text: string }
 > = {
-  name: { title: "Name", text: "What people will call it." },
-  database: {
-    title: "Database",
-    text: "Where its entities and facts are written: a Helix database you have, or a new one.",
+  company: {
+    title: "Your company",
+    text: "Foundry reads your company’s site and asks what it can’t tell, so the goal starts from what you do.",
   },
   sources: {
     title: "Connect your data or upload documents",
@@ -2928,7 +3289,7 @@ export const STEP_COPY: Record<
   goal: { title: "Goal", text: "Describe the questions you want to answer." },
   review: {
     title: "Review and create",
-    text: "Foundry creates it, then its agent drafts a first version.",
+    text: "Foundry creates it, its agent drafts it, then Foundry loads it and emails you.",
   },
   draft: {
     title: "Generate a draft",
@@ -3038,7 +3399,8 @@ export function setSourcesText(documents: readonly FoundryDocument[]) {
 
 /**
  * A generation's sources checked against the workspace's connectors, sets
- * and documents, and what generating from them sends. It needs one source,
+ * and documents, what generating from them sends, and how many tables they
+ * hold toward MAX_TABLES (`tables`, which the picker shows). It needs one source,
  * any kind: a synced connector, an API source it can read, a table file
  * that has been read, or a chosen set holding text. Tables, table files and
  * API sources read through mappings (one table each) together count toward
@@ -3068,18 +3430,19 @@ export function setSourcesText(documents: readonly FoundryDocument[]) {
  * @example
  * const facts = { connectors: [], sets: [{ id: "g", name: "General" }], documents: [{ id: "d", setId: "g", mediaType: "text/csv", status: "uploaded", read: { state: "FOUNDRY_FILE_READ_STATE_READY" } }] };
  * generationSources({ connectorIds: null, eventSources: new Map(), setIds: new Set(["g"]) }, facts);
- * // { state: { kind: "ready", summary: "General: 1 table file" }, request: { noConnectors: true, documentSetIds: ["g"] } }
+ * // { state: { kind: "ready", summary: "General: 1 table file" }, request: { noConnectors: true, documentSetIds: ["g"] }, tables: 1 }
  * const replies = { id: "e1", kind: "events", name: "Agent replies", tables: [{ name: "events", rowCount: "3" }] };
  * generationSources({ connectorIds: null, eventSources: new Map([["e1", "FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED"]]), setIds: new Set() }, { ...facts, connectors: [replies] });
  * // { state: { kind: "ready", summary: "Agent replies (mappings)" },
- * //   request: { noConnectors: true, eventSources: [{ connectorId: "e1", mode: "FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED" }], documentSetIds: [] } }
+ * //   request: { noConnectors: true, eventSources: [{ connectorId: "e1", mode: "FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED" }], documentSetIds: [] },
+ * //   tables: 1 }
  * generationSources({ connectorIds: null, eventSources: new Map([["e1", "FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION"]]), setIds: new Set() }, { ...facts, connectors: [replies] }).state;
  * // { kind: "blocked", reason: "Agent replies has no text field." }
  */
 export function generationSources(
   draft: Pick<DraftChoices, "connectorIds" | "eventSources" | "setIds">,
   facts: Pick<WizardFacts, "connectors" | "sets" | "documents">,
-): { state: StepState; request: GenerateSources } {
+): { state: StepState; request: GenerateSources; tables: number } {
   const blocked = (reason: string): StepState => ({ kind: "blocked", reason });
   const all = facts.connectors || [],
     connectors = all.filter((c) => !isEventSource(c.kind)),
@@ -3120,6 +3483,8 @@ export function generationSources(
         // A connector's set by its count: its documents aren't listed here.
         sets.reduce((n, s) => n + (s.connector ? s.documents || 0 : 0), 0),
     };
+  // What counts toward MAX_TABLES.
+  const counted = tables + docs.files;
   const [first, ...rest] = picked.map((c) => c.id),
     [pick, ...picks] = events.map(
       (e): FoundryEventSourcePick => ({ connectorId: e.c.id, mode: e.mode }),
@@ -3155,9 +3520,9 @@ export function generationSources(
               ? `A generation reads at most ${MAX_GENERATION_SETS} document sets, each API source read by extraction among them. Uncheck some.`
               : `A generation reads at most ${MAX_GENERATION_SETS} document sets. Uncheck some.`,
           )
-        : tables + docs.files > MAX_TABLES
+        : counted > MAX_TABLES
           ? blocked(
-              `One generation covers at most ${MAX_TABLES} tables, table files included. Choose fewer connectors or sets.`,
+              `These sources hold ${countText(counted, "table")} and one draft reads at most ${MAX_TABLES}, table files included. Untick connectors or sets until it’s ${MAX_TABLES} or fewer.`,
             )
           : empty.length
             ? blocked(lacking(empty, "no pieces yet"))
@@ -3219,7 +3584,7 @@ export function generationSources(
                           }
                         : {}),
                     };
-  return { state, request };
+  return { state, request, tables: counted };
 }
 
 /**
@@ -3406,50 +3771,80 @@ function walk<Id extends string>(
  * /ontology/new's steps checked against what the workspace holds: whether
  * each lets the user on and what it chose, the step to show for `requested`
  * (a `?step=` value; the first while it is missing or unknown), where Back
- * and Continue go, and, once everything is chosen, what creating sends.
+ * and Continue go, the name it gets unless Advanced names it, and, once
+ * everything is chosen, what creating sends.
  *
- * - Name: required.
- * - Database: one not used by another ontology, or a new one, named, in a
- *   project the workspace has or a new one, named.
+ * - Your company: optional; ready once its site is researched, with how
+ *   many questions have an answer.
  * - Connect your data or upload documents: at least one source, any kind
  *   (generationSources): a synced connector, an API source with pieces, a
  *   table file that has been read, or a set holding text; at most
  *   MAX_TABLES tables, table files and API sources and MAX_GENERATION_SETS
  *   sets. Ids of sets and API sources that are gone are dropped.
  * - Goal: optional; at most MAX_GOAL characters.
+ * - Review: Advanced's name ("" for the derived one) and database (null for
+ *   a new one, newDatabase, which waits for the projects to be read): an
+ *   existing one free and live, or a new one named, in a project the
+ *   workspace has or a new one, named. What blocks it says why there.
  *
- * A step whose reads are loading is passable: the one asked for still
- * shows, and nothing is sent until they load.
+ * The derived name is the one a goal drafted from the research came with,
+ * else the research's suggestion, else the goal's title (titleFromGoal),
+ * else what it drafts from (firstOntologyName). A step whose reads are
+ * loading is passable: the one asked for still shows, and nothing is sent
+ * until they load.
  *
  * @example
- * const draft = { name: "Orders", database: { kind: "existing", tenantId: "t1" }, connectorIds: null, eventSources: new Map(), setIds: new Set<string>(), goal: "" };
+ * const draft = { company: null, draftedName: "", name: "", database: null, connectorIds: null, eventSources: new Map(), setIds: new Set<string>(), goal: "" };
  * const facts = {
- *   databases: [{ tenantId: "t1", projectId: "p1", project: "Production", name: "orders" }],
+ *   databases: [],
+ *   projects: [],
  *   connectors: [{ id: "c1", kind: "stripe", name: "Stripe", tables: [{ name: "charges" }] }],
  *   sets: [],
  *   documents: [],
  * };
- * newOntologyWizard(draft, facts, "review").current; // "review"
- * newOntologyWizard(draft, facts, "review").steps.map((s) => s.state);
- * // [{ kind: "ready", summary: "Orders" }, { kind: "ready", summary: "orders in Production" },
- * //  { kind: "ready", summary: "Stripe: 1 table" }, { kind: "skipped" },
- * //  { kind: "ready", summary: "" }]
- * newOntologyWizard({ ...draft, name: " " }, facts, "review").current; // "name"
- * newOntologyWizard(draft, facts, null).next; // "database"
+ * newOntologyWizard(draft, facts, "Acme", null).current; // "company"
+ * newOntologyWizard(draft, facts, "Acme", "review").steps.map((s) => s.state);
+ * // [{ kind: "skipped" }, { kind: "ready", summary: "Stripe: 1 table" }, { kind: "skipped" }, { kind: "ready", summary: "" }]
+ * newOntologyWizard(draft, facts, "Acme", "review").request;
+ * // { name: "Stripe",
+ * //   database: { kind: "new", project: { kind: "new", name: "Acme" }, name: "Stripe" },
+ * //   generate: { connectorIds: ["c1"], documentSetIds: [] } }
+ * newOntologyWizard({ ...draft, goal: "Which charges fail? By card." }, facts, "Acme", "review").derivedName; // "Which charges fail?"
  */
 export function newOntologyWizard(
   draft: WizardDraft,
   facts: WizardFacts,
+  workspace: string,
   requested: string | null,
 ): Wizard {
   const ready = (summary: string): StepState => ({ kind: "ready", summary }),
     blocked = (reason: string): StepState => ({ kind: "blocked", reason }),
     loading: StepState = { kind: "loading" };
-  const name = draft.name.trim();
-
+  const company = draft.company,
+    answered = company
+      ? [...company.answers.values()].filter((a) => a.trim()).length
+      : 0;
+  const choices = choiceSteps(draft, facts);
+  const derivedName =
+    [
+      draft.draftedName,
+      company?.research.suggestedName,
+      titleFromGoal(draft.goal),
+    ]
+      .map((n) => n?.trim())
+      .find((n) => !!n) ??
+    firstOntologyName(choices.generate, facts, workspace);
+  const name = draft.name.trim() || derivedName;
+  // Advanced's database: the one chosen, else a new one named as the
+  // ontology (once the projects are read).
+  const pick: DatabasePick | null =
+    draft.database ??
+    (facts.projects ? newDatabase(name, workspace, facts.projects) : null);
   const database = ((d): StepState => {
-    if (!d) return blocked("Choose a database, or create one.");
+    if (!d) return loading;
     if (d.kind === "existing") {
+      if (!d.tenantId)
+        return blocked("Choose a database, or create a new one.");
       if (!facts.databases) return loading;
       const c = facts.databases.find((x) => x.tenantId === d.tenantId);
       if (!c) return blocked("That database is gone. Choose another.");
@@ -3457,66 +3852,68 @@ export function newOntologyWizard(
         return blocked(`${c.name} is used by ${c.usedBy}. Choose another.`);
       return ready(`${c.name} in ${c.project}`);
     }
-    const db = d.name.trim(),
-      project = d.project;
-    if (project.kind === "new" && !project.name.trim())
+    if (d.project.kind === "new" && !d.project.name.trim())
       return blocked("Name the new project.");
-    if (!db) return blocked("Name the new database.");
-    if (project.kind === "new")
-      return ready(
-        `A new database, ${db}, in a new project, ${project.name.trim()}`,
-      );
-    if (!facts.projects) return loading;
-    const p = facts.projects.find((x) => x.id === project.id);
-    if (!p) return blocked("That project is gone. Choose another.");
-    return ready(
-      `A new database, ${db}, in ${p.displayName || p.slug || p.id}`,
-    );
-  })(draft.database);
-
-  const choices = choiceSteps(draft, facts);
+    if (!d.name.trim()) return blocked("Name the new database.");
+    if (d.project.kind === "existing") {
+      if (!facts.projects) return loading;
+      const { id } = d.project;
+      if (!facts.projects.some((x) => x.id === id))
+        return blocked("That project is gone. Choose another.");
+    }
+    return ready("");
+  })(pick);
   const { done, ...at } = walk(
     WIZARD_STEPS,
     [
       {
-        id: "name",
-        optional: false,
-        state: name ? ready(name) : blocked("Name the ontology."),
+        id: "company",
+        optional: true,
+        state: company
+          ? ready(
+              `${company.research.companyName || company.research.domain || "Your company"}: ${countText(answered, "answer")}`,
+            )
+          : { kind: "skipped" },
       },
-      { id: "database", optional: false, state: database },
       ...choices.steps,
     ],
     requested,
   );
+  const holds = done && database.kind === "ready" && !!pick;
   return {
     ...at,
-    request:
-      done && draft.database
-        ? {
-            name,
-            database:
-              draft.database.kind === "existing"
-                ? draft.database
-                : {
-                    kind: "new",
-                    project:
-                      draft.database.project.kind === "new"
-                        ? {
-                            kind: "new",
-                            name: draft.database.project.name.trim(),
-                          }
-                        : draft.database.project,
-                    name: draft.database.name.trim(),
-                  },
-            generate: choices.generate,
-          }
-        : null,
+    // The review says what keeps Advanced's choices from holding, and waits
+    // while the databases or projects they need are read.
+    steps:
+      done && database.kind !== "ready"
+        ? at.steps.map((s) =>
+            s.id === "review" ? { ...s, state: database } : s,
+          )
+        : at.steps,
+    derivedName,
+    request: holds
+      ? {
+          name,
+          database:
+            pick.kind === "existing"
+              ? pick
+              : {
+                  kind: "new",
+                  project:
+                    pick.project.kind === "new"
+                      ? { kind: "new", name: pick.project.name.trim() }
+                      : pick.project,
+                  name: pick.name.trim(),
+                },
+          generate: choices.generate,
+        }
+      : null,
   };
 }
 
 /**
- * The name a first ontology gets, which its wizard doesn't ask for: what
- * it drafts from, by name (its connectors, then its API sources, then its
+ * The name of an ontology neither its research nor its goal names: what it
+ * drafts from, by name (its connectors, then its API sources, then its
  * document sets), else the workspace's, cut to the 100 characters a name
  * takes.
  *
@@ -3552,42 +3949,6 @@ export function firstOntologyName(
     ? listText([...new Set(names)])
     : workspace.trim() || "My ontology";
   return [...name].slice(0, 100).join("").trim();
-}
-
-/**
- * /ontology/new for a workspace's first ontology of its own: the sources
- * and Goal steps, checked as newOntologyWizard checks them, then the
- * review. It is named from what it drafts from (firstOntologyName) and
- * goes on a new database named as it, in the workspace's first project,
- * else a new one named as the workspace (newDatabase); its request waits
- * for the projects to be read.
- *
- * @example
- * const facts = { projects: [], connectors: [{ id: "c1", kind: "stripe", name: "Stripe", tables: [{ name: "charges" }] }], sets: [], documents: [] };
- * const draft = { connectorIds: null, eventSources: new Map(), setIds: new Set<string>(), goal: "" };
- * firstOntologyWizard(draft, facts, "Acme", null).current; // "sources"
- * firstOntologyWizard(draft, facts, "Acme", "review").request?.name; // "Stripe"
- * firstOntologyWizard(draft, facts, "Acme", "review").request?.database;
- * // { kind: "new", project: { kind: "new", name: "Acme" }, name: "Stripe" }
- */
-export function firstOntologyWizard(
-  draft: DraftChoices,
-  facts: WizardFacts,
-  workspace: string,
-  requested: string | null,
-): Wizard {
-  const choices = choiceSteps(draft, facts);
-  const { done, ...at } = walk(FIRST_WIZARD_STEPS, choices.steps, requested);
-  if (!done || !facts.projects) return { ...at, request: null };
-  const name = firstOntologyName(choices.generate, facts, workspace);
-  return {
-    ...at,
-    request: {
-      name,
-      database: newDatabase(name, workspace, facts.projects),
-      generate: choices.generate,
-    },
-  };
 }
 
 /**

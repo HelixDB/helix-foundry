@@ -8,8 +8,10 @@ import {
   loadVersion3,
   makeContractsCurrent,
   mock,
+  openAdvanced,
   postToWfe,
   signIn,
+  signInToNewWorkspace,
   test,
   uploadInData,
 } from "./support/mock";
@@ -152,6 +154,17 @@ test("every main page in both themes", async ({ page }, info) => {
 
   await visit("ontologies", "/ontology");
   await visit("ontology-new", "/ontology/new");
+  // Its company researched: the company, its pages, and the questions with
+  // their guesses and chips.
+  await page.getByLabel("Company website").fill("globex.com");
+  await page.getByRole("button", { name: "Research" }).click();
+  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await settle(page);
+  await shoot("ontology-new-company");
+  await page.goto("/ontology/new?step=review");
+  await openAdvanced(page);
+  await settle(page);
+  await shoot("ontology-new-review");
   await visit("ontology-schema", O);
   await visit("versions", `${O}#versions`);
   await visit("version-agent", `${O}/versions/ver_seed_2`);
@@ -366,6 +379,14 @@ test("every main page in both themes", async ({ page }, info) => {
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Account" }).click();
   await shoot("account-menu");
+  await page.keyboard.press("Escape");
+
+  // A new workspace's onboarding, Get started: its two cards and the
+  // sample's link.
+  await page.context().clearCookies();
+  await signInToNewWorkspace(page);
+  await settle(page);
+  await shoot("get-started");
 
   expect(failures).toEqual([]);
 });

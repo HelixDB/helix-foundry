@@ -63,7 +63,8 @@ import { handleWorkos } from "./workos";
 // slackTeamTaken, slackEmailMismatch, slackFeedOff, slackScopesOld,
 // slackInstallerMember, slackEventsLimited, slackBackfillMs, slackLossyDays,
 // relayAvailable, relayLinked, relayOnline, relayLinkOutcome,
-// partnerAppsAvailable, partnerAppInstalled }.
+// partnerAppsAvailable, partnerAppInstalled, companyResearchMs,
+// companyResearchOutcome }.
 //
 // GET /__mock/password-resets lists the reset links WorkOS would have
 // emailed, oldest first: [{ email, token }] (./routes/auth.ts).

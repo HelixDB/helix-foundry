@@ -2322,6 +2322,75 @@ export type PutDataLayoutRequest = {
   expectedRevision: string;
 };
 
+// ---------------------------------------------------------------- Ontology: company research
+// POST /v1/workspaces/{workspaceId}/foundry/company-research reads a
+// company's public site (its homepage and up to 3 pages of it about the
+// company, never a private address) and has the workspace's extract model
+// sum it up and ask at most 5 questions a site can't answer, each with a best
+// guess. POST .../company-research/{researchId}:draft-goal writes a
+// generation goal and an ontology name from that research, the answers and
+// the client's inventory of the chosen data. Both are synchronous (about 45 s
+// at most), for owners and admins, charged to the workspace's AI as any model
+// work: FOUNDRY_AI_NOT_CONFIGURED and FOUNDRY_PRO_REQUIRED as generating,
+// RESOURCE_EXHAUSTED past the hourly cap per user, FAILED_PRECONDITION reason
+// FOUNDRY_RESEARCH_BUDGET past the workspace's monthly spend, UNAVAILABLE
+// reason FOUNDRY_RESEARCH_FAILED when the model failed. A free-mail or
+// malformed domain is INVALID_ARGUMENT, in a sentence the page shows.
+
+/** v1FoundryResearchQuestion: one thing only the company can say. */
+export type FoundryResearchQuestion = {
+  // "q1".."q5".
+  id: string;
+  question?: string;
+  // What the site suggests: the answer field starts with it.
+  bestGuess?: string;
+  // Up to 4 short answers to pick from.
+  options?: string[];
+};
+
+/** v1FoundryCompanyResearch */
+export type FoundryCompanyResearch = {
+  id: string;
+  // The registrable domain read: "globex.com" for "https://www.globex.com/x".
+  domain?: string;
+  companyName?: string;
+  // At most 600 characters.
+  summary?: string;
+  // An ontology name, at most 60 characters: "Globex operations".
+  suggestedName?: string;
+  questions?: FoundryResearchQuestion[];
+  // The pages read, as URLs.
+  sources?: string[];
+  // False when no page could be read: the summary and guesses come from the
+  // domain alone.
+  fetched?: boolean;
+  createdAt?: string | null;
+};
+
+/** FoundryServiceResearchFoundryCompanyBody: POST .../company-research. */
+export type ResearchCompanyRequest = { domain: string };
+
+/** v1ResearchFoundryCompanyResponse */
+export type ResearchCompanyResponse = { research?: FoundryCompanyResearch };
+
+/** v1FoundryResearchAnswer */
+export type FoundryResearchAnswer = { questionId: string; answer: string };
+
+/**
+ * FoundryServiceDraftFoundryGoalBody: POST
+ * .../company-research/{researchId}:draft-goal. Each answer at most 500
+ * characters, naming a question of the research (else INVALID_ARGUMENT);
+ * `data` the chosen data in plain text, at most 12,000 characters. An
+ * unknown research, or another workspace's, is NOT_FOUND.
+ */
+export type DraftGoalRequest = {
+  answers: FoundryResearchAnswer[];
+  data: string;
+};
+
+/** v1DraftFoundryGoalResponse: a goal of at most 2,000 characters and a name of at most 60. */
+export type DraftGoalResponse = { goal?: string; name?: string };
+
 // ---------------------------------------------------------------- Ontology: loads
 // Routes under .../ontologies/{ontologyId}/loads...: a load is one write of a
 // version into the ontology's database. Its id is the id of the job that

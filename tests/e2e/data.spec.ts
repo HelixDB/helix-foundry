@@ -637,7 +637,8 @@ test("offers databases once the workspace upgrades to Foundry Pro", async ({
   page,
 }) => {
   await signInToNewWorkspace(page);
-  // Use my own data opens the sources, where nothing is connected yet.
+  // Set up here, past its company, opens the sources, where nothing is
+  // connected yet.
   await startFirstOntology(page);
   await expect(
     page.getByRole("heading", { name: "No connectors yet" }),
