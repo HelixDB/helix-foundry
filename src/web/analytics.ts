@@ -176,7 +176,11 @@ export type AnalyticsEvents = {
   // shown (`failed` when a sign-in came back failed), and left for the
   // phone's browser by Chrome's intent or a copied link.
   in_app_browser_shown: { app: InApp; os: InAppBrowser["os"]; failed: boolean };
-  in_app_browser_left: { app: InApp; os: InAppBrowser["os"]; via: "chrome" | "copy_link" };
+  in_app_browser_left: {
+    app: InApp;
+    os: InAppBrowser["os"];
+    via: "chrome" | "copy_link";
+  };
   // Sign-in's "See it without an account": the stamp's public demo.
   demo_clicked: undefined;
   // WorkOS emailed a code before it signs the address in (/login/verify):

@@ -6,7 +6,11 @@ import { ArrowRight, Check } from "lucide-react";
 import { signInStarted, trackBeforeLeaving, trackEvent } from "./analytics";
 import { signOut } from "./api";
 import { Button, ButtonAnchor, useTitle } from "./kit";
-import { chromeIntent, inAppBrowser, type InAppBrowser } from "./in-app-browser";
+import {
+  chromeIntent,
+  inAppBrowser,
+  type InAppBrowser,
+} from "./in-app-browser";
 import { PasswordSignIn } from "./password";
 import { whoamiQuery } from "./workspaces";
 import { LOCAL } from "../shared/deployment";
@@ -348,12 +352,12 @@ function InAppNotice({ inApp }: { inApp: InAppBrowser }) {
             void Promise.resolve()
               .then(() => navigator.clipboard.writeText(here.href))
               .then(
-              () => {
-                setCopy("copied");
-                void left("copy_link");
-              },
-              () => setCopy("failed"),
-            )
+                () => {
+                  setCopy("copied");
+                  void left("copy_link");
+                },
+                () => setCopy("failed"),
+              )
           }
         >
           {copy === "copied" ? "Link copied" : "Copy link"}

@@ -11,9 +11,21 @@ const IOS = (tail: string) =>
 
 describe("inAppBrowser", () => {
   it.each([
-    ["X on Android", ANDROID("Pixel 7 Build/TQ3A.230805.001", " TwitterAndroid"), "x", "X", "android"],
+    [
+      "X on Android",
+      ANDROID("Pixel 7 Build/TQ3A.230805.001", " TwitterAndroid"),
+      "x",
+      "X",
+      "android",
+    ],
     ["X on iOS", IOS("Twitter for iPhone/10.5"), "x", "X", "ios"],
-    ["LinkedIn on iOS", IOS("[LinkedInApp]/9.29.6406"), "linkedin", "LinkedIn", "ios"],
+    [
+      "LinkedIn on iOS",
+      IOS("[LinkedInApp]/9.29.6406"),
+      "linkedin",
+      "LinkedIn",
+      "ios",
+    ],
     [
       "LinkedIn on Android",
       ANDROID("SM-S918B Build/UP1A.231005.007", " [LinkedInApp]/4.1.889"),
@@ -23,28 +35,37 @@ describe("inAppBrowser", () => {
     ],
     [
       "Facebook on iOS",
-      IOS("[FBAN/FBIOS;FBAV/442.0.0.33.111;FBBV/543116425;FBDV/iPhone15,2;FBMD/iPhone;FBSN/iOS;FBSV/17.1;FBSS/3;FBID/phone;FBLC/en_US;FBOP/5;FBRV/0]"),
+      IOS(
+        "[FBAN/FBIOS;FBAV/442.0.0.33.111;FBBV/543116425;FBDV/iPhone15,2;FBMD/iPhone;FBSN/iOS;FBSV/17.1;FBSS/3;FBID/phone;FBLC/en_US;FBOP/5;FBRV/0]",
+      ),
       "facebook",
       "Facebook",
       "ios",
     ],
     [
       "Facebook on Android",
-      ANDROID("SM-G991B Build/TP1A.220624.014", " [FB_IAB/FB4A;FBAV/442.0.0.32.110;]"),
+      ANDROID(
+        "SM-G991B Build/TP1A.220624.014",
+        " [FB_IAB/FB4A;FBAV/442.0.0.32.110;]",
+      ),
       "facebook",
       "Facebook",
       "android",
     ],
     [
       "Messenger on iOS",
-      IOS("[FBAN/MessengerForiOS;FBAV/385.0.0.37.110;FBBV/398765432;FBDV/iPhone14,2;FBMD/iPhone;FBSN/iOS;FBSV/16.0]"),
+      IOS(
+        "[FBAN/MessengerForiOS;FBAV/385.0.0.37.110;FBBV/398765432;FBDV/iPhone14,2;FBMD/iPhone;FBSN/iOS;FBSV/16.0]",
+      ),
       "messenger",
       "Messenger",
       "ios",
     ],
     [
       "Instagram on iOS",
-      IOS("Instagram 309.0.2.18.119 (iPhone14,5; iOS 17_1_2; en_US; en; scale=3.00; 1170x2532; 541635890)"),
+      IOS(
+        "Instagram 309.0.2.18.119 (iPhone14,5; iOS 17_1_2; en_US; en; scale=3.00; 1170x2532; 541635890)",
+      ),
       "instagram",
       "Instagram",
       "ios",
@@ -61,14 +82,18 @@ describe("inAppBrowser", () => {
     ],
     [
       "Threads on iOS",
-      IOS("Barcelona 289.0.0.77.109 (iPhone15,3; iOS 17_0; en_US; en; scale=3.00; 1290x2796; 489720907)"),
+      IOS(
+        "Barcelona 289.0.0.77.109 (iPhone15,3; iOS 17_0; en_US; en; scale=3.00; 1290x2796; 489720907)",
+      ),
       "threads",
       "Threads",
       "ios",
     ],
     [
       "TikTok on iOS",
-      IOS("musical_ly_32.5.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/en Region/US WKWebView/1 BytedanceWebview/d8a21c6"),
+      IOS(
+        "musical_ly_32.5.0 JsSdk/2.0 NetType/WIFI Channel/App Store ByteLocale/en Region/US WKWebView/1 BytedanceWebview/d8a21c6",
+      ),
       "tiktok",
       "TikTok",
       "ios",
@@ -83,7 +108,13 @@ describe("inAppBrowser", () => {
       "TikTok",
       "android",
     ],
-    ["Snapchat on iOS", IOS("Snapchat/12.60.0.40 (like Safari/8617.2.4.10.8, panda)"), "snapchat", "Snapchat", "ios"],
+    [
+      "Snapchat on iOS",
+      IOS("Snapchat/12.60.0.40 (like Safari/8617.2.4.10.8, panda)"),
+      "snapchat",
+      "Snapchat",
+      "ios",
+    ],
     [
       "Pinterest on Android",
       ANDROID("Pixel 8 Build/UD1A.230803.041", " [Pinterest/Android]"),
@@ -141,7 +172,10 @@ describe("inAppBrowser", () => {
       "Samsung Internet",
       "Mozilla/5.0 (Linux; Android 13; SAMSUNG SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
     ],
-    ["Firefox on Android", "Mozilla/5.0 (Android 14; Mobile; rv:121.0) Gecko/121.0 Firefox/121.0"],
+    [
+      "Firefox on Android",
+      "Mozilla/5.0 (Android 14; Mobile; rv:121.0) Gecko/121.0 Firefox/121.0",
+    ],
     [
       "Chrome on a Mac",
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

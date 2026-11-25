@@ -197,7 +197,12 @@ describe("next.config.ts", () => {
       mode: undefined,
       url: "https://demo.foundry.invalid/",
     },
-    { name: "local mode against the mock", appEnv: "mock", mode: "local", url: "" },
+    {
+      name: "local mode against the mock",
+      appEnv: "mock",
+      mode: "local",
+      url: "",
+    },
     { name: "local mode", appEnv: undefined, mode: "local", url: "" },
   ])(
     "sets NEXT_PUBLIC_FOUNDRY_DEMO_URL for $name",

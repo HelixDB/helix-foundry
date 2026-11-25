@@ -155,9 +155,13 @@ test.describe("in an app's built-in browser", () => {
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
       await page.goto("/login?return_to=%2Fdata");
       await expect(notice(page)).toContainText("Open in Safari");
-      await expect(page.getByRole("link", { name: "Open in Chrome" })).toHaveCount(0);
+      await expect(
+        page.getByRole("link", { name: "Open in Chrome" }),
+      ).toHaveCount(0);
       await page.getByRole("button", { name: "Copy link" }).click();
-      await expect(page.getByRole("button", { name: "Link copied" })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Link copied" }),
+      ).toBeVisible();
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
         `${APP_ORIGIN}/login?return_to=%2Fdata`,
       );

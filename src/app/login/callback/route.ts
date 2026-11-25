@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
   // WorkOS returns with ?error= when the provider or the user declined.
   if (params.has("error")) return fail(request, "provider_error", cookie);
   if (!code || !state) return fail(request, "missing_code", cookie);
-  if (!cookie) return fail(request, "invalid_state");
+  if (!flowId || !cookie) return fail(request, "invalid_state");
   const sealed = request.cookies.get(cookie)?.value;
   if (!sealed) return fail(request, "missing_flow_cookie");
   const transaction = openLoginTransaction(sealed, config.cookiePassword);

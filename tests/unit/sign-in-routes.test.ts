@@ -355,6 +355,11 @@ describe("a callback that fails", () => {
     ],
     ["WorkOS refuses the code", () => grpc(3, 400), "code_exchange_failed"],
     ["the WFE is away", () => grpc(14, 503), "exchange_unavailable"],
+    [
+      "a proxy answers for the WFE",
+      () => new Response("bad gateway", { status: 502 }),
+      "exchange_unavailable",
+    ],
     ["the email isn't let in", () => grpc(7, 403), "denied"],
     [
       "the WFE can't be reached",
@@ -408,7 +413,11 @@ describe("exchangeFailure", () => {
       "login_session_unknown",
     ],
     [401, { code: 16, message: "state mismatch" }, "state_mismatch"],
-    [401, { code: 16, message: "exchange: invalid_grant" }, "code_exchange_failed"],
+    [
+      401,
+      { code: 16, message: "exchange: invalid_grant" },
+      "code_exchange_failed",
+    ],
     [401, { code: 16 }, "code_exchange_failed"],
     [400, { code: 3, message: "state mismatch" }, "code_exchange_failed"],
     [400, { code: 9 }, "code_exchange_failed"],
