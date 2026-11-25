@@ -1233,6 +1233,10 @@
         },
         "displayName": {
           "type": "string"
+        },
+        "attribution": {
+          "$ref": "#/definitions/v1SignupAttribution",
+          "description": "Where the person first came from, kept as their signup source when this is the first\nworkspace they own."
         }
       }
     },
@@ -2070,6 +2074,24 @@
           "$ref": "#/definitions/v1AuthApplication"
         }
       }
+    },
+    "v1SignupAttribution": {
+      "type": "object",
+      "properties": {
+        "utmSource": {
+          "type": "string"
+        },
+        "utmMedium": {
+          "type": "string"
+        },
+        "utmCampaign": {
+          "type": "string"
+        },
+        "referrerDomain": {
+          "type": "string"
+        }
+      },
+      "description": "SignupAttribution is where a person signing up on a Helix website first came from: the site's\nfirst touch, its utm_ tags and the host that referred it. Each is a tag of lowercase letters,\ndigits and ._-, at most 40 characters, or empty; the backend keeps only that much of any value."
     },
     "v1StartLoginRequest": {
       "type": "object",

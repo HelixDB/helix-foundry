@@ -255,6 +255,20 @@ export type CreateWorkspaceRequest = {
   slug: string;
   region: string;
   displayName?: string;
+  /** Kept as the person's signup source if it is the first workspace they own. */
+  attribution?: SignupAttribution;
+};
+
+/**
+ * v1SignupAttribution: the site's first touch (src/web/first-touch.ts), its
+ * utm_ tags and referring host, each a tag of lowercase [a-z0-9._-], at most
+ * 40 characters. The WFE keeps only that much of any value.
+ */
+export type SignupAttribution = {
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  referrerDomain?: string;
 };
 
 /** helixwfev1ListWorkspaceMembersResponse: GET /v1/workspaces/{workspaceId}/members */
