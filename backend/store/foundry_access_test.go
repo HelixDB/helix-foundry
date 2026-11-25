@@ -112,6 +112,54 @@ func TestFoundryAccessGrants(t *testing.T) {
 	})
 }
 
+// A workspace grant names nothing: it is stored for any principal, restricts
+// a member and a team's members as any grant does, needs no live source, and
+// survives every connector and set deleted. The store refuses one naming
+// a source.
+func TestFoundryAccessWorkspaceGrant(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "AWS")
+	ws := f.ontology.WorkspaceID
+	pg := id26("CONN-AWS-P")
+	connectorRow(t, f.db, ws, pg)
+	user := access.Principal{Kind: access.PrincipalUser, ID: id26("U-AWS")}
+	team := access.Principal{Kind: access.PrincipalTeam, ID: id26("TEAM-AWS")}
+	agent := access.Principal{Kind: access.PrincipalServiceCredential, ID: id26("SC-AWS")}
+	by := id26("U-AWS-ADMIN")
+	everything := []access.Target{access.WorkspaceTarget()}
+
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, user, everything, &by))
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, agent, []access.Target{access.WorkspaceTarget(), access.EnrichmentTarget()}, &by))
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, team, []access.Target{access.WorkspaceTarget(), access.ConnectorTarget(pg)}, nil))
+	assert.Equal(t, everything, targetsOf(t, f.db, ws, user))
+	assert.ElementsMatch(t, []access.Target{access.WorkspaceTarget(), access.EnrichmentTarget()}, targetsOf(t, f.db, ws, agent))
+	assert.ElementsMatch(t, []access.Target{access.WorkspaceTarget(), access.ConnectorTarget(pg)}, targetsOf(t, f.db, ws, team))
+	restricted, err := f.db.IsFoundryMemberRestricted(ctx, ws, user.ID)
+	require.NoError(t, err)
+	assert.True(t, restricted, "everything is still a grant: the member reads by it")
+
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, user, everything, &by), "again changes nothing")
+	assert.Equal(t, everything, targetsOf(t, f.db, ws, user))
+
+	set := f.documentSet("AWS-EMPTY")
+	require.NoError(t, f.db.CreateFoundryDocumentSet(ctx, set, 1000))
+	require.NoError(t, f.db.DeleteFoundryDocumentSet(ctx, ws, set.ID))
+	require.NoError(t, f.db.DeleteConnector(ctx, ws, pg))
+	assert.Equal(t, everything, targetsOf(t, f.db, ws, user), "deleting a connector or a set leaves it")
+	assert.Equal(t, everything, targetsOf(t, f.db, ws, team), "the connector's own grant went with it")
+
+	_, err = testDB.Exec(`INSERT INTO foundry_access_grants (id, workspace_id, principal_kind, principal_id, target_kind, connector_id)
+VALUES (?, ?, 'user', ?, 'workspace', ?)`, id26("AG-AWS-BAD"), ws, user.ID, pg)
+	assert.Error(t, err, "a workspace grant naming a connector")
+
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, user, []access.Target{access.EnrichmentTarget()}, &by))
+	assert.Equal(t, []access.Target{access.EnrichmentTarget()}, targetsOf(t, f.db, ws, user), "narrowed, it goes")
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, user, nil, &by))
+	restricted, err = f.db.IsFoundryMemberRestricted(ctx, ws, user.ID)
+	require.NoError(t, err)
+	assert.True(t, restricted, "taking it away leaves them restricted")
+}
+
 // A load's inputs are its version's generation's tables and table files,
 // the sets its documents are in now, the documents of the prop decisions it
 // copied, and its People enrichment step; a load made before grants could

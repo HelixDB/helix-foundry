@@ -58,6 +58,16 @@ func TestGrantsTableRows(t *testing.T) {
 			assert.True(t, g.Keeps(access.Inputs{Tables: []access.TableRef{r.Table}}, part.Items), "%s: keeps %s", name, r.Table.Table)
 		}
 	}
+	t.Run("a workspace grant reads the rows a connector's does", func(t *testing.T) {
+		reach := access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C2"}, Member: true}, now)
+		sharing := access.NewSharing(map[string]access.SourceReach{"slack": reach}, kinds)
+		workspace := access.NewGrants([]access.Target{access.WorkspaceTarget()}).WithSharing(sharing)
+		assert.Equal(t, grants(reach).Part(holdings), workspace.Part(holdings))
+		assert.False(t, workspace.CoversTable(messages), "never whole")
+		assert.False(t, workspace.CoversSet(access.SetRef{SetID: "conv", ConnectorID: "slack"}), "never whole")
+		assert.True(t, workspace.ReachesSet(access.SetRef{SetID: "conv", ConnectorID: "slack"}))
+		assert.True(t, workspace.CoversTable(access.TableRef{ConnectorID: "stripe", Table: "customers"}), "a source no one narrows is whole")
+	})
 	t.Run("a table not granted gives no rows", func(t *testing.T) {
 		g := access.NewGrants([]access.Target{access.TableTarget("slack", "channels")}).
 			WithSharing(access.NewSharing(map[string]access.SourceReach{"slack": access.ReachOf(&fresh, nil, access.Shared{Items: []string{"C1"}, Member: true}, now)}, kinds))

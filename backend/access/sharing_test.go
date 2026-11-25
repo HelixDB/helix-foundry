@@ -149,6 +149,17 @@ func TestGrantsWithSharing(t *testing.T) {
 		"a table's grant, every channel shared, still never gives the table whole": {
 			targets: []access.Target{access.TableTarget("slack", "messages")}, reach: ptr(reach(&fresh, "C1", "C2")), reaches: true,
 			rows: []string{"C1", "C2"}, items: []access.ItemRef{c1, c2}},
+		"the workspace, no source narrowing it, reads everything": {
+			targets: []access.Target{access.WorkspaceTarget()}, covers: true, reaches: true, table: true, keeps: true,
+			docs: []string{"d-public", "d-private", "d-no-item", "d-unlisted", "d-upload"}},
+		"the workspace is narrowed as the connector's grant is": {
+			targets: []access.Target{access.WorkspaceTarget()}, reach: ptr(reach(&fresh, "C1")), reaches: true, keeps: true, rows: []string{"C1"},
+			docs: []string{"d-public", "d-upload"}, items: []access.ItemRef{c1}},
+		"the workspace, audiences never read, reads only the rest": {
+			targets: []access.Target{access.WorkspaceTarget()}, reach: &access.SourceReach{}, reaches: true, docs: []string{"d-upload"}},
+		"the workspace, with the connector granted too, reads no more": {
+			targets: []access.Target{access.WorkspaceTarget(), access.ConnectorTarget("slack")}, reach: ptr(reach(&fresh, "C2")), reaches: true, keeps: true,
+			rows: []string{"C2"}, docs: []string{"d-private", "d-upload"}, items: []access.ItemRef{c2}},
 		"sharing gives nothing ungranted": {
 			targets: []access.Target{access.DocumentSetTarget("contracts")}, reach: ptr(reach(&fresh, "C1", "C2")), reaches: true,
 			docs: []string{"d-upload"}},
@@ -174,7 +185,7 @@ func TestGrantsWithSharing(t *testing.T) {
 		if tc.table {
 			whole = append(whole, messages)
 		}
-		if slices.Contains(tc.targets, access.ConnectorTarget("stripe")) {
+		if slices.Contains(tc.targets, access.ConnectorTarget("stripe")) || slices.Contains(tc.targets, access.WorkspaceTarget()) {
 			whole = append(whole, customers)
 		}
 		assert.Equal(t, whole, part.Tables, "%s: tables whole", name)

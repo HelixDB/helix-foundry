@@ -56,8 +56,8 @@ FROM foundry_access_grants WHERE workspace_id=?`
 }
 
 // SetFoundryAccessGrants replaces principal's grants in the workspace with
-// targets, which must be of its live connectors and sets: ErrNotFound means
-// one is not. Grants kept keep their id and creation. Giving a member or a
+// targets, whose connectors and sets must be live: ErrNotFound means one is
+// not. A workspace or People enrichment target names none. Grants kept keep their id and creation. Giving a member or a
 // team any restricts that member or the team's members in the same
 // transaction, and taking them away leaves them restricted: taking access
 // away never gives anyone more.
@@ -74,6 +74,8 @@ func (s *mysqlDB) SetFoundryAccessGrants(ctx context.Context, workspaceID string
 				connectors = append(connectors, t.ConnectorID())
 			case access.TargetDocumentSet:
 				sets = append(sets, t.DocumentSetID())
+			case access.TargetWorkspace, access.TargetEnrichment:
+				// Names no connector or set: nothing to check.
 			}
 		}
 		for _, check := range []struct {

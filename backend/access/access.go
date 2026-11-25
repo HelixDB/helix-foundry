@@ -1,7 +1,8 @@
 // Package access says what a caller admitted through Foundry's source grants
 // may do. Owners and admins grant a principal (a user, a team, or a service
 // credential: an agent's key) the workspace's sources: a connector, one of
-// its tables, a document set, or People enrichment. A grantee may read an
+// its tables, a document set, People enrichment, or everything in the
+// workspace but People enrichment, now and later. A grantee may read an
 // ontology's current load only while every source that load holds is
 // granted to it, and may change nothing.
 //

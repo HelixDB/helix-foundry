@@ -19,6 +19,13 @@ const (
 	TargetDocumentSet
 	// TargetEnrichment is the People enrichment profiles a load applies.
 	TargetEnrichment
+	// TargetWorkspace is everything in the workspace: every connector (its
+	// tables and the document sets it owns), every table and every document
+	// set, uploaded or a connector's, now and later. It names nothing. It
+	// never gives People enrichment (TargetEnrichment), and the source of an
+	// audienced connector narrows it as it narrows that connector's grant: it
+	// reads only what each source shares with the reader (WithSharing).
+	TargetWorkspace
 )
 
 var targetKindNames = map[TargetKind]string{
@@ -26,13 +33,15 @@ var targetKindNames = map[TargetKind]string{
 	TargetTable:       "table",
 	TargetDocumentSet: "document_set",
 	TargetEnrichment:  "enrichment",
+	TargetWorkspace:   "workspace",
 }
 
 // String is the kind as the store keeps it.
 func (k TargetKind) String() string { return targetKindNames[k] }
 
 // Target is what one grant gives. Make one with ConnectorTarget,
-// TableTarget, DocumentSetTarget, EnrichmentTarget or ParseTarget: each
+// TableTarget, DocumentSetTarget, EnrichmentTarget, WorkspaceTarget or
+// ParseTarget: each
 // kind names exactly what it needs.
 type Target struct {
 	kind                      TargetKind
@@ -57,6 +66,10 @@ func DocumentSetTarget(setID string) Target {
 // EnrichmentTarget grants People enrichment's profiles.
 func EnrichmentTarget() Target { return Target{kind: TargetEnrichment} }
 
+// WorkspaceTarget grants everything in the workspace but People enrichment,
+// now and later.
+func WorkspaceTarget() Target { return Target{kind: TargetWorkspace} }
+
 // ParseTarget reads a target as the store and the API carry it: its kind
 // and the ids that kind names, the others empty.
 //
@@ -73,6 +86,8 @@ func ParseTarget(kind, connectorID, table, setID string) (Target, error) {
 		t, ok = DocumentSetTarget(setID), connectorID == "" && table == "" && setID != ""
 	case TargetEnrichment.String():
 		t, ok = EnrichmentTarget(), connectorID == "" && table == "" && setID == ""
+	case TargetWorkspace.String():
+		t, ok = WorkspaceTarget(), connectorID == "" && table == "" && setID == ""
 	default:
 		return Target{}, fmt.Errorf("access: unknown grant target kind %q", kind)
 	}
@@ -115,12 +130,14 @@ type Inputs struct {
 // Grants are the targets a grantee holds, through itself and its teams, and
 // what the sources of those targets share with it (WithSharing): a grant of
 // a connector whose source reports its permissions gives only the items the
-// source shares with the reader.
+// source shares with the reader. A workspace grant (TargetWorkspace) gives
+// every connector, table and set as their own grants would.
 type Grants struct {
 	connectors map[string]bool
 	tables     map[TableRef]bool
 	sets       map[string]bool
 	enrichment bool
+	workspace  bool
 	sharing    Sharing
 }
 
@@ -138,6 +155,8 @@ func NewGrants(targets []Target) Grants {
 			g.sets[t.setID] = true
 		case TargetEnrichment:
 			g.enrichment = true
+		case TargetWorkspace:
+			g.workspace = true
 		}
 	}
 	return g
@@ -160,12 +179,13 @@ func (g Grants) WithSharing(s Sharing) Grants {
 
 // Empty reports grants that give nothing.
 func (g Grants) Empty() bool {
-	return len(g.connectors)+len(g.tables)+len(g.sets) == 0 && !g.enrichment
+	return len(g.connectors)+len(g.tables)+len(g.sets) == 0 && !g.enrichment && !g.workspace
 }
 
 // Holds reports whether the grants give at least what every one of targets
-// gives: a table held by its own grant or its connector's, a connector, a set
-// and People enrichment only by their own. What a restricted member's
+// gives: a connector, a table and a set held by a workspace grant, a table also
+// by its connector's, and each by its own; People enrichment and a workspace
+// grant only by their own. What a restricted member's
 // Founder thread read under targets stays theirs only while they hold them.
 // It compares grants as given, whatever their sources share: a thread
 // records the items its reads were narrowed to apart (SeesItems).
@@ -176,30 +196,33 @@ func (g Grants) Holds(targets []Target) bool {
 	return !slices.ContainsFunc(targets, func(t Target) bool {
 		switch t.kind {
 		case TargetConnector:
-			return !g.connectors[t.connectorID]
+			return !g.workspace && !g.connectors[t.connectorID]
 		case TargetTable:
-			return !g.connectors[t.connectorID] && !g.tables[TableRef{t.connectorID, t.table}]
+			return !g.workspace && !g.connectors[t.connectorID] && !g.tables[TableRef{t.connectorID, t.table}]
 		case TargetDocumentSet:
-			return !g.sets[t.setID]
+			return !g.workspace && !g.sets[t.setID]
 		case TargetEnrichment:
 			return !g.enrichment
+		case TargetWorkspace:
+			return !g.workspace
 		}
 		return true
 	})
 }
 
 // CoversTable reports whether the grants cover a table: it is granted, by
-// itself or its connector, and its connector's source doesn't report its
-// permissions. A table of one that does is never covered whole: its rows may
+// itself, its connector or the workspace, and its connector's source doesn't
+// report its permissions. A table of one that does is never covered whole: its rows may
 // be of items the last read of the source's permissions didn't list, so a
 // grantee reads only the rows of the items shared with it (ReadsTable).
 func (g Grants) CoversTable(t TableRef) bool {
-	return (g.connectors[t.ConnectorID] || g.tables[t]) && !g.sharing.audienced(t.ConnectorID)
+	return (g.workspace || g.connectors[t.ConnectorID] || g.tables[t]) && !g.sharing.audienced(t.ConnectorID)
 }
 
-// givesSet reports whether a grant gives set s, whatever its source shares.
+// givesSet reports whether a grant gives set s, whatever its source shares: a
+// set gone (no SetID) is no one's, even under a workspace grant.
 func (g Grants) givesSet(s SetRef) bool {
-	return s.SetID != "" && (g.sets[s.SetID] || (s.ConnectorID != "" && g.connectors[s.ConnectorID]))
+	return s.SetID != "" && (g.workspace || g.sets[s.SetID] || (s.ConnectorID != "" && g.connectors[s.ConnectorID]))
 }
 
 // CoversSet reports whether the grants cover every document in set s: it is

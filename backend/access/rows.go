@@ -120,7 +120,7 @@ const (
 // apart, no item shared or more than MaxHeldItems of them hold nothing.
 func (g Grants) table(t TableRef) (tableHold, TableRows) {
 	switch {
-	case !g.connectors[t.ConnectorID] && !g.tables[t]:
+	case !g.workspace && !g.connectors[t.ConnectorID] && !g.tables[t]:
 		return holdsNone, TableRows{}
 	case !g.sharing.audienced(t.ConnectorID):
 		return holdsWhole, TableRows{}
