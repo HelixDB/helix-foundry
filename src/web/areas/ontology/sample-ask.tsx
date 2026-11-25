@@ -65,8 +65,8 @@ export function SampleAskWhileLoading({
           <span>
             <strong>“{held}”</strong>
             <small>
-              Asked the moment the load is ready; its answer opens in the
-              Analyst. You can leave and come back: it waits in this browser.
+              Asked the moment the load is ready, and its answer opens. You
+              can leave and come back: it waits in this browser.
             </small>
           </span>
           <Button
