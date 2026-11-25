@@ -46,10 +46,14 @@ test("follows a load from any page with its step and bar, then says it ended", a
     card.getByRole("link", { name: "View progress" }),
   ).toHaveAttribute("href", /\/ontology\/ont_acme_contracts\/loads\/load_/);
 
-  // It ends there, pointing at the Explorer, which it stops following.
+  // It ends there, pointing at its page, which asks about the load in one
+  // click; following it stops following the load.
   await expect(card).toContainText("Data loaded", { timeout: 30_000 });
-  await card.getByRole("link", { name: "Explore it" }).click();
-  await expect(page).toHaveURL(/\/explore\/ont_acme_contracts/);
+  await card.getByRole("link", { name: "Ask about it" }).click();
+  await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts\/loads\/load_/);
+  await expect(
+    page.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible();
   await expect(dock(page)).toHaveCount(0);
 });
 

@@ -288,6 +288,16 @@ export type AnalyticsEvents = {
   };
   question_refused: { reason: Refusal };
   question_cancelled: undefined;
+  // A suggested question asked with one click once a load is ready (the
+  // setup's Explore or ask step, or the current load's page), and where the
+  // suggestions came from: the version's competency questions, or its schema.
+  start_question_asked: {
+    where: "setup" | "load";
+    source: "competency" | "schema";
+  };
+  // Add <property or link> to the ontology, under a question it couldn't
+  // answer for want of one: Generate opened with a goal saying what's missing.
+  gap_draft_opened: { kind: "undeclared_property" | "undeclared_relation" };
   revision_started: { mode: RevisionMode };
   revision_succeeded: { mode: RevisionMode };
   revision_failed: { mode: RevisionMode };

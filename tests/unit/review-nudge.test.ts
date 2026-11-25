@@ -112,7 +112,7 @@ describe("dockOffersReview", () => {
     expect(dockOffersReview(load({ status: "failed" }), s("a", 7))).toBe(false);
     expect(dockOffersReview(undefined, s("a", 7))).toBe(false);
     expect(dockOffersReview(load({ id: "L-old" }), s("a", 7))).toBe(false);
-    // Nothing to decide: the card offers Explore it.
+    // Nothing to decide: the card offers Ask about it.
     expect(dockOffersReview(load(), s("a", 0))).toBe(false);
   });
 });

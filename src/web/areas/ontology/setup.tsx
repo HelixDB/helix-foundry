@@ -1,4 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -75,7 +82,9 @@ import { useSampleOntology } from "./use-sample-ontology";
 // steps from where its setup is (ontologySetup): Name and Database done, then Connect your data or upload documents
 // and Goal, Generate a draft, Review and make a version current, Load it,
 // and Explore or ask. The first step not done is open with what to do, done
-// ones are a line of what they chose, and the rest wait.
+// ones are a line of what they chose, and the rest wait. Explore or ask
+// offers the load's questions, one click each (./ask-start.tsx, which the
+// overview hands it).
 //
 // Until a draft is under way, the sources and Goal are the wizard's steps
 // and pickers (./generate-parts.tsx, connecting and uploading in place),
@@ -150,12 +159,15 @@ export function SetupFlow({
   setup,
   current: v,
   database,
+  ask,
 }: {
   setup: Exclude<OntologySetup, { step: "done" }>;
   // The current version, once read; none without one.
   current?: OntologyVersion | null;
   // What the Database step says: the database and its project.
   database: string;
+  // What Explore or ask shows: its questions to ask (./ask-start.tsx).
+  ask?: ReactNode;
 }) {
   const { id, role } = useWorkspace(),
     { id: o, ontology } = useOntology(),
@@ -377,7 +389,9 @@ export function SetupFlow({
         </>
       )
     ) : (
-      setup.step === "explore" && (
+      setup.step === "explore" &&
+      // Until the current load is read, its links.
+      (ask || (
         <span className="on-card-actions">
           <ButtonLink variant="primary" size="sm" to={paths.explore(o)}>
             Open the Explorer
@@ -386,7 +400,7 @@ export function SetupFlow({
             Ask a question
           </ButtonLink>
         </span>
-      )
+      ))
     );
   const body = (step: DraftStepId) => {
     if (!manage)

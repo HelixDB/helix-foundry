@@ -8,6 +8,7 @@ import {
   EmptyState,
   Page,
   PageHeader,
+  Panel,
   SkeletonText,
   StatusBadge,
   Tag,
@@ -32,6 +33,7 @@ import {
   readFoundry,
   type Graph,
 } from "./model";
+import { AskStart } from "./ask-start";
 import {
   ArrivalNotes,
   GenerateButton,
@@ -178,6 +180,18 @@ function OntologyOverview() {
     // LiveLoad's, for the badge: a load looking people up says so.
     loads = useQuery(ontologyQueries.loads(id, o));
   const v = currentId ? current.data?.version : null;
+  // The current load, and the question asked from its setup's Explore or
+  // ask step: it stays shown above the schema once that ends the setup.
+  const currentLoad = loads.data?.loads?.find((l) => l.current),
+    [asked, setAsked] = useState<string | null>(null),
+    ask = currentLoad && (
+      <AskStart
+        load={currentLoad}
+        where="setup"
+        asked={asked}
+        onAsked={setAsked}
+      />
+    );
   const generation = useQuery({
     ...ontologyQueries.generation(id, o, v?.generationId || ""),
     enabled: !!v?.generationId,
@@ -275,7 +289,11 @@ function OntologyOverview() {
             setup={setup}
             current={v}
             database={`${database}${project ? ` · ${project.displayName || project.slug}` : ""}`}
+            ask={ask}
           />
+        )}
+        {asked && setup?.step === "done" && (
+          <Panel title="Ask about your data">{ask}</Panel>
         )}
         {current.data && <RefreshFailed query={current} />}
         {currentId && current.isPending ? (
