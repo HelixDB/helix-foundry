@@ -616,7 +616,10 @@ describe("the sample tour's wait", () => {
       kind: "usual",
       minutes: SAMPLE_LOAD_MINUTES.usual,
     });
-    expect(sampleLoadWait(start, at(70))).toEqual({ kind: "usual", minutes: 4 });
+    expect(sampleLoadWait(start, at(70))).toEqual({
+      kind: "usual",
+      minutes: 4,
+    });
     // Never "0 minutes left" while it is within its usual time.
     expect(sampleLoadWait(start, at(290))).toEqual({
       kind: "usual",
@@ -627,9 +630,9 @@ describe("the sample tour's wait", () => {
       kind: "usual",
       minutes: SAMPLE_LOAD_MINUTES.usual,
     });
-    expect(sampleLoadWait(start, at(SAMPLE_LOAD_MINUTES.usual * 60))).toEqual(
-      { kind: "late" },
-    );
+    expect(sampleLoadWait(start, at(SAMPLE_LOAD_MINUTES.usual * 60))).toEqual({
+      kind: "late",
+    });
     expect(sampleLoadWait(start, at(SAMPLE_LOAD_MINUTES.most * 60))).toEqual({
       kind: "slow",
     });

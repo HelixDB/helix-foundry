@@ -6,6 +6,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { Database, FileText, RotateCcw, TriangleAlert } from "lucide-react";
+import type { JobPhase } from "../../../shared/wfe";
 import {
   Button,
   ButtonLink,
@@ -249,7 +250,12 @@ async function sideBySide<T extends readonly unknown[]>(
 }
 
 // A load job's phases, in order.
-const PHASES = ["provisioning", "ingest", "documents", "finishing"] as const;
+const PHASES: readonly JobPhase[] = [
+  "provisioning",
+  "ingest",
+  "documents",
+  "finishing",
+];
 
 // "checking" until the first reads say what an earlier visit made.
 const STAGES = ["checking", "data", "ontology", "load"] as const;

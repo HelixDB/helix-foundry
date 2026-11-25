@@ -608,7 +608,7 @@ describe("jobs", () => {
         },
       ],
     };
-    b.jobSeen("load", [{ id: "load_s", status: "running" }]);
+    b.jobSeen("load", [{ id: "load_s", status: "writing" }]);
     b.jobSeen("load", [ready]);
     b.jobSeen("load", [ready]);
     b.jobSeen("question", [
