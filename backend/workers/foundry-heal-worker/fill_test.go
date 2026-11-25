@@ -2,9 +2,12 @@ package foundryhealworker
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -209,5 +212,125 @@ func TestHealFillsBoundedByTheTick(t *testing.T) {
 	r.fills(ctx)
 	if n := count(t, started, a, b); n != 2 {
 		t.Fatalf("%d fills started after the next tick, want 2", n)
+	}
+}
+
+// windowed is an agent that answers pages pages a window, then holds the
+// next until the collect's time runs out: a load too large for one window.
+type windowed struct {
+	*fakeAgent
+	pages  int32
+	served atomic.Int32
+}
+
+func (a *windowed) Audit(ctx context.Context, body []byte) (json.RawMessage, error) {
+	if a.served.Add(1)%(a.pages+1) == 0 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return a.fakeAgent.Audit(ctx, body)
+}
+
+// cursor reads the load's fill's saved collect: its last document and
+// what it owed; "" for none.
+func cursor(t *testing.T, load string) (after string, owed int) {
+	t.Helper()
+	var at sql.NullString
+	if err := testDB.QueryRow(`SELECT collect_after, collect_owed FROM foundry_heal_fills WHERE load_id=?`, load).Scan(&at, &owed); err != nil {
+		t.Fatal(err)
+	}
+	return at.String, owed
+}
+
+// A collect that runs out of time past pages it saved gives its lease up,
+// counting no failure, and the next tick resumes after its last page, never
+// listing a document twice, window after window, until it starts the fill
+// owing every document once, its cursor cleared.
+func TestHealFillCollectResumedAcrossWindows(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(5)
+	w.movedFor(load, "fw")
+	agent := &windowed{fakeAgent: &fakeAgent{t: t, respond: listing}, pages: 1}
+	r := w.runnerOf(nil, 2)
+	r.agent, r.maxRun = agent, 300*time.Millisecond
+	for window := 1; window <= 2; window++ {
+		r.fills(ctx)
+		after, owed := cursor(t, load)
+		if after != id26(fmt.Sprintf("D%03d", 2*window-1)) || owed != window {
+			t.Fatalf("window %d: cursor after %q owing %d", window, after, owed)
+		}
+		if n := count(t, `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id=? AND state='moved' AND failures=0 AND paused_until IS NULL`, load); n != 1 {
+			t.Fatalf("window %d: the fill counted a failure or kept its lease", window)
+		}
+		if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed'`, load); n != window {
+			t.Fatalf("window %d: %d documents owed", window, n)
+		}
+	}
+	r.fills(ctx)
+	var listed []string
+	for _, req := range agent.sent() {
+		listed = append(listed, req.DocIDs...)
+	}
+	want := []string{id26("D000"), id26("D001"), id26("D002"), id26("D003"), id26("D004")}
+	if !slices.Equal(listed, want) {
+		t.Fatalf("listed %v, want each reviewed document once, in order", listed)
+	}
+	var state string
+	var owed int
+	if err := testDB.QueryRow(`SELECT state, docs_owed FROM foundry_heal_fills WHERE load_id=?`, load).Scan(&state, &owed); err != nil {
+		t.Fatal(err)
+	}
+	if state != "applying" || owed != 3 {
+		t.Fatalf("fill %s owing %d, want applying owing 3", state, owed)
+	}
+	if after, _ := cursor(t, load); after != "" {
+		t.Fatalf("a started fill keeps its cursor %q", after)
+	}
+}
+
+// A cursor saved at a version the load has moved on from (a later move in
+// place) is stale: the next collect starts over, ending what the first
+// owed, and owes each document once.
+func TestHealFillCollectStartsOverAfterANewerMove(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(5)
+	w.movedFor(load, "fv")
+	agent := &windowed{fakeAgent: &fakeAgent{t: t, respond: listing}, pages: 1}
+	r := w.runnerOf(nil, 2)
+	r.agent, r.maxRun = agent, 300*time.Millisecond
+	r.fills(ctx)
+	if after, owed := cursor(t, load); after == "" || owed != 1 {
+		t.Fatalf("cursor after %q owing %d", after, owed)
+	}
+	// Another suggestion's move: the load records a newer version, along a
+	// chain of moves that each only add.
+	var from string
+	if err := testDB.QueryRow(`SELECT version_id FROM foundry_loads WHERE id=?`, load).Scan(&from); err != nil {
+		t.Fatal(err)
+	}
+	newer := id26("FVNEWER")
+	exec(t, `INSERT INTO foundry_ontology_versions (id, workspace_id, ontology_id, version, format, definition, source)
+SELECT ?, workspace_id, ontology_id, version + 10, format, definition, source FROM foundry_ontology_versions WHERE id=?`, newer, from)
+	exec(t, `INSERT INTO foundry_heal_fills (id, ontology_id, load_id, fingerprint, from_version_id, to_version_id, state, links_added)
+VALUES (?, ?, ?, ?, ?, ?, 'filled', '["advises"]')`, id26("HFfv2"), w.ontology, load, fp("fv2"), from, newer)
+	exec(t, `UPDATE foundry_loads SET version_id=? WHERE id=?`, newer, load)
+	agent.pages = 10
+	r.fills(ctx)
+	sent := agent.sent()
+	if first := sent[1].DocIDs[0]; first != id26("D000") {
+		t.Fatalf("the collect resumed at %s at a version its cursor didn't list", first)
+	}
+	var state string
+	var owed int
+	if err := testDB.QueryRow(`SELECT state, docs_owed FROM foundry_heal_fills WHERE load_id=? AND fingerprint=?`, load, fp("fv")).Scan(&state, &owed); err != nil {
+		t.Fatal(err)
+	}
+	if state != "applying" || owed != 3 {
+		t.Fatalf("fill %s owing %d, want applying owing 3", state, owed)
+	}
+	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed'`, load); n != 3 {
+		t.Fatalf("%d documents owed, want 3", n)
 	}
 }

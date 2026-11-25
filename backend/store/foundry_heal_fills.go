@@ -15,7 +15,8 @@ import (
 
 const foundryHealFillColumns = `f.id, f.ontology_id, f.load_id, f.fingerprint, f.from_version_id, f.to_version_id, f.state, f.why,
        f.links_added, v.version, f.stop_reason, f.docs_owed, f.docs_left, f.docs_filled, f.docs_nothing, f.docs_refused, f.docs_native,
-       f.reviews_taken, f.facts_added, f.spent_usd, f.cap_usd, f.paused_until, f.failures`
+       f.reviews_taken, f.facts_added, f.spent_usd, f.cap_usd, f.paused_until, f.failures, f.collect_after, f.collect_version_id,
+       f.collect_owed, f.collect_left`
 
 const foundryHealFillFrom = ` FROM foundry_heal_fills f JOIN foundry_ontology_versions v ON v.id=f.to_version_id`
 
@@ -623,12 +624,13 @@ func scanFoundryHealFill(scanner rowScanner) (*model.FoundryHealFill, error) {
 func scanFoundryHealFillWith(scanner rowScanner, more ...any) (*model.FoundryHealFill, error) {
 	var f model.FoundryHealFill
 	var state string
-	var why, links, stop sql.NullString
+	var why, links, stop, after, at sql.NullString
 	var paused sql.NullTime
+	var cursor model.FoundryFillCursor
 	c := &f.Counts
 	if err := scanner.Scan(append([]any{&f.ID, &f.OntologyID, &f.LoadID, &f.Fingerprint, &f.FromVersionID, &f.ToVersionID, &state, &why,
 		&links, &f.ToVersion, &stop, &c.Owed, &c.Left, &c.Filled, &c.Nothing, &c.Refused, &c.Native, &c.ReviewsTaken, &c.FactsAdded,
-		&f.SpentUSD, &f.CapUSD, &paused, &f.Failures}, more...)...); err != nil {
+		&f.SpentUSD, &f.CapUSD, &paused, &f.Failures, &after, &at, &cursor.Owed, &cursor.Left}, more...)...); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -639,6 +641,11 @@ func scanFoundryHealFillWith(scanner rowScanner, more ...any) (*model.FoundryHea
 	if paused.Valid {
 		at := paused.Time.UTC()
 		f.PausedUntil = &at
+	}
+	// The table's CHECK holds both or neither.
+	if after.Valid && at.Valid {
+		cursor.After, cursor.VersionID = after.String, at.String
+		f.Collect = &cursor
 	}
 	for _, col := range []struct {
 		src sql.NullString
