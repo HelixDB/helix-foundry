@@ -524,9 +524,10 @@ func (s *mysqlDB) RestartFoundryFillCollect(ctx context.Context, fill *model.Fou
 		if err != nil {
 			return err
 		}
-		if ok, _, err = tx.holdsFoundryFillCollect(ctx, o, fill, versionID); err != nil || !ok {
+		if _, err := tx.holdsFoundryFillCollect(ctx, o, fill, versionID); err != nil {
 			return err
 		}
+		ok = true
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends w SET w.status='done', w.ended_at=NOW(6)
 WHERE w.load_id=? AND w.reason=? AND w.status='owed'
   AND NOT EXISTS (SELECT 1 FROM foundry_heal_fills a WHERE a.load_id=w.load_id AND a.state='applying')`,
@@ -536,15 +537,20 @@ WHERE w.load_id=? AND w.reason=? AND w.status='owed'
 		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_heal_fills SET `+clearFoundryFillCursor+` WHERE load_id=?`, fill.LoadID)
 		return err
 	})
+	if errors.Is(err, errCollectLost) || errors.Is(err, ErrStale) {
+		return false, nil
+	}
 	if err == nil && ok {
 		fill.Collect = nil
 	}
 	return ok, err
 }
 
-// errCollectMoved rolls back a collect's page whose cursor write matched no
-// row: OweFoundryFillDocuments reports it as the fill changed.
-var errCollectMoved = errors.New("store: the fill's collect moved under it")
+// errCollectLost is a collect that may no longer write: its fill is no
+// longer moved under its lease, its finding closed, its load is no longer
+// current, or its cursor isn't the one it last saved. Nothing it wrote in
+// the transaction stays.
+var errCollectLost = errors.New("store: the fill's collect changed under it")
 
 // OweFoundryFillDocuments owes fill's load a fill of each of documentIDs
 // ('link' rows), one page of its collect, and saves at as how far the
@@ -575,9 +581,12 @@ func (s *mysqlDB) OweFoundryFillDocuments(ctx context.Context, fill *model.Found
 		if err != nil {
 			return err
 		}
-		held, saved, err := tx.holdsFoundryFillCollect(ctx, o, fill, at.VersionID)
-		if err != nil || !held || !sameFoundryFillCursor(saved, fill.Collect) {
+		saved, err := tx.holdsFoundryFillCollect(ctx, o, fill, at.VersionID)
+		if err != nil {
 			return err
+		}
+		if !sameFoundryFillCursor(saved, fill.Collect) {
+			return errCollectLost
 		}
 		if len(documentIDs) > 0 {
 			if err := tx.oweFoundryResends(ctx, fill.LoadID, model.FoundryResendLink, documentIDs); err != nil {
@@ -597,14 +606,14 @@ WHERE f.id=? AND f.state='moved' AND f.paused_until=? AND f.collect_after<=>? AN
 		}
 		if n, err := res.RowsAffected(); err != nil || n == 0 {
 			if err == nil {
-				err = errCollectMoved
+				err = errCollectLost
 			}
 			return err
 		}
 		ok = true
 		return nil
 	})
-	if errors.Is(err, errCollectMoved) {
+	if errors.Is(err, errCollectLost) || errors.Is(err, ErrStale) {
 		return false, nil
 	}
 	if err == nil && ok {
@@ -637,28 +646,28 @@ func sameFoundryFillCursor(a, b *model.FoundryFillCursor) bool {
 	return *a == *b
 }
 
-// holdsFoundryFillCollect reports whether fill's collect may write, its
-// ontology o locked by the caller: the load still current at versionID
-// (locked FOR SHARE, so no move in place lands before the write commits),
-// and the fill still moved under the collect lease this collect claimed
-// (ClaimFoundryFillCollect), its row locked, with its finding open (FOR
-// SHARE: one dismissed or superseded meanwhile has its cursor cleared,
-// which a collect still running must not save again). saved is the cursor
-// the row holds, for a write to compare with the one it last saved.
+// holdsFoundryFillCollect checks that fill's collect may write, its
+// ontology o locked by the caller: the load still current (errCollectLost
+// otherwise) at versionID (locked FOR SHARE, so no move in place lands
+// before the write commits; ErrStale otherwise), and the fill still moved
+// under the collect lease this collect claimed (ClaimFoundryFillCollect),
+// its row locked, with its finding open (FOR SHARE: one dismissed or
+// superseded meanwhile has its cursor cleared, which a collect still
+// running must not save again; errCollectLost otherwise). saved is the
+// cursor the row holds, for a write to compare with the one it last saved.
 func (s *mysqlDB) holdsFoundryFillCollect(ctx context.Context, o *model.FoundryOntology, fill *model.FoundryHealFill,
-	versionID string) (held bool, saved *model.FoundryFillCursor, err error) {
+	versionID string) (saved *model.FoundryFillCursor, err error) {
 	if fill.PausedUntil == nil || o.CurrentLoadID == nil || *o.CurrentLoadID != fill.LoadID {
-		return false, nil, nil
+		return nil, errCollectLost
 	}
 	var at string
-	if err := s.db.QueryRowContext(ctx, `SELECT version_id FROM foundry_loads WHERE id=? FOR SHARE`, fill.LoadID).Scan(&at); err != nil {
-		if err == sql.ErrNoRows {
-			return false, nil, nil
-		}
-		return false, nil, err
-	}
-	if at != versionID {
-		return false, nil, nil
+	switch err := s.db.QueryRowContext(ctx, `SELECT version_id FROM foundry_loads WHERE id=? FOR SHARE`, fill.LoadID).Scan(&at); {
+	case err == sql.ErrNoRows:
+		return nil, errCollectLost
+	case err != nil:
+		return nil, err
+	case at != versionID:
+		return nil, fmt.Errorf("%w: the load moved from version %s to %s", ErrStale, versionID, at)
 	}
 	var after, version sql.NullString
 	var cursor model.FoundryFillCursor
@@ -666,23 +675,26 @@ func (s *mysqlDB) holdsFoundryFillCollect(ctx context.Context, o *model.FoundryO
 	switch err := s.db.QueryRowContext(ctx, `SELECT fingerprint, collect_after, collect_version_id, collect_owed, collect_left FROM foundry_heal_fills
 WHERE id=? AND state='moved' AND paused_until=? FOR UPDATE`, fill.ID, *fill.PausedUntil).Scan(&fingerprint, &after, &version, &cursor.Owed, &cursor.Left); {
 	case err == sql.ErrNoRows:
-		return false, nil, nil
+		return nil, errCollectLost
 	case err != nil:
-		return false, nil, err
-	}
-	if after.Valid && version.Valid {
-		cursor.After, cursor.VersionID = after.String, version.String
-		saved = &cursor
+		return nil, err
 	}
 	var status string
 	switch err := s.db.QueryRowContext(ctx, `SELECT status FROM foundry_heal_findings WHERE ontology_id=? AND fingerprint=? FOR SHARE`,
 		fill.OntologyID, fingerprint).Scan(&status); {
 	case err == sql.ErrNoRows:
-		return false, nil, nil
+		return nil, errCollectLost
 	case err != nil:
-		return false, nil, err
+		return nil, err
+	case status != string(model.FoundryHealOpen):
+		return nil, errCollectLost
 	}
-	return status == string(model.FoundryHealOpen), saved, nil
+	// The table's CHECK holds both or neither.
+	if after.Valid && version.Valid {
+		cursor.After, cursor.VersionID = after.String, version.String
+		return &cursor, nil
+	}
+	return nil, nil
 }
 
 // foundryDocumentReviewed reports whether load loadID holds document docID
@@ -764,12 +776,12 @@ func (s *mysqlDB) StartFoundryFill(ctx context.Context, fill *model.FoundryHealF
 		if o.CurrentLoadID == nil || *o.CurrentLoadID != fill.LoadID {
 			return ErrConflict
 		}
-		held, saved, err := tx.holdsFoundryFillCollect(ctx, o, fill, versionID)
+		saved, err := tx.holdsFoundryFillCollect(ctx, o, fill, versionID)
 		switch {
+		case errors.Is(err, errCollectLost):
+			return ErrConflict
 		case err != nil:
 			return err
-		case !held:
-			return ErrConflict
 		case !sameFoundryFillCursor(saved, fill.Collect):
 			return fmt.Errorf("%w: the fill's collect was started over", ErrStale)
 		}

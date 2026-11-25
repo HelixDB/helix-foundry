@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 // movedFor records load moved for finding tag, as "Add this link" leaves
@@ -332,5 +334,192 @@ VALUES (?, ?, ?, ?, ?, ?, 'filled', '["advises"]')`, id26("HFfv2"), w.ontology, 
 	}
 	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed'`, load); n != 3 {
 		t.Fatalf("%d documents owed, want 3", n)
+	}
+}
+
+// failedStart is a store whose fill starts fail as a worker stopping makes
+// them: not a refusal, nothing changed.
+type failedStart struct{ healStore }
+
+func (failedStart) StartFoundryFill(context.Context, *model.FoundryHealFill, string, string, int64, int64, *model.FoundryGraphJob) error {
+	return errors.New("sql: database is closed")
+}
+
+// A collect whose start fails, not refused, gives its lease up, counting
+// no failure: the next tick resumes from the cursor its pages saved, listing
+// nothing again, and starts the fill.
+func TestHealFillStartFailureReleasesTheCollect(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(3)
+	w.movedFor(load, "fs")
+	agent := &fakeAgent{t: t, respond: listing}
+	r := w.runnerOf(agent, 10)
+	r.db = failedStart{w.db}
+	r.fills(ctx)
+	if n := count(t, `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id=? AND state='moved' AND failures=0 AND paused_until IS NULL`, load); n != 1 {
+		t.Fatal("the failed start kept its lease or counted a failure")
+	}
+	if after, owed := cursor(t, load); after != id26("D002") || owed != 2 {
+		t.Fatalf("cursor after %q owing %d", after, owed)
+	}
+	r.db = w.db
+	r.fills(ctx)
+	if n := len(agent.sent()); n != 1 {
+		t.Fatalf("%d pages listed, want the first collect's 1", n)
+	}
+	var state string
+	var owed int
+	if err := testDB.QueryRow(`SELECT state, docs_owed FROM foundry_heal_fills WHERE load_id=?`, load).Scan(&state, &owed); err != nil {
+		t.Fatal(err)
+	}
+	if state != "applying" || owed != 2 {
+		t.Fatalf("fill %s owing %d, want applying owing 2", state, owed)
+	}
+}
+
+// moveLoad moves load in place to a newer version, as another suggestion's
+// move records it, along a chain of moves that each only add: its fill of
+// tag stays due.
+func moveLoad(t *testing.T, w *world, load, tag string) {
+	t.Helper()
+	var from string
+	if err := testDB.QueryRow(`SELECT version_id FROM foundry_loads WHERE id=?`, load).Scan(&from); err != nil {
+		t.Fatal(err)
+	}
+	newer := id26(tag + "NEWER")
+	exec(t, `INSERT INTO foundry_ontology_versions (id, workspace_id, ontology_id, version, format, definition, source)
+SELECT ?, workspace_id, ontology_id, version + 10, format, definition, source FROM foundry_ontology_versions WHERE id=?`, newer, from)
+	exec(t, `INSERT INTO foundry_heal_fills (id, ontology_id, load_id, fingerprint, from_version_id, to_version_id, state, links_added)
+VALUES (?, ?, ?, ?, ?, ?, 'filled', '["advises"]')`, id26("HF"+tag+"2"), w.ontology, load, fp(tag+"2"), from, newer)
+	exec(t, `UPDATE foundry_loads SET version_id=? WHERE id=?`, newer, load)
+}
+
+// A move in place that lands while a collect lists: the page listed at the
+// version it moved from isn't owed, the collect gives its lease up, and the
+// next tick starts over at the new version, owing each document once.
+func TestHealFillCollectWhileTheLoadMoves(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(5)
+	w.movedFor(load, "fm")
+	var pages atomic.Int32
+	agent := &fakeAgent{t: t, respond: func(req ontologyagent.AuditRequest) string {
+		if pages.Add(1) == 2 {
+			moveLoad(t, w, load, "fm")
+		}
+		return listing(req)
+	}}
+	r := w.runnerOf(agent, 2)
+	r.fills(ctx)
+	if n := count(t, `SELECT COUNT(*) FROM foundry_heal_fills WHERE load_id=? AND fingerprint=? AND state='moved' AND failures=0 AND paused_until IS NULL`,
+		load, fp("fm")); n != 1 {
+		t.Fatal("the collect kept its lease, counted a failure, or started")
+	}
+	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed'`, load); n != 1 {
+		t.Fatalf("%d documents owed, want the first page's 1", n)
+	}
+	r.fills(ctx)
+	sent := agent.sent()
+	if first := sent[2].DocIDs[0]; first != id26("D000") {
+		t.Fatalf("the collect resumed at %s, not from the start", first)
+	}
+	var state string
+	var owed int
+	if err := testDB.QueryRow(`SELECT state, docs_owed FROM foundry_heal_fills WHERE load_id=? AND fingerprint=?`, load, fp("fm")).Scan(&state, &owed); err != nil {
+		t.Fatal(err)
+	}
+	if state != "applying" || owed != 3 {
+		t.Fatalf("fill %s owing %d, want applying owing 3", state, owed)
+	}
+}
+
+// A document that becomes reviewed behind a collect's cursor between its
+// windows (a partial load's document extracted) starts the collect over:
+// the next window lists it, and the fill owes it.
+func TestHealFillDocumentReviewedBehindTheCursor(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(5)
+	w.movedFor(load, "fd")
+	exec(t, `UPDATE foundry_load_extractions SET status='failed', error_code='model', error_retryable=TRUE, reviews=0 WHERE load_id=? AND document_id=?`,
+		load, id26("D000"))
+	agent := &windowed{fakeAgent: &fakeAgent{t: t, respond: listing}, pages: 1}
+	r := w.runnerOf(nil, 2)
+	r.agent, r.maxRun = agent, 300*time.Millisecond
+	r.fills(ctx)
+	if after, owed := cursor(t, load); after != id26("D002") || owed != 1 {
+		t.Fatalf("cursor after %q owing %d", after, owed)
+	}
+	// The failed document's retry, by a job of the load, extracts it with
+	// reviews.
+	var version string
+	if err := testDB.QueryRow(`SELECT version_id FROM foundry_loads WHERE id=?`, load).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	job := id26("JRETRY")
+	exec(t, `INSERT INTO foundry_load_jobs (id, workspace_id, ontology_id, version_id, load_id, kind, status, phase, active_key, lease_owner, lease_until)
+VALUES (?, ?, ?, ?, ?, 'extract', 'running', 'documents', 1, 'w', NOW(6) + INTERVAL 1 HOUR)`, job, w.workspace, w.ontology, version, load)
+	exec(t, `INSERT INTO foundry_load_documents (load_id, document_id, set_id) VALUES (?, ?, ?)`, load, id26("D000"), id26("SET"))
+	if err := w.db.RecordFoundryDocumentExtraction(ctx, job, "w", &model.FoundryDocumentExtraction{DocumentID: id26("D000"),
+		Status: model.FoundryExtractionExtracted, Counts: model.FoundryExtractionCounts{Sections: 1, Reviews: 2}}, false); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, `UPDATE foundry_load_jobs SET status='succeeded', active_key=NULL, lease_owner=NULL, finished_at=NOW(6) WHERE id=?`, job)
+	if after, _ := cursor(t, load); after != "" {
+		t.Fatalf("the cursor %q stays past a document reviewed behind it", after)
+	}
+	agent.pages = 10
+	r.fills(ctx)
+	if n := count(t, `SELECT COUNT(*) FROM foundry_load_resends WHERE load_id=? AND reason='link' AND status='owed' AND document_id=?`, load, id26("D000")); n != 1 {
+		t.Fatal("the document reviewed behind the cursor isn't owed")
+	}
+	var state string
+	var owed int
+	if err := testDB.QueryRow(`SELECT state, docs_owed FROM foundry_heal_fills WHERE load_id=?`, load).Scan(&state, &owed); err != nil {
+		t.Fatal(err)
+	}
+	if state != "applying" || owed != 3 {
+		t.Fatalf("fill %s owing %d, want applying owing 3", state, owed)
+	}
+}
+
+// Past the most one fill takes, the collect stops at the first page with
+// documents left: it counts those as left, at least, and never lists the
+// rest only to count them.
+func TestHealFillCollectStopsPastTheCap(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	load := w.load(0)
+	w.movedFor(load, "fc")
+	exec(t, `INSERT INTO foundry_load_extractions (load_id, document_id, ontology_id, workspace_id, job_id, status, reviews)
+SELECT ?, CONCAT('C', LPAD(a.d + 10*b.d + 100*c.d + 1000*d.d + 10000*e.d, 25, '0')), ?, ?, ?, 'extracted', 1
+FROM (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+  UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) a,
+  (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+  UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b,
+  (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+  UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c,
+  (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+  UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) d,
+  (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+  UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) e`, load, w.ontology, w.workspace, load)
+	all := func(req ontologyagent.AuditRequest) string {
+		ids, _ := json.Marshal(req.DocIDs)
+		return fmt.Sprintf(`{"outcome":"done","findings":[],"mined":{"mined":"complete"},"rows":"unmeasured","documents":%d,"unread":0,`+
+			`"new_link_support":{"docs":7,"quotes":7},"documents_of":[{"set":%q,"doc_ids":%s}]}`, len(req.DocIDs), req.DocumentsFor[0].Set, ids)
+	}
+	agent := &fakeAgent{t: t, respond: all}
+	w.runnerOf(agent, 30000).fills(ctx)
+	if n := len(agent.sent()); n != 2 {
+		t.Fatalf("%d pages listed, want 2: the second passes the cap", n)
+	}
+	var state string
+	var owed, left int64
+	if err := testDB.QueryRow(`SELECT state, docs_owed, docs_left FROM foundry_heal_fills WHERE load_id=?`, load).Scan(&state, &owed, &left); err != nil {
+		t.Fatal(err)
+	}
+	if state != "applying" || owed != model.FoundryFillMaxDocuments || left != 2*30000-model.FoundryFillMaxDocuments {
+		t.Fatalf("fill %s owing %d, %d left", state, owed, left)
 	}
 }
