@@ -7,7 +7,7 @@ import {
   type LoginTransaction,
 } from "@/server/login-transaction";
 import { refusal, sentence, type PasswordAction } from "@/server/password";
-import { verifyFailure } from "@/server/sign-in";
+import { exchangeFailure, verifyFailure } from "@/server/sign-in";
 
 // The callback's two answers without tokens, over a stubbed WFE and AuthKit:
 // WorkOS emailing a code (the callback keeps the login, /auth/verify-email
@@ -273,6 +273,148 @@ describe("an exchange whose company requires single sign-on", () => {
     expect(res.headers.get("location")).toBe(
       `${SITE}/login?error=sso&return_to=%2Fdata`,
     );
+  });
+});
+
+describe("a callback that fails", () => {
+  const signedIn = () =>
+    json({ accessToken, refreshToken: "r", email: "ada@example.com" });
+  const at = async (path: string, cookies?: string) => {
+    const { GET } = await import("@/app/login/callback/route");
+    return GET(request(path, { cookies }));
+  };
+  const reason = (res: Response) =>
+    new URL(res.headers.get("location")!).searchParams.get("error");
+
+  it("says the provider declined, and drops its sign-in", async () => {
+    const res = await at(
+      `/login/callback?error=access_denied&state=${STATE}`,
+      `${cookie}=${loginCookie()}`,
+    );
+    expect(reason(res)).toBe("provider_error");
+    expect(setCookie(res, cookie)).toBe("");
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ["no code", `/login/callback?state=${STATE}`, "missing_code"],
+    ["no state", "/login/callback?code=c0de", "missing_code"],
+    [
+      "a state too long to name a sign-in",
+      `/login/callback?code=c0de&state=${"s".repeat(2049)}`,
+      "invalid_state",
+    ],
+    [
+      "no cookie for its sign-in",
+      `/login/callback?code=c0de&state=${STATE}`,
+      "missing_flow_cookie",
+    ],
+  ])("says so for %s", async (_, path, why) => {
+    expect(reason(await at(path))).toBe(why);
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ["tampered", () => loginCookie().slice(0, -2) + "xx"],
+    [
+      "out of time",
+      () =>
+        sealLoginTransaction(
+          { sessionId: SESSION, returnPath: "/data" },
+          PASSWORD,
+          Date.now() - 11 * 60 * 1000,
+        )!,
+    ],
+  ])("refuses a %s cookie", async (_, sealed) => {
+    const res = await at(
+      `/login/callback?code=c0de&state=${STATE}`,
+      `${cookie}=${sealed()}`,
+    );
+    expect(reason(res)).toBe("flow_cookie_invalid");
+    expect(setCookie(res, cookie)).toBe("");
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    [
+      "the WFE no longer holds the sign-in",
+      () =>
+        json(
+          {
+            code: 16,
+            message: "login session expired or unknown — start a new login",
+          },
+          401,
+        ),
+      "login_session_unknown",
+    ],
+    [
+      "the state isn't the sign-in's",
+      () => json({ code: 16, message: "state mismatch" }, 401),
+      "state_mismatch",
+    ],
+    ["WorkOS refuses the code", () => grpc(3, 400), "code_exchange_failed"],
+    ["the WFE is away", () => grpc(14, 503), "exchange_unavailable"],
+    ["the email isn't let in", () => grpc(7, 403), "denied"],
+    [
+      "the WFE can't be reached",
+      () => {
+        throw new TypeError("fetch failed");
+      },
+      "exchange_unavailable",
+    ],
+  ])("says why when %s", async (_, answer, why) => {
+    answers["/v1/auth/exchange"] = answer;
+    const res = await callback();
+    expect(reason(res)).toBe(why);
+    expect(setCookie(res, cookie)).toBe("");
+  });
+
+  it("says when the emailed code's sign-in can't be kept", async () => {
+    answers["/v1/auth/exchange"] = () =>
+      json({ email: "no-at-sign", emailVerificationRequired: true });
+    expect(reason(await callback())).toBe("verify_start_failed");
+  });
+
+  it("says when WorkOS doesn't know the user it signed in", async () => {
+    answers["/v1/auth/exchange"] = signedIn;
+    getUser.mockRejectedValue(new Error("not found"));
+    const res = await callback();
+    expect(reason(res)).toBe("session_failed");
+    expect(saveSession).not.toHaveBeenCalled();
+  });
+
+  it("signs in when nothing fails", async () => {
+    answers["/v1/auth/exchange"] = signedIn;
+    const res = await callback();
+    expect(res.headers.get("location")).toBe(`${SITE}/data`);
+    expect(saveSession).toHaveBeenCalledOnce();
+  });
+});
+
+describe("exchangeFailure", () => {
+  it.each([
+    [403, { code: 7, message: "refused" }, "denied"],
+    [400, { code: 7 }, "denied"],
+    [503, { code: 14 }, "exchange_unavailable"],
+    [400, { code: 14 }, "exchange_unavailable"],
+    [502, null, "exchange_unavailable"],
+    [
+      401,
+      {
+        code: 16,
+        message: "login session expired or unknown — start a new login",
+      },
+      "login_session_unknown",
+    ],
+    [401, { code: 16, message: "state mismatch" }, "state_mismatch"],
+    [401, { code: 16, message: "exchange: invalid_grant" }, "code_exchange_failed"],
+    [401, { code: 16 }, "code_exchange_failed"],
+    [400, { code: 3, message: "state mismatch" }, "code_exchange_failed"],
+    [400, { code: 9 }, "code_exchange_failed"],
+    [400, "not json", "code_exchange_failed"],
+  ] as const)("reads %s %o as %s", (status, body, failure) => {
+    expect(exchangeFailure(status, body)).toBe(failure);
   });
 });
 

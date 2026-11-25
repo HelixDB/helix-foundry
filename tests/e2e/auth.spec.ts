@@ -78,7 +78,7 @@ test("says what Foundry is only to a cold sign-in", async ({ page }) => {
     page.getByRole("button", { name: "Continue with GitHub" }),
   ).toBeVisible();
   await expect(pitch).toHaveCount(0);
-  await page.goto("/login?error=callback");
+  await page.goto("/login?error=code_exchange_failed");
   await expect(
     page.getByRole("button", { name: "Continue with GitHub" }),
   ).toBeVisible();
@@ -86,11 +86,17 @@ test("says what Foundry is only to a cold sign-in", async ({ page }) => {
 });
 
 test("explains a sign-in that did not finish", async ({ page }) => {
+  // A browser that lost the sign-in's cookie: an app's built-in browser, often.
   await page.goto("/login/callback?code=nope&state=unknown");
-  await expect(page).toHaveURL(/\/login\?error=callback$/);
+  await expect(page).toHaveURL(/\/login\?error=missing_flow_cookie$/);
   // (Next's route announcer is an empty role=alert too.)
   await expect(page.getByRole("alert").filter({ hasText: /./ })).toContainText(
-    "Sign-in didn’t finish",
+    "This browser lost the sign-in it started",
+  );
+  // An exchange the WFE refuses says so in its own words.
+  await page.goto("/login?error=code_exchange_failed");
+  await expect(page.getByRole("alert").filter({ hasText: /./ })).toContainText(
+    "The sign-in link expired or was already used",
   );
   // And the sign-in page still works from there: it opens the main page,
   // Ask.

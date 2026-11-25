@@ -125,7 +125,7 @@ test("every main page in both themes", async ({ page }, info) => {
   };
 
   await visit("sign-in", "/login");
-  await visit("sign-in-error", "/login?error=callback");
+  await visit("sign-in-error", "/login?error=missing_flow_cookie");
   await signIn(page);
 
   // A current agent draft, a document and a load, so every page has data.

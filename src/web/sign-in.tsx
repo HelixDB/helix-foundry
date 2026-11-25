@@ -25,6 +25,10 @@ const providers: Provider[] = [
   { id: "microsoft", label: "Microsoft" },
 ];
 
+// Why sign-in came back here, one reason per cause, as sign_in_failed reports
+// it: /auth/login's (`request`, `unavailable`), /login/callback's (the
+// provider, the callback's link, this browser's cookie and the WFE's code
+// exchange) and /auth/verify-email's.
 const errors = {
   request: {
     title: "Sign-in couldn’t start.",
@@ -34,9 +38,49 @@ const errors = {
     title: "Sign-in is unavailable right now.",
     text: "Helix couldn’t start sign-in. Try again in a moment.",
   },
-  callback: {
+  provider_error: {
+    title: "Sign-in was cancelled.",
+    text: "The provider didn’t sign you in. Choose a way to sign in to try again.",
+  },
+  missing_code: {
+    title: "Sign-in didn’t finish.",
+    text: "The sign-in link came back incomplete. Try again.",
+  },
+  invalid_state: {
+    title: "Sign-in didn’t finish.",
+    text: "The sign-in link came back incomplete. Try again.",
+  },
+  missing_flow_cookie: {
+    title: "Sign-in didn’t finish.",
+    text: "This browser lost the sign-in it started: it took over 10 minutes, or an app’s built-in browser dropped it. Try again in your browser.",
+  },
+  flow_cookie_invalid: {
+    title: "Sign-in ran out of time.",
+    text: "Start again: a sign-in lasts 10 minutes.",
+  },
+  login_session_unknown: {
+    title: "Sign-in ran out of time.",
+    text: "Helix no longer holds that sign-in. Start again.",
+  },
+  state_mismatch: {
+    title: "Sign-in didn’t finish.",
+    text: "The sign-in link isn’t the one this browser started. Try again in one tab.",
+  },
+  code_exchange_failed: {
     title: "Sign-in didn’t finish.",
     text: "The sign-in link expired or was already used. Try again.",
+  },
+  exchange_unavailable: {
+    title: "Sign-in didn’t finish.",
+    text: "Helix couldn’t reach sign-in. Try again in a moment.",
+  },
+  verify_start_failed: {
+    title: "Sign-in didn’t finish.",
+    text: "Helix couldn’t start checking your email. Try again, or choose another way to sign in.",
+  },
+  session_failed: {
+    title: "Sign-in didn’t finish.",
+    text: "Helix couldn’t open your session. Try again in a moment.",
   },
   denied: {
     title: "This account can’t sign in here.",
@@ -52,7 +96,7 @@ const errors = {
   },
 } satisfies Record<string, { title: string; text: string }>;
 
-/** Why sign-in came back here: /login/callback's ?error=. */
+/** Why sign-in came back here: the ?error= of /auth/login and /login/callback. */
 export type SignInError = keyof typeof errors;
 const isSignInError = (code: string | null): code is SignInError =>
   !!code && Object.hasOwn(errors, code);

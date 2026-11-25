@@ -12,11 +12,17 @@ import {
   openLoginTransaction,
   sealLoginTransaction,
 } from "@/server/login-transaction";
-import { finishSignIn, signInErrorPath, throughSso } from "@/server/sign-in";
+import {
+  exchangeFailure,
+  finishSignIn,
+  signInErrorPath,
+  throughSso,
+} from "@/server/sign-in";
 import type {
   ExchangeAuthCodeRequest,
   ExchangeAuthCodeResponse,
 } from "@/shared/wfe";
+import type { SignInError } from "@/web/sign-in";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,15 +34,16 @@ export const runtime = "nodejs";
 // account, often): the pending login is kept for /login/verify, which sends
 // the code to /auth/verify-email. The email's company requires its single
 // sign-on: a new login goes through it, once. Every failure lands on the
-// sign-in page with ?error=<reason>.
-
-type Failure = "callback" | "denied" | "verify" | "sso";
+// sign-in page with ?error=<reason>, one reason per cause, so sign_in_failed
+// tells them apart: the provider's own error, a callback without its code or
+// state, a browser that lost the login's cookie (an app's built-in browser,
+// often) or sent one that no longer opens, and each way the exchange fails.
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 function fail(
   request: NextRequest,
-  reason: Failure,
+  reason: SignInError,
   cookie?: string | null,
   returnPath?: string,
 ) {
@@ -51,22 +58,20 @@ function fail(
 
 export async function GET(request: NextRequest) {
   const config = authConfig();
-  const code = request.nextUrl.searchParams.get("code"),
-    state = request.nextUrl.searchParams.get("state");
+  if (!config) return fail(request, "unavailable");
+  const params = request.nextUrl.searchParams,
+    code = params.get("code"),
+    state = params.get("state");
   const flowId = state ? loginFlowId(state) : null,
-    cookie =
-      flowId && config
-        ? loginCookieName(loginCookiePrefix(config), flowId)
-        : null;
-  const transaction =
-    cookie && config
-      ? openLoginTransaction(
-          request.cookies.get(cookie)?.value ?? "",
-          config.cookiePassword,
-        )
-      : null;
-  if (!config || !code || !state || !flowId || !cookie || !transaction)
-    return fail(request, "callback", cookie);
+    cookie = flowId ? loginCookieName(loginCookiePrefix(config), flowId) : null;
+  // WorkOS returns with ?error= when the provider or the user declined.
+  if (params.has("error")) return fail(request, "provider_error", cookie);
+  if (!code || !state) return fail(request, "missing_code", cookie);
+  if (!cookie) return fail(request, "invalid_state");
+  const sealed = request.cookies.get(cookie)?.value;
+  if (!sealed) return fail(request, "missing_flow_cookie");
+  const transaction = openLoginTransaction(sealed, config.cookiePassword);
+  if (!transaction) return fail(request, "flow_cookie_invalid", cookie);
 
   let tokens: ExchangeAuthCodeResponse;
   try {
@@ -82,13 +87,17 @@ export async function GET(request: NextRequest) {
       cache: "no-store",
       redirect: "manual",
     });
-    // PERMISSION_DENIED: the stamp does not let this email sign in (the
-    // WFE's auth.allowed_emails). Retrying would only refuse it again.
+    // A denied email (the WFE's auth.allowed_emails) would only be refused
+    // again; the others need a new sign-in.
     if (!res.ok)
-      return fail(request, res.status === 403 ? "denied" : "callback", cookie);
+      return fail(
+        request,
+        exchangeFailure(res.status, await res.json().catch(() => null)),
+        cookie,
+      );
     tokens = await res.json();
   } catch {
-    return fail(request, "callback", cookie);
+    return fail(request, "exchange_unavailable", cookie);
   }
 
   if (tokens.ssoRequired === true) {
@@ -115,7 +124,7 @@ export async function GET(request: NextRequest) {
       { ...transaction, verifyEmail: tokens.email ?? "" },
       config.cookiePassword,
     );
-    if (!waiting) return fail(request, "callback", cookie);
+    if (!waiting) return fail(request, "verify_start_failed", cookie);
     const response = NextResponse.redirect(
       new URL(
         `/login/verify?${new URLSearchParams({ flow: flowId })}`,
@@ -133,7 +142,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (!(await finishSignIn(request, tokens)))
-    return fail(request, "callback", cookie);
+    return fail(request, "session_failed", cookie);
   const response = NextResponse.redirect(
     new URL(transaction.returnPath, request.url),
     { status: 303, headers: NO_STORE },
