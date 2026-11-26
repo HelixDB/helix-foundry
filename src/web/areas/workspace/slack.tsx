@@ -5,7 +5,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { Bot, UserRound } from "lucide-react";
+import { Bot, Globe, ListChecks, UserRound } from "lucide-react";
 import type {
   FoundrySlackInstall,
   FoundrySlackLink,
@@ -42,7 +42,9 @@ import {
   slackLinksQuery,
   slackQuery,
   startSlackInstall,
+  updateSlackBotScope,
   updateSlackMode,
+  type SlackBotScope,
   type SlackMode,
   type SlackView,
 } from "./slack-api";
@@ -50,11 +52,13 @@ import {
 // Settings › Slack: Helix's own Slack app, Helix Foundry,
 // which answers people in a Slack workspace as Founder: each linked Slack
 // user as their own Foundry user, or, in bot mode, anyone there as one
-// shared bot, a workspace key whose sources Settings › Access chooses and
-// whose proposed changes owners and admins run as themselves. Everyone sees
-// whether it is added, its mode and their own link; owners and admins add
-// it (Slack's page, then back through /slack/installed), switch its mode
-// (behind a confirmation), see who is linked, unlink anyone and disconnect it.
+// shared bot, a workspace key that reads everything in the workspace, or
+// only the sources Settings › Access gives it, and whose proposed changes
+// owners and admins run as themselves. Everyone sees whether it is added,
+// its mode, what the bot reads and their own link; owners and admins add it
+// (Slack's page, then back through /slack/installed), switch its mode
+// (behind a confirmation), choose what the bot reads (widening it behind a
+// confirmation), see who is linked, unlink anyone and disconnect it.
 // The install says when it lacks permissions what Helix offers here needs
 // (owners and admins add it again), and, where a Slack connection may read
 // through it (the Slack kind's setup), the connection that does or the way
@@ -75,8 +79,12 @@ const LOCAL_PURPOSE =
   "Ask Founder from Slack: mention @Founder in a channel or message it directly, and it answers from this Foundry’s data, through Helix.";
 const LOCAL_NOTICE =
   "Links in its answers open on the computer running this Foundry.";
-const BOT_PURPOSE =
-  "Ask Founder from Slack: anyone in your Slack workspace mentions @Founder in a channel or messages it directly, and the shared bot answers from the sources you give it.";
+const BOT_PURPOSE: Record<SlackBotScope, string> = {
+  workspace:
+    "Ask Founder from Slack: anyone in your Slack workspace mentions @Founder in a channel or messages it directly, and the shared bot answers from everything in this workspace.",
+  sources:
+    "Ask Founder from Slack: anyone in your Slack workspace mentions @Founder in a channel or messages it directly, and the shared bot answers from the sources you give it.",
+};
 /** The message shortcut (backend slack.CallbackAskAbout), in one line. */
 const SHORTCUT =
   "On any message, More actions › Ask Founder about this asks what Foundry knows about it.";
@@ -92,7 +100,7 @@ const MODES = {
   bot: {
     title: "Shared bot",
     description:
-      "Anyone in your Slack workspace can ask; the bot reads only the sources you give it; answers in a channel reach everyone in it, guests included; owners and admins approve changes.",
+      "Anyone in your Slack workspace can ask; the bot reads everything in this workspace, or only the sources you choose; answers in a channel reach everyone in it, guests included; owners and admins approve changes.",
     icon: <Bot strokeWidth={1.5} />,
   },
 } as const;
@@ -190,7 +198,11 @@ function SlackSettings({
             />
           )}
           {!LOCAL && view.mode.kind === "bot" && (
-            <SharedBot bot={view.mode} canManage={view.canManage} />
+            <SharedBot
+              team={view.install.teamName || "your Slack workspace"}
+              bot={view.mode}
+              canManage={view.canManage}
+            />
           )}
           <YourAccount
             install={view.install}
@@ -329,7 +341,11 @@ function Installed({
     <Panel
       title="Slack"
       subtitle={
-        LOCAL ? LOCAL_PURPOSE : mode.kind === "bot" ? BOT_PURPOSE : PURPOSE
+        LOCAL
+          ? LOCAL_PURPOSE
+          : mode.kind === "bot"
+            ? BOT_PURPOSE[mode.scope]
+            : PURPOSE
       }
       actions={
         canManage && (
@@ -479,7 +495,7 @@ function IdentityMode({
       void qc.invalidateQueries({ queryKey: slackKey(id) });
       notify(
         asking === "bot"
-          ? "The shared bot is on. Choose its sources next."
+          ? "The shared bot is on"
           : `Helix Foundry answers each linked person in ${team} as themselves`,
       );
       setAsking(undefined);
@@ -522,7 +538,7 @@ function IdentityMode({
       {asking === "bot" && (
         <ConfirmDialog
           title={`Turn on the shared bot in ${team}?`}
-          description="Anyone in your Slack workspace can ask Helix Foundry without linking, and the bot answers them all alike. Helix makes it a key in Settings › Access that reads nothing until you choose its sources. Answers in a channel reach everyone in it, guests included. Changes it prepares wait for an owner or admin, who reviews them in Slack and runs them as themselves."
+          description="Anyone in your Slack workspace can ask Helix Foundry without linking, and the bot answers them all alike. It reads everything in this Foundry workspace, so anyone in the Slack workspace can ask it about all of it; you can limit it to sources you choose once it is on. Answers in a channel reach everyone in it, guests included. Changes it prepares wait for an owner or admin, who reviews them in Slack and runs them as themselves."
           confirmLabel="Turn on"
           pending={pending}
           onConfirm={change}
@@ -556,22 +572,66 @@ function IdentityMode({
   );
 }
 
+/** What the shared bot can see, as its choices say it. */
+const SCOPES = {
+  workspace: {
+    title: "Everything in this workspace",
+    description:
+      "Every ontology, its data and documents, as a member reads them. Anyone in the Slack workspace can ask it about everything in this Foundry workspace.",
+    icon: <Globe strokeWidth={1.5} />,
+  },
+  sources: {
+    title: "Only the sources I choose",
+    description:
+      "Only the sources you give its key in Settings › Access; nothing until you choose them.",
+    icon: <ListChecks strokeWidth={1.5} />,
+  },
+} as const;
+
 /**
- * The shared bot: its key, whether it still works, and, for owners and
- * admins, the way to its sources in Settings › Access.
+ * The shared bot: what it can see (owners and admins choose, widening it to
+ * the whole workspace behind a confirmation; members read it), its key,
+ * whether it still works, and, while it reads only its sources, the way to
+ * them in Settings › Access for owners and admins.
  */
 function SharedBot({
+  team,
   bot,
   canManage,
 }: {
+  team: string;
   bot: Extract<SlackMode, { kind: "bot" }>;
   canManage: boolean;
 }) {
+  const { id, notify } = useWorkspace(),
+    qc = useQueryClient();
+  const [widening, setWidening] = useState(false),
+    [pending, setPending] = useState(false),
+    [error, setError] = useState("");
+  const choose = async (scope: SlackBotScope) => {
+    setPending(true);
+    setError("");
+    try {
+      qc.setQueryData(slackKey(id), await updateSlackBotScope(id, scope));
+      void qc.invalidateQueries({ queryKey: slackKey(id) });
+      notify(
+        scope === "workspace"
+          ? "The shared bot reads everything in this workspace"
+          : "The shared bot reads only the sources you choose",
+      );
+      setWidening(false);
+    } catch (e) {
+      setError(sentence((e as Error).message));
+    } finally {
+      setPending(false);
+    }
+  };
   return (
     <Panel
       title="Shared bot"
       actions={
         canManage &&
+        bot.scope === "sources" &&
         bot.credentialId &&
         !bot.broken && (
           <ButtonLink
@@ -598,7 +658,39 @@ function SharedBot({
           },
         ]}
       />
-      <div className="wk-pad">
+      <div className="wk-pad wk-ai-form">
+        {canManage ? (
+          <fieldset className="plain-fieldset" disabled={pending}>
+            <legend>What the bot can see</legend>
+            <div className="choice-options provider-options">
+              {(["workspace", "sources"] as const).map((k) => (
+                <ChoiceCard
+                  key={k}
+                  name="slack-bot-scope"
+                  title={SCOPES[k].title}
+                  description={SCOPES[k].description}
+                  icon={SCOPES[k].icon}
+                  checked={(widening ? "workspace" : bot.scope) === k}
+                  onChange={() => {
+                    if (k === bot.scope) return setWidening(false);
+                    if (k === "workspace") return setWidening(true);
+                    void choose(k);
+                  }}
+                />
+              ))}
+            </div>
+          </fieldset>
+        ) : (
+          <p className="wk-note">
+            What the bot can see: {SCOPES[bot.scope].title}.{" "}
+            {SCOPES[bot.scope].description}
+          </p>
+        )}
+        {error && !widening && (
+          <p role="alert" className="hf-form-error">
+            {error}
+          </p>
+        )}
         {bot.broken ? (
           <p role="alert" className="hf-form-error">
             The bot’s key was revoked, deleted, expired or given database
@@ -609,13 +701,33 @@ function SharedBot({
           </p>
         ) : (
           <p className="wk-note">
-            It reads only the sources its key is given in Settings › Access,
-            none until an owner or admin chooses them. Changes it prepares wait
-            in Slack for an owner or admin, who reviews them and runs them as
-            themselves.
+            {bot.scope === "workspace"
+              ? `Anyone in ${team} can ask it about everything in this Foundry workspace, and its answers in a channel reach everyone in it.`
+              : "It reads only the sources its key is given in Settings › Access, none until an owner or admin chooses them."}{" "}
+            Changes it prepares wait in Slack for an owner or admin, who reviews
+            them and runs them as themselves.
           </p>
         )}
       </div>
+      {widening && (
+        <ConfirmDialog
+          title="Let the shared bot see everything?"
+          description={`The bot reads every ontology, its data and documents in this Foundry workspace, whatever its key is given in Settings › Access. Anyone in ${team} can ask it about all of it, and its answers in a channel reach everyone in it, guests included.`}
+          confirmLabel="Let it see everything"
+          pending={pending}
+          onConfirm={() => void choose("workspace")}
+          onCancel={() => {
+            setWidening(false);
+            setError("");
+          }}
+        >
+          {error && (
+            <p role="alert" className="hf-form-error">
+              {error}
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
     </Panel>
   );
 }

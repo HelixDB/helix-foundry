@@ -25,6 +25,7 @@ import {
   slackMode,
   slackView,
   startSlackInstall,
+  updateSlackBotScope,
   updateSlackMode,
 } from "@/web/areas/workspace/slack-api";
 
@@ -99,20 +100,34 @@ describe("the page's state", () => {
       credentialId: "sc_1",
       credentialName: "Slack bot (Acme)",
       broken: false,
+      scope: "workspace",
     });
     expect(bot({ credentialId: "sc_1", broken: true })).toEqual({
       kind: "bot",
       credentialId: "sc_1",
       credentialName: "",
       broken: true,
+      scope: "workspace",
     });
-    // A bot the WFE didn't describe has no key to link to.
+    // A bot the WFE didn't describe has no key to link to, and reads the
+    // workspace, every bot's default.
     expect(bot(null)).toEqual({
       kind: "bot",
       credentialId: null,
       credentialName: "",
       broken: false,
+      scope: "workspace",
     });
+    // Only SOURCES limits it to its sources.
+    for (const [scope, want] of [
+      ["FOUNDRY_SLACK_BOT_SCOPE_SOURCES", "sources"],
+      ["FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE", "workspace"],
+      ["FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED", "workspace"],
+      [undefined, "workspace"],
+    ] as const)
+      expect(bot({ credentialId: "sc_1", scope })).toMatchObject({
+        scope: want,
+      });
     expect(bot({ credentialId: "" })).toMatchObject({ credentialId: null });
     for (const identityMode of [
       "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
@@ -538,6 +553,53 @@ describe("the mode", () => {
     call.mockRejectedValueOnce(refused);
     await expect(updateSlackMode("ws", "bot")).rejects.toBe(refused);
     expect(slackReason(refused)).toBe("FOUNDRY_SLACK_BOT_HOSTED_ONLY");
+    expect(tracked).not.toHaveBeenCalled();
+  });
+  it("PATCHes the bot's scope, reporting it once accepted", async () => {
+    const answer = (scope: wfe.FoundrySlackBotScope) =>
+      ({
+        slack: {
+          canManage: true,
+          install: {
+            ...install,
+            identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+            bot: { credentialId: "sc_1", scope },
+          },
+        },
+      }) satisfies wfe.FoundrySlackResponse;
+    call.mockResolvedValueOnce(answer("FOUNDRY_SLACK_BOT_SCOPE_SOURCES"));
+    await expect(updateSlackBotScope("ws 1", "sources")).resolves.toMatchObject(
+      { mode: { kind: "bot", scope: "sources" } },
+    );
+    expect(call).toHaveBeenCalledWith(
+      "/v1/workspaces/ws%201/foundry/slack",
+      {
+        identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+        botScope: "FOUNDRY_SLACK_BOT_SCOPE_SOURCES",
+      },
+      "PATCH",
+    );
+    expect(tracked).toHaveBeenCalledWith("slack_bot_scope_changed", {
+      scope: "sources",
+    });
+    tracked.mockClear();
+    call.mockResolvedValueOnce(answer("FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE"));
+    await expect(updateSlackBotScope("ws", "workspace")).resolves.toMatchObject(
+      { mode: { kind: "bot", scope: "workspace" } },
+    );
+    expect(call).toHaveBeenLastCalledWith(
+      "/v1/workspaces/ws/foundry/slack",
+      {
+        identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+        botScope: "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE",
+      },
+      "PATCH",
+    );
+    tracked.mockClear();
+    call.mockRejectedValueOnce(new ApiError("permission denied", 403));
+    await expect(updateSlackBotScope("ws", "sources")).rejects.toThrow(
+      "permission denied",
+    );
     expect(tracked).not.toHaveBeenCalled();
   });
 });

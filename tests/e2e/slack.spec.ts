@@ -350,7 +350,7 @@ test("the setting says when Helix doesn't offer the app", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("an owner turns on the shared bot, chooses its sources and turns it off", async ({
+test("an owner turns on the shared bot, limits it to its sources, chooses them and turns it off", async ({
   page,
 }) => {
   await signIn(page);
@@ -364,7 +364,9 @@ test("an owner turns on the shared bot, chooses its sources and turns it off", a
   const on = page.getByRole("dialog", {
     name: "Turn on the shared bot in Acme Slack?",
   });
-  await expect(on).toContainText("reads nothing until you choose its sources");
+  await expect(on).toContainText(
+    "anyone in the Slack workspace can ask it about all of it",
+  );
   await on.getByRole("button", { name: "Cancel" }).click();
   await expect(modes.getByRole("radio", { name: "Per person" })).toBeChecked();
 
@@ -375,7 +377,31 @@ test("an owner turns on the shared bot, chooses its sources and turns it off", a
   await expect(bot).toContainText("Slack bot (Acme Slack)");
   await expect(bot).toContainText("Answering");
   await expect(settingsPanel(page, "Slack")).toContainText(
-    "anyone in your Slack workspace",
+    "answers from everything in this workspace",
+  );
+  // It sees the whole workspace, so there are no sources to choose.
+  const scope = bot.getByRole("group", { name: "What the bot can see" });
+  await expect(
+    scope.getByRole("radio", { name: /Everything in this workspace/ }),
+  ).toBeChecked();
+  await expect(bot).toContainText(
+    "Anyone in Acme Slack can ask it about everything in this Foundry workspace",
+  );
+  await expect(
+    bot.getByRole("link", { name: "Choose the bot’s sources" }),
+  ).toHaveCount(0);
+
+  // Limited to its sources at once; it reads none until they're chosen.
+  await scope.getByRole("radio", { name: /Only the sources I choose/ }).check();
+  await expect(
+    page.getByText("The shared bot reads only the sources you choose"),
+  ).toBeVisible();
+  await expect(
+    scope.getByRole("radio", { name: /Only the sources I choose/ }),
+  ).toBeChecked();
+  await expect(bot).toContainText("none until an owner or admin chooses them");
+  await expect(settingsPanel(page, "Slack")).toContainText(
+    "answers from the sources you give it",
   );
 
   // Its sources open in Settings › Access, then the address drops the key.
@@ -419,6 +445,61 @@ test("an owner turns on the shared bot, chooses its sources and turns it off", a
   ).toHaveCount(0);
 });
 
+test("widening the shared bot to the whole workspace asks first", async ({
+  page,
+}) => {
+  await signIn(page);
+  await addToSlack(page);
+  await settingsPanel(page, "Who it answers as")
+    .getByRole("radio", { name: "Shared bot" })
+    .check();
+  await page
+    .getByRole("dialog", { name: "Turn on the shared bot in Acme Slack?" })
+    .getByRole("button", { name: "Turn on" })
+    .click();
+  const bot = settingsPanel(page, "Shared bot");
+  const scope = bot.getByRole("group", { name: "What the bot can see" });
+  const everything = scope.getByRole("radio", {
+      name: /Everything in this workspace/,
+    }),
+    sources = scope.getByRole("radio", { name: /Only the sources I choose/ });
+  await sources.check();
+  await expect(sources).toBeChecked();
+
+  // Cancelled, it stays limited.
+  await everything.check();
+  const widen = page.getByRole("dialog", {
+    name: "Let the shared bot see everything?",
+  });
+  await expect(widen).toContainText(
+    "Anyone in Acme Slack can ask it about all of it",
+  );
+  await widen.getByRole("button", { name: "Cancel" }).click();
+  await expect(sources).toBeChecked();
+  await expect(
+    bot.getByRole("link", { name: "Choose the bot’s sources" }),
+  ).toBeVisible();
+
+  await everything.check();
+  await widen.getByRole("button", { name: "Let it see everything" }).click();
+  await expect(widen).toHaveCount(0);
+  await expect(everything).toBeChecked();
+  await expect(
+    bot.getByRole("link", { name: "Choose the bot’s sources" }),
+  ).toHaveCount(0);
+  // Settings › Access says its key's sources don't limit it now.
+  await page.goto("/settings/access");
+  await page.getByRole("tab", { name: "Agents" }).click();
+  await expect(
+    page.getByRole("listitem", { name: "Slack bot (Acme Slack)" }),
+  ).toContainText(
+    "reads everything in this workspace, whatever this key is given",
+  );
+  // And the scope stays across a reload.
+  await page.goto("/settings/slack");
+  await expect(everything).toBeChecked();
+});
+
 test("a link to a revoked key's sources says so", async ({ page }) => {
   await signIn(page);
   await page.goto("/settings/access?principal=service_credential:sc_gone");
@@ -453,6 +534,11 @@ test("members see the shared bot without changing it, and a broken bot says why"
   await expect(modes.getByRole("radio")).toHaveCount(0);
   const bot = settingsPanel(alan, "Shared bot");
   await expect(bot).toContainText("Slack bot (Acme Slack)");
+  // A member reads what it sees, and can't change it.
+  await expect(bot).toContainText(
+    "What the bot can see: Everything in this workspace.",
+  );
+  await expect(bot.getByRole("radio")).toHaveCount(0);
   await expect(
     bot.getByRole("link", { name: "Choose the bot’s sources" }),
   ).toHaveCount(0);

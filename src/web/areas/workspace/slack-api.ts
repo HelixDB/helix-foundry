@@ -91,11 +91,18 @@ export const slackReason = (error: unknown): SlackReason | undefined =>
   errorInfo(error)?.reason;
 
 /**
+ * What the shared bot reads: everything in the workspace an unrestricted
+ * member reads (a new bot's), or only the sources Settings › Access gives
+ * its key.
+ */
+export type SlackBotScope = "workspace" | "sources";
+
+/**
  * Whom an install's bot acts as: each linked Slack user as themselves, or
- * one shared bot, a workspace key no one holds, whose sources Settings ›
- * Access chooses (its `credentialId`; null when the WFE didn't say).
- * `broken`: the key was revoked, deleted, expired or given database
- * permissions, so the bot can't answer until bot mode is turned off and on.
+ * one shared bot, a workspace key no one holds (its `credentialId`; null
+ * when the WFE didn't say), reading what its `scope` says. `broken`: the key
+ * was revoked, deleted, expired or given database permissions, so the bot
+ * can't answer until bot mode is turned off and on.
  */
 export type SlackMode =
   | { kind: "per_person" }
@@ -104,15 +111,19 @@ export type SlackMode =
       credentialId: string | null;
       credentialName: string;
       broken: boolean;
+      scope: SlackBotScope;
     };
 
 /**
  * An install's mode as the WFE says it: BOT is the shared bot, anything
- * else (PER_PERSON, unset from a WFE before bot mode) per person.
+ * else (PER_PERSON, unset from a WFE before bot mode) per person. A bot
+ * reads its sources only when the WFE says SOURCES, else the workspace,
+ * every bot's default.
  *
  * @example
  * slackMode({ identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT", bot: { credentialId: "sc_1", credentialName: "Slack bot (Acme)" } });
- * // { kind: "bot", credentialId: "sc_1", credentialName: "Slack bot (Acme)", broken: false }
+ * // { kind: "bot", credentialId: "sc_1", credentialName: "Slack bot (Acme)", broken: false, scope: "workspace" }
+ * slackMode({ identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT", bot: { scope: "FOUNDRY_SLACK_BOT_SCOPE_SOURCES" } }).scope; // "sources"
  * slackMode({}); // { kind: "per_person" }
  */
 export function slackMode(install: FoundrySlackInstall): SlackMode {
@@ -124,6 +135,8 @@ export function slackMode(install: FoundrySlackInstall): SlackMode {
     credentialId: bot.credentialId || null,
     credentialName: bot.credentialName || "",
     broken: !!bot.broken,
+    scope:
+      bot.scope === "FOUNDRY_SLACK_BOT_SCOPE_SOURCES" ? "sources" : "workspace",
   };
 }
 
@@ -462,6 +475,30 @@ export async function updateSlackMode(
     "PATCH",
   );
   trackEvent("slack_mode_changed", { mode });
+  return slackView(slack);
+}
+
+/**
+ * Sets what the shared bot reads, for owners and admins: the whole
+ * workspace, or only the sources Settings › Access gives its key. The scope
+ * it has already changes nothing.
+ */
+export async function updateSlackBotScope(
+  ws: string,
+  scope: SlackBotScope,
+): Promise<SlackView> {
+  const { slack } = await api<FoundrySlackResponse>(
+    path(ws),
+    {
+      identityMode: "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+      botScope:
+        scope === "workspace"
+          ? "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE"
+          : "FOUNDRY_SLACK_BOT_SCOPE_SOURCES",
+    } satisfies UpdateFoundrySlackRequest,
+    "PATCH",
+  );
+  trackEvent("slack_bot_scope_changed", { scope });
   return slackView(slack);
 }
 
