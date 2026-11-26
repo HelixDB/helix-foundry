@@ -151,9 +151,7 @@ export function CompanyPanel({
     <section
       className="on-focus"
       aria-label={
-        q
-          ? `Question ${at + 1} of ${questions.length}`
-          : (r.companyName ?? "")
+        q ? `Question ${at + 1} of ${questions.length}` : (r.companyName ?? "")
       }
     >
       <form
@@ -235,8 +233,7 @@ export function CompanyPanel({
           </>
         ) : (
           <p className="on-muted">
-            Foundry has no questions for you: it writes the goal from the
-            site.
+            Foundry has no questions for you: it writes the goal from the site.
           </p>
         )}
         <div className="on-focus-actions">
