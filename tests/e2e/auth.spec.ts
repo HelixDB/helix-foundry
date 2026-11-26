@@ -40,7 +40,7 @@ test("signs in and returns to the page it came from", async ({ page }) => {
   expect((await mock.stats()).loginStarts).toBe(1);
 });
 
-test("says what Foundry is only to a cold sign-in", async ({ page }) => {
+test("says what Foundry is beside every sign-in", async ({ page }) => {
   const pitch = page.getByRole("region", {
     name: "Your company’s data as one graph your agents can query.",
   });
@@ -71,18 +71,16 @@ test("says what Foundry is only to a cold sign-in", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const phone = await boxes();
   expect(phone.pitch.y).toBeGreaterThan(phone.google.y + phone.google.height);
-  // The app's own way here (a signed-out page) and a failed sign-in show
-  // only the sign-in.
-  await page.goto("/login?return_to=%2Fdata");
-  await expect(
-    page.getByRole("button", { name: "Continue with GitHub" }),
-  ).toBeVisible();
-  await expect(pitch).toHaveCount(0);
-  await page.goto("/login?error=code_exchange_failed");
-  await expect(
-    page.getByRole("button", { name: "Continue with GitHub" }),
-  ).toBeVisible();
-  await expect(pitch).toHaveCount(0);
+  // The app's own way here (a signed-out page, or a link such as
+  // ontology.new) and a failed sign-in show it too.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  for (const path of [
+    "/login?return_to=%2Fontology%2Fnew",
+    "/login?error=code_exchange_failed",
+  ]) {
+    await page.goto(path);
+    await expect(pitch).toBeVisible();
+  }
 });
 
 test("explains a sign-in that did not finish", async ({ page }) => {
