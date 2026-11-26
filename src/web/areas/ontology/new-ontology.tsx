@@ -123,11 +123,12 @@ import {
 // tab, whose wizard (kept per tab) starts afresh.
 
 type Saved = {
-  // The company's domain as typed, and its research with the answers, by
-  // question id.
+  // The company's domain as typed, and its research with what it does (as
+  // corrected) and the answers, by question id.
   domain: string;
   company: {
     research: FoundryCompanyResearch;
+    summary: string;
     answers: [string, string][];
   } | null;
   // The goal a draft from the research wrote, and the name it came with:
@@ -243,8 +244,10 @@ export function readNewOntology(ws: string): Saved | null {
         isRecord(c) && Array.isArray(c.answers)
           ? (c.answers as unknown[])
           : null;
+      const summary = isRecord(c) ? c.summary : null;
       if (
         questions.some((q) => !q) ||
+        !isText(summary) ||
         !answers ||
         !answers.every(
           (a) =>
@@ -269,6 +272,7 @@ export function readNewOntology(ws: string): Saved | null {
           fetched: r.fetched as boolean | undefined,
           createdAt: r.createdAt as string | null | undefined,
         },
+        summary,
         answers: answers as [string, string][],
       };
     })(s.company);
@@ -413,6 +417,7 @@ export function NewOntologyPage() {
         domain: saved.domain,
         company: saved.company && {
           research: saved.company.research,
+          summary: saved.company.summary,
           answers: new Map(saved.company.answers),
         },
         goal: saved.goal,
@@ -459,6 +464,7 @@ export function NewOntologyPage() {
     domain,
     company: company && {
       research: company.research,
+      summary: company.summary,
       answers: [...company.answers],
     },
     drafted,
@@ -561,6 +567,12 @@ export function NewOntologyPage() {
         .map(([questionId, answer]) => ({ questionId, answer: answer.trim() }))
         .filter((a) => a.answer),
       data: goalData(sources),
+      // Only a correction: the research's own summary is the default.
+      ...(company &&
+      company.summary.trim() &&
+      company.summary.trim() !== (company.research.summary || "")
+        ? { summary: company.summary.trim() }
+        : {}),
     }).then(
       (r) =>
         setFlow((f) =>
@@ -578,14 +590,17 @@ export function NewOntologyPage() {
     );
     return true;
   };
-  // The company step's last Continue: the goal is drafted from the answers
-  // at once, while the user chooses their data, and again only when the
-  // answers changed since and the goal is still the drafted one (or none).
+  // The company step's last Continue: the goal is drafted from the summary
+  // and answers at once, while the user chooses their data, and again only
+  // when they changed since and the goal is still the drafted one (or none).
   // A draft that can't start yet (the data still being read) starts on the
   // goal step.
   const draftedFrom = useRef<string | null>(null);
   const finishCompany = () => {
-    const answers = JSON.stringify([...(company?.answers || [])]);
+    const answers = JSON.stringify([
+      company?.summary,
+      ...(company?.answers || []),
+    ]);
     const edited =
       !!goal.trim() && !(flow.drafted && flow.drafted.goal === goal);
     if (company && !drafting && !edited && draftedFrom.current !== answers) {
@@ -777,6 +792,9 @@ export function NewOntologyPage() {
               setFlow((f) => companyFlow(f, { type: "domain", domain }))
             }
             onResearch={research}
+            onSummary={(summary) =>
+              setFlow((f) => companyFlow(f, { type: "summary", summary }))
+            }
             onAnswer={(questionId, answer) =>
               setFlow((f) =>
                 companyFlow(f, { type: "answer", questionId, answer }),

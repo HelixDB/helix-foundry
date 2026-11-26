@@ -2864,11 +2864,13 @@ export type DraftChoices = {
 };
 
 /**
- * The company step's outcome: its site's research and the answers to its
- * questions, by question id (each starts as its best guess).
+ * The company step's outcome: its site's research, what the company does
+ * (starts as the research's summary; the person may correct it) and the
+ * answers to its questions, by question id (each starts as its best guess).
  */
 export type CompanyChoice = {
   research: FoundryCompanyResearch;
+  summary: string;
   answers: ReadonlyMap<string, string>;
 };
 
@@ -3055,6 +3057,7 @@ export type CompanyFlowAction =
   | { type: "research-done"; domain: string; research: FoundryCompanyResearch }
   | { type: "research-failed"; domain: string; error: unknown }
   | { type: "answer"; questionId: string; answer: string }
+  | { type: "summary"; summary: string }
   | { type: "goal"; goal: string }
   // `auto`: the goal step drafting on its own, only into an empty goal and
   // once per research; else Write it again.
@@ -3117,6 +3120,7 @@ export function companyFlow(
         ? {
             ...switched({
               research: action.research,
+              summary: action.research.summary || "",
               answers: new Map(
                 (action.research.questions || []).map((q) => [
                   q.id,
@@ -3143,6 +3147,10 @@ export function companyFlow(
               ),
             },
           }
+        : flow;
+    case "summary":
+      return flow.company
+        ? { ...flow, company: { ...flow.company, summary: action.summary } }
         : flow;
     case "goal":
       return {

@@ -2394,12 +2394,16 @@ export type FoundryResearchAnswer = { questionId: string; answer: string };
  * FoundryServiceDraftFoundryGoalBody: POST
  * .../company-research/{researchId}:draft-goal. Each answer at most 500
  * characters, naming a question of the research (else INVALID_ARGUMENT);
- * `data` the chosen data in plain text, at most 12,000 characters. An
+ * `data` the chosen data in plain text, at most 12,000 characters; `summary`
+ * at most 600. An
  * unknown research, or another workspace's, is NOT_FOUND.
  */
 export type DraftGoalRequest = {
   answers: FoundryResearchAnswer[];
   data: string;
+  // What the company does, as the person corrected the research's summary:
+  // at most 600 characters. Left out (or blank), the research's is used.
+  summary?: string;
 };
 
 /** v1DraftFoundryGoalResponse: a goal of at most 2,000 characters and a name of at most 60. */

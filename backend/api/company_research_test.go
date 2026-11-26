@@ -447,3 +447,29 @@ func TestDraftFoundryGoal(t *testing.T) {
 	assert.Equal(t, "FOUNDRY_RESEARCH_FAILED", reasonOf(err))
 	assert.Len(t, store.ofKind(foundrymodel.FoundryCompanyResearchGoal), 3)
 }
+
+// A summary the person corrected replaces the research's in the goal's
+// prompt; a blank one keeps it, and one past MaxSummary is refused.
+func TestDraftFoundryGoalCorrectedSummary(t *testing.T) {
+	s, _, model, _ := researchService(t, researchAnswer{tool: companyresearch.ResearchTool, input: acmeResearch},
+		researchAnswer{tool: companyresearch.GoalTool, input: acmeGoal},
+		researchAnswer{tool: companyresearch.GoalTool, input: acmeGoal})
+	r, err := research(s, site("user-ada"), "acme.com")
+	require.NoError(t, err)
+	ask := func(summary string) error {
+		_, err := s.DraftFoundryGoal(site("user-ada"), &foundryv1.DraftFoundryGoalRequest{WorkspaceId: "ws-1", ResearchId: r.GetId(), Summary: summary})
+		return err
+	}
+
+	require.NoError(t, ask("  Acme sells anvils to cartoon coyotes.  "))
+	user := model.requests[1].Messages[0].Content[0].(llm.Text).Text
+	assert.Contains(t, user, "What it does: Acme sells anvils to cartoon coyotes.\n")
+	assert.NotContains(t, user, r.GetSummary())
+
+	require.NoError(t, ask(" "))
+	assert.Contains(t, model.requests[2].Messages[0].Content[0].(llm.Text).Text, "What it does: "+r.GetSummary()+"\n")
+
+	err = ask(strings.Repeat("s", companyresearch.MaxSummary+1))
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Len(t, model.requests, 3, "a refused summary never reached the model")
+}
