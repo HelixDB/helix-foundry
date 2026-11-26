@@ -154,11 +154,11 @@ test("every main page in both themes", async ({ page }, info) => {
 
   await visit("ontologies", "/ontology");
   await visit("ontology-new", "/ontology/new");
-  // Its company researched: the company, its pages, and the questions with
-  // their guesses and chips.
+  // Its company researched: the company, its pages, and its first question
+  // with its guess and chips.
   await page.getByLabel("Company website").fill("globex.com");
   await page.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await expect(page.locator(".on-focus-count")).toBeVisible();
   await settle(page);
   await shoot("ontology-new-company");
   await page.goto("/ontology/new?step=review");

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
+  Check,
   CreditCard,
   Database,
   RotateCcw,
@@ -69,7 +70,7 @@ import {
   type MadeResources,
   type WizardStepId,
 } from "./model";
-import { Callout, FlowStep, type Arrival } from "./parts";
+import { Callout, type Arrival } from "./parts";
 import { SAMPLE, isSampleConnector, isSampleSet } from "./sample";
 import {
   createOntology,
@@ -577,6 +578,22 @@ export function NewOntologyPage() {
     );
     return true;
   };
+  // The company step's last Continue: the goal is drafted from the answers
+  // at once, while the user chooses their data, and again only when the
+  // answers changed since and the goal is still the drafted one (or none).
+  // A draft that can't start yet (the data still being read) starts on the
+  // goal step.
+  const draftedFrom = useRef<string | null>(null);
+  const finishCompany = () => {
+    const answers = JSON.stringify([...(company?.answers || [])]);
+    const edited =
+      !!goal.trim() && !(flow.drafted && flow.drafted.goal === goal);
+    if (company && !drafting && !edited && draftedFrom.current !== answers) {
+      if (writeGoal(draftedFrom.current === null))
+        draftedFrom.current = answers;
+    }
+    go("sources");
+  };
   // The goal step, shown with research and no goal, drafts one once per
   // research (a failure says why and leaves the field to the user).
   // StrictMode runs the effect twice with one render's flow: the ref keeps
@@ -765,6 +782,17 @@ export function NewOntologyPage() {
                 companyFlow(f, { type: "answer", questionId, answer }),
               )
             }
+            onFinish={finishCompany}
+            onSkip={() => go("sources")}
+            onBack={
+              onboarding
+                ? () => {
+                    setOwn(false);
+                    setParams({});
+                  }
+                : undefined
+            }
+            onCancel={cancel}
           />
         );
       case "sources":
@@ -928,11 +956,7 @@ export function NewOntologyPage() {
   return (
     <SignInReturn.Provider value={BACK}>
       <Page width="narrow">
-        <PageHeader
-          breadcrumbs={crumbs}
-          title={title}
-          subtitle="Tell Foundry about your company, choose your data and say what you want to understand. Its agent drafts the ontology, loads it into a Helix database and emails you when it’s ready to ask."
-        />
+        <PageHeader breadcrumbs={crumbs} title={title} />
         {connecting}
         {sending && (
           <EventSourceSendDialog
@@ -952,149 +976,194 @@ export function NewOntologyPage() {
             onCancel={() => setRedrafting(false)}
           />
         )}
-        <ol className="on-wizard" aria-label="Steps">
-          {wizard.steps.map((s, i) => {
-            const copy = STEP_COPY[s.id];
+        <ol className="on-stepper" aria-label="Steps">
+          {wizard.steps.map((st, i) => {
+            const state = i === at ? "current" : i < at ? "done" : "upcoming";
             return (
-              <FlowStep
-                key={s.id}
-                number={i + 1}
-                title={copy.title}
-                text={copy.text}
-                optional={s.optional}
-                state={i === at ? "current" : i < at ? "done" : "upcoming"}
-                summary={stepSummary(s.state)}
-                onEdit={() => go(s.id)}
+              <li
+                key={st.id}
+                className={cx("on-stepper-step", `is-${state}`)}
+                aria-current={state === "current" ? "step" : undefined}
               >
-                {i === at && body()}
-                <div className="on-generate-foot">
-                  {s.state.kind === "blocked" && (
-                    <p className="on-muted" role="status">
-                      {s.state.reason}
-                    </p>
-                  )}
-                  {s.state.kind === "ready" && s.state.note && (
-                    <p className="on-muted" role="status">
-                      {s.state.note}
-                    </p>
-                  )}
-                  {s.id === "review" &&
-                    i === at &&
-                    s.state.kind === "loading" &&
-                    readFailed && (
-                      <p className="hf-form-error on-review-error" role="alert">
-                        {sentence(
-                          `Couldn’t read this workspace’s databases, which creating it needs: ${
-                            readFailed.message || "try again"
-                          }`,
-                        )}{" "}
-                        <Button
-                          size="sm"
-                          icon={RotateCcw}
-                          onClick={() => {
-                            void databases.refetch();
-                            void ontologies.refetch();
-                          }}
-                        >
-                          Retry
-                        </Button>
-                      </p>
-                    )}
-                  {s.id === "review" && aiReady === false && (
-                    <AiGate action="Its first draft" />
-                  )}
-                  {s.id === "review" &&
-                    error !== null &&
-                    (isNoSubscription(error) ? (
-                      <Callout
-                        icon={CreditCard}
-                        tone="danger"
-                        title="A new database needs a Helix plan"
-                        text="This workspace has no active Helix subscription, which a database on the shared cluster needs. Choose a plan in the Helix dashboard, or use a database you already have."
-                        action={
-                          <span className="on-card-actions">
-                            <a
-                              className="hf-btn hf-btn--secondary hf-btn--sm"
-                              href={`${DASHBOARD_URL}/${encodeURIComponent(slug)}/billing`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Open Helix billing
-                            </a>
-                            {choices?.some((c) => !c.usedBy) && (
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  setDatabase({
-                                    kind: "existing",
-                                    tenantId: "",
-                                  });
-                                  setAdvanced(true);
-                                  setError(null);
-                                }}
-                              >
-                                Use an existing one
-                              </Button>
-                            )}
-                          </span>
-                        }
-                      />
-                    ) : (
-                      <p className="hf-form-error" role="alert">
-                        {message
-                          ? sentence(message)
-                          : "Couldn’t create the ontology."}
-                      </p>
-                    ))}
-                  <div className="hf-form-actions">
-                    {wizard.back ? (
-                      <Button onClick={() => go(wizard.back!)}>Back</Button>
-                    ) : onboarding ? (
-                      <Button
-                        onClick={() => {
-                          setOwn(false);
-                          setParams({});
-                        }}
-                      >
-                        Back
-                      </Button>
-                    ) : (
-                      <Button onClick={cancel}>Cancel</Button>
-                    )}
-                    {wizard.next ? (
-                      <Button
-                        variant="primary"
-                        iconRight={ArrowRight}
-                        disabled={
-                          (drafting && s.id === "goal") ||
-                          s.state.kind === "blocked" ||
-                          s.state.kind === "loading"
-                        }
-                        onClick={() => go(wizard.next!)}
-                      >
-                        {s.state.kind === "skipped" ? "Skip" : "Continue"}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="primary"
-                        icon={Sparkles}
-                        pending={pending}
-                        disabled={!wizard.request || drafting}
-                        onClick={() => void create()}
-                      >
-                        {aiReady === false ? "Create" : "Create and generate"}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </FlowStep>
+                {state === "done" ? (
+                  <button
+                    type="button"
+                    className="on-stepper-button"
+                    aria-label={`Edit ${STEP_LABELS[st.id]}`}
+                    title={stepSummary(st.state)}
+                    onClick={() => go(st.id)}
+                  >
+                    <span className="on-stepper-number" aria-hidden>
+                      <Check size={12} />
+                    </span>
+                    <span className="on-stepper-title">
+                      {STEP_LABELS[st.id]}
+                    </span>
+                    <span className="hf-sr-only">
+                      {" "}
+                      (done: {stepSummary(st.state)})
+                    </span>
+                  </button>
+                ) : (
+                  // Only a done step is a way back: the others aren't buttons.
+                  <span className="on-stepper-button">
+                    <span className="on-stepper-number" aria-hidden>
+                      {i + 1}
+                    </span>
+                    <span className="on-stepper-title">
+                      {STEP_LABELS[st.id]}
+                    </span>
+                  </span>
+                )}
+              </li>
             );
           })}
         </ol>
+        {step.id === "company" ? (
+          body()
+        ) : (
+          <div className="on-step">
+            <header className="on-step-head">
+              <h2>
+                {STEP_COPY[step.id].title}
+                {step.optional && <small>Optional</small>}
+              </h2>
+              <p>{STEP_COPY[step.id].text}</p>
+            </header>
+            {body()}
+            <div className="on-generate-foot">
+              {step.state.kind === "blocked" && (
+                <p className="on-muted" role="status">
+                  {step.state.reason}
+                </p>
+              )}
+              {step.state.kind === "ready" && step.state.note && (
+                <p className="on-muted" role="status">
+                  {step.state.note}
+                </p>
+              )}
+              {step.id === "review" &&
+                step.state.kind === "loading" &&
+                readFailed && (
+                  <p className="hf-form-error on-review-error" role="alert">
+                    {sentence(
+                      `Couldn’t read this workspace’s databases, which creating it needs: ${
+                        readFailed.message || "try again"
+                      }`,
+                    )}{" "}
+                    <Button
+                      size="sm"
+                      icon={RotateCcw}
+                      onClick={() => {
+                        void databases.refetch();
+                        void ontologies.refetch();
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </p>
+                )}
+              {step.id === "review" && aiReady === false && (
+                <AiGate action="Its first draft" />
+              )}
+              {step.id === "review" &&
+                error !== null &&
+                (isNoSubscription(error) ? (
+                  <Callout
+                    icon={CreditCard}
+                    tone="danger"
+                    title="A new database needs a Helix plan"
+                    text="This workspace has no active Helix subscription, which a database on the shared cluster needs. Choose a plan in the Helix dashboard, or use a database you already have."
+                    action={
+                      <span className="on-card-actions">
+                        <a
+                          className="hf-btn hf-btn--secondary hf-btn--sm"
+                          href={`${DASHBOARD_URL}/${encodeURIComponent(slug)}/billing`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Helix billing
+                        </a>
+                        {choices?.some((c) => !c.usedBy) && (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setDatabase({
+                                kind: "existing",
+                                tenantId: "",
+                              });
+                              setAdvanced(true);
+                              setError(null);
+                            }}
+                          >
+                            Use an existing one
+                          </Button>
+                        )}
+                      </span>
+                    }
+                  />
+                ) : (
+                  <p className="hf-form-error" role="alert">
+                    {message
+                      ? sentence(message)
+                      : "Couldn’t create the ontology."}
+                  </p>
+                ))}
+              <div className="hf-form-actions">
+                {wizard.back ? (
+                  <Button onClick={() => go(wizard.back!)}>Back</Button>
+                ) : onboarding ? (
+                  <Button
+                    onClick={() => {
+                      setOwn(false);
+                      setParams({});
+                    }}
+                  >
+                    Back
+                  </Button>
+                ) : (
+                  <Button onClick={cancel}>Cancel</Button>
+                )}
+                {wizard.next ? (
+                  <Button
+                    variant="primary"
+                    iconRight={ArrowRight}
+                    disabled={
+                      (drafting && step.id === "goal") ||
+                      step.state.kind === "blocked" ||
+                      step.state.kind === "loading"
+                    }
+                    onClick={() => go(wizard.next!)}
+                  >
+                    {step.state.kind === "skipped" ? "Skip" : "Continue"}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    icon={Sparkles}
+                    pending={pending}
+                    disabled={!wizard.request || drafting}
+                    onClick={() => void create()}
+                  >
+                    {aiReady === false ? "Create" : "Create and generate"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </Page>
     </SignInReturn.Provider>
   );
 }
+
+// What the steps along the top are called: short enough for one row.
+const STEP_LABELS: Record<WizardStepId, string> = {
+  company: "Your company",
+  sources: "Your data",
+  goal: "Goal",
+  review: "Review",
+};
 
 const NEW_PROJECT = "__new";
 

@@ -295,7 +295,7 @@ test("gives a new workspace only the wizard until its first ontology", async ({
     page.getByRole("heading", { level: 1, name: "Your first ontology" }),
   ).toBeVisible();
   await expect(page.getByRole("list", { name: "Steps" })).toContainText(
-    /^1Your company.*2Connect your data or upload documents.*3Goal.*4Review and create/s,
+    /^1Your company.*2Your data.*3Goal.*4Review/s,
   );
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(wizard).toBeVisible();

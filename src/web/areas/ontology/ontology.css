@@ -907,6 +907,179 @@
   flex-wrap: wrap;
 }
 
+/* New ontology: its steps in one row along the top, numbered, done ones
+   ticked (a click goes back to one), the current one marked; below it the
+   current step alone, its title and what it asks, then its content. */
+.on-stepper {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 var(--hf-space-5);
+  padding: 0;
+  list-style: none;
+}
+.on-stepper-step {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* A line between steps, the lines sharing the row's spare width. */
+.on-stepper-step + .on-stepper-step {
+  flex: 1 1 auto;
+}
+.on-stepper-step + .on-stepper-step::before {
+  content: "";
+  flex: 1 1 16px;
+  min-width: 12px;
+  height: 1px;
+  background: var(--hf-border);
+}
+.on-stepper-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  text-align: left;
+}
+button.on-stepper-button {
+  cursor: pointer;
+}
+button.on-stepper-button:hover {
+  color: var(--hf-text);
+}
+.on-stepper-number {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-sm);
+  font-size: var(--hf-text-xs);
+}
+.on-stepper-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-stepper-step.is-current .on-stepper-button {
+  color: var(--hf-text);
+  font-weight: 500;
+}
+.on-stepper-step.is-current .on-stepper-number {
+  border-color: var(--hf-text);
+  background: var(--hf-text);
+  color: var(--hf-raised);
+}
+.on-stepper-step.is-done .on-stepper-number {
+  border-color: var(--hf-accent);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.on-stepper-step.is-upcoming .on-stepper-button {
+  opacity: 0.6;
+}
+.on-stepper-step.is-done .on-stepper-button {
+  color: var(--hf-text-2);
+}
+.on-step {
+  display: grid;
+  gap: var(--hf-space-3);
+}
+.on-step-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-lg);
+  font-weight: 500;
+}
+.on-step-head h2 small {
+  padding: 1px 6px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+}
+.on-step-head p {
+  margin: 4px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+/* On a phone only the current step keeps its title. */
+@media (max-width: 640px) {
+  .on-stepper-step:not(.is-current) .on-stepper-title {
+    display: none;
+  }
+}
+
+/* The company step: one thing at a time, in the middle of the page. */
+.on-focus {
+  display: grid;
+  place-items: center;
+  min-height: 50vh;
+}
+.on-focus-card {
+  display: grid;
+  gap: var(--hf-space-2);
+  width: min(100%, 560px);
+}
+.on-focus-title {
+  margin: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-xl);
+  font-weight: 500;
+  line-height: 1.3;
+}
+.on-focus-card > .on-muted {
+  margin: 0;
+}
+.on-focus-kicker {
+  margin: 0;
+  color: var(--hf-text);
+  font-weight: 500;
+}
+.on-focus-count {
+  margin: var(--hf-space-2) 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.on-focus-question {
+  display: grid;
+  gap: var(--hf-space-2);
+  margin-top: 0;
+}
+.on-focus-question textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.on-company-summary {
+  margin: 0;
+  color: var(--hf-text-2);
+}
+.on-company-status:empty {
+  display: none;
+}
+.on-focus-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--hf-space-2);
+}
+.on-focus-actions > :last-child {
+  margin-left: auto;
+}
+
 /* New ontology, and an unfinished ontology's overview: its steps, a
    numbered row each, done ones ticked with what they chose, the current (or
    running) one open below its row. */
@@ -1263,9 +1436,9 @@
   text-decoration: underline;
 }
 
-/* The wizard's company step: the domain and Research on one row, then the
-   company, the pages read and its questions, each answer's options as
-   chips that fill it. */
+/* The wizard's company step: the domain and Research on one row; what
+   Foundry found over the first question, each answer's options as chips
+   that fill it. */
 .on-company-form {
   display: flex;
   flex-wrap: wrap;
@@ -1284,8 +1457,9 @@
 }
 .on-company {
   display: grid;
-  gap: 10px;
-  margin-top: 14px;
+  gap: 6px;
+  padding-bottom: var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-border);
 }
 .on-company-sources {
   margin: 0;
@@ -1295,13 +1469,6 @@
 }
 .on-company-sources a {
   color: var(--hf-text-2);
-}
-.on-company .on-question .hf-field {
-  margin-top: 0;
-}
-.on-company .on-question textarea {
-  resize: vertical;
-  line-height: 1.5;
 }
 .on-chips {
   display: flex;

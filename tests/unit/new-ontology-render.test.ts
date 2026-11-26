@@ -119,6 +119,8 @@ describe("CompanyPanel", () => {
         onDomain: () => {},
         onResearch: () => {},
         onAnswer: () => {},
+        onFinish: () => {},
+        onSkip: () => {},
       }),
     );
   const status = (html: string) =>
@@ -126,28 +128,37 @@ describe("CompanyPanel", () => {
       html,
     )?.[1];
 
-  it("keeps its status line mounted, saying what the research is doing and found", () => {
-    expect(status(panel({ kind: "idle" }))).toBe("");
+  it("asks for the website first, its status line mounted, saying when it reads the site", () => {
+    const idle = panel({ kind: "idle" });
+    expect(idle).toContain("What’s your company’s website?");
+    expect(idle).toContain("Skip");
+    expect(status(idle)).toBe("");
     const pending = panel({ kind: "pending", domain: "globex.com" });
     expect(status(pending)).toBe("Reading globex.com…");
     expect(pending).toContain('aria-busy="true"');
-    expect(status(panel({ kind: "idle" }, company))).toBe(
-      "Foundry read Globex: 2 questions to answer below.",
+  });
+
+  it("opens a researched company on its first question, under what Foundry found, one question at a time", () => {
+    const html = panel({ kind: "idle" }, company);
+    expect(html).toContain("Globex");
+    expect(html).toContain("Question 1 of 2");
+    expect(html).toContain("Who asks?");
+    expect(html).not.toContain("What matters?");
+    expect(html).toContain("Next");
+    expect(html).not.toContain("Write the goal");
+    // The only question's button writes the goal.
+    const one = panel(
+      { kind: "idle" },
+      {
+        ...company,
+        research: {
+          ...company.research,
+          questions: [company.research.questions![0]!],
+        },
+      },
     );
-    expect(
-      status(
-        panel(
-          { kind: "idle" },
-          {
-            ...company,
-            research: {
-              ...company.research,
-              questions: [company.research.questions![0]!],
-            },
-          },
-        ),
-      ),
-    ).toBe("Foundry read Globex: 1 question to answer below.");
+    expect(one).toContain("Question 1 of 1");
+    expect(one).toContain("Write the goal");
   });
 
   it("says why research failed, with Retry", () => {
