@@ -104,7 +104,8 @@ func TestABotsTurnReadsAsItsKeyAndOnlyProposes(t *testing.T) {
 	}
 	assert.ElementsMatch(t, slices.Collect(maps.Keys(BotTools)), offered)
 	system := h.model.requests[0].System
-	assert.Contains(t, system, botPrompt)
+	assert.Contains(t, system, botPrompt+" "+botSourcesPrompt)
+	assert.NotContains(t, system, botWorkspacePrompt)
 	assert.Contains(t, system, slackPrompt)
 	assert.NotContains(t, system, granteePrompt)
 
@@ -135,6 +136,46 @@ func TestABotsTurnReadsAsItsKeyAndOnlyProposes(t *testing.T) {
 	require.Len(t, proposals, 2)
 	assert.JSONEq(t, `{"type":"action_proposal","action_id":"`+h.db.actions[0].ID+`","operation":"update_dashboard"}`, proposals[0],
 		"the action alone")
+}
+
+// A bot whose scope is the workspace reads all of it, as the API reads its
+// key (access.Reader): its thread records no grants, whatever its key
+// holds, and no call is read around; it is told it reads everything for
+// everyone in the conversation, offers BotTools, and still only proposes.
+func TestAWorkspaceBotReadsTheWholeViewAndOnlyProposes(t *testing.T) {
+	h := newHarness(t,
+		call("toolu_1", "helix_foundry_list_ontologies", `{"workspace_id":"ws1"}`),
+		call("toolu_2", toolPrepare, `{"operation":"create_dashboard","target":"workspace:ws1","payload":{"name":"Pipeline"}}`),
+		say("An owner or admin will review it."))
+	h.runner.ProposalTTL = time.Hour
+	h.backend.readsWorkspace = true
+	// Grants taken away during a call change nothing for it.
+	key := access.Principal{Kind: access.PrincipalServiceCredential, ID: botKey}
+	h.db.grants = []model.FoundryAccessGrant{{Principal: key, Target: access.ConnectorTarget("stripe")}}
+	h.backend.onCall = func() { h.db.grants = nil }
+	turn := botMessage("Make me a pipeline dashboard")
+	h.db.turns = []*model.FoundryAgentTurn{turn}
+	_, err := h.runner.Run(context.Background(), turn)
+	require.NoError(t, err)
+
+	assert.Equal(t, []ports.Actor{{Source: ports.SourceGrantee, ServiceCredentialID: botKey, WorkspaceID: ws}}, h.host.actors, "it acts as its key")
+	var offered []string
+	for _, tool := range h.model.requests[0].Tools {
+		offered = append(offered, tool.Name)
+	}
+	assert.ElementsMatch(t, slices.Collect(maps.Keys(BotTools)), offered)
+	system := h.model.requests[0].System
+	assert.Contains(t, system, botPrompt+" "+botWorkspacePrompt)
+	assert.NotContains(t, system, botSourcesPrompt)
+	assert.NotContains(t, system, granteePrompt)
+	thread, err := h.db.GetFoundryAgentThread(context.Background(), ws, turn.ThreadID)
+	require.NoError(t, err)
+	assert.Nil(t, thread.Granted, "the whole view's thread")
+	require.Len(t, h.db.actions, 1)
+	assert.Equal(t, model.FoundryAgentActionPrepared, h.db.actions[0].Status, "a proposal waits for an owner or admin")
+	assert.Equal(t, model.AdminApproval{}, h.db.actions[0].Approval)
+	assert.Empty(t, h.backend.created, "nothing runs as the bot")
+	assert.Empty(t, h.host.service.Confirmations.(*confirmations).kept, "nothing is confirmed as the bot")
 }
 
 // A bot whose key its host refuses fails for good, in words the Slack bot
@@ -244,7 +285,24 @@ func TestTurnReach(t *testing.T) {
 	require.NoError(t, err)
 	reach, err := turnReach(session, botMessage("Hi"))
 	require.NoError(t, err)
-	assert.Equal(t, ReachBot, reach)
+	assert.Equal(t, ReachBotSources, reach, "a bot the API reads as no reader of the workspace")
+	reach, err = turnReach(session, readOnly(botMessage("Hi")))
+	require.NoError(t, err)
+	assert.Equal(t, ReachGrants, reach, "it proposes nothing read-only")
+	h.backend.readsWorkspace = true
+	reach, err = turnReach(session, botMessage("Hi"))
+	require.NoError(t, err)
+	assert.Equal(t, ReachBotWorkspace, reach)
+	reach, err = turnReach(session, readOnly(botMessage("Hi")))
+	require.NoError(t, err)
+	assert.Equal(t, ReachReadOnly, reach, "the whole view, proposing nothing")
+	h.backend.readsWorkspace = false
+	h.backend.accessErr = status.Error(codes.Unavailable, "down")
+	_, err = turnReach(session, botMessage("Hi"))
+	var retried *Failure
+	require.ErrorAs(t, err, &retried, "a bot's scope that can't be read fails the attempt")
+	assert.False(t, retried.Permanent)
+	h.backend.accessErr = nil
 	reach, err = turnReach(session, message("Hi"))
 	require.NoError(t, err)
 	assert.Equal(t, ReachWorkspace, reach)
@@ -267,7 +325,8 @@ func TestTurnReach(t *testing.T) {
 func TestEachReachOffersItsTools(t *testing.T) {
 	assert.Equal(t, Tools, ReachWorkspace.tools())
 	assert.Equal(t, GranteeTools, ReachGrants.tools())
-	assert.Equal(t, BotTools, ReachBot.tools())
+	assert.Equal(t, BotTools, ReachBotSources.tools())
+	assert.Equal(t, BotTools, ReachBotWorkspace.tools(), "the whole workspace's bot reads and proposes as one of its sources does")
 	want := maps.Clone(GranteeTools)
 	want[toolPrepare] = true
 	assert.Equal(t, want, BotTools)
@@ -291,30 +350,35 @@ func TestABotsSinkOnlyProposes(t *testing.T) {
 		return &actionSink{db: h.db, keys: h.keys, turn: botMessage("Load it"), workerID: "w1", maxPending: 3, reach: reach, proposalTTL: time.Hour}
 	}
 	h := newHarness(t)
-	for reach, allowed := range map[Reach]map[string]bool{ReachWorkspace: Operations, ReachBot: BotOperations, ReachGrants: {}} {
+	for reach, allowed := range map[Reach]map[string]bool{ReachWorkspace: Operations, ReachBotSources: BotOperations, ReachBotWorkspace: BotOperations,
+		ReachGrants: {}, ReachReadOnly: {}} {
 		sink := sinkOf(h, reach)
 		for op := range Operations {
 			assert.Equal(t, allowed[op], sink.Allows(op), "%v %s", reach, op)
 		}
 	}
 
-	for _, reach := range []Reach{ReachGrants, ReachWorkspace} {
+	for _, reach := range []Reach{ReachGrants, ReachWorkspace, ReachReadOnly} {
 		_, err := sinkOf(h, reach).Propose(context.Background(), proposal)
 		assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	}
-	keepsNone := sinkOf(h, ReachBot)
+	for _, reach := range []Reach{ReachBotSources, ReachBotWorkspace} {
+		_, err := sinkOf(h, reach).Record(context.Background(), integration.PreparedAction{Operation: "create_load", Target: "ontology:ws1/ont1"})
+		assert.Equal(t, codes.PermissionDenied, status.Code(err), "a bot runs nothing: %v", reach)
+	}
+	keepsNone := sinkOf(h, ReachBotSources)
 	keepsNone.proposalTTL = 0
 	_, err := keepsNone.Propose(context.Background(), proposal)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	for _, target := range []string{"ontology:ws2/ont1", "workspace:ws2", "tenant:t1"} {
 		elsewhere := proposal
 		elsewhere.Target = target
-		_, err = sinkOf(h, ReachBot).Propose(context.Background(), elsewhere)
+		_, err = sinkOf(h, ReachBotSources).Propose(context.Background(), elsewhere)
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), target)
 	}
 	assert.Empty(t, h.db.actions)
 
-	sink := sinkOf(h, ReachBot)
+	sink := sinkOf(h, ReachBotSources)
 	first, err := sink.Propose(context.Background(), proposal)
 	require.NoError(t, err)
 	again, err := sink.Propose(context.Background(), proposal)
@@ -337,7 +401,7 @@ func TestABotsSinkOnlyProposes(t *testing.T) {
 		{errors.New("the store went away"), codes.Unknown},
 	} {
 		h := newHarness(t)
-		failing := &actionSink{db: failingRecord{memStore: h.db, err: c.err}, turn: botMessage("Load it"), reach: ReachBot, proposalTTL: time.Hour}
+		failing := &actionSink{db: failingRecord{memStore: h.db, err: c.err}, turn: botMessage("Load it"), reach: ReachBotWorkspace, proposalTTL: time.Hour}
 		_, err := failing.Propose(context.Background(), proposal)
 		require.Error(t, err)
 		assert.Equal(t, c.code, status.Code(err), c.err.Error())
