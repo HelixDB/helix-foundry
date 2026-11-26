@@ -25,8 +25,9 @@ const foundrySlackRetired = "2000-01-01 00:00:00"
 // SetFoundrySlackMode sets whom the workspace's live install installID acts
 // as, and returns the mode it had (ErrNotFound when it isn't the
 // workspace's live install). Setting the mode it has changes nothing.
-//   - model.SlackSharedBot from per_person stores the credential; from
-//     another credential it is ErrConflict: per_person comes first.
+//   - model.SlackSharedBot from per_person stores the credential and its
+//     scope; from the same credential it sets the scope alone; from another
+//     credential it is ErrConflict: per_person comes first.
 //   - model.SlackPerPerson from a bot clears it, and retires the bot's
 //     threads in the same transaction: its live turns are cancelled
 //     (charging what they reserved), its Founder threads deleted, and their
@@ -38,6 +39,9 @@ func (s *mysqlDB) SetFoundrySlackMode(ctx context.Context, workspaceID, installI
 	case model.SlackSharedBot:
 		if m.CredentialID == "" || len(m.CredentialID) > 26 {
 			return nil, fmt.Errorf("a Slack bot's credential id is 1 to 26 bytes")
+		}
+		if m.Scope == nil {
+			return nil, fmt.Errorf("a Slack bot has a scope")
 		}
 	default:
 		return nil, fmt.Errorf("unknown Slack identity mode %T", mode)
@@ -60,17 +64,18 @@ FROM foundry_slack_installs WHERE id=? AND workspace_id=? AND revoked_at IS NULL
 		}
 		bot, isBot := was.(model.SlackSharedBot)
 		if next, ok := mode.(model.SlackSharedBot); ok {
-			if isBot {
+			if isBot && bot.CredentialID != next.CredentialID {
 				return ErrConflict
 			}
-			_, err := tx.db.ExecContext(ctx, `UPDATE foundry_slack_installs SET bot_credential_id=? WHERE id=?`, next.CredentialID, installID)
+			_, err := tx.db.ExecContext(ctx, `UPDATE foundry_slack_installs SET bot_credential_id=?, bot_scope=? WHERE id=?`,
+				next.CredentialID, next.Scope.String(), installID)
 			return err
 		}
 		for _, stmt := range []struct {
 			q    string
 			args []any
 		}{
-			{`UPDATE foundry_slack_installs SET bot_credential_id=NULL WHERE id=?`, []any{installID}},
+			{`UPDATE foundry_slack_installs SET bot_credential_id=NULL, bot_scope=DEFAULT WHERE id=?`, []any{installID}},
 			{`UPDATE foundry_agent_threads SET deleted_at=NOW(6)
 WHERE workspace_id=? AND user_id=? AND principal_kind='service_credential' AND deleted_at IS NULL`, []any{workspaceID, bot.CredentialID}},
 			{`UPDATE foundry_agent_turns
@@ -92,13 +97,20 @@ WHERE workspace_id=? AND user_id=? AND principal_kind='service_credential' AND s
 	return was, nil
 }
 
-// IsFoundrySlackBot reports whether credentialID is the bot of the
-// workspace's live install: the one non-person principal Founder serves.
-func (s *mysqlDB) IsFoundrySlackBot(ctx context.Context, workspaceID, credentialID string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_slack_installs
-WHERE bot_credential_id=? AND workspace_id=? AND revoked_at IS NULL`, credentialID, workspaceID).Scan(&n)
-	return n > 0, err
+// FoundrySlackBotScope is what credentialID reads as the bot of the
+// workspace's live install, the one non-person principal Founder serves;
+// ErrNotFound when it is no such bot.
+func (s *mysqlDB) FoundrySlackBotScope(ctx context.Context, workspaceID, credentialID string) (model.SlackBotScope, error) {
+	var scope string
+	err := s.db.QueryRowContext(ctx, `SELECT bot_scope FROM foundry_slack_installs
+WHERE bot_credential_id=? AND workspace_id=? AND revoked_at IS NULL`, credentialID, workspaceID).Scan(&scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return model.ParseSlackBotScope(scope)
 }
 
 // IsFoundrySlackBotCredential reports whether any install, live or revoked,

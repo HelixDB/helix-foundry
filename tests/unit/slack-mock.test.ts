@@ -384,6 +384,7 @@ describe("bot mode", () => {
         credentialId: key!.id,
         credentialName: "Slack bot (Acme Slack)",
         broken: false,
+        scope: "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE",
       },
     });
     // The mode it has changes nothing: no second key.
@@ -408,6 +409,57 @@ describe("bot mode", () => {
     await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
     expect((await bots()).filter((k) => !k.revokedAt)).toHaveLength(1);
   });
+  it("reads the whole workspace unless limited to its sources, which owners and admins change in place", async () => {
+    const scoped = (
+      identityMode: unknown,
+      botScope: unknown,
+      userId = "usr_ada",
+    ) => call("PATCH", W, { identityMode, botScope }, userId);
+    const scopeOf = async () =>
+      (await call("GET", W, undefined, "usr_alan")).body.slack.install.bot
+        .scope;
+    await installAcme();
+    // A scope goes with bot mode only, and is one of the two.
+    expect(
+      (
+        await scoped(
+          "FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON",
+          "FOUNDRY_SLACK_BOT_SCOPE_SOURCES",
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (await scoped("FOUNDRY_SLACK_IDENTITY_MODE_BOT", "EVERYTHING")).status,
+    ).toBe(400);
+    expect(await bots()).toEqual([]);
+    // Turned on limited, it starts limited.
+    await scoped(
+      "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+      "FOUNDRY_SLACK_BOT_SCOPE_SOURCES",
+    );
+    expect(await scopeOf()).toBe("FOUNDRY_SLACK_BOT_SCOPE_SOURCES");
+    const [key] = await bots();
+    // Widened in place: the same key; and no scope keeps it.
+    await scoped(
+      "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+      "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE",
+    );
+    expect(await scopeOf()).toBe("FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE");
+    await mode("FOUNDRY_SLACK_IDENTITY_MODE_BOT");
+    expect(await scopeOf()).toBe("FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE");
+    expect(await bots()).toEqual([key]);
+    // A member reads it and can't change it.
+    expect(
+      (
+        await scoped(
+          "FOUNDRY_SLACK_IDENTITY_MODE_BOT",
+          "FOUNDRY_SLACK_BOT_SCOPE_SOURCES",
+          "usr_alan",
+        )
+      ).status,
+    ).toBe(403);
+    expect(await scopeOf()).toBe("FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE");
+  });
   it("cuts the key's name to 64 characters", async () => {
     db.workspaces.get("ws_acme")!.displayName = "A".repeat(80);
     await installAcme();
@@ -428,6 +480,7 @@ describe("bot mode", () => {
       credentialId: key!.id,
       credentialName: "",
       broken: true,
+      scope: "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE",
     });
     // Off and on again gives it a new key that works.
     await mode("FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON");

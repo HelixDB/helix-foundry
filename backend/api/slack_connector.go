@@ -98,9 +98,15 @@ func (s *Service) slackInstallToProto(ctx context.Context, install *model.SlackI
 		out.IdentityMode = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON
 	case model.SlackSharedBot:
 		out.IdentityMode = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT
-		out.Bot = &foundryv1.FoundrySlackBot{CredentialId: m.CredentialID}
+		out.Bot = &foundryv1.FoundrySlackBot{CredentialId: m.CredentialID, Scope: slackBotScopes[m.Scope]}
 	}
 	return out
+}
+
+// slackBotScopes are the shared bot's scopes as the API names them.
+var slackBotScopes = map[model.SlackBotScope]foundryv1.FoundrySlackBotScope{
+	model.SlackBotWorkspace{}: foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE,
+	model.SlackBotSources{}:   foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_SOURCES,
 }
 
 // slackFeedRefused words a refused binding for the person: FAILED_PRECONDITION,

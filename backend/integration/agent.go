@@ -264,8 +264,10 @@ type Session struct {
 //
 // A Slack install's bot (bot mode) opens a grantee session: actor is
 // ports.SourceGrantee with its ServiceCredentialID and no UserID, and the
-// Identity is that key's MCP identity, narrowed by Foundry's source grants
-// alone; it confirms ConfirmByAdmin only. The host refuses a key that is
+// Identity is that key's MCP identity, which Foundry reads as the bot's
+// scope says (the whole workspace, as access.Reader, or its source grants
+// alone), FoundryGrants set while either gives it something; it confirms
+// ConfirmByAdmin only. The host refuses a key that is
 // revoked, expired, of another workspace, or holds database grants (which
 // would read past Foundry's grants), with PermissionDenied.
 type SessionHost interface {

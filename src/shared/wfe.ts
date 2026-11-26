@@ -5976,6 +5976,8 @@ export type PreviewFoundryAccessChangeResponse = {
  * of, `partialOntologyIds` those of them it holds only some of; `workflows`:
  * it may use those ontologies' use cases (always, for a caller that isn't a
  * grantee), seeing only the runs it started of one it holds only some of.
+ * `readsWorkspace`: a Slack shared bot whose scope is the workspace, never
+ * a person.
  */
 export type GetMyFoundryAccessResponse = {
   grantee?: boolean;
@@ -5983,6 +5985,7 @@ export type GetMyFoundryAccessResponse = {
   ontologyIds?: string[];
   partialOntologyIds?: string[];
   workflows?: boolean;
+  readsWorkspace?: boolean;
   /**
    * A grantee's: the channels its sources share with it now, sorted, and a
    * source's directory of people (Slack's users) as the item `*directory`
@@ -6149,8 +6152,8 @@ export type FoundrySlackInstall = {
 /**
  * v1FoundrySlackIdentityMode: whom an install's bot acts as. PER_PERSON:
  * each linked Slack user as their own Foundry user. BOT: one shared bot,
- * which anyone in the Slack workspace may ask, reading only the sources its
- * key is given; owners and admins run what it proposes as themselves.
+ * which anyone in the Slack workspace may ask, reading what its scope says;
+ * owners and admins run what it proposes as themselves.
  */
 export type FoundrySlackIdentityMode =
   | "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED"
@@ -6159,17 +6162,25 @@ export type FoundrySlackIdentityMode =
 
 /**
  * v1FoundrySlackBot: an install's shared bot, the workspace service
- * credential it acts as. Settings › Access chooses its sources, as principal
- * service_credential:<credentialId>. credentialName is empty when Helix
- * can't read it. broken: the key was revoked, deleted, expired or given
- * database permissions, and the bot's turns fail until bot mode is turned
- * off and on again.
+ * credential it acts as. scope: what it reads, WORKSPACE (everything an
+ * unrestricted member reads; a new bot's) or SOURCES (only what Settings ›
+ * Access gives it, as principal service_credential:<credentialId>).
+ * credentialName is empty when Helix can't read it. broken: the key was
+ * revoked, deleted, expired or given database permissions, and the bot's
+ * turns fail until bot mode is turned off and on again.
  */
 export type FoundrySlackBot = {
   credentialId?: string;
   credentialName?: string;
   broken?: boolean;
+  scope?: FoundrySlackBotScope;
 };
+
+/** v1FoundrySlackBotScope: what an install's shared bot reads. */
+export type FoundrySlackBotScope =
+  | "FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED"
+  | "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE"
+  | "FOUNDRY_SLACK_BOT_SCOPE_SOURCES";
 
 /**
  * v1FoundrySlackLink: a Slack user who acts as a Foundry user: the bot
@@ -6277,15 +6288,21 @@ export type FinishFoundrySlackInstallRequest =
 
 /**
  * FoundryServiceUpdateFoundrySlackBody: PATCH .../foundry/slack, owners and
- * admins (answers FoundrySlackResponse). BOT makes the shared bot's key;
- * PER_PERSON revokes it and deletes the bot's threads; the mode the install
- * has changes nothing. NOT_FOUND without an install; FAILED_PRECONDITION
- * FOUNDRY_SLACK_BOT_HOSTED_ONLY where the host makes no bot keys.
+ * admins (answers FoundrySlackResponse). BOT makes the shared bot's key,
+ * reading botScope (WORKSPACE when left out), and sets a bot's botScope;
+ * PER_PERSON revokes it and deletes the bot's threads, and takes no
+ * botScope; the mode the install has changes nothing. NOT_FOUND without an
+ * install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the host
+ * makes no bot keys.
  */
 export type UpdateFoundrySlackRequest = {
   identityMode: Exclude<
     FoundrySlackIdentityMode,
     "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED"
+  >;
+  botScope?: Exclude<
+    FoundrySlackBotScope,
+    "FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED"
   >;
 };
 

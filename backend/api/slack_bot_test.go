@@ -26,9 +26,17 @@ import (
 // questions, and Settings › Slack turns bot mode on and off. The store's
 // rules on MySQL are its own tests'.
 
-// IsFoundrySlackBot is ws-1's Slack bot, as slackBot names it.
-func (s *accessStore) IsFoundrySlackBot(_ context.Context, ws, credentialID string) (bool, error) {
-	return ws == "ws-1" && s.slackBot != "" && credentialID == s.slackBot, s.slackBotErr
+// FoundrySlackBotScope is ws-1's Slack bot's scope, as slackBot names it.
+func (s *accessStore) FoundrySlackBotScope(_ context.Context, ws, credentialID string) (model.SlackBotScope, error) {
+	switch {
+	case s.slackBotErr != nil:
+		return nil, s.slackBotErr
+	case ws != "ws-1" || s.slackBot == "" || credentialID != s.slackBot:
+		return nil, foundrystore.ErrNotFound
+	case s.slackBotScope == nil:
+		return model.SlackBotSources{}, nil
+	}
+	return s.slackBotScope, nil
 }
 
 // limitedFounderStore is founderStore keeping the limits each turn was
@@ -246,8 +254,8 @@ func (s *botSlackStore) SetFoundrySlackMode(_ context.Context, ws, installID str
 			i.Mode, s.raced = s.raced, nil
 		}
 		was := i.Mode
-		_, wasBot := was.(model.SlackSharedBot)
-		if next, ok := mode.(model.SlackSharedBot); ok && wasBot && was != next {
+		bot, wasBot := was.(model.SlackSharedBot)
+		if next, ok := mode.(model.SlackSharedBot); ok && wasBot && bot.CredentialID != next.CredentialID {
 			return nil, foundrystore.ErrConflict
 		}
 		i.Mode = mode
@@ -335,9 +343,16 @@ func updateSlack(f slackFixture, user string, mode foundryv1.FoundrySlackIdentit
 	return resp.GetSlack(), err
 }
 
+func updateSlackScope(f slackFixture, user string, mode foundryv1.FoundrySlackIdentityMode, scope foundryv1.FoundrySlackBotScope) (*foundryv1.FoundrySlack, error) {
+	resp, err := f.s.UpdateFoundrySlack(as(user), &foundryv1.UpdateFoundrySlackRequest{WorkspaceId: slackWS, IdentityMode: mode, BotScope: scope})
+	return resp.GetSlack(), err
+}
+
 const (
-	botMode       = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT
-	perPersonMode = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON
+	botMode        = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT
+	perPersonMode  = foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON
+	workspaceScope = foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE
+	sourcesScope   = foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_SOURCES
 )
 
 func TestUpdateFoundrySlack(t *testing.T) {
@@ -346,7 +361,7 @@ func TestUpdateFoundrySlack(t *testing.T) {
 		got, err := updateSlack(f, "user-3", botMode)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"ws-1 Slack bot (Acme) user-3"}, keys.made)
-		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-1"}, db.installs[0].Mode)
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-1", Scope: model.SlackBotWorkspace{}}, db.installs[0].Mode)
 		assert.Equal(t, botMode, got.GetInstall().GetIdentityMode())
 		assert.Equal(t, "cred-bot-1", got.GetInstall().GetBot().GetCredentialId())
 		assert.Equal(t, "Slack bot (Acme)", got.GetInstall().GetBot().GetCredentialName())
@@ -355,6 +370,78 @@ func TestUpdateFoundrySlack(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, keys.made, 1, "the mode it has")
 		assert.Empty(t, keys.revoked)
+	})
+	t.Run("a new bot reads the workspace unless asked otherwise", func(t *testing.T) {
+		f, db, _ := newBotFixture(t, model.SlackPerPerson{})
+		got, err := updateSlack(f, "user-1", botMode)
+		require.NoError(t, err)
+		assert.Equal(t, model.SlackBotWorkspace{}, db.installs[0].Mode.(model.SlackSharedBot).Scope)
+		assert.Equal(t, workspaceScope, got.GetInstall().GetBot().GetScope())
+
+		f, db, _ = newBotFixture(t, model.SlackPerPerson{})
+		got, err = updateSlackScope(f, "user-1", botMode, sourcesScope)
+		require.NoError(t, err)
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-1", Scope: model.SlackBotSources{}}, db.installs[0].Mode)
+		assert.Equal(t, sourcesScope, got.GetInstall().GetBot().GetScope())
+	})
+	t.Run("a bot's scope changes in place", func(t *testing.T) {
+		f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
+		got, err := updateSlackScope(f, "user-3", botMode, sourcesScope)
+		require.NoError(t, err)
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotSources{}}, db.installs[0].Mode)
+		assert.Equal(t, sourcesScope, got.GetInstall().GetBot().GetScope())
+		assert.Empty(t, keys.made, "the same key")
+		assert.Empty(t, keys.revoked)
+		assert.Empty(t, db.deleted, "its grants stay, for its sources")
+		got, err = updateSlack(f, "user-1", botMode)
+		require.NoError(t, err)
+		assert.Equal(t, sourcesScope, got.GetInstall().GetBot().GetScope(), "no scope keeps it")
+		got, err = updateSlackScope(f, "user-1", botMode, workspaceScope)
+		require.NoError(t, err)
+		assert.Equal(t, workspaceScope, got.GetInstall().GetBot().GetScope())
+		assert.Equal(t, model.SlackBotWorkspace{}, db.installs[0].Mode.(model.SlackSharedBot).Scope)
+	})
+	t.Run("a scope that can't be set", func(t *testing.T) {
+		f, db, _ := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
+		for name, tc := range map[string]struct {
+			mode  foundryv1.FoundrySlackIdentityMode
+			scope foundryv1.FoundrySlackBotScope
+			user  string
+			want  codes.Code
+		}{
+			"per person with a scope": {perPersonMode, sourcesScope, "user-1", codes.InvalidArgument},
+			"an unknown scope":        {botMode, 9, "user-1", codes.InvalidArgument},
+			"a member":                {botMode, sourcesScope, "user-2", codes.PermissionDenied},
+		} {
+			_, err := updateSlackScope(f, tc.user, tc.mode, tc.scope)
+			assert.Equal(t, tc.want, status.Code(err), name)
+		}
+		_, err := f.s.UpdateFoundrySlack(ports.WithActor(context.Background(), agent), &foundryv1.UpdateFoundrySlackRequest{WorkspaceId: slackWS,
+			IdentityMode: botMode, BotScope: workspaceScope})
+		assert.Equal(t, codes.PermissionDenied, status.Code(err), "a key, the bot's own included")
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}}, db.installs[0].Mode, "unchanged")
+		// A member reads it.
+		resp, err := f.s.GetFoundrySlack(as("user-2"), &foundryv1.GetFoundrySlackRequest{WorkspaceId: slackWS})
+		require.NoError(t, err)
+		assert.Equal(t, workspaceScope, resp.GetSlack().GetInstall().GetBot().GetScope())
+
+		// Another click turned bot mode off and on again meanwhile: the newer
+		// bot keeps its scope.
+		db.raced = model.SlackSharedBot{CredentialID: "cred-newer", Scope: model.SlackBotWorkspace{}}
+		_, err = updateSlackScope(f, "user-1", botMode, sourcesScope)
+		assert.Equal(t, codes.Aborted, status.Code(err))
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-newer", Scope: model.SlackBotWorkspace{}}, db.installs[0].Mode)
+		for name, tc := range map[string]struct {
+			err  error
+			want codes.Code
+		}{
+			"the install went": {foundrystore.ErrNotFound, codes.NotFound},
+			"the store down":   {errors.New("down"), codes.Internal},
+		} {
+			db.setErr = tc.err
+			_, err = updateSlackScope(f, "user-1", botMode, sourcesScope)
+			assert.Equal(t, tc.want, status.Code(err), name)
+		}
 	})
 	t.Run("a long team name is cut to the key's 64 characters", func(t *testing.T) {
 		f, _, keys := newBotFixture(t, model.SlackPerPerson{})
@@ -373,7 +460,7 @@ func TestUpdateFoundrySlack(t *testing.T) {
 		assert.Equal(t, "Slack bot ("+strings.Repeat("a", 52)+")", got.GetInstall().GetBot().GetCredentialName())
 	})
 	t.Run("per person revokes the key first, then retires the bot", func(t *testing.T) {
-		f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+		f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 		got, err := updateSlack(f, "user-1", perPersonMode)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"cred-bot-0"}, keys.revoked)
@@ -386,15 +473,15 @@ func TestUpdateFoundrySlack(t *testing.T) {
 		assert.Len(t, keys.revoked, 1, "the mode it has")
 	})
 	t.Run("a key that can't be revoked leaves bot mode on, to try again", func(t *testing.T) {
-		f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+		f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 		keys.revokeErr = errors.New("down")
 		_, err := updateSlack(f, "user-1", perPersonMode)
 		assert.Equal(t, codes.Unavailable, status.Code(err))
-		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-0"}, db.installs[0].Mode)
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}}, db.installs[0].Mode)
 		keys.revokeErr, db.deleteErr = nil, errors.New("down")
 		_, err = updateSlack(f, "user-1", perPersonMode)
 		assert.Equal(t, codes.Unavailable, status.Code(err), "nor its grants dropped")
-		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-0"}, db.installs[0].Mode)
+		assert.Equal(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}}, db.installs[0].Mode)
 		db.deleteErr = nil
 		_, err = updateSlack(f, "user-1", perPersonMode)
 		require.NoError(t, err)
@@ -404,20 +491,20 @@ func TestUpdateFoundrySlack(t *testing.T) {
 	t.Run("clicks that race", func(t *testing.T) {
 		// Another click made the bot first: this one's key goes unused.
 		f, db, keys := newBotFixture(t, model.SlackPerPerson{})
-		db.raced = model.SlackSharedBot{CredentialID: "cred-other"}
+		db.raced = model.SlackSharedBot{CredentialID: "cred-other", Scope: model.SlackBotWorkspace{}}
 		keys.keys["cred-other"] = &botKey{workspaceID: slackWS, name: "Slack bot (Acme)", usable: true}
 		got, err := updateSlack(f, "user-1", botMode)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"cred-bot-1"}, keys.revoked)
 		assert.Equal(t, "cred-other", got.GetInstall().GetBot().GetCredentialId())
 		// Another click turned it off and on again: both keys go.
-		db.raced = model.SlackSharedBot{CredentialID: "cred-newer"}
+		db.raced = model.SlackSharedBot{CredentialID: "cred-newer", Scope: model.SlackBotWorkspace{}}
 		_, err = updateSlack(f, "user-1", perPersonMode)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"cred-bot-1", "cred-other", "cred-newer"}, keys.revoked)
 		assert.Equal(t, model.SlackPerPerson{}, db.installs[0].Mode)
 		// The other key's revoke failing is logged: the mode is off.
-		db.installs[0].Mode, db.raced = model.SlackSharedBot{CredentialID: "cred-a"}, model.SlackSharedBot{CredentialID: "cred-b"}
+		db.installs[0].Mode, db.raced = model.SlackSharedBot{CredentialID: "cred-a", Scope: model.SlackBotWorkspace{}}, model.SlackSharedBot{CredentialID: "cred-b", Scope: model.SlackBotWorkspace{}}
 		keys.revoked, keys.refuse = nil, "cred-b"
 		_, err = updateSlack(f, "user-1", perPersonMode)
 		require.NoError(t, err)
@@ -451,7 +538,7 @@ func TestUpdateFoundrySlack(t *testing.T) {
 			"the install went": {foundrystore.ErrNotFound, codes.NotFound},
 			"the store down":   {errors.New("down"), codes.Internal},
 		} {
-			f, db, _ := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+			f, db, _ := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 			db.setErr = tc.err
 			_, err := updateSlack(f, "user-1", perPersonMode)
 			assert.Equal(t, tc.want, status.Code(err), name)
@@ -466,7 +553,7 @@ func TestUpdateFoundrySlack(t *testing.T) {
 		_, err = updateSlack(f, "user-1", perPersonMode)
 		require.NoError(t, err, "the mode it has")
 		// A bot it holds still turns off: its grants are dropped.
-		f, db, _ := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+		f, db, _ := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 		f.s.deps.BotCredentials = nil
 		got, err := updateSlack(f, "user-1", perPersonMode)
 		require.NoError(t, err)
@@ -517,7 +604,7 @@ func TestGetFoundrySlackBot(t *testing.T) {
 	assert.Equal(t, perPersonMode, got.GetIdentityMode())
 	assert.Nil(t, got.GetBot())
 
-	f, _, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+	f, _, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 	got = get(f)
 	assert.Equal(t, botMode, got.GetIdentityMode())
 	assert.Equal(t, "cred-bot-0", got.GetBot().GetCredentialId())
@@ -540,13 +627,13 @@ func TestGetFoundrySlackBot(t *testing.T) {
 // Disconnecting a bot-mode install revokes its key; a revoke that fails
 // leaves the install disconnected.
 func TestDisconnectFoundrySlackBot(t *testing.T) {
-	f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+	f, db, keys := newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 	_, err := f.s.DisconnectFoundrySlack(as("user-1"), &foundryv1.DisconnectFoundrySlackRequest{WorkspaceId: slackWS})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"cred-bot-0"}, keys.revoked)
 	assert.Equal(t, []access.Principal{{Kind: access.PrincipalServiceCredential, ID: "cred-bot-0"}}, db.deleted)
 
-	f, _, keys = newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0"})
+	f, _, keys = newBotFixture(t, model.SlackSharedBot{CredentialID: "cred-bot-0", Scope: model.SlackBotWorkspace{}})
 	keys.revokeErr = errors.New("down")
 	got, err := f.s.DisconnectFoundrySlack(as("user-1"), &foundryv1.DisconnectFoundrySlackRequest{WorkspaceId: slackWS})
 	require.NoError(t, err)

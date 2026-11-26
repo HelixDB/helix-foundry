@@ -58,7 +58,8 @@ func TestAReadOnlyTurnsReach(t *testing.T) {
 // and its thread records the whole view, not grants.
 func TestReadOnlyReadsTheWholeViewWithGranteeTools(t *testing.T) {
 	assert.Equal(t, GranteeTools, ReachReadOnly.tools())
-	for reach, whole := range map[Reach]bool{ReachWorkspace: true, ReachReadOnly: true, ReachGrants: false, ReachBot: false} {
+	for reach, whole := range map[Reach]bool{ReachWorkspace: true, ReachReadOnly: true, ReachGrants: false, ReachBotSources: false,
+		ReachBotWorkspace: true} {
 		assert.Equal(t, whole, reach.wholeView(), "%v", reach)
 	}
 }

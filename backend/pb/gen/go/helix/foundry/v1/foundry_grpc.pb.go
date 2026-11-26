@@ -608,11 +608,12 @@ type FoundryServiceClient interface {
 	DisconnectFoundrySlack(ctx context.Context, in *DisconnectFoundrySlackRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error)
 	// Sets whom the install's bot acts as, for an owner or admin. BOT makes
 	// one shared bot for the whole Slack workspace: Helix makes it a
-	// workspace service credential no one holds the token of, whose sources
-	// are chosen in Settings › Access, and owners and admins run what it
-	// proposes as themselves. PER_PERSON answers each linked Slack user as
-	// their own Foundry user: the bot's credential is revoked and its threads
-	// deleted. Setting the mode it has changes nothing. NOT_FOUND without an
+	// workspace service credential no one holds the token of, which reads
+	// what its bot_scope says (the whole workspace unless set otherwise), and
+	// owners and admins run what it proposes as themselves. BOT with a
+	// bot_scope sets the shared bot's scope. PER_PERSON answers each linked
+	// Slack user as their own Foundry user: the bot's credential is revoked
+	// and its threads deleted. Setting the mode it has changes nothing. NOT_FOUND without an
 	// install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the
 	// host makes no such credentials.
 	UpdateFoundrySlack(ctx context.Context, in *UpdateFoundrySlackRequest, opts ...grpc.CallOption) (*FoundrySlackResponse, error)
@@ -2850,11 +2851,12 @@ type FoundryServiceServer interface {
 	DisconnectFoundrySlack(context.Context, *DisconnectFoundrySlackRequest) (*FoundrySlackResponse, error)
 	// Sets whom the install's bot acts as, for an owner or admin. BOT makes
 	// one shared bot for the whole Slack workspace: Helix makes it a
-	// workspace service credential no one holds the token of, whose sources
-	// are chosen in Settings › Access, and owners and admins run what it
-	// proposes as themselves. PER_PERSON answers each linked Slack user as
-	// their own Foundry user: the bot's credential is revoked and its threads
-	// deleted. Setting the mode it has changes nothing. NOT_FOUND without an
+	// workspace service credential no one holds the token of, which reads
+	// what its bot_scope says (the whole workspace unless set otherwise), and
+	// owners and admins run what it proposes as themselves. BOT with a
+	// bot_scope sets the shared bot's scope. PER_PERSON answers each linked
+	// Slack user as their own Foundry user: the bot's credential is revoked
+	// and its threads deleted. Setting the mode it has changes nothing. NOT_FOUND without an
 	// install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the
 	// host makes no such credentials.
 	UpdateFoundrySlack(context.Context, *UpdateFoundrySlackRequest) (*FoundrySlackResponse, error)

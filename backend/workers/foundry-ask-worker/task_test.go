@@ -169,6 +169,23 @@ type memStore struct {
 	// sharing says, by reader's email ("agent" for no one).
 	slack   bool
 	sharing map[string][]model.FoundrySourceSharing
+	// botScopes are the scopes of the workspace's Slack bot, by its key;
+	// botErr fails reading them.
+	botScopes map[string]model.SlackBotScope
+	botErr    error
+}
+
+func (s *memStore) FoundrySlackBotScope(_ context.Context, _, credentialID string) (model.SlackBotScope, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.botErr != nil {
+		return nil, s.botErr
+	}
+	scope, ok := s.botScopes[credentialID]
+	if !ok {
+		return nil, foundrystore.ErrNotFound
+	}
+	return scope, nil
 }
 
 func (s *memStore) SourceSharingFor(_ context.Context, _ string, reader *connector.Email) ([]model.FoundrySourceSharing, error) {

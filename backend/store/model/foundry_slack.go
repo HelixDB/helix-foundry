@@ -22,11 +22,49 @@ type SlackIdentityMode interface{ slackIdentityMode() }
 type SlackPerPerson struct{}
 
 // SlackSharedBot acts as the install's own bot, a service credential of the
-// workspace's that no one holds the token of (L2).
-type SlackSharedBot struct{ CredentialID string }
+// workspace's that no one holds the token of (L2), reading what Scope says.
+type SlackSharedBot struct {
+	CredentialID string
+	Scope        SlackBotScope
+}
 
 func (SlackPerPerson) slackIdentityMode() {}
 func (SlackSharedBot) slackIdentityMode() {}
+
+// SlackBotScope is what a shared bot reads: a closed set, stored as its
+// String (foundry_slack_installs.bot_scope,
+// migrations/20261227000000_foundry_slack_bot_scope.sql). Either way the bot
+// only reads and asks, and proposes what an owner or admin runs.
+type SlackBotScope interface {
+	slackBotScope()
+	String() string
+}
+
+// SlackBotWorkspace reads everything an unrestricted member of the workspace
+// reads: every ontology, its current load and documents. A new bot's scope,
+// and every bot's from before scopes.
+type SlackBotWorkspace struct{}
+
+// SlackBotSources reads only what Settings › Access grants its credential.
+type SlackBotSources struct{}
+
+func (SlackBotWorkspace) slackBotScope() {}
+func (SlackBotSources) slackBotScope()   {}
+
+func (SlackBotWorkspace) String() string { return "workspace" }
+func (SlackBotSources) String() string   { return "sources" }
+
+// ParseSlackBotScope reads a scope as the store keeps it, refusing any other.
+//
+//	scope, err := model.ParseSlackBotScope("sources") // model.SlackBotSources{}, nil
+func ParseSlackBotScope(s string) (SlackBotScope, error) {
+	for _, scope := range []SlackBotScope{SlackBotWorkspace{}, SlackBotSources{}} {
+		if scope.String() == s {
+			return scope, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown Slack bot scope %q", s)
+}
 
 // Retention of Slack's data (the spec's §12): minimise, never train. How
 // long intake and replies stay is foundry.slack.retention's.

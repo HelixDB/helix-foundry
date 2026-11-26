@@ -55,35 +55,52 @@ func guarded(desc *grpc.ServiceDesc, authorize grpc.UnaryServerInterceptor) *grp
 	return &out
 }
 
-// authorize serves the host's caller as before grants, and a grantee only
-// as access's rule for the method lets it, with its Grantee (and, for an
+// authorize serves the host's caller as before grants; a grantee only as
+// access's rule for the method lets it, with its Grantee (and, for an
 // ontology's method, the current load its grants cover) on the handler's
-// context, for the handler to narrow what it answers.
+// context, for the handler to narrow what it answers; and a reader only
+// where access.ReaderAdmits, in its own workspace, with its Reader on the
+// context and nothing narrowed.
 func (s *Service) authorize(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	ctx = context.WithValue(ctx, sourceReadsKey{}, sourceaccess.New(s.deps.DB, s.deps.People, time.Now()))
-	g, ok, err := s.granteeOf(ctx, actor(ctx), req)
+	c, err := s.callerOf(ctx, actor(ctx), req)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return handler(ctx, req)
-	}
-	ctx, err = s.admit(access.WithCaller(ctx, g), g, access.RuleOf(info.FullMethod), req)
-	if err != nil {
-		return nil, err
+	switch c := c.(type) {
+	case access.Grantee:
+		if ctx, err = s.admit(access.WithCaller(ctx, c), c, access.RuleOf(info.FullMethod), req); err != nil {
+			return nil, err
+		}
+	case access.Reader:
+		ws, ok := req.(interface{ GetWorkspaceId() string })
+		if !access.ReaderAdmits(info.FullMethod) || !ok || ws.GetWorkspaceId() != c.WorkspaceID {
+			return nil, errNotGranted
+		}
+		ctx = access.WithCaller(ctx, c)
 	}
 	return handler(ctx, req)
 }
 
-// granteeOf is the Grantee a call is for, if it is one: a SourceGrantee
-// call, of its user or service credential, or a member restricted in the
-// request's workspace while their role is member. A user's grantee holds
-// their teams' grants too.
-func (s *Service) granteeOf(ctx context.Context, a ports.Actor, req any) (access.Grantee, bool, error) {
+// callerOf is who a call is for (access.Caller):
+//   - a Reader: a SourceGrantee service credential that is the shared bot of
+//     its workspace's live Slack install whose scope is the workspace;
+//   - a Grantee: any other SourceGrantee call, of its user or service
+//     credential, or a member restricted in the request's workspace while
+//     their role is member. A user's grantee holds their teams' grants too;
+//   - else the host's caller.
+func (s *Service) callerOf(ctx context.Context, a ports.Actor, req any) (access.Caller, error) {
 	var g access.Grantee
 	switch {
 	case a.Source == ports.SourceGrantee && a.ServiceCredentialID != "":
-		return access.Grantee{WorkspaceID: a.WorkspaceID, Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: a.ServiceCredentialID}}, true, nil
+		reader, ok, err := s.readerOf(ctx, a.WorkspaceID, a.ServiceCredentialID)
+		switch {
+		case err != nil:
+			return nil, err
+		case ok:
+			return reader, nil
+		}
+		return access.Grantee{WorkspaceID: a.WorkspaceID, Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: a.ServiceCredentialID}}, nil
 	case a.Source == ports.SourceGrantee:
 		g = access.Grantee{WorkspaceID: a.WorkspaceID, Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}}
 	case (a.Source == ports.SourceUser || a.Source == ports.SourceMCP) && a.UserID != "":
@@ -92,25 +109,46 @@ func (s *Service) granteeOf(ctx context.Context, a ports.Actor, req any) (access
 			workspaceID = r.GetWorkspaceId()
 		}
 		if workspaceID == "" {
-			return access.Grantee{}, false, nil
+			return access.Host{}, nil
 		}
 		restricted, err := s.deps.DB.IsFoundryMemberRestricted(ctx, workspaceID, a.UserID)
 		if err != nil {
-			return access.Grantee{}, false, status.Errorf(codes.Internal, "read restrictions: %v", err)
+			return nil, status.Errorf(codes.Internal, "read restrictions: %v", err)
 		}
 		if !restricted || s.promoted(ctx, workspaceID, a.UserID) {
-			return access.Grantee{}, false, nil
+			return access.Host{}, nil
 		}
 		g = access.Grantee{WorkspaceID: workspaceID, Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}}
 	default:
-		return access.Grantee{}, false, nil
+		return access.Host{}, nil
 	}
 	teams, err := s.deps.DB.FoundryTeamsOf(ctx, g.WorkspaceID, g.Principal.ID)
 	if err != nil {
-		return access.Grantee{}, false, status.Errorf(codes.Internal, "read teams: %v", err)
+		return nil, status.Errorf(codes.Internal, "read teams: %v", err)
 	}
 	g.Teams = teams
-	return g, true, nil
+	return g, nil
+}
+
+// readerOf is the Reader credentialID calls as in workspaceID: the shared
+// bot of the workspace's live Slack install whose scope is the workspace.
+// False for any other key, and for a bot whose scope is its sources, which
+// is a grantee.
+func (s *Service) readerOf(ctx context.Context, workspaceID, credentialID string) (access.Reader, bool, error) {
+	if workspaceID == "" {
+		return access.Reader{}, false, nil
+	}
+	scope, err := s.deps.DB.FoundrySlackBotScope(ctx, workspaceID, credentialID)
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return access.Reader{}, false, nil
+	case err != nil:
+		return access.Reader{}, false, status.Errorf(codes.Internal, "read the Slack install: %v", err)
+	}
+	if _, whole := scope.(foundrymodel.SlackBotWorkspace); !whole {
+		return access.Reader{}, false, nil
+	}
+	return access.Reader{WorkspaceID: workspaceID, Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: credentialID}}, true, nil
 }
 
 // promoted reports a restricted member made an owner or admin since, whose
@@ -487,8 +525,14 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
-	g, grantee := access.GranteeFrom(ctx)
-	if !grantee {
+	var g access.Grantee
+	grantee := false
+	switch c := access.CallerFrom(ctx).(type) {
+	case access.Reader:
+		return s.readerAccess(ctx, c)
+	case access.Grantee:
+		g, grantee = c, true
+	default:
 		a := actor(ctx)
 		switch {
 		case a.UserID != "":
@@ -498,6 +542,15 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 			}
 			g = access.Grantee{WorkspaceID: req.GetWorkspaceId(), Principal: access.Principal{Kind: access.PrincipalUser, ID: a.UserID}, Teams: teams}
 		case a.ServiceCredentialID != "":
+			// The host's own key, asking for discovery: the bot says what
+			// it reads as itself.
+			reader, ok, err := s.readerOf(ctx, req.GetWorkspaceId(), a.ServiceCredentialID)
+			switch {
+			case err != nil:
+				return nil, err
+			case ok:
+				return s.readerAccess(ctx, reader)
+			}
 			g = access.Grantee{WorkspaceID: req.GetWorkspaceId(), Principal: access.Principal{Kind: access.PrincipalServiceCredential, ID: a.ServiceCredentialID}}
 		default:
 			return &foundryv1.GetMyFoundryAccessResponse{Workflows: true}, nil
@@ -530,6 +583,16 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 		}
 	}
 	return resp, nil
+}
+
+// readerAccess is what r reads: the whole workspace, so every live ontology
+// with a current load, and no workflow (access.ReaderAdmits).
+func (s *Service) readerAccess(ctx context.Context, r access.Reader) (*foundryv1.GetMyFoundryAccessResponse, error) {
+	loads, err := s.deps.DB.ListFoundryCurrentLoadInputs(ctx, r.WorkspaceID, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read current loads: %v", err)
+	}
+	return &foundryv1.GetMyFoundryAccessResponse{ReadsWorkspace: true, OntologyIds: slices.Sorted(maps.Keys(loads))}, nil
 }
 
 // PreviewFoundryAccessChange returns each principal whose own grants cover

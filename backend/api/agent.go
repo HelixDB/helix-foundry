@@ -56,8 +56,9 @@ var reviewCardIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // may not be restricted here at all), a restricted member being a person
 // narrowed by the access check and the turn's Reach; or the bot of
 // workspaceID's live Slack install in bot mode (foundrymodel.AgentBot): a
-// SourceGrantee service credential the store names as that bot, and so
-// always a grantee, narrowed as one. Off, the Assistant is
+// SourceGrantee service credential the store names as that bot: a reader of
+// the whole workspace (access.Reader) or a grantee narrowed to its source
+// grants, as its scope says. Off, the Assistant is
 // FAILED_PRECONDITION, reason FOUNDRY_AGENT_DISABLED.
 func (s *Service) agentPrincipal(ctx context.Context, workspaceID string) (foundrymodel.FoundryAgentPrincipal, error) {
 	if !s.deps.Cfg.Foundry.Agent.Enabled {
@@ -68,12 +69,11 @@ func (s *Service) agentPrincipal(ctx context.Context, workspaceID string) (found
 	case a.Source == ports.SourceUser && a.UserID != "" && a.ServiceCredentialID == "":
 		return foundrymodel.AgentPerson{UserID: a.UserID}, nil
 	case a.Source == ports.SourceGrantee && a.ServiceCredentialID != "" && a.UserID == "" && workspaceID != "":
-		bot, err := s.deps.DB.IsFoundrySlackBot(ctx, workspaceID, a.ServiceCredentialID)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
-		}
-		if bot {
+		switch _, err := s.deps.DB.FoundrySlackBotScope(ctx, workspaceID, a.ServiceCredentialID); {
+		case err == nil:
 			return foundrymodel.AgentBot{CredentialID: a.ServiceCredentialID}, nil
+		case !errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Errorf(codes.Internal, "read the Slack install: %v", err)
 		}
 	}
 	return nil, status.Error(codes.PermissionDenied, "Founder answers people signed in to Foundry, and a Slack install's bot")
@@ -129,8 +129,10 @@ func agentRefusal(workspaceID string, err error) (error, bool) {
 // helper that runs it is online; one Foundry's worker runs, while the
 // workspace's model can't run. A grantee's page context keeps only what its
 // grants show (granteePage), and it relays no generation's answers: an owner
-// or admin answers a draft. A Slack install's bot is such a grantee, whose
-// threads always run on Foundry's worker, within foundry.slack.bot.per_hour.
+// or admin answers a draft. A Slack install's bot is such a grantee, or a
+// reader of the whole workspace whose threads hold no grants as a member's
+// don't; its threads always run on Foundry's worker, within
+// foundry.slack.bot.per_hour, and it relays no answers either.
 func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.SendFoundryAgentMessageRequest) (*foundryv1.FoundryAgentTurnResponse, error) {
 	ws := req.GetWorkspaceId()
 	principal, err := s.agentPrincipal(ctx, ws)
@@ -198,7 +200,7 @@ func (s *Service) SendFoundryAgentMessage(ctx context.Context, req *foundryv1.Se
 			return nil, status.Error(codes.NotFound, "turn not found")
 		case asking.Asked == nil:
 			return nil, foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED", "that turn asked you nothing")
-		case grantee && asking.Asked.Generation != nil:
+		case asking.Asked.Generation != nil && (grantee || principal.Access().Kind != access.PrincipalUser):
 			return nil, foundryPrecondition(ws, "FOUNDRY_AGENT_QUESTIONS_CLOSED",
 				"a draft's questions are answered by an owner or admin, on the generation's page in Foundry")
 		}

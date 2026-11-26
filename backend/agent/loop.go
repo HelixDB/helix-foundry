@@ -169,15 +169,21 @@ const (
 	// ReachWorkspace is everyone else's: Tools, and cards for what the
 	// person may do.
 	ReachWorkspace
-	// ReachBot is a Slack install's bot's: it reads what its source grants
-	// give it, as a restricted member does, and proposes BotOperations for
-	// an owner or admin to run (BotTools).
-	ReachBot
+	// ReachBotSources is a Slack install's bot's whose scope is its sources
+	// (model.SlackBotSources): it reads what its source grants give it, as a
+	// restricted member does, and proposes BotOperations for an owner or
+	// admin to run (BotTools).
+	ReachBotSources
 	// ReachReadOnly is a read-only turn's (model.FoundryAgentTurn.ReadOnly)
 	// of a person with the workspace's whole view: it reads all of it, as
 	// ReachWorkspace does, but with GranteeTools only, so it prepares,
 	// changes and makes nothing (readOnlyPrompt).
 	ReachReadOnly
+	// ReachBotWorkspace is a Slack install's bot's whose scope is the
+	// workspace (model.SlackBotWorkspace, the API's access.Reader): it reads
+	// all of it, as ReachWorkspace does, and proposes as ReachBotSources
+	// does (BotTools).
+	ReachBotWorkspace
 )
 
 // tools are the tools a turn of r may offer its model.
@@ -185,7 +191,7 @@ func (r Reach) tools() map[string]bool {
 	switch r {
 	case ReachWorkspace:
 		return Tools
-	case ReachBot:
+	case ReachBotSources, ReachBotWorkspace:
 		return BotTools
 	}
 	return GranteeTools
@@ -194,7 +200,12 @@ func (r Reach) tools() map[string]bool {
 // wholeView reports a Reach that reads the whole workspace, never narrowed
 // to source grants: the thread records no grants, and its tool calls need
 // no reads of them around (reachAround).
-func (r Reach) wholeView() bool { return r == ReachWorkspace || r == ReachReadOnly }
+func (r Reach) wholeView() bool {
+	return r == ReachWorkspace || r == ReachReadOnly || r == ReachBotWorkspace
+}
+
+// bot reports a Slack install's bot's Reach, which proposes (BotOperations).
+func (r Reach) bot() bool { return r == ReachBotSources || r == ReachBotWorkspace }
 
 // readOnlyPrompt is what a read-only turn is told after the system prompt
 // (ReachReadOnly, and a helper's turn: Hosts.Open): a standalone install's
@@ -203,18 +214,28 @@ func (r Reach) wholeView() bool { return r == ReachWorkspace || r == ReachReadOn
 const readOnlyPrompt = `This conversation only reads and asks: prepare nothing, and change or make nothing, dashboards included; you have no tool that would, so what the prompt above says about actions, cards, dashboards you make and workflows doesn't apply here. When they ask for a change, tell them plainly that the install's owner makes changes in Foundry, then answer what you can by reading and asking.`
 
 // turnReach is the turn's Reach this attempt, for the worker's turns and a
-// helper's alike: ReachBot for a Slack install's bot, else its person's now
-// (reachOf). A read-only turn only narrows it: a person with the whole view
-// reads it all with ReachReadOnly, a restricted member keeps ReachGrants,
-// and a bot reads its grants as one does (ReachGrants: it proposes
+// helper's alike: a Slack install's bot's as its scope says now
+// (ReachBotWorkspace or ReachBotSources), else its person's now (reachOf);
+// both as the API reads them (GetMyFoundryAccess), so the worker and the API
+// decide alike. A read-only turn only narrows it: the whole view reads it
+// all with ReachReadOnly, a restricted member keeps ReachGrants, and a bot
+// of its sources reads its grants as one does (ReachGrants: it proposes
 // nothing).
 func turnReach(session integration.Session, turn *model.FoundryAgentTurn) (Reach, error) {
 	switch turn.Principal.(type) {
 	case model.AgentBot:
-		if turn.ReadOnly {
+		mine, err := session.Service.Foundry.GetMyFoundryAccess(session.Ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: turn.WorkspaceID})
+		switch {
+		case err != nil:
+			return ReachGrants, accessRetry(err)
+		case mine.GetReadsWorkspace() && turn.ReadOnly:
+			return ReachReadOnly, nil
+		case mine.GetReadsWorkspace():
+			return ReachBotWorkspace, nil
+		case turn.ReadOnly:
 			return ReachGrants, nil
 		}
-		return ReachBot, nil
+		return ReachBotSources, nil
 	case model.AgentPerson:
 		reach, err := reachOf(session, turn.WorkspaceID)
 		if err == nil && reach == ReachWorkspace && turn.ReadOnly {
@@ -424,7 +445,8 @@ type turnRun struct {
 //     (GranteeTools for a restricted member, whose turn only reads and asks;
 //     an automation's fails for good); a Slack install's bot's is a grantee
 //     session of its key, which proposes for an owner or admin (BotTools,
-//     ReachBot), and fails for good with BotKeyRefused once its host
+//     ReachBotWorkspace or ReachBotSources, as its scope says), and fails
+//     for good with BotKeyRefused once its host
 //     refuses the key;
 //  3. read the thread's transcript, adding the turn's own message once;
 //  4. call the model and run the tools it calls, committing each message and

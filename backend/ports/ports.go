@@ -43,8 +43,10 @@ const (
 	SourceEventSource
 	// SourceGrantee is a user or service credential the front end's own
 	// permissions did not admit, so Foundry decides from its source grants
-	// (package access). It names exactly one of UserID and
-	// ServiceCredentialID, a WorkspaceID, and no query scope.
+	// (package access), or, for a Slack install's bot whose scope is the
+	// workspace, reads it as the workspace's reader (access.Reader). It
+	// names exactly one of UserID and ServiceCredentialID, a WorkspaceID, and
+	// no query scope.
 	SourceGrantee
 )
 
@@ -195,7 +197,8 @@ type People interface {
 // BotCredentials makes, reads and revokes the non-person principal a Slack
 // install's bot mode acts as: a workspace service credential whose token no
 // one holds and whose database grants stay empty, so it reads only what
-// Foundry's source grants give it. Hosted only: nil on a standalone
+// Foundry lets it as the bot: the whole workspace, or its source grants, as
+// the bot's scope says. Hosted only: nil on a standalone
 // install, where bot mode is refused.
 type BotCredentials interface {
 	// Create makes a credential of workspaceID named name (at most 64

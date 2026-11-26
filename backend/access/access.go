@@ -6,6 +6,10 @@
 // ontology's current load only while every source that load holds is
 // granted to it, and may change nothing.
 //
+// A Slack install's shared bot whose scope is the whole workspace is a
+// Reader: admitted only to the methods a grantee is, it reads everything an
+// unrestricted member reads and changes nothing but its own.
+//
 // Everyone else is the host's caller, as before grants existed: the front
 // end that authenticated them authorized the call, and Foundry trusts its
 // Actor. A workspace that grants nothing behaves as it did without them. A
@@ -63,7 +67,7 @@ type Principal struct {
 	ID   string
 }
 
-// Caller is who a call is for: Host or Grantee.
+// Caller is who a call is for: Host, Grantee or Reader.
 type Caller interface{ caller() }
 
 // Host is a caller the front end authorized: Foundry serves it as it did
@@ -80,8 +84,20 @@ type Grantee struct {
 	Teams []string
 }
 
+// Reader is a caller that reads its whole workspace as an unrestricted
+// member does, never narrowed to grants, and changes nothing: the shared
+// bot of the workspace's Slack install whose scope is the workspace. It is
+// admitted only where Rule admits a grantee, Workflows aside (ReaderAdmits).
+// Its own questions are its own, as a grantee's are.
+type Reader struct {
+	WorkspaceID string
+	// Principal is the service credential calling.
+	Principal Principal
+}
+
 func (Host) caller()    {}
 func (Grantee) caller() {}
+func (Reader) caller()  {}
 
 // Principals are those whose grants the grantee holds: itself, then its
 // teams.
@@ -114,4 +130,16 @@ func CallerFrom(ctx context.Context) Caller {
 func GranteeFrom(ctx context.Context) (Grantee, bool) {
 	g, ok := CallerFrom(ctx).(Grantee)
 	return g, ok
+}
+
+// PrincipalFrom is whose own the call's questions are: a grantee's or a
+// reader's principal, or none for the host's caller, whose are everyone's.
+func PrincipalFrom(ctx context.Context) (Principal, bool) {
+	switch c := CallerFrom(ctx).(type) {
+	case Grantee:
+		return c.Principal, true
+	case Reader:
+		return c.Principal, true
+	}
+	return Principal{}, false
 }
