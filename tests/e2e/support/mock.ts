@@ -490,6 +490,23 @@ export async function startOntology(page: Page) {
 }
 
 /**
+ * Walks a researched company's questions as they stand, one screen each,
+ * to the last, whose Write the goal starts the goal's draft and opens the
+ * sources step.
+ */
+export async function finishCompany(page: Page) {
+  const count = page.locator(".on-focus-count");
+  await expect(count).toHaveText(/^Question 1 of \d+$/);
+  const n = Number((await count.textContent())!.match(/of (\d+)/)![1]);
+  for (let i = 1; i < n; i++) {
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(count).toHaveText(`Question ${i + 1} of ${n}`);
+  }
+  await page.getByRole("button", { name: "Write the goal" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+}
+
+/**
  * Walks the wizard on from the sources step as it stands (every synced
  * connector unless changed, no document sets) with no goal to the review,
  * and opens its Advanced, naming the ontology `name` when given: the

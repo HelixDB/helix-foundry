@@ -4,6 +4,7 @@ import {
   createdOntology,
   expect,
   file,
+  finishCompany,
   finishOntology,
   mock,
   openAdvanced,
@@ -83,11 +84,9 @@ test("researches the company from the user's email, drafts the goal from the ans
   expect((await asked).postDataJSON()).toEqual({
     domain: "globex-industries.com",
   });
-  await expect(
-    page.getByRole("status").filter({ hasText: "Foundry read" }),
-  ).toHaveText("Foundry read Globex Industries: 4 questions to answer below.");
-  // What it found: the company, the pages it read, and its questions, each
-  // answer starting as its best guess.
+  // What it found over its first question: the company and the pages it
+  // read. Then each question on its own screen, each answer starting as its
+  // best guess.
   await expect(page.locator(".on-company")).toContainText(
     "Globex Industries sells software that helps teams run their operations.",
   );
@@ -99,18 +98,23 @@ test("researches the company from the user's email, drafts the goal from the ans
     await expect(link).toHaveAttribute("href", href);
     await expect(link).toHaveAttribute("rel", "noopener noreferrer");
   }
-  const questions = page.getByRole("list", { name: "Questions" });
-  await expect(questions.getByRole("listitem")).toHaveCount(4);
+  const count = page.locator(".on-focus-count");
+  await expect(count).toHaveText("Question 1 of 4");
   const who = page.getByRole("textbox", {
-      name: "Who will ask this ontology questions, and what for?",
-    }),
-    most = page.getByRole("textbox", { name: "Which questions matter most?" }),
-    truth = page.getByRole("textbox", {
-      name: "When two sources describe a customer, which one is right?",
-    });
+    name: "Who will ask this ontology questions, and what for?",
+  });
+  await expect(who).toBeFocused();
   await expect(who).toHaveValue(
     "Globex Industries’s operations and finance teams, to see how customers, orders and revenue connect.",
   );
+  await who.fill("");
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(count).toHaveText("Question 2 of 4");
+  // The company shows only over the first.
+  await expect(page.locator(".on-company")).toHaveCount(0);
+  const most = page.getByRole("textbox", {
+    name: "Which questions matter most?",
+  });
   await expect(most).toHaveValue(
     "Which customers are growing or at risk, and why.",
   );
@@ -123,11 +127,42 @@ test("researches the company from the user's email, drafts the goal from the ans
   await expect(
     chips.getByRole("button", { name: "Churn risk" }),
   ).toHaveAttribute("aria-pressed", "true");
-  await truth.fill("Stripe for billing, the CRM for people");
-  await who.fill("");
-  await page.getByRole("button", { name: "Continue" }).click();
+  // Back keeps the answers.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(who).toHaveValue("");
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(most).toHaveValue("Churn risk");
+  await page.getByRole("button", { name: "Next" }).click();
+  await page
+    .getByRole("textbox", {
+      name: "When two sources describe a customer, which one is right?",
+    })
+    .fill("Stripe for billing, the CRM for people");
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(count).toHaveText("Question 4 of 4");
+  // The last question's Write the goal drafts it at once, from the answers
+  // left, and moves on to the data while it is written.
+  const drafting = page.waitForRequest(isPost(DRAFT));
+  await page.getByRole("button", { name: "Write the goal" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+  const body = (await drafting).postDataJSON();
+  expect(body.answers).toEqual([
+    { questionId: "q2", answer: "Churn risk" },
+    { questionId: "q3", answer: "Stripe for billing, the CRM for people" },
+    { questionId: "q4", answer: "Paid an invoice in the last 90 days." },
+  ]);
   await expect(steps.getByRole("listitem").first()).toContainText(
     "Globex Industries: 3 answers",
+  );
+  // Only the current step says what it asks.
+  await expect(
+    page.getByRole("heading", {
+      level: 2,
+      name: "Connect your data or upload documents",
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("main")).not.toContainText(
+    "Describe the questions you want to answer.",
   );
 
   // Sources: one uploaded document.
@@ -137,30 +172,21 @@ test("researches the company from the user's email, drafts the goal from the ans
     await chooser
   ).setFiles([file("notes.md", "# Notes\n\nRenewals slip.\n")]);
   await expect(uploadCard(page, "notes.md")).toContainText("Uploaded");
-  const drafting = page.waitForRequest(isPost(DRAFT));
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // The goal step drafts one by itself, from the answers left and the data
-  // chosen.
-  await expect(
-    page.getByRole("status").filter({ hasText: "Writing a goal" }),
-  ).toHaveText("Writing a goal from your answers…");
-  const body = (await drafting).postDataJSON();
-  expect(body.answers).toEqual([
-    { questionId: "q2", answer: "Churn risk" },
-    { questionId: "q3", answer: "Stripe for billing, the CRM for people" },
-    { questionId: "q4", answer: "Paid an invoice in the last 90 days." },
-  ]);
-  expect(body.data).toContain("General");
+  // The goal is waiting, written from the answers.
   const goal = page.getByLabel("Goal");
   await expect(goal).toHaveValue(
     /^Globex Industries uses this ontology to answer its team’s questions/,
   );
   await expect(goal).toHaveValue(/Which questions matter most\? Churn risk/);
-  await expect(goal).toBeFocused();
   await expect(
     page.getByText("Foundry wrote the goal from your answers."),
   ).toBeVisible();
+  // One draft: the goal step doesn't write another.
+  expect(
+    (await mock.stats()).requests.filter((r) => r.includes(":draft-goal")),
+  ).toHaveLength(1);
   const drafted = await goal.inputValue();
 
   // Write it again asks before replacing an edited goal.
@@ -172,8 +198,14 @@ test("researches the company from the user's email, drafts the goal from the ans
   const again = page.waitForRequest(isPost(DRAFT));
   await page.getByRole("button", { name: "Write it again" }).click();
   await confirm.getByRole("button", { name: "Write it again" }).click();
-  await again;
-  await expect(goal).toHaveValue(drafted);
+  // Written again, it reads the data chosen since: the uploaded notes.
+  expect((await again).postDataJSON().data).toContain("General");
+  await expect(goal).not.toHaveValue("Renewals at risk, by customer.");
+  await expect(goal).toHaveValue(
+    /^Globex Industries uses this ontology to answer its team’s questions/,
+  );
+  const redrafted = await goal.inputValue();
+  expect(redrafted).not.toBe(drafted);
   await page.getByRole("button", { name: "Continue" }).click();
 
   // The review: the name the draft came with, the database a new one named
@@ -199,7 +231,7 @@ test("researches the company from the user's email, drafts the goal from the ans
   // Every new ontology's first draft is made current and loaded.
   expect((await generated).postDataJSON()).toMatchObject({
     noConnectors: true,
-    goal: drafted,
+    goal: redrafted,
     loadWhenReady: true,
   });
   await page.goto(await createdOntology(page));
@@ -220,16 +252,21 @@ test("names the ontology and picks an existing database in Advanced", async ({
   await expect(page.getByLabel("Company website")).toHaveValue("example.com");
   await page.getByLabel("Company website").fill("https://www.Acme.com/about");
   await page.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
   await expect(page.locator(".on-company")).toContainText("Acme");
-  // Editing the domain drops the research.
+  // Back from the first question returns to the website, the research kept;
+  // editing the domain drops it.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Back to the questions" }),
+  ).toBeVisible();
   await page.getByLabel("Company website").fill("acme.co");
-  await expect(page.getByRole("list", { name: "Questions" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Back to the questions" }),
+  ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Skip" })).toBeVisible();
   await page.getByLabel("Company website").fill("acme.com");
   await page.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await finishCompany(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByLabel("Goal")).toHaveValue(/^Acme uses this ontology/);
   await page.getByRole("button", { name: "Continue" }).click();
@@ -326,16 +363,17 @@ test("says when the site can't be read, and when the research fails, with Retry"
     ),
   ).toBeVisible();
   await expect(page.locator(".on-company-sources")).toHaveCount(0);
-  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await expect(page.locator(".on-focus-count")).toBeVisible();
 
   // The model failing: why, with Retry, which asks again; Skip still works.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await domain.fill("fail-co.com");
   await research.click();
   const failed = page.locator(".on-company-error");
   await expect(failed).toContainText(
     "The model couldn’t finish the research; try again.",
   );
-  await expect(page.getByRole("list", { name: "Questions" })).toHaveCount(0);
+  await expect(page.locator(".on-focus-count")).toHaveCount(0);
   await failed.getByRole("button", { name: "Retry" }).click();
   await expect.poll(async () => (await researched()).length).toBe(3);
   await expect(failed).toBeVisible();
@@ -360,9 +398,9 @@ test("leaves the goal to the user when drafting it fails", async ({ page }) => {
   await page.goto("/ontology/new");
   await page.getByLabel("Company website").fill("acme.com");
   await page.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.locator(".on-focus-count")).toBeVisible();
   await mock.configure({ companyResearchOutcome: "fail" });
+  await finishCompany(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.locator(".on-goal-draft [role=alert]")).toHaveText(
     "The model couldn’t finish the research; try again.",

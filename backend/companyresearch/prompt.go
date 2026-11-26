@@ -16,10 +16,12 @@ const (
 )
 
 // The most a call may write: a research's or a goal's fields at their caps,
-// in JSON, with room to spare.
+// in JSON, with room to spare. A goal's 2,000 characters are about 500
+// tokens, but a model may write a line before it calls the tool, and an
+// answer cut off at the cap has no tool call to read.
 const (
 	ResearchMaxOutput = 2500
-	GoalMaxOutput     = 1500
+	GoalMaxOutput     = 4000
 )
 
 // researchSystem is what a research's model is told.
