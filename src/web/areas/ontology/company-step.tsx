@@ -20,7 +20,8 @@ import type { CompanyChoice, ResearchRun } from "./model";
  * abandons one running. A failure says why, with Retry; without an AI
  * provider, or off Pro on the workspace's own key, the gate shows instead.
  * `onBack`, when given, leaves the website's screen (onboarding's Get
- * started); `onSkip` goes on without a company.
+ * started), else `onCancel` leaves the wizard; `onSkip` goes on without a
+ * company.
  */
 export function CompanyPanel({
   domain,
@@ -32,6 +33,7 @@ export function CompanyPanel({
   onFinish,
   onSkip,
   onBack,
+  onCancel,
 }: {
   domain: string;
   company: CompanyChoice | null;
@@ -42,6 +44,7 @@ export function CompanyPanel({
   onFinish: () => void;
   onSkip: () => void;
   onBack?: () => void;
+  onCancel?: () => void;
 }) {
   const aiReady = useAiConfigured();
   const pending = research.kind === "pending",
@@ -124,10 +127,12 @@ export function CompanyPanel({
             )}
           </AiRefusal>
           <div className="on-focus-actions">
-            {onBack && (
+            {onBack ? (
               <Button icon={ArrowLeft} onClick={onBack}>
                 Back
               </Button>
+            ) : (
+              onCancel && <Button onClick={onCancel}>Cancel</Button>
             )}
             {r && !pending && (
               <Button iconRight={ArrowRight} onClick={() => setAt(0)}>

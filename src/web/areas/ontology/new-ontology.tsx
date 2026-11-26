@@ -792,6 +792,7 @@ export function NewOntologyPage() {
                   }
                 : undefined
             }
+            onCancel={cancel}
           />
         );
       case "sources":
@@ -1018,9 +1019,9 @@ export function NewOntologyPage() {
         {step.id === "company" ? (
           body()
         ) : (
-          <section className="on-step" aria-labelledby="on-step-title">
+          <div className="on-step">
             <header className="on-step-head">
-              <h2 id="on-step-title">
+              <h2>
                 {STEP_COPY[step.id].title}
                 {step.optional && <small>Optional</small>}
               </h2>
@@ -1146,7 +1147,7 @@ export function NewOntologyPage() {
                 )}
               </div>
             </div>
-          </section>
+          </div>
         )}
       </Page>
     </SignInReturn.Provider>
