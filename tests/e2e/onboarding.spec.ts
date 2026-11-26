@@ -101,7 +101,7 @@ test("researches the company from the user's email, drafts the goal from the ans
   }
   const guess = page.locator(".on-guess");
   await expect(guess).toHaveText(
-    "Globex Industries sells software that helps teams run their operations.",
+    /^Globex Industries sells software that helps teams run their operations\./,
   );
   await expect(page.getByText("Does this look right to you?")).toBeVisible();
   const right = page.getByRole("button", { name: "This looks right to me" });
@@ -150,11 +150,16 @@ test("researches the company from the user's email, drafts the goal from the ans
   await expect(
     chips.getByRole("button", { name: "Churn risk" }),
   ).toHaveAttribute("aria-pressed", "true");
-  // Back keeps the answers, and a cleared one opens on its field.
+  // Back keeps the answers, and a cleared one opens on its field, which
+  // stays open as it is typed in.
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(count).toHaveText("2 of 5");
   await expect(who).toHaveValue("");
   await expect(who).toBeFocused();
+  await who.pressSequentially("Ops");
+  await expect(who).toBeFocused();
+  await expect(who).toHaveValue("Ops");
+  await who.fill("");
   await page.getByRole("button", { name: "Next" }).click();
   await expect(guess).toHaveText("Churn risk");
   await right.click();
@@ -297,7 +302,10 @@ test("names the ontology and picks an existing database in Advanced", async ({
   await expect(page.getByRole("button", { name: "Skip" })).toBeVisible();
   await page.getByLabel("Company website").fill("acme.com");
   await page.getByRole("button", { name: "Research" }).click();
+  // Confirmed as found, what the company does goes as the research's own.
+  const drafting = page.waitForRequest(isPost(DRAFT));
   await finishCompany(page);
+  expect((await drafting).postDataJSON()).not.toHaveProperty("summary");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByLabel("Goal")).toHaveValue(/^Acme uses this ontology/);
   await page.getByRole("button", { name: "Continue" }).click();

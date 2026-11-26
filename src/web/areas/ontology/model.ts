@@ -2875,6 +2875,22 @@ export type CompanyChoice = {
 };
 
 /**
+ * What the company does as draft-goal's `summary`: the person's correction,
+ * trimmed, or undefined when they kept the research's (or cleared it, which
+ * the backend reads as keeping it too).
+ *
+ * @example
+ * correctedSummary({ research: { id: "r", summary: "Sells anvils." }, summary: " Sells anvils. ", answers: new Map() }) // undefined
+ * correctedSummary({ research: { id: "r", summary: "Sells anvils." }, summary: "Makes anvils.", answers: new Map() }) // "Makes anvils."
+ */
+export function correctedSummary(company: CompanyChoice): string | undefined {
+  const said = company.summary.trim();
+  return said && said !== (company.research.summary || "").trim()
+    ? said
+    : undefined;
+}
+
+/**
  * What /ontology/new has chosen so far: the company researched (null while
  * none is), the sources and goal, the name a goal drafted from the research
  * came with ("" for none), and Advanced's overrides: a name ("" takes the

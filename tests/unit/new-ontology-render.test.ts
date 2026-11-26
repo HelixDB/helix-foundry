@@ -149,6 +149,11 @@ describe("CompanyPanel", () => {
     expect(html).toContain("This looks right to me");
     expect(html).toContain("Change it");
     expect(html).not.toContain("<textarea");
+    // Named by its heading; the button it focuses says what it confirms.
+    expect(html).toContain('aria-labelledby="on-company-head"');
+    expect(html).toContain(
+      'aria-describedby="on-company-head on-guess on-guess-ask"',
+    );
     // One screen at a time: no question yet.
     expect(html).not.toContain("Who asks?");
     expect(html).not.toContain("Foundry writes your goal from these next.");

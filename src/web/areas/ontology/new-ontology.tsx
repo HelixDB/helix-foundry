@@ -69,6 +69,7 @@ import {
   type DatabasePick,
   type MadeResources,
   type WizardStepId,
+  correctedSummary,
 } from "./model";
 import { Callout, type Arrival } from "./parts";
 import { SAMPLE, isSampleConnector, isSampleSet } from "./sample";
@@ -567,11 +568,8 @@ export function NewOntologyPage() {
         .map(([questionId, answer]) => ({ questionId, answer: answer.trim() }))
         .filter((a) => a.answer),
       data: goalData(sources),
-      // Only a correction: the research's own summary is the default.
-      ...(company &&
-      company.summary.trim() &&
-      company.summary.trim() !== (company.research.summary || "")
-        ? { summary: company.summary.trim() }
+      ...(company && correctedSummary(company) !== undefined
+        ? { summary: correctedSummary(company) }
         : {}),
     }).then(
       (r) =>
@@ -598,7 +596,7 @@ export function NewOntologyPage() {
   const draftedFrom = useRef<string | null>(null);
   const finishCompany = () => {
     const answers = JSON.stringify([
-      company?.summary,
+      company && correctedSummary(company),
       ...(company?.answers || []),
     ]);
     const edited =

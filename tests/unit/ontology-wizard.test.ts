@@ -20,6 +20,7 @@ import {
   newOntologyWizard,
   setSourcesText,
   type CompanyChoice,
+  correctedSummary,
   type CompanyFlow,
   type CompanyFlowAction,
   type WizardDraft,
@@ -1126,6 +1127,22 @@ describe("companyFlow", () => {
         .company!.summary,
     ).toBe("Globex makes sensors.");
     expect(companyFlow(start, { type: "summary", summary: "x" })).toBe(start);
+  });
+
+  it("sends what the company does only as a correction", () => {
+    const of = (summary: string) => ({ ...researched.company!, summary });
+    expect(correctedSummary(of("Globex sells widgets."))).toBeUndefined();
+    expect(correctedSummary(of("  Globex sells widgets. "))).toBeUndefined();
+    expect(correctedSummary(of(" "))).toBeUndefined();
+    expect(correctedSummary(of(" Globex makes sensors. "))).toBe(
+      "Globex makes sensors.",
+    );
+    expect(
+      correctedSummary({
+        ...of("Globex makes sensors."),
+        research: { id: "r" },
+      }),
+    ).toBe("Globex makes sensors.");
     expect(
       run(researched, {
         type: "answer",

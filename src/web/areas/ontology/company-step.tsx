@@ -68,12 +68,18 @@ export function CompanyPanel({
   // research that lands opens the company; coming back to a researched
   // company opens it there too.
   const [at, setAt] = useState(r ? 0 : -1);
-  // Whether the shown screen's field is open: each screen opens on its
-  // guess, asking whether it looks right.
-  const [changing, setChanging] = useState(false);
+  // What a screen holds: what the company does, or a question's answer.
+  const valueAt = (screen: number) => {
+    const q = screen > 0 ? questions[screen - 1] : undefined;
+    return !company ? "" : q ? (company.answers.get(q.id) ?? "") : company.summary;
+  };
+  // Whether the shown screen's field is open. Each screen opens on its
+  // guess, asking whether it looks right, or on its field when it has none;
+  // decided as it opens, so typing into an empty field keeps it open.
+  const [editing, setEditing] = useState(() => !valueAt(0).trim());
   const show = (screen: number) => {
     setAt(screen);
-    setChanging(false);
+    setEditing(!valueAt(screen).trim());
   };
   const landed = useRef(r?.id);
   useEffect(() => {
@@ -83,12 +89,7 @@ export function CompanyPanel({
   }, [r?.id]);
 
   const q = at > 0 ? questions[at - 1] : undefined;
-  const value = !company
-    ? ""
-    : q
-      ? (company.answers.get(q.id) ?? "")
-      : company.summary;
-  const editing = changing || !value.trim();
+  const value = valueAt(at);
   // Each screen puts the cursor on what it asks for: the field, else This
   // looks right to me.
   const card = useRef<HTMLFormElement>(null);
@@ -184,8 +185,10 @@ export function CompanyPanel({
   const name = r.companyName || r.domain || "your company";
   const count = `${at + 1} of ${total}`;
   return (
-    <section className="on-focus" aria-label={count}>
+    <section className="on-focus" aria-labelledby="on-company-head">
+      {/* A screen of its own, so moving on focuses afresh and is read. */}
       <form
+        key={at}
         ref={card}
         className="on-focus-card"
         onSubmit={(e) => {
@@ -195,10 +198,12 @@ export function CompanyPanel({
       >
         <p className="on-focus-count">{count}</p>
         {q ? (
-          <h2 className="on-focus-title">{q.question}</h2>
+          <h2 id="on-company-head" className="on-focus-title">
+            {q.question}
+          </h2>
         ) : (
           <>
-            <h2 className="on-focus-title">
+            <h2 id="on-company-head" className="on-focus-title">
               {r.companyName || r.domain || "Your company"}
             </h2>
             {r.fetched ? (
@@ -271,8 +276,12 @@ export function CompanyPanel({
           </>
         ) : (
           <>
-            <p className="on-guess">{value}</p>
-            <p className="on-guess-ask">Does this look right to you?</p>
+            <p id="on-guess" className="on-guess">
+              {value}
+            </p>
+            <p id="on-guess-ask" className="on-guess-ask">
+              Does this look right to you?
+            </p>
           </>
         )}
         {last && (
@@ -283,7 +292,7 @@ export function CompanyPanel({
             Back
           </Button>
           {!editing && (
-            <Button icon={Pencil} onClick={() => setChanging(true)}>
+            <Button icon={Pencil} onClick={() => setEditing(true)}>
               Change it
             </Button>
           )}
@@ -293,6 +302,10 @@ export function CompanyPanel({
             iconRight={editing ? ArrowRight : undefined}
             icon={editing ? undefined : Check}
             data-focus={editing ? undefined : true}
+            // Focused on arrival: says what it confirms.
+            aria-describedby={
+              editing ? undefined : "on-company-head on-guess on-guess-ask"
+            }
           >
             {!editing
               ? "This looks right to me"
