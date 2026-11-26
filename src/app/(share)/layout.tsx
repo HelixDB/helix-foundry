@@ -33,11 +33,7 @@ export const viewport: Viewport = {
 
 export default function ShareLayout({ children }: { children: ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={helixMono.variable}
-      suppressHydrationWarning
-    >
+    <html lang="en" className={helixMono.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>

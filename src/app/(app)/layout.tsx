@@ -37,11 +37,7 @@ export const viewport: Viewport = {
 // feeds the font tokens (src/web/workspace.css).
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={helixMono.variable}
-      suppressHydrationWarning
-    >
+    <html lang="en" className={helixMono.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         {/* Slack's and Helix's returns leave the URL before the tracker or
