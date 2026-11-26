@@ -6,6 +6,7 @@ import {
   dataTree,
   expect,
   file,
+  finishCompany,
   mock,
   signIn,
   test,
@@ -141,9 +142,9 @@ test("ontology: the panel, the overview and a new one", async ({ page }) => {
   // guess.
   await page.getByLabel("Company website").fill("acme.com");
   await page.getByRole("button", { name: "Research" }).click();
-  await expect(page.getByRole("list", { name: "Questions" })).toBeVisible();
+  await expect(page.locator(".on-focus-count")).toBeVisible();
   await shot(page, "ontology", "new-ontology");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await finishCompany(page);
   // One step for what it drafts from: tables, API sources and documents.
   await expect(
     page.getByRole("list", { name: "Connectors" }).getByRole("checkbox"),
@@ -306,10 +307,16 @@ test("ontology: create video", async ({ browser }) => {
   );
   await type(video.getByLabel("Company website"), "acme.com");
   await click(video.getByRole("button", { name: "Research" }));
-  await expect(video.getByRole("list", { name: "Questions" })).toBeVisible();
+  const count = video.locator(".on-focus-count");
+  await expect(count).toBeVisible();
   await video.waitForTimeout(1800);
-  await caption(video, "Answer what it can’t tell, or keep its guesses");
-  await click(video.getByRole("button", { name: "Continue" }));
+  await caption(video, "Answer what it can’t tell, one question at a time");
+  const n = Number((await count.textContent())!.match(/of (\d+)/)![1]);
+  for (let i = 1; i < n; i++) {
+    await click(video.getByRole("button", { name: "Next" }));
+    await video.waitForTimeout(600);
+  }
+  await click(video.getByRole("button", { name: "Write the goal" }));
   await caption(
     video,
     "Choose what it drafts from: synced tables, API sources, documents",
@@ -327,7 +334,7 @@ test("ontology: create video", async ({ browser }) => {
   ).toBeChecked({ timeout: 15_000 });
   await video.waitForTimeout(1500);
   await click(video.getByRole("button", { name: "Continue" }));
-  await caption(video, "Foundry writes the goal from your answers and data");
+  await caption(video, "Foundry has written the goal from your answers");
   await expect(
     video.getByText("Foundry wrote the goal from your answers."),
   ).toBeVisible();
