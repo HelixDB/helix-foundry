@@ -1,4 +1,11 @@
-import { ArrowLeft, ArrowRight, RotateCcw, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Pencil,
+  RotateCcw,
+  Search,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { sentence } from "../../api";
 import { Button } from "../../kit";
@@ -9,11 +16,15 @@ import type { CompanyChoice, ResearchRun } from "./model";
  * The new-ontology wizard's Your company step, one thing at a time in the
  * middle of the page: first the company's website (`domain`, which the page
  * starts from the user's email when it names a company) with Research,
- * which has the WFE read its site; then each of the research's questions on
- * its own screen, its answer starting as the best guess and its options as
- * chips that fill it, the first one under what Foundry found (the company,
- * and the pages read, or that none could be). The last question's Continue
- * calls `onFinish`, which drafts the goal and moves on.
+ * which has the WFE read its site; then what Foundry found (the company, its
+ * summary and the pages read, or that none could be), then each of the
+ * research's questions, each on its own screen. Every one of those shows
+ * Foundry's guess (the summary, a question's best guess) and asks whether it
+ * looks right: This looks right to me goes on, Change it opens the field
+ * (and a question's options as chips that fill it). A screen with nothing to
+ * confirm (a question without a guess, or one cleared) opens on its field.
+ * The last screen's go-on calls `onFinish`, which drafts the goal and moves
+ * on.
  *
  * The page runs the research (`research`, companyFlow), so it carries on
  * while this step is left; editing the domain drops the research and
@@ -29,6 +40,7 @@ export function CompanyPanel({
   research,
   onDomain,
   onResearch,
+  onSummary,
   onAnswer,
   onFinish,
   onSkip,
@@ -40,6 +52,7 @@ export function CompanyPanel({
   research: ResearchRun;
   onDomain: (domain: string) => void;
   onResearch: () => void;
+  onSummary: (summary: string) => void;
   onAnswer: (questionId: string, answer: string) => void;
   onFinish: () => void;
   onSkip: () => void;
@@ -51,26 +64,44 @@ export function CompanyPanel({
     error = research.kind === "failed" ? research.error : null;
   const r = company?.research,
     questions = r?.questions || [];
-  // -1 is the website's screen, else the question shown. A research that
-  // lands opens its first question; coming back to a researched company
-  // opens it there too.
+  // -1 is the website's screen, 0 the company's, else question at - 1. A
+  // research that lands opens the company; coming back to a researched
+  // company opens it there too.
   const [at, setAt] = useState(r ? 0 : -1);
+  // What a screen holds: what the company does, or a question's answer.
+  const valueAt = (screen: number) => {
+    const q = screen > 0 ? questions[screen - 1] : undefined;
+    return !company ? "" : q ? (company.answers.get(q.id) ?? "") : company.summary;
+  };
+  // Whether the shown screen's field is open. Each screen opens on its
+  // guess, asking whether it looks right, or on its field when it has none;
+  // decided as it opens, so typing into an empty field keeps it open.
+  const [editing, setEditing] = useState(() => !valueAt(0).trim());
+  const show = (screen: number) => {
+    setAt(screen);
+    setEditing(!valueAt(screen).trim());
+  };
   const landed = useRef(r?.id);
   useEffect(() => {
-    if (r && landed.current !== r.id) setAt(0);
-    if (!r) setAt(-1);
+    if (r && landed.current !== r.id) show(0);
+    if (!r) show(-1);
     landed.current = r?.id;
   }, [r?.id]);
-  // Each screen puts the cursor in its field.
-  const field = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
-  useEffect(() => {
-    field.current?.focus();
-  }, [at]);
 
-  if (at < 0 || !r) {
+  const q = at > 0 ? questions[at - 1] : undefined;
+  const value = valueAt(at);
+  // Each screen puts the cursor on what it asks for: the field, else This
+  // looks right to me.
+  const card = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    card.current?.querySelector<HTMLElement>("[data-focus]")?.focus();
+  }, [at, editing]);
+
+  if (at < 0 || !r || !company) {
     return (
       <section className="on-focus" aria-labelledby="on-company-ask">
         <form
+          ref={card}
           className="on-focus-card"
           onSubmit={(e) => {
             e.preventDefault();
@@ -88,7 +119,7 @@ export function CompanyPanel({
             <label className="hf-field">
               <span className="hf-sr-only">Company website</span>
               <input
-                ref={field}
+                data-focus
                 value={domain}
                 placeholder="e.g. acme.com"
                 inputMode="url"
@@ -135,8 +166,8 @@ export function CompanyPanel({
               onCancel && <Button onClick={onCancel}>Cancel</Button>
             )}
             {r && !pending && (
-              <Button iconRight={ArrowRight} onClick={() => setAt(0)}>
-                {questions.length ? "Back to the questions" : "Continue"}
+              <Button iconRight={ArrowRight} onClick={() => show(0)}>
+                Continue
               </Button>
             )}
             <Button variant="ghost" onClick={onSkip}>
@@ -148,30 +179,33 @@ export function CompanyPanel({
     );
   }
 
-  const q = questions[at];
-  const last = at >= questions.length - 1;
-  const next = () => (last ? onFinish() : setAt(at + 1));
-  const value = q ? (company!.answers.get(q.id) ?? "") : "";
+  const total = questions.length + 1;
+  const last = at >= questions.length;
+  const next = () => (last ? onFinish() : show(at + 1));
+  const name = r.companyName || r.domain || "your company";
+  const count = `${at + 1} of ${total}`;
   return (
-    <section
-      className="on-focus"
-      aria-label={
-        q ? `Question ${at + 1} of ${questions.length}` : (r.companyName ?? "")
-      }
-    >
+    <section className="on-focus" aria-labelledby="on-company-head">
+      {/* A screen of its own, so moving on focuses afresh and is read. */}
       <form
+        key={at}
+        ref={card}
         className="on-focus-card"
         onSubmit={(e) => {
           e.preventDefault();
           next();
         }}
       >
-        {at === 0 && (
-          <div className="on-company">
-            <p className="on-focus-kicker">
+        <p className="on-focus-count">{count}</p>
+        {q ? (
+          <h2 id="on-company-head" className="on-focus-title">
+            {q.question}
+          </h2>
+        ) : (
+          <>
+            <h2 id="on-company-head" className="on-focus-title">
               {r.companyName || r.domain || "Your company"}
-            </p>
-            {r.summary && <p className="on-company-summary">{r.summary}</p>}
+            </h2>
             {r.fetched ? (
               !!r.sources?.length && (
                 <p className="on-company-sources">
@@ -192,21 +226,25 @@ export function CompanyPanel({
                 domain alone.
               </p>
             )}
-          </div>
+          </>
         )}
-        {q ? (
+        {editing ? (
           <>
-            <p className="on-focus-count">
-              Question {at + 1} of {questions.length}
-            </p>
             <label className="hf-field on-focus-question">
-              <span className="on-focus-title">{q.question}</span>
+              <span className="hf-sr-only">
+                {q ? q.question : `What ${name} does`}
+              </span>
               <textarea
-                ref={field}
-                rows={3}
-                maxLength={500}
+                data-focus
+                rows={q ? 3 : 5}
+                maxLength={q ? 500 : 600}
                 value={value}
-                onChange={(e) => onAnswer(q.id, e.target.value)}
+                placeholder={q ? undefined : `What does ${name} do?`}
+                onChange={(e) =>
+                  q
+                    ? onAnswer(q.id, e.target.value)
+                    : onSummary(e.target.value)
+                }
                 onKeyDown={(e) => {
                   // Enter goes on; Shift+Enter is a new line.
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -216,7 +254,7 @@ export function CompanyPanel({
                 }}
               />
             </label>
-            {!!q.options?.length && (
+            {!!q?.options?.length && (
               <div
                 className="on-chips"
                 role="group"
@@ -237,16 +275,43 @@ export function CompanyPanel({
             )}
           </>
         ) : (
-          <p className="on-muted">
-            Foundry has no questions for you: it writes the goal from the site.
-          </p>
+          <>
+            <p id="on-guess" className="on-guess">
+              {value}
+            </p>
+            <p id="on-guess-ask" className="on-guess-ask">
+              Does this look right to you?
+            </p>
+          </>
+        )}
+        {last && (
+          <p className="on-muted">Foundry writes your goal from these next.</p>
         )}
         <div className="on-focus-actions">
-          <Button icon={ArrowLeft} onClick={() => setAt(at - 1)}>
+          <Button icon={ArrowLeft} onClick={() => show(at - 1)}>
             Back
           </Button>
-          <Button type="submit" variant="primary" iconRight={ArrowRight}>
-            {last ? "Write the goal" : "Next"}
+          {!editing && (
+            <Button icon={Pencil} onClick={() => setEditing(true)}>
+              Change it
+            </Button>
+          )}
+          <Button
+            type="submit"
+            variant="primary"
+            iconRight={editing ? ArrowRight : undefined}
+            icon={editing ? undefined : Check}
+            data-focus={editing ? undefined : true}
+            // Focused on arrival: says what it confirms.
+            aria-describedby={
+              editing ? undefined : "on-company-head on-guess on-guess-ask"
+            }
+          >
+            {!editing
+              ? "This looks right to me"
+              : last
+                ? "Write the goal"
+                : "Next"}
           </Button>
         </div>
       </form>

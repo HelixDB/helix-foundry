@@ -107,6 +107,7 @@ describe("CompanyPanel", () => {
         { id: "q2", question: "What matters?" },
       ],
     },
+    summary: "Globex sells widgets.",
     answers: new Map(),
   };
   const panel = (research: ResearchRun, c: CompanyChoice | null = null) =>
@@ -118,6 +119,7 @@ describe("CompanyPanel", () => {
         research,
         onDomain: () => {},
         onResearch: () => {},
+        onSummary: () => {},
         onAnswer: () => {},
         onFinish: () => {},
         onSkip: () => {},
@@ -138,27 +140,44 @@ describe("CompanyPanel", () => {
     expect(pending).toContain('aria-busy="true"');
   });
 
-  it("opens a researched company on its first question, under what Foundry found, one question at a time", () => {
+  it("opens a researched company on what it does, asking whether that looks right", () => {
     const html = panel({ kind: "idle" }, company);
+    expect(html).toContain("1 of 3");
     expect(html).toContain("Globex");
-    expect(html).toContain("Question 1 of 2");
-    expect(html).toContain("Who asks?");
-    expect(html).not.toContain("What matters?");
-    expect(html).toContain("Next");
-    expect(html).not.toContain("Write the goal");
-    // The only question's button writes the goal.
-    const one = panel(
-      { kind: "idle" },
-      {
-        ...company,
-        research: {
-          ...company.research,
-          questions: [company.research.questions![0]!],
-        },
-      },
+    expect(html).toContain('class="on-guess">Globex sells widgets.</p>');
+    expect(html).toContain("Does this look right to you?");
+    expect(html).toContain("This looks right to me");
+    expect(html).toContain("Change it");
+    expect(html).not.toContain("<textarea");
+    // Named by its heading; the button it focuses says what it confirms.
+    expect(html).toContain('aria-labelledby="on-company-head"');
+    expect(html).toContain(
+      'aria-describedby="on-company-head on-guess on-guess-ask"',
     );
-    expect(one).toContain("Question 1 of 1");
-    expect(one).toContain("Write the goal");
+    // One screen at a time: no question yet.
+    expect(html).not.toContain("Who asks?");
+    expect(html).not.toContain("Foundry writes your goal from these next.");
+  });
+
+  it("opens on the field when there is nothing to confirm, and the last screen writes the goal", () => {
+    const blank = panel({ kind: "idle" }, { ...company, summary: " " });
+    expect(blank).toContain("<textarea");
+    expect(blank).toContain("What does Globex do?");
+    expect(blank).toContain("Next");
+    expect(blank).not.toContain("Change it");
+    expect(blank).not.toContain("This looks right to me");
+    // Without questions what it does is the last screen.
+    const only = {
+      ...company,
+      research: { ...company.research, questions: [] },
+    };
+    const last = panel({ kind: "idle" }, only);
+    expect(last).toContain("1 of 1");
+    expect(last).toContain("Foundry writes your goal from these next.");
+    expect(last).toContain("This looks right to me");
+    expect(panel({ kind: "idle" }, { ...only, summary: "" })).toContain(
+      "Write the goal",
+    );
   });
 
   it("says why research failed, with Retry", () => {

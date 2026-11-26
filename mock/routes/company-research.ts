@@ -42,8 +42,9 @@ import { manages } from "./workspaces";
 //   options.
 // - draft-goal: NOT_FOUND for research unknown or another workspace's;
 //   INVALID_ARGUMENT for an answer that isn't a question id and a string,
-//   one naming no question of it, an answer over 500 characters or data
-//   over 12,000; else a goal (at most 2,000 characters) from the summary,
+//   one naming no question of it, an answer over 500 characters, data
+//   over 12,000 or a summary over 600; else a goal (at most 2,000
+//   characters) from the summary (the body's when not blank, as corrected),
 //   the answers in the questions' order and the first lines of data, and
 //   the research's suggestedName.
 // - `POST /__mock/config {"companyResearchMs": n}`: each call takes n ms
@@ -232,7 +233,11 @@ export const companyResearchRoutes: MockRoute[] = [
         const { research } = found,
           body = (req.body || {}) as Partial<DraftGoalRequest>,
           answers = Array.isArray(body.answers) ? body.answers : [],
-          data = typeof body.data === "string" ? body.data : "";
+          data = typeof body.data === "string" ? body.data : "",
+          summary =
+            (typeof body.summary === "string" && body.summary.trim()) ||
+            research.summary ||
+            "";
         const questions = research.questions || [];
         if (
           !answers.every(
@@ -261,6 +266,8 @@ export const companyResearchRoutes: MockRoute[] = [
           );
         if ([...data].length > 12_000)
           return fail("INVALID_ARGUMENT", "data is at most 12,000 characters");
+        if ([...summary].length > 600)
+          return fail("INVALID_ARGUMENT", "summary is longer than 600 characters");
         const said = questions.flatMap((q) => {
           const a = answers.find((x) => x.questionId === q.id)?.answer?.trim();
           return a ? [`${q.question} ${a}`] : [];
@@ -271,7 +278,7 @@ export const companyResearchRoutes: MockRoute[] = [
           .filter((l) => l.startsWith("**") || l.startsWith("- "))
           .slice(0, 3);
         const goal = [
-          `${research.companyName} uses this ontology to answer its team’s questions about its business. ${research.summary || ""}`.trim(),
+          `${research.companyName} uses this ontology to answer its team’s questions about its business. ${summary}`.trim(),
           "",
           ...said,
           ...(reads.length ? ["", "It reads:", ...reads] : []),

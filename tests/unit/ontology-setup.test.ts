@@ -471,14 +471,18 @@ describe("the wizard's kept choices", () => {
       JSON.stringify({
         token: "t1",
         domain: "globex.com",
-        company: { research, answers: [["q1", "Ops"]] },
+        company: { research, summary: "Globex sells widgets.", answers: [["q1", "Ops"]] },
         drafted: { goal: "Ops asks.", name: "Globex operations" },
         name: "Orders",
         database: { kind: "existing", tenantId: "t1" },
       }),
     );
     const read = readNewOntology("ws1")!;
-    expect(read.company).toEqual({ research, answers: [["q1", "Ops"]] });
+    expect(read.company).toEqual({
+      research,
+      summary: "Globex sells widgets.",
+      answers: [["q1", "Ops"]],
+    });
     expect(read.drafted).toEqual({
       goal: "Ops asks.",
       name: "Globex operations",
@@ -505,48 +509,52 @@ describe("the wizard's kept choices", () => {
       );
       return readNewOntology("ws1")!;
     };
-    expect(read({ research, answers: [] }).company).toEqual({
+    expect(read({ research, summary: "", answers: [] }).company).toEqual({
       research,
+      summary: "",
       answers: [],
     });
     for (const company of [
       null,
       { research },
-      { research, answers: {} },
-      { research: { ...research, id: "" }, answers: [] },
-      { research: { ...research, companyName: 4 }, answers: [] },
-      { research: { ...research, fetched: "yes" }, answers: [] },
-      { research: { ...research, createdAt: 4 }, answers: [] },
+      // What it does is kept as a string, never missing.
+      { research, answers: [] },
+      { research, summary: 4, answers: [] },
+      { research, summary: "", answers: {} },
+      { research: { ...research, id: "" }, summary: "", answers: [] },
+      { research: { ...research, companyName: 4 }, summary: "", answers: [] },
+      { research: { ...research, fetched: "yes" }, summary: "", answers: [] },
+      { research: { ...research, createdAt: 4 }, summary: "", answers: [] },
       {
         research: { ...research, sources: ["javascript:alert(1)"] },
-        answers: [],
+        summary: "", answers: [],
       },
       {
         research: { ...research, sources: "https://globex.com/" },
-        answers: [],
+        summary: "", answers: [],
       },
-      { research: { ...research, questions: { q1: {} } }, answers: [] },
-      { research: { ...research, questions: [3] }, answers: [] },
+      { research: { ...research, questions: { q1: {} } }, summary: "", answers: [] },
+      { research: { ...research, questions: [3] }, summary: "", answers: [] },
       {
         research: { ...research, questions: [{ question: "no id" }] },
-        answers: [],
+        summary: "", answers: [],
       },
       {
         research: { ...research, questions: [{ id: "q1", options: "Ops" }] },
-        answers: [],
+        summary: "", answers: [],
       },
       {
         research: { ...research, questions: [{ id: "q1", options: [4] }] },
-        answers: [],
+        summary: "", answers: [],
       },
       {
         research: { ...research, questions: [{ id: "q1", bestGuess: 4 }] },
-        answers: [],
+        summary: "", answers: [],
       },
-      { research, answers: [["q1", 4]] },
-      { research, answers: [["q2", "an answer to no question"]] },
-      { research, answers: [["q1", "Ops", "x"]] },
-      { research, answers: ["q1"] },
+      { research, summary: "", answers: [["q1", 4]] },
+      { research, summary: "", answers: [["q2", "an answer to no question"]] },
+      { research, summary: "", answers: [["q1", "Ops", "x"]] },
+      { research, summary: "", answers: ["q1"] },
     ]) {
       const r = read(company);
       expect(r.company, JSON.stringify(company)).toBeNull();

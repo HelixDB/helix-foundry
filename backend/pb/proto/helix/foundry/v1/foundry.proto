@@ -1631,6 +1631,9 @@ message DraftFoundryGoalRequest {
   // What the ontology will read, in plain text, as the site lists it (the
   // chosen tables and their columns, documents): at most 12000 characters.
   string data = 4;
+  // What the company does, as the person corrected the research's summary:
+  // at most 600 characters. Empty keeps the research's.
+  string summary = 5;
 }
 message DraftFoundryGoalResponse {
   // Plain text, at most 2000 characters: who uses the ontology and what

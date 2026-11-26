@@ -7694,6 +7694,10 @@
         "data": {
           "type": "string",
           "description": "What the ontology will read, in plain text, as the site lists it (the\nchosen tables and their columns, documents): at most 12000 characters."
+        },
+        "summary": {
+          "type": "string",
+          "description": "What the company does, as the person corrected the research's summary:\nat most 600 characters. Empty keeps the research's."
         }
       }
     },
@@ -8359,7 +8363,7 @@
         "NULL_VALUE"
       ],
       "default": "NULL_VALUE",
-      "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
+      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
     },
     "rpcStatus": {
       "type": "object",
