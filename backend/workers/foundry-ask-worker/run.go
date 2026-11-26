@@ -49,6 +49,7 @@ type store interface {
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
 	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs, items []access.ItemRef) error
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
+	FoundrySlackBotScope(ctx context.Context, workspaceID, credentialID string) (model.SlackBotScope, error)
 	SourceSharingFor(ctx context.Context, workspaceID string, reader *connector.Email) ([]model.FoundrySourceSharing, error)
 }
 
@@ -255,11 +256,21 @@ func (h heldLoad) within(before heldLoad) bool {
 // granted is what the grants of the grantee that asked q (and of its teams,
 // now) hold of its load, narrowed by what its sources share with it as the
 // API narrows them (package sourceaccess), none for a question someone else
-// asked: q's load must still be its ontology's current one, and they must
-// hold some of it, or the question fails (errNoLongerGranted).
+// asked, or the Slack bot asked while its scope is the workspace (the API's
+// access.Reader): q's load must still be its ontology's current one, and
+// they must hold some of it, or the question fails (errNoLongerGranted).
 func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (heldLoad, error) {
 	if q.Grantee == nil {
 		return heldLoad{}, nil
+	}
+	if q.Grantee.Kind == access.PrincipalServiceCredential {
+		scope, err := r.db.FoundrySlackBotScope(ctx, q.WorkspaceID, q.Grantee.ID)
+		if err != nil && !errors.Is(err, foundrystore.ErrNotFound) {
+			return heldLoad{}, retry("could not read your access; Helix will retry", err)
+		}
+		if _, whole := scope.(model.SlackBotWorkspace); whole {
+			return heldLoad{}, nil
+		}
 	}
 	g := access.Grantee{WorkspaceID: q.WorkspaceID, Principal: *q.Grantee}
 	if q.Grantee.Kind == access.PrincipalUser {

@@ -799,10 +799,12 @@ func (s *Service) DisconnectFoundrySlack(ctx context.Context, req *foundryv1.Dis
 // UpdateFoundrySlack sets whom the workspace's install acts as, for an owner
 // or admin. BOT makes the bot a workspace service credential no one holds
 // the token of (ports.BotCredentials, hosted only:
-// FOUNDRY_SLACK_BOT_HOSTED_ONLY elsewhere), whose sources Settings › Access
-// chooses. PER_PERSON revokes it first, so a failure leaves bot mode on to
-// try again, then the store clears it and retires the bot's threads. The
-// mode the install has already changes nothing.
+// FOUNDRY_SLACK_BOT_HOSTED_ONLY elsewhere), reading the scope asked for,
+// else the whole workspace (model.SlackBotWorkspace); a bot's BOT with a
+// scope sets it, and without one changes nothing. Under SOURCES, Settings ›
+// Access chooses its sources. PER_PERSON revokes it first, so a failure
+// leaves bot mode on to try again, then the store clears it and retires the
+// bot's threads. The mode the install has already changes nothing.
 func (s *Service) UpdateFoundrySlack(ctx context.Context, req *foundryv1.UpdateFoundrySlackRequest) (*foundryv1.FoundrySlackResponse, error) {
 	ws := req.GetWorkspaceId()
 	if ws == "" {
@@ -817,6 +819,20 @@ func (s *Service) UpdateFoundrySlack(ctx context.Context, req *foundryv1.UpdateF
 		mode != foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT {
 		return nil, status.Error(codes.InvalidArgument, "identity_mode is PER_PERSON or BOT")
 	}
+	// scope is the bot's scope asked for; nil keeps it.
+	var scope model.SlackBotScope
+	switch req.GetBotScope() {
+	case foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED:
+	case foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE:
+		scope = model.SlackBotWorkspace{}
+	case foundryv1.FoundrySlackBotScope_FOUNDRY_SLACK_BOT_SCOPE_SOURCES:
+		scope = model.SlackBotSources{}
+	default:
+		return nil, status.Error(codes.InvalidArgument, "bot_scope is WORKSPACE or SOURCES")
+	}
+	if scope != nil && mode != foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT {
+		return nil, status.Error(codes.InvalidArgument, "bot_scope goes with identity_mode BOT")
+	}
 	if err := s.requireSlackManager(ctx, ws, userID); err != nil {
 		return nil, err
 	}
@@ -829,7 +845,21 @@ func (s *Service) UpdateFoundrySlack(ctx context.Context, req *foundryv1.UpdateF
 	}
 	bot, isBot := install.Mode.(model.SlackSharedBot)
 	switch {
-	case isBot == (mode == foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT):
+	case isBot && mode == foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_BOT:
+		if scope == nil || scope == bot.Scope {
+			break
+		}
+		switch _, err := s.deps.DB.SetFoundrySlackMode(ctx, ws, install.ID, model.SlackSharedBot{CredentialID: bot.CredentialID, Scope: scope}); {
+		case errors.Is(err, foundrystore.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "this workspace isn't connected to Slack")
+		case errors.Is(err, foundrystore.ErrConflict):
+			// Turned off and on again meanwhile: the newer bot keeps its scope.
+			return nil, status.Error(codes.Aborted, "bot mode changed meanwhile; try again")
+		case err != nil:
+			return nil, status.Errorf(codes.Internal, "set the bot's scope: %v", err)
+		}
+		log.From(ctx).Info("foundry slack bot scope set", "workspace_id", ws, "install_id", install.ID, "credential_id", bot.CredentialID, "scope", scope.String())
+	case !isBot && mode == foundryv1.FoundrySlackIdentityMode_FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON:
 		// The mode it has.
 	case !isBot && s.deps.BotCredentials == nil:
 		return nil, foundryPrecondition(ws, "FOUNDRY_SLACK_BOT_HOSTED_ONLY", "a shared Slack bot is offered on Helix's hosted Foundry only")
@@ -843,7 +873,10 @@ func (s *Service) UpdateFoundrySlack(ctx context.Context, req *foundryv1.UpdateF
 		if err != nil {
 			return nil, status.Errorf(codes.Unavailable, "make the bot's key: %v", err)
 		}
-		_, err = s.deps.DB.SetFoundrySlackMode(ctx, ws, install.ID, model.SlackSharedBot{CredentialID: credentialID})
+		if scope == nil {
+			scope = model.SlackBotWorkspace{}
+		}
+		_, err = s.deps.DB.SetFoundrySlackMode(ctx, ws, install.ID, model.SlackSharedBot{CredentialID: credentialID, Scope: scope})
 		if err != nil {
 			// Unused: another click made the bot first (ErrConflict), the
 			// install went, or the write failed.
@@ -870,7 +903,7 @@ func (s *Service) UpdateFoundrySlack(ctx context.Context, req *foundryv1.UpdateF
 			return nil, status.Errorf(codes.Internal, "turn bot mode off: %v", err)
 		}
 		// Another click turned it off and on again meanwhile: its key goes too.
-		if other, ok := was.(model.SlackSharedBot); ok && other != bot {
+		if other, ok := was.(model.SlackSharedBot); ok && other.CredentialID != bot.CredentialID {
 			if err := s.revokeSlackBot(ctx, ws, other.CredentialID); err != nil {
 				log.From(ctx).Error("revoke a retired Slack bot's key failed", "workspace_id", ws, "credential_id", other.CredentialID, "err", err)
 			}

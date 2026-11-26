@@ -3,6 +3,7 @@ package foundryaskworker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -486,6 +487,52 @@ func TestGranteeQuestionsFollowSlack(t *testing.T) {
 		settled := h.run(t, q)
 		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || settled[0].Error != noLongerGranted {
 			t.Fatalf("settled %+v", settled)
+		}
+	})
+}
+
+// The Slack bot's question reads as its scope says when it runs: the whole
+// workspace's bot is asked as the host's caller, with no grants at all; a
+// bot of its sources, or a key no install names, through its grants alone;
+// and a scope that can't be read is tried again.
+func TestSlackBotQuestions(t *testing.T) {
+	bot := access.Principal{Kind: access.PrincipalServiceCredential, ID: "cred-bot"}
+	asked := func(scope model.SlackBotScope) (*harness, []model.FoundryQuestionOutcome) {
+		h := newHarness(t)
+		h.store.currentLoads = map[string]model.FoundryLoadInputs{"ont-1": {LoadID: "load-1", VersionID: "ver-3",
+			Inputs: access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}}}
+		h.store.holdings = map[string]access.Holdings{"load-1": {Documents: []access.DocumentRef{{ID: "doc-1", Set: access.SetRef{SetID: "set-1"}}}}}
+		if scope != nil {
+			h.store.botScopes = map[string]model.SlackBotScope{bot.ID: scope}
+		}
+		q := question(1)
+		q.Grantee = &bot
+		return h, h.run(t, q)
+	}
+	t.Run("the whole workspace", func(t *testing.T) {
+		h, settled := asked(model.SlackBotWorkspace{})
+		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		if req, _ := decodeAsk(t, h.agent.calls()[0]); req.Visibility != nil || req.Goal == "" {
+			t.Fatalf("visibility %+v, goal %q", req.Visibility, req.Goal)
+		}
+	})
+	for name, scope := range map[string]model.SlackBotScope{"its sources": model.SlackBotSources{}, "no longer the bot": nil} {
+		t.Run(name, func(t *testing.T) {
+			h, settled := asked(scope)
+			if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || settled[0].Error != noLongerGranted || len(h.agent.calls()) != 0 {
+				t.Fatalf("settled %+v", settled)
+			}
+		})
+	}
+	t.Run("its scope can't be read", func(t *testing.T) {
+		h := newHarness(t)
+		h.store.botErr = errors.New("mysql gone")
+		q := question(1)
+		q.Grantee = &bot
+		if _, err := h.task.runner.granted(context.Background(), q); err == nil || err.(*failure).Permanent {
+			t.Fatalf("granted: %v", err)
 		}
 	})
 }

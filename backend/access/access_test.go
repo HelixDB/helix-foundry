@@ -122,6 +122,53 @@ func TestCallerFrom(t *testing.T) {
 	}
 }
 
+// A reader is no grantee, whose questions are its own as a grantee's are;
+// the host's are everyone's.
+func TestReaderFrom(t *testing.T) {
+	bot := access.Principal{Kind: access.PrincipalServiceCredential, ID: "cred"}
+	ctx := access.WithCaller(context.Background(), access.Reader{WorkspaceID: "ws", Principal: bot})
+	if _, ok := access.GranteeFrom(ctx); ok {
+		t.Fatal("a reader is a grantee")
+	}
+	if p, ok := access.PrincipalFrom(ctx); !ok || p != bot {
+		t.Fatalf("a reader's principal: %+v, %v", p, ok)
+	}
+	ada := access.Principal{Kind: access.PrincipalUser, ID: "ada"}
+	if p, ok := access.PrincipalFrom(access.WithCaller(context.Background(), access.Grantee{WorkspaceID: "ws", Principal: ada})); !ok || p != ada {
+		t.Fatalf("a grantee's principal: %+v, %v", p, ok)
+	}
+	if _, ok := access.PrincipalFrom(context.Background()); ok {
+		t.Fatal("the host's caller has a principal")
+	}
+}
+
+// A reader is admitted exactly where a grantee is, but to workflows: it
+// reads, asks and talks to Founder, and so never writes what a grantee
+// can't.
+func TestReadersAdmitted(t *testing.T) {
+	for _, m := range methods() {
+		rule := access.RuleOf(m)
+		if want := rule == access.Workspace || rule == access.Ontology; access.ReaderAdmits(m) != want {
+			t.Errorf("%s: a reader admitted %v, its rule %v", m, !want, rule)
+		}
+		if access.ReaderAdmits(m) && !access.GranteeAdmits(m) {
+			t.Errorf("%s admits a reader, not a grantee", m)
+		}
+	}
+	for _, m := range []string{"", foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName, foundryv1.FoundryService_CreateFoundryLoad_FullMethodName,
+		foundryv1.FoundryService_ExecuteFoundryAgentAction_FullMethodName, foundryv1.FoundryService_UpdateFoundrySlack_FullMethodName} {
+		if access.ReaderAdmits(m) {
+			t.Errorf("%q admits a reader", m)
+		}
+	}
+}
+
+func ExampleReaderAdmits() {
+	fmt.Println(access.ReaderAdmits(foundryv1.FoundryService_AskFoundryQuestion_FullMethodName),
+		access.ReaderAdmits(foundryv1.FoundryService_SetFoundryAccessGrants_FullMethodName))
+	// Output: true false
+}
+
 func ExampleParsePrincipalKind() {
 	k, err := access.ParsePrincipalKind("team")
 	fmt.Println(k == access.PrincipalTeam, err)

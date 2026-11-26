@@ -22,8 +22,14 @@ func (f slackFixture) botMapping(n int, installID, agentThread string) *model.Sl
 	return m
 }
 
-// Bot mode is a credential on the install: set from per_person, refused
-// over another, and, turned off, retiring every thread of the bot's.
+// sharedBot is bot as the install's shared bot, reading scope.
+func sharedBot(bot model.AgentBot, scope model.SlackBotScope) model.SlackSharedBot {
+	return model.SlackSharedBot{CredentialID: bot.CredentialID, Scope: scope}
+}
+
+// Bot mode is a credential on the install, with its scope: set from
+// per_person, its scope changed in place, refused over another, and, turned
+// off, retiring every thread of the bot's.
 func TestFoundrySlackMode(t *testing.T) {
 	ctx := context.Background()
 	f := newSlackFixture(t, "mode")
@@ -31,33 +37,54 @@ func TestFoundrySlackMode(t *testing.T) {
 	assert.Equal(t, model.SlackPerPerson{}, i.Mode)
 	bot := f.bot()
 	for name, mode := range map[string]model.SlackIdentityMode{
-		"none": nil, "no credential": model.SlackSharedBot{}, "a credential too long": model.SlackSharedBot{CredentialID: strings.Repeat("c", 27)},
+		"none": nil, "no credential": model.SlackSharedBot{Scope: model.SlackBotWorkspace{}},
+		"a credential too long": model.SlackSharedBot{CredentialID: strings.Repeat("c", 27), Scope: model.SlackBotWorkspace{}},
+		"no scope":              model.SlackSharedBot{CredentialID: bot.CredentialID},
 	} {
 		_, err := f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, mode)
 		assert.Error(t, err, name)
 	}
-	_, err := f.db.SetFoundrySlackMode(ctx, id26("AWS-other"), i.ID, model.SlackSharedBot(bot))
+	whole, sources := sharedBot(bot, model.SlackBotWorkspace{}), sharedBot(bot, model.SlackBotSources{})
+	_, err := f.db.SetFoundrySlackMode(ctx, id26("AWS-other"), i.ID, whole)
 	assert.ErrorIs(t, err, store.ErrNotFound, "another workspace's install")
 
-	was, err := f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot(bot))
+	was, err := f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, whole)
 	require.NoError(t, err)
 	assert.Equal(t, model.SlackPerPerson{}, was)
 	got, err := f.db.GetFoundrySlackInstall(ctx, f.workspaceID)
 	require.NoError(t, err)
-	assert.Equal(t, model.SlackSharedBot(bot), got.Mode)
-	was, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot(bot))
+	assert.Equal(t, whole, got.Mode)
+	was, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, whole)
 	require.NoError(t, err)
-	assert.Equal(t, model.SlackSharedBot(bot), was, "the same mode again changes nothing")
-	_, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot{CredentialID: id26("CRED-other")})
+	assert.Equal(t, whole, was, "the same mode again changes nothing")
+	_, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot{CredentialID: id26("CRED-other"), Scope: model.SlackBotWorkspace{}})
 	assert.ErrorIs(t, err, store.ErrConflict, "per_person comes before another bot")
+
+	// The same bot's scope changes in place, either way.
+	was, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, sources)
+	require.NoError(t, err)
+	assert.Equal(t, whole, was)
+	got, err = f.db.GetFoundrySlackInstall(ctx, f.workspaceID)
+	require.NoError(t, err)
+	assert.Equal(t, sources, got.Mode)
+	scope, err := f.db.FoundrySlackBotScope(ctx, f.workspaceID, bot.CredentialID)
+	require.NoError(t, err)
+	assert.Equal(t, model.SlackBotSources{}, scope)
+	was, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, whole)
+	require.NoError(t, err)
+	assert.Equal(t, sources, was)
 
 	for _, c := range []struct {
 		workspace, credential string
 		want                  bool
 	}{{f.workspaceID, bot.CredentialID, true}, {id26("AWS-other"), bot.CredentialID, false}, {f.workspaceID, id26("CRED-other"), false}} {
-		live, err := f.db.IsFoundrySlackBot(ctx, c.workspace, c.credential)
+		scope, err := f.db.FoundrySlackBotScope(ctx, c.workspace, c.credential)
+		if !c.want {
+			assert.ErrorIs(t, err, store.ErrNotFound, "%s %s", c.workspace, c.credential)
+			continue
+		}
 		require.NoError(t, err)
-		assert.Equal(t, c.want, live, "%s %s", c.workspace, c.credential)
+		assert.Equal(t, model.SlackBotWorkspace{}, scope)
 	}
 	named, err := f.db.IsFoundrySlackBotCredential(ctx, bot.CredentialID)
 	require.NoError(t, err)
@@ -74,18 +101,15 @@ func TestFoundrySlackMode(t *testing.T) {
 
 	was, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackPerPerson{})
 	require.NoError(t, err)
-	assert.Equal(t, model.SlackSharedBot(bot), was, "the caller revokes the credential it returns")
+	assert.Equal(t, whole, was, "the caller revokes the credential it returns")
 	got, err = f.db.GetFoundrySlackInstall(ctx, f.workspaceID)
 	require.NoError(t, err)
 	assert.Equal(t, model.SlackPerPerson{}, got.Mode)
-	for _, check := range []func() (bool, error){
-		func() (bool, error) { return f.db.IsFoundrySlackBot(ctx, f.workspaceID, bot.CredentialID) },
-		func() (bool, error) { return f.db.IsFoundrySlackBotCredential(ctx, bot.CredentialID) },
-	} {
-		is, err := check()
-		require.NoError(t, err)
-		assert.False(t, is)
-	}
+	_, err = f.db.FoundrySlackBotScope(ctx, f.workspaceID, bot.CredentialID)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+	named, err = f.db.IsFoundrySlackBotCredential(ctx, bot.CredentialID)
+	require.NoError(t, err)
+	assert.False(t, named)
 	_, err = f.db.GetFoundryAgentThread(ctx, f.workspaceID, f.threadID(1))
 	assert.ErrorIs(t, err, store.ErrNotFound, "the bot's thread is deleted")
 	cancelled, err := f.db.GetFoundryAgentTurn(ctx, f.workspaceID, live.ID)
@@ -109,13 +133,15 @@ func TestFoundrySlackMode(t *testing.T) {
 	assert.Equal(t, model.SlackPerPerson{}, was)
 
 	// A revoked install's credential stays named until it is revoked too.
-	_, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot{CredentialID: id26("CRED-two")})
+	// A bot turned on again starts on its scope as asked, whatever the last
+	// one's was.
+	two := model.SlackSharedBot{CredentialID: id26("CRED-two"), Scope: model.SlackBotSources{}}
+	_, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, two)
 	require.NoError(t, err)
 	require.NoError(t, f.db.RevokeFoundrySlackInstall(ctx, f.workspaceID, i.ID, false))
-	is, err := f.db.IsFoundrySlackBot(ctx, f.workspaceID, id26("CRED-two"))
-	require.NoError(t, err)
-	assert.False(t, is, "a revoked install has no bot")
-	is, err = f.db.IsFoundrySlackBotCredential(ctx, id26("CRED-two"))
+	_, err = f.db.FoundrySlackBotScope(ctx, f.workspaceID, id26("CRED-two"))
+	assert.ErrorIs(t, err, store.ErrNotFound, "a revoked install has no bot")
+	is, err := f.db.IsFoundrySlackBotCredential(ctx, id26("CRED-two"))
 	require.NoError(t, err)
 	assert.True(t, is)
 	_, err = f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackPerPerson{})
@@ -126,7 +152,7 @@ func TestFoundrySlackMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, retired, 1)
 	assert.Equal(t, i.ID, retired[0].ID)
-	assert.Equal(t, model.SlackSharedBot{CredentialID: id26("CRED-two")}, retired[0].Mode)
+	assert.Equal(t, two, retired[0].Mode)
 	none, err := f.db.ListFoundrySlackRetiredBots(ctx, 0)
 	require.NoError(t, err)
 	assert.Empty(t, none, "up to its limit")
@@ -147,15 +173,14 @@ func TestFoundrySlackRetiredBotsAreRevokedInstalls(t *testing.T) {
 	f := newSlackFixture(t, "retired")
 	i := f.installed(t)
 	bot := f.bot()
-	_, err := f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, model.SlackSharedBot(bot))
+	_, err := f.db.SetFoundrySlackMode(ctx, f.workspaceID, i.ID, sharedBot(bot, model.SlackBotWorkspace{}))
 	require.NoError(t, err)
 	retired, err := f.db.ListFoundrySlackRetiredBots(ctx, 10)
 	require.NoError(t, err)
 	assert.Empty(t, retired)
 	assert.ErrorIs(t, f.db.ForgetFoundrySlackBot(ctx, i.ID, bot.CredentialID), store.ErrNotFound)
-	live, err := f.db.IsFoundrySlackBot(ctx, f.workspaceID, bot.CredentialID)
+	_, err = f.db.FoundrySlackBotScope(ctx, f.workspaceID, bot.CredentialID)
 	require.NoError(t, err)
-	assert.True(t, live)
 }
 
 // Who spoke to the bot is kept per bot-mode Slack thread.

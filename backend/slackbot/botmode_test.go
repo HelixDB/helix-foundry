@@ -139,7 +139,7 @@ func newBotWorld(t *testing.T, with ...func(*Options)) (*world, *people, *approv
 	appr := &approver{display: map[string]any{}}
 	w := newWorld(t, append([]func(*Options){func(o *Options) { o.People, o.Proposals = ppl, appr }}, with...)...)
 	appr.w = w
-	_, err := w.db.SetFoundrySlackMode(w.ctx, w.ws, w.install.ID, model.SlackSharedBot{CredentialID: botCred})
+	_, err := w.db.SetFoundrySlackMode(w.ctx, w.ws, w.install.ID, model.SlackSharedBot{CredentialID: botCred, Scope: model.SlackBotWorkspace{}})
 	require.NoError(t, err)
 	w.install, err = w.db.GetFoundrySlackInstallByID(w.ctx, w.install.ID)
 	require.NoError(t, err)

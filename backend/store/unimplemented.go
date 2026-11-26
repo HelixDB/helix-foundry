@@ -2106,9 +2106,9 @@ func (u Unimplemented) AddFoundrySlackThreadPerson(context.Context, string, stri
 	return nil
 }
 
-func (u Unimplemented) IsFoundrySlackBot(context.Context, string, string) (bool, error) {
-	u.unimplemented("IsFoundrySlackBot")
-	return false, nil
+func (u Unimplemented) FoundrySlackBotScope(context.Context, string, string) (model.SlackBotScope, error) {
+	u.unimplemented("FoundrySlackBotScope")
+	return nil, nil
 }
 
 func (u Unimplemented) IsFoundrySlackBotCredential(context.Context, string) (bool, error) {

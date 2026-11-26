@@ -213,11 +213,11 @@ func (s *Service) foundryQuestionLimits(ctx context.Context, workspaceID string,
 	if asker == nil || asker.Kind != access.PrincipalServiceCredential {
 		return limits, nil
 	}
-	bot, err := s.deps.DB.IsFoundrySlackBot(ctx, workspaceID, asker.ID)
-	if err != nil {
+	switch _, err := s.deps.DB.FoundrySlackBotScope(ctx, workspaceID, asker.ID); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+	case err != nil:
 		return limits, status.Errorf(codes.Internal, "read the Slack install: %v", err)
-	}
-	if bot {
+	default:
 		limits.GranteePerHour, limits.GranteeCapMicros = limits.PerHour, limits.CapMicros
 	}
 	return limits, nil
@@ -399,13 +399,14 @@ func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymod
 }
 
 // questionsOf is whose questions the call may see and add to: a grantee's
-// own only, or, for the host's caller (nil), every question.
+// or a reader's own only, or, for the host's caller (nil), every question.
+// A reader's question reads the whole load (the worker reads its scope).
 func questionsOf(ctx context.Context) *access.Principal {
-	g, ok := access.GranteeFrom(ctx)
+	p, ok := access.PrincipalFrom(ctx)
 	if !ok {
 		return nil
 	}
-	return &g.Principal
+	return &p
 }
 
 // samePrincipal reports whether a question asked by asked is one the caller

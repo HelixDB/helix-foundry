@@ -277,3 +277,14 @@ func RuleOf(method string) Rule { return rules[method] }
 // whose own permissions refuse a caller may send the call on as a grantee
 // only to such a method.
 func GranteeAdmits(method string) bool { return RuleOf(method) != Deny }
+
+// ReaderAdmits reports whether method admits a Reader: where a grantee's
+// rule is Workspace or Ontology. A Reader runs no workflow: a use case's
+// runs are an agent's records, which the Slack bot keeps none of.
+//
+//	access.ReaderAdmits(foundryv1.FoundryService_AskFoundryQuestion_FullMethodName)     // true
+//	access.ReaderAdmits(foundryv1.FoundryService_StartFoundryWorkflowRun_FullMethodName) // false
+func ReaderAdmits(method string) bool {
+	rule := RuleOf(method)
+	return rule == Workspace || rule == Ontology
+}

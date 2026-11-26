@@ -354,7 +354,7 @@ func (b *Bot) message(ctx context.Context, c claim, m said) (model.SlackIntakeOu
 	}
 	// principal is whom the turn is for, person the Slack user whose
 	// Founder thread the Slack thread continues ("" for the bot's).
-	var principal model.FoundryAgentPrincipal = model.AgentBot(shared)
+	var principal model.FoundryAgentPrincipal = model.AgentBot{CredentialID: shared.CredentialID}
 	person, readOnly := "", false
 	if !isBot {
 		link, err := b.db.GetFoundrySlackLink(ctx, c.install.ID, m.user)
