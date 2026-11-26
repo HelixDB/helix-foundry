@@ -349,7 +349,11 @@ export function CompanyPanel({
             </Button>
           )}
           {changed && (
-            <Button icon={Undo2} title="Back to Foundry’s answer" onClick={undo}>
+            <Button
+              icon={Undo2}
+              title="Back to Foundry’s answer"
+              onClick={undo}
+            >
               Undo
             </Button>
           )}
