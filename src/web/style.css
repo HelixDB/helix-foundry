@@ -1579,7 +1579,7 @@ details > summary {
   flex-direction: column;
   padding: 11px 18px;
   gap: 7px;
-  font-family: monospace;
+  font-family: var(--hf-font-mono);
   font-size: 9px;
   color: var(--hf-muted);
 }
@@ -1626,12 +1626,12 @@ details > summary {
   gap: 7px;
 }
 .schema-column small {
-  font-family: monospace;
+  font-family: var(--hf-font-mono);
   font-size: 8px;
   color: var(--hf-on-ink);
 }
 .table-token {
-  font-family: monospace;
+  font-family: var(--hf-font-mono);
   color: var(--hf-on-ink);
   max-width: 100%;
   overflow: hidden;

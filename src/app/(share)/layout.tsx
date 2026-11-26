@@ -1,8 +1,7 @@
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { THEME_BACKGROUNDS, THEME_BOOT } from "@/shared/theme";
+import { helixMono } from "@/web/fonts";
 // The app's tokens and kit, without its shell: a published dashboard's page
 // is drawn as the app draws a dashboard, light or dark as the viewer's
 // browser is.
@@ -36,7 +35,7 @@ export default function ShareLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      className={helixMono.variable}
       suppressHydrationWarning
     >
       <head>
