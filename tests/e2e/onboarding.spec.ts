@@ -91,14 +91,10 @@ test("researches the company from the user's email, drafts the goal from the ans
   await expect(
     page.getByRole("heading", { level: 2, name: "Globex Industries" }),
   ).toBeVisible();
-  for (const [name, href] of [
-    ["globex-industries.com", "https://globex-industries.com/"],
-    ["globex-industries.com/about", "https://globex-industries.com/about"],
-  ]) {
-    const link = page.getByRole("link", { name, exact: true });
-    await expect(link).toHaveAttribute("href", href);
-    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
-  }
+  // Not the pages it read: what it found is the point.
+  await expect(
+    page.getByRole("link", { name: "globex-industries.com/about" }),
+  ).toHaveCount(0);
   const guess = page.locator(".on-guess");
   await expect(guess).toHaveText(
     /^Globex Industries sells software that helps teams run their operations\./,
@@ -112,6 +108,17 @@ test("researches the company from the user's email, drafts the goal from the ans
     name: "What Globex Industries does",
   });
   await expect(does).toBeFocused();
+  // Undo puts Foundry's back, on its question.
+  await does.fill("Globex Industries makes nothing.");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(guess).toHaveText(
+    /^Globex Industries sells software that helps teams run their operations\./,
+  );
+  await expect(right).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Change it" }).click();
   await does.fill("Globex Industries makes sensors and sells their data.");
   await page.getByRole("button", { name: "Next" }).click();
 
@@ -393,9 +400,22 @@ test("says when the site can't be read, and when the research fails, with Retry"
   await page.goto("/ontology/new");
   const domain = page.getByLabel("Company website"),
     research = page.getByRole("button", { name: "Research" });
+  // While it reads, it says what it does, a step at a time: the done ones
+  // ticked, the latest announced.
+  await mock.configure({ companyResearchMs: 2500 });
   // Unreadable: guesses from the domain alone, and no pages.
   await domain.fill("unreadable-co.com");
   await research.click();
+  const steps = page.locator(".on-research li");
+  await expect(steps).toHaveCount(2);
+  await expect(steps.nth(0)).toHaveText("Reading unreadable-co.com");
+  await expect(steps.nth(0)).toHaveClass("is-done");
+  await expect(steps.nth(1)).toHaveText(
+    "Following its pages about the company…",
+  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Following its pages" }),
+  ).toHaveText("Following its pages about the company…");
   await expect(
     page.getByText(
       "Foundry couldn’t read the site, so these guesses come from the domain alone.",

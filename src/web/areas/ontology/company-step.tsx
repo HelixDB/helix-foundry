@@ -2,9 +2,11 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  LoaderCircle,
   Pencil,
   RotateCcw,
   Search,
+  Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { sentence } from "../../api";
@@ -13,16 +15,73 @@ import { AiRefusal, useAiConfigured } from "../workspace/ai-gate";
 import type { CompanyChoice, ResearchRun } from "./model";
 
 /**
+ * What research does, as it goes: the backend reads the site (its homepage,
+ * then the pages it links about the company, 6 s at most: companyresearch
+ * Timeout), then one model call writes what Foundry found and its
+ * questions. The page hears nothing until it ends, so each step shows from
+ * when it can have started: `at` is that time in ms.
+ */
+const RESEARCH_STEPS = [
+  { at: 0, text: (domain: string) => `Reading ${domain}` },
+  { at: 1500, text: () => "Following its pages about the company" },
+  { at: 6000, text: () => "Working out what it does" },
+  { at: 14000, text: () => "Writing the questions only you can answer" },
+];
+
+/**
+ * The research's steps so far, a chat assistant's way: each one done ticked,
+ * the latest shimmering. Shown while `domain` is being read.
+ */
+function ResearchSteps({ domain }: { domain: string }) {
+  const [shown, setShown] = useState(1);
+  useEffect(() => {
+    const timers = RESEARCH_STEPS.slice(1).map((step, i) =>
+      setTimeout(() => setShown(i + 2), step.at),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, []);
+  const steps = RESEARCH_STEPS.slice(0, shown);
+  return (
+    <>
+      {/* Announced one step at a time; the list is for the eye. */}
+      <p className="hf-sr-only" role="status">
+        {steps.at(-1)!.text(domain)}…
+      </p>
+      <ol className="on-research" aria-hidden="true">
+        {steps.map((step, i) => {
+          const done = i < steps.length - 1;
+          return (
+            <li key={step.at} className={done ? "is-done" : "is-current"}>
+              {done ? (
+                <Check size={14} />
+              ) : (
+                <LoaderCircle size={14} className="hf-spin" />
+              )}
+              <span>
+                {step.text(domain)}
+                {done ? "" : "…"}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </>
+  );
+}
+
+/**
  * The new-ontology wizard's Your company step, one thing at a time in the
  * middle of the page: first the company's website (`domain`, which the page
  * starts from the user's email when it names a company) with Research,
- * which has the WFE read its site; then what Foundry found (the company, its
- * summary and the pages read, or that none could be), then each of the
- * research's questions, each on its own screen. Every one of those shows
- * Foundry's guess (the summary, a question's best guess) and asks whether it
- * looks right: This looks right to me goes on, Change it opens the field
- * (and a question's options as chips that fill it). A screen with nothing to
- * confirm (a question without a guess, or one cleared) opens on its field.
+ * which has the WFE read its site, saying what it does as it goes
+ * (ResearchSteps); then what Foundry found (the company and its summary, or
+ * that the site couldn't be read), then each of the research's questions,
+ * each on its own screen. Every one of those shows Foundry's guess (the
+ * summary, a question's best guess) and asks whether it looks right: This
+ * looks right to me goes on, Change it opens the field (and a question's
+ * options as chips that fill it), and once the answer differs from Foundry's,
+ * Undo puts Foundry's back. A screen with nothing to confirm (a
+ * question without a guess, or one cleared) opens on its field.
  * The last screen's go-on calls `onFinish`, which drafts the goal and moves
  * on.
  *
@@ -143,10 +202,9 @@ export function CompanyPanel({
               Research
             </Button>
           </div>
-          {/* Mounted throughout, so what it says next is announced. */}
-          <p className="on-muted on-company-status" role="status">
-            {pending ? `Reading ${research.domain}…` : ""}
-          </p>
+          {pending && (
+            <ResearchSteps key={research.domain} domain={research.domain} />
+          )}
           <AiRefusal
             action="Researching your company"
             error={error}
@@ -174,9 +232,7 @@ export function CompanyPanel({
                 Continue
               </Button>
             )}
-            <Button variant="ghost" onClick={onSkip}>
-              Skip
-            </Button>
+            <Button onClick={onSkip}>Skip</Button>
           </div>
         </form>
       </section>
@@ -188,6 +244,14 @@ export function CompanyPanel({
   const next = () => (last ? onFinish() : show(at + 1));
   const name = r.companyName || r.domain || "your company";
   const count = `${at + 1} of ${total}`;
+  // Foundry's own answer, which Undo puts back once it differs.
+  const original = q ? q.bestGuess || "" : r.summary || "";
+  const changed = !!original.trim() && value.trim() !== original.trim();
+  const undo = () => {
+    if (q) onAnswer(q.id, original);
+    else onSummary(original);
+    setEditing(false);
+  };
   return (
     <section className="on-focus" aria-labelledby="on-company-head">
       {/* A screen of its own, so moving on focuses afresh and is read. */}
@@ -210,21 +274,7 @@ export function CompanyPanel({
             <h2 id="on-company-head" className="on-focus-title">
               {r.companyName || r.domain || "Your company"}
             </h2>
-            {r.fetched ? (
-              !!r.sources?.length && (
-                <p className="on-company-sources">
-                  Read{" "}
-                  {r.sources.map((url, i) => (
-                    <span key={url}>
-                      {i > 0 && ", "}
-                      <a href={url} target="_blank" rel="noopener noreferrer">
-                        {url.replace(/^https?:\/\//, "").replace(/\/$/, "")}
-                      </a>
-                    </span>
-                  ))}
-                </p>
-              )
-            ) : (
+            {!r.fetched && (
               <p className="on-muted">
                 Foundry couldn’t read the site, so these guesses come from the
                 domain alone.
@@ -296,6 +346,15 @@ export function CompanyPanel({
           {!editing && (
             <Button icon={Pencil} onClick={() => setEditing(true)}>
               Change it
+            </Button>
+          )}
+          {changed && (
+            <Button
+              icon={Undo2}
+              title="Back to Foundry’s answer"
+              onClick={undo}
+            >
+              Undo
             </Button>
           )}
           <Button
