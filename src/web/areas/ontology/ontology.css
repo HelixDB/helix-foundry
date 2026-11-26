@@ -944,10 +944,10 @@
   font-size: var(--hf-text-sm);
   text-align: left;
 }
-.on-stepper-button:not(:disabled) {
+button.on-stepper-button {
   cursor: pointer;
 }
-.on-stepper-button:not(:disabled):hover {
+button.on-stepper-button:hover {
   color: var(--hf-text);
 }
 .on-stepper-number {
@@ -981,6 +981,9 @@
 }
 .on-stepper-step.is-upcoming .on-stepper-button {
   opacity: 0.6;
+}
+.on-stepper-step.is-done .on-stepper-button {
+  color: var(--hf-text-2);
 }
 .on-step {
   display: grid;

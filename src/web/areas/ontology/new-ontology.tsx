@@ -985,27 +985,32 @@ export function NewOntologyPage() {
                 className={cx("on-stepper-step", `is-${state}`)}
                 aria-current={state === "current" ? "step" : undefined}
               >
-                <button
-                  type="button"
-                  className="on-stepper-button"
-                  disabled={state !== "done"}
-                  aria-label={
-                    state === "done" ? `Edit ${copy.title}` : undefined
-                  }
-                  title={state === "done" ? stepSummary(st.state) : undefined}
-                  onClick={() => go(st.id)}
-                >
-                  <span className="on-stepper-number" aria-hidden>
-                    {state === "done" ? <Check size={12} /> : i + 1}
-                  </span>
-                  <span className="on-stepper-title">{copy.title}</span>
-                  {state === "done" && (
+                {state === "done" ? (
+                  <button
+                    type="button"
+                    className="on-stepper-button"
+                    aria-label={`Edit ${copy.title}`}
+                    title={stepSummary(st.state)}
+                    onClick={() => go(st.id)}
+                  >
+                    <span className="on-stepper-number" aria-hidden>
+                      <Check size={12} />
+                    </span>
+                    <span className="on-stepper-title">{copy.title}</span>
                     <span className="hf-sr-only">
                       {" "}
                       (done: {stepSummary(st.state)})
                     </span>
-                  )}
-                </button>
+                  </button>
+                ) : (
+                  // Only a done step is a way back: the others aren't buttons.
+                  <span className="on-stepper-button">
+                    <span className="on-stepper-number" aria-hidden>
+                      {i + 1}
+                    </span>
+                    <span className="on-stepper-title">{copy.title}</span>
+                  </span>
+                )}
               </li>
             );
           })}

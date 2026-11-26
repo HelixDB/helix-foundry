@@ -128,7 +128,7 @@ test("researches the company from the user's email, drafts the goal from the ans
     chips.getByRole("button", { name: "Churn risk" }),
   ).toHaveAttribute("aria-pressed", "true");
   // Back keeps the answers.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(who).toHaveValue("");
   await page.getByRole("button", { name: "Next" }).click();
   await expect(most).toHaveValue("Churn risk");
@@ -249,7 +249,7 @@ test("names the ontology and picks an existing database in Advanced", async ({
   await expect(page.locator(".on-company")).toContainText("Acme");
   // Back from the first question returns to the website, the research kept;
   // editing the domain drops it.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Back to the questions" }),
   ).toBeVisible();
@@ -360,7 +360,7 @@ test("says when the site can't be read, and when the research fails, with Retry"
   await expect(page.locator(".on-focus-count")).toBeVisible();
 
   // The model failing: why, with Retry, which asks again; Skip still works.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await domain.fill("fail-co.com");
   await research.click();
   const failed = page.locator(".on-company-error");
