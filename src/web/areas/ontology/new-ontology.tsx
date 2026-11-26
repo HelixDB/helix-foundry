@@ -979,7 +979,6 @@ export function NewOntologyPage() {
         <ol className="on-stepper" aria-label="Steps">
           {wizard.steps.map((st, i) => {
             const state = i === at ? "current" : i < at ? "done" : "upcoming";
-            const copy = STEP_COPY[st.id];
             return (
               <li
                 key={st.id}
@@ -990,14 +989,14 @@ export function NewOntologyPage() {
                   <button
                     type="button"
                     className="on-stepper-button"
-                    aria-label={`Edit ${copy.title}`}
+                    aria-label={`Edit ${STEP_LABELS[st.id]}`}
                     title={stepSummary(st.state)}
                     onClick={() => go(st.id)}
                   >
                     <span className="on-stepper-number" aria-hidden>
                       <Check size={12} />
                     </span>
-                    <span className="on-stepper-title">{copy.title}</span>
+                    <span className="on-stepper-title">{STEP_LABELS[st.id]}</span>
                     <span className="hf-sr-only">
                       {" "}
                       (done: {stepSummary(st.state)})
@@ -1009,7 +1008,7 @@ export function NewOntologyPage() {
                     <span className="on-stepper-number" aria-hidden>
                       {i + 1}
                     </span>
-                    <span className="on-stepper-title">{copy.title}</span>
+                    <span className="on-stepper-title">{STEP_LABELS[st.id]}</span>
                   </span>
                 )}
               </li>
@@ -1153,6 +1152,14 @@ export function NewOntologyPage() {
     </SignInReturn.Provider>
   );
 }
+
+// What the steps along the top are called: short enough for one row.
+const STEP_LABELS: Record<WizardStepId, string> = {
+  company: "Your company",
+  sources: "Your data",
+  goal: "Goal",
+  review: "Review",
+};
 
 const NEW_PROJECT = "__new";
 

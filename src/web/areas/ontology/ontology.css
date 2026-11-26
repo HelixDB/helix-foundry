@@ -919,14 +919,19 @@
 }
 .on-stepper-step {
   display: flex;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
+/* A line between steps, the lines sharing the row's spare width. */
+.on-stepper-step + .on-stepper-step {
+  flex: 1 1 auto;
+}
 .on-stepper-step + .on-stepper-step::before {
   content: "";
-  flex: 0 0 16px;
+  flex: 1 1 16px;
+  min-width: 12px;
   height: 1px;
   background: var(--hf-border);
 }
@@ -1013,9 +1018,6 @@ button.on-stepper-button:hover {
 }
 /* On a phone only the current step keeps its title. */
 @media (max-width: 640px) {
-  .on-stepper-step:not(.is-current) {
-    flex: none;
-  }
   .on-stepper-step:not(.is-current) .on-stepper-title {
     display: none;
   }
