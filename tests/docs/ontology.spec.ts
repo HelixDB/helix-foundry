@@ -310,13 +310,12 @@ test("ontology: create video", async ({ browser }) => {
   const count = video.locator(".on-focus-count");
   await expect(count).toBeVisible();
   await video.waitForTimeout(1800);
-  await caption(video, "Answer what it can’t tell, one question at a time");
+  await caption(video, "Check what it found, one thing at a time");
   const n = Number((await count.textContent())!.match(/of (\d+)/)![1]);
-  for (let i = 1; i < n; i++) {
-    await click(video.getByRole("button", { name: "Next" }));
+  for (let i = 1; i <= n; i++) {
+    await click(video.getByRole("button", { name: "This looks right to me" }));
     await video.waitForTimeout(600);
   }
-  await click(video.getByRole("button", { name: "Write the goal" }));
   await caption(
     video,
     "Choose what it drafts from: synced tables, API sources, documents",

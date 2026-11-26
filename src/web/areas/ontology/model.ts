@@ -2864,13 +2864,31 @@ export type DraftChoices = {
 };
 
 /**
- * The company step's outcome: its site's research and the answers to its
- * questions, by question id (each starts as its best guess).
+ * The company step's outcome: its site's research, what the company does
+ * (starts as the research's summary; the person may correct it) and the
+ * answers to its questions, by question id (each starts as its best guess).
  */
 export type CompanyChoice = {
   research: FoundryCompanyResearch;
+  summary: string;
   answers: ReadonlyMap<string, string>;
 };
+
+/**
+ * What the company does as draft-goal's `summary`: the person's correction,
+ * trimmed, or undefined when they kept the research's (or cleared it, which
+ * the backend reads as keeping it too).
+ *
+ * @example
+ * correctedSummary({ research: { id: "r", summary: "Sells anvils." }, summary: " Sells anvils. ", answers: new Map() }) // undefined
+ * correctedSummary({ research: { id: "r", summary: "Sells anvils." }, summary: "Makes anvils.", answers: new Map() }) // "Makes anvils."
+ */
+export function correctedSummary(company: CompanyChoice): string | undefined {
+  const said = company.summary.trim();
+  return said && said !== (company.research.summary || "").trim()
+    ? said
+    : undefined;
+}
 
 /**
  * What /ontology/new has chosen so far: the company researched (null while
@@ -3055,6 +3073,7 @@ export type CompanyFlowAction =
   | { type: "research-done"; domain: string; research: FoundryCompanyResearch }
   | { type: "research-failed"; domain: string; error: unknown }
   | { type: "answer"; questionId: string; answer: string }
+  | { type: "summary"; summary: string }
   | { type: "goal"; goal: string }
   // `auto`: the goal step drafting on its own, only into an empty goal and
   // once per research; else Write it again.
@@ -3117,6 +3136,7 @@ export function companyFlow(
         ? {
             ...switched({
               research: action.research,
+              summary: action.research.summary || "",
               answers: new Map(
                 (action.research.questions || []).map((q) => [
                   q.id,
@@ -3143,6 +3163,10 @@ export function companyFlow(
               ),
             },
           }
+        : flow;
+    case "summary":
+      return flow.company
+        ? { ...flow, company: { ...flow.company, summary: action.summary } }
         : flow;
     case "goal":
       return {

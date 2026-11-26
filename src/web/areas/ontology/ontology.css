@@ -1044,11 +1044,6 @@ button.on-stepper-button:hover {
 .on-focus-card > .on-muted {
   margin: 0;
 }
-.on-focus-kicker {
-  margin: 0;
-  color: var(--hf-text);
-  font-weight: 500;
-}
 .on-focus-count {
   margin: var(--hf-space-2) 0 0;
   color: var(--hf-muted);
@@ -1063,9 +1058,20 @@ button.on-stepper-button:hover {
   resize: vertical;
   line-height: 1.5;
 }
-.on-company-summary {
-  margin: 0;
+/* Foundry's guess on a company screen, and whether it looks right. */
+.on-guess {
+  margin: var(--hf-space-2) 0 0;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--hf-border-strong);
+  color: var(--hf-text);
+  font-size: var(--hf-text-lg);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.on-guess-ask {
+  margin: var(--hf-space-2) 0 0;
   color: var(--hf-text-2);
+  font-weight: 500;
 }
 .on-company-status:empty {
   display: none;
@@ -1454,12 +1460,6 @@ button.on-stepper-button:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-.on-company {
-  display: grid;
-  gap: 6px;
-  padding-bottom: var(--hf-space-2);
-  border-bottom: 1px solid var(--hf-border);
 }
 .on-company-sources {
   margin: 0;

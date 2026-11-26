@@ -490,19 +490,18 @@ export async function startOntology(page: Page) {
 }
 
 /**
- * Walks a researched company's questions as they stand, one screen each,
- * to the last, whose Write the goal starts the goal's draft and opens the
- * sources step.
+ * Confirms a researched company as it stands, one screen each (what it
+ * does, then each question), to the last, whose This looks right to me
+ * starts the goal's draft and opens the sources step.
  */
 export async function finishCompany(page: Page) {
   const count = page.locator(".on-focus-count");
-  await expect(count).toHaveText(/^Question 1 of \d+$/);
+  await expect(count).toHaveText(/^1 of \d+$/);
   const n = Number((await count.textContent())!.match(/of (\d+)/)![1]);
-  for (let i = 1; i < n; i++) {
-    await page.getByRole("button", { name: "Next" }).click();
-    await expect(count).toHaveText(`Question ${i + 1} of ${n}`);
+  for (let i = 1; i <= n; i++) {
+    await expect(count).toHaveText(`${i} of ${n}`);
+    await page.getByRole("button", { name: "This looks right to me" }).click();
   }
-  await page.getByRole("button", { name: "Write the goal" }).click();
   await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
 }
 

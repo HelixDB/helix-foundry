@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -154,6 +155,12 @@ func (s *Service) DraftFoundryGoal(ctx context.Context, req *foundryv1.DraftFoun
 	}
 	if utf8.RuneCountInString(req.GetData()) > companyresearch.MaxData {
 		return nil, status.Errorf(codes.InvalidArgument, "data is longer than %d characters", companyresearch.MaxData)
+	}
+	if summary := strings.TrimSpace(req.GetSummary()); summary != "" {
+		if utf8.RuneCountInString(summary) > companyresearch.MaxSummary {
+			return nil, status.Errorf(codes.InvalidArgument, "summary is longer than %d characters", companyresearch.MaxSummary)
+		}
+		research.Summary = summary
 	}
 	m, err := s.researchModelOf(ctx, ws)
 	if err != nil {
