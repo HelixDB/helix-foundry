@@ -126,17 +126,20 @@ describe("CompanyPanel", () => {
       }),
     );
   const status = (html: string) =>
-    /<p class="on-muted on-company-status" role="status">(.*?)<\/p>/.exec(
-      html,
-    )?.[1];
+    /<p class="hf-sr-only" role="status">(.*?)<\/p>/.exec(html)?.[1];
 
-  it("asks for the website first, its status line mounted, saying when it reads the site", () => {
+  it("asks for the website first, then says what research does as it goes", () => {
     const idle = panel({ kind: "idle" });
     expect(idle).toContain("What’s your company’s website?");
     expect(idle).toContain("Skip");
-    expect(status(idle)).toBe("");
+    expect(status(idle)).toBeUndefined();
+    expect(idle).not.toContain("on-research");
     const pending = panel({ kind: "pending", domain: "globex.com" });
+    // Its first step, announced and shimmering; the rest come with time.
     expect(status(pending)).toBe("Reading globex.com…");
+    expect(pending).toContain('<ol class="on-research" aria-hidden="true">');
+    expect(pending).toContain('class="is-current"');
+    expect(pending).not.toContain("Following its pages");
     expect(pending).toContain('aria-busy="true"');
   });
 
