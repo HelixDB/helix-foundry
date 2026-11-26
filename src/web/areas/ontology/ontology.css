@@ -1073,8 +1073,45 @@ button.on-stepper-button:hover {
   color: var(--hf-text-2);
   font-weight: 500;
 }
-.on-company-status:empty {
-  display: none;
+/* What research does as it goes, a chat assistant's way: steps done
+   ticked, the latest shimmering. */
+.on-research {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--hf-text-sm);
+}
+.on-research li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: hf-pop 0.2s ease-out;
+}
+.on-research .is-done {
+  color: var(--hf-muted);
+}
+.on-research .is-done svg {
+  color: var(--hf-success-text);
+}
+.on-research .is-current svg {
+  color: var(--hf-muted);
+}
+.on-research .is-current span {
+  background: linear-gradient(
+      90deg,
+      var(--hf-text-2) 0%,
+      var(--hf-text-2) 40%,
+      var(--hf-faint) 50%,
+      var(--hf-text-2) 60%,
+      var(--hf-text-2) 100%
+    )
+    0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: hf-shimmer 2.4s linear infinite;
 }
 .on-focus-actions {
   display: flex;
@@ -1448,8 +1485,12 @@ button.on-stepper-button:hover {
 .on-company-form {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
+}
+/* Research stands as tall as the field beside it. */
+.on-company-form > .hf-btn {
+  height: auto;
 }
 .on-company-form .hf-field {
   flex: 1 1 220px;
@@ -1460,15 +1501,6 @@ button.on-stepper-button:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-.on-company-sources {
-  margin: 0;
-  color: var(--hf-muted);
-  font-size: var(--hf-text-sm);
-  overflow-wrap: anywhere;
-}
-.on-company-sources a {
-  color: var(--hf-text-2);
 }
 .on-chips {
   display: flex;
