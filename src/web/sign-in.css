@@ -234,7 +234,7 @@
   color: var(--hf-faint);
 }
 
-/* What Foundry is, for someone who opened sign-in cold: under the card on a
+/* What Foundry is, beside every hosted sign-in: under the card on a
    phone, beside it on a wide screen, both centred as one group. */
 .hf-gate.has-aside {
   align-content: center;

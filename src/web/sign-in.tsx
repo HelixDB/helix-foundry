@@ -241,10 +241,6 @@ export function SignInPage() {
   // Already signed in: go straight on.
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
-  // Someone who came here cold sees what Foundry is: the app sends a
-  // signed-out user with return_to (but from `/`, and after signing out), a
-  // failed sign-in comes back with ?error=, and a local build has no sign-in.
-  const cold = !LOCAL && !returnTo && !code;
   const start = async (id: Provider["id"]) => {
     setPending(id);
     await signInStarted(id);
@@ -256,7 +252,7 @@ export function SignInPage() {
     <GatePage
       title="Sign in to Helix Foundry"
       lede="Use your Helix account, or continue to create one."
-      aside={cold ? <Pitch /> : undefined}
+      aside={LOCAL ? undefined : <Pitch />}
     >
       {error && (
         <div role="alert" className="hf-gate-alert">
@@ -376,7 +372,7 @@ function InAppNotice({ inApp }: { inApp: InAppBrowser }) {
 const ASK_DEMO_URL =
   "https://www.helix-db.com/?utm_source=foundry&utm_medium=login&utm_campaign=pitch#foundry-ask";
 
-/** What Foundry is, in a line and three points, beside a cold sign-in. */
+/** What Foundry is, in a line and three points, beside every hosted sign-in. */
 function Pitch() {
   return (
     <section className="hf-gate-pitch" aria-labelledby="sign-in-pitch">
