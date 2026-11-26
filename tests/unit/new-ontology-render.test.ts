@@ -167,7 +167,10 @@ describe("CompanyPanel", () => {
     expect(blank).not.toContain("Change it");
     expect(blank).not.toContain("This looks right to me");
     // Without questions what it does is the last screen.
-    const only = { ...company, research: { ...company.research, questions: [] } };
+    const only = {
+      ...company,
+      research: { ...company.research, questions: [] },
+    };
     const last = panel({ kind: "idle" }, only);
     expect(last).toContain("1 of 1");
     expect(last).toContain("Foundry writes your goal from these next.");
