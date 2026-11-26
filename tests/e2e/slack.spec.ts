@@ -392,7 +392,8 @@ test("an owner turns on the shared bot, limits it to its sources, chooses them a
   ).toHaveCount(0);
 
   // Limited to its sources at once; it reads none until they're chosen.
-  await scope.getByRole("radio", { name: /Only the sources I choose/ }).check();
+  // It changes once the API answers, so the radio is clicked, not checked.
+  await scope.getByRole("radio", { name: /Only the sources I choose/ }).click();
   await expect(
     page.getByText("The shared bot reads only the sources you choose"),
   ).toBeVisible();
@@ -463,7 +464,7 @@ test("widening the shared bot to the whole workspace asks first", async ({
       name: /Everything in this workspace/,
     }),
     sources = scope.getByRole("radio", { name: /Only the sources I choose/ });
-  await sources.check();
+  await sources.click();
   await expect(sources).toBeChecked();
 
   // Cancelled, it stays limited.
