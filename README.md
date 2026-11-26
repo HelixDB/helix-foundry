@@ -28,6 +28,14 @@ Connect your databases, tools and documents, let an agent draft an ontology over
   <img src=".github/assets/explorer.png" width="800" alt="The Helix Foundry Explorer: customers, invoices and contracts as one connected graph, with the selected customer's properties and relationships beside it">
 </p>
 
+## What it's for
+
+Helix Foundry is an open-source AI knowledge graph builder. It turns a company's databases, SaaS tools and documents into one ontology that people and AI agents can query, with every fact traced back to where it came from.
+
+- **A company brain for AI agents.** Agents work off the same connected graph your team explores, through the Helix MCP or the Analyst, instead of searching each tool on its own.
+- **An open-source alternative to Palantir Foundry's ontology.** Build an ontology over your own data and run it on Helix Cloud or on your own computer, under Apache 2.0.
+- **Your data and your model.** Run it locally with Docker and the AI provider you choose, including a local model in Ollama or LM Studio.
+
 ## Get started with your coding agent
 
 **On Helix Cloud.** Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
