@@ -108,16 +108,16 @@ test("researches the company from the user's email, drafts the goal from the ans
     name: "What Globex Industries does",
   });
   await expect(does).toBeFocused();
-  // Undo changes puts Foundry's back, on its question.
+  // Undo puts Foundry's back, on its question.
   await does.fill("Globex Industries makes nothing.");
-  await page.getByRole("button", { name: "Undo changes" }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(guess).toHaveText(
     /^Globex Industries sells software that helps teams run their operations\./,
   );
   await expect(right).toBeFocused();
-  await expect(page.getByRole("button", { name: "Undo changes" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Change it" }).click();
   await does.fill("Globex Industries makes sensors and sells their data.");
   await page.getByRole("button", { name: "Next" }).click();

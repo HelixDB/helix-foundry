@@ -80,7 +80,7 @@ function ResearchSteps({ domain }: { domain: string }) {
  * summary, a question's best guess) and asks whether it looks right: This
  * looks right to me goes on, Change it opens the field (and a question's
  * options as chips that fill it), and once the answer differs from Foundry's,
- * Undo changes puts Foundry's back. A screen with nothing to confirm (a
+ * Undo puts Foundry's back. A screen with nothing to confirm (a
  * question without a guess, or one cleared) opens on its field.
  * The last screen's go-on calls `onFinish`, which drafts the goal and moves
  * on.
@@ -244,7 +244,7 @@ export function CompanyPanel({
   const next = () => (last ? onFinish() : show(at + 1));
   const name = r.companyName || r.domain || "your company";
   const count = `${at + 1} of ${total}`;
-  // Foundry's own answer, which Undo changes puts back once it differs.
+  // Foundry's own answer, which Undo puts back once it differs.
   const original = q ? q.bestGuess || "" : r.summary || "";
   const changed = !!original.trim() && value.trim() !== original.trim();
   const undo = () => {
@@ -349,8 +349,8 @@ export function CompanyPanel({
             </Button>
           )}
           {changed && (
-            <Button icon={Undo2} onClick={undo}>
-              Undo changes
+            <Button icon={Undo2} title="Back to Foundry’s answer" onClick={undo}>
+              Undo
             </Button>
           )}
           <Button
