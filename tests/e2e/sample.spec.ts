@@ -361,7 +361,7 @@ test("keeps the sample's data out of an ontology of the user's own", async ({
   await expect(noConnectors).toBeVisible();
   await expect(noDocuments).toBeVisible();
   await expect(steps).not.toContainText("Acme Corp");
-  await expect(steps).toContainText(
+  await expect(page.getByRole("main")).toContainText(
     "Connect your data or upload documents to continue.",
   );
   await expect(onward).toBeDisabled();

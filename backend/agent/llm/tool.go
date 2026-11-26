@@ -48,6 +48,7 @@ func CallTool[T any](ctx context.Context, b Binding, req Request, tool string, c
 		}
 		var input json.RawMessage
 		var failed error
+		var stop StopReason
 		for chunk, err := range b.Model.Stream(ctx, req) {
 			if err != nil {
 				failed = err
@@ -60,6 +61,8 @@ func CallTool[T any](ctx context.Context, b Binding, req Request, tool string, c
 				}
 			case Usage:
 				cost += b.Pricer.Micros(c)
+			case Stop:
+				stop = c.Reason
 			}
 		}
 		var refused *Error
@@ -81,7 +84,7 @@ func CallTool[T any](ctx context.Context, b Binding, req Request, tool string, c
 		read, err := parse(input)
 		if err != nil {
 			failure = FailureUnusable
-			log.From(ctx).Info("model call: an answer that didn't read", "tool", tool, "err", err)
+			log.From(ctx).Info("model call: an answer that didn't read", "tool", tool, "stop", stop, "err", err)
 			continue
 		}
 		return read, cost, ""
