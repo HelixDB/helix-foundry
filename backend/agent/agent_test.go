@@ -639,12 +639,14 @@ type backend struct {
 	// created are the dashboards made; deleted the ids of those deleted.
 	created []*foundryv1.CreateFoundryDashboardRequest
 	deleted []string
-	// grantee reads the person as a restricted member; accessErr refuses
-	// reading their access; items are the Slack channels the API reads as
-	// shared with them.
-	grantee   bool
-	accessErr error
-	items     []*foundryv1.FoundrySourceItem
+	// grantee reads the person as a restricted member, readsWorkspace a
+	// Slack bot as the whole workspace's reader; accessErr refuses reading
+	// their access; items are the Slack channels the API reads as shared
+	// with them.
+	grantee        bool
+	readsWorkspace bool
+	accessErr      error
+	items          []*foundryv1.FoundrySourceItem
 	// loadErr refuses making a load.
 	loadErr error
 	// approved are the workflows approved, approveErr refuses approving,
@@ -658,7 +660,7 @@ func (b *backend) GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAcc
 	if b.accessErr != nil {
 		return nil, b.accessErr
 	}
-	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, Workflows: true, SourceItems: b.items}, nil
+	return &foundryv1.GetMyFoundryAccessResponse{Grantee: b.grantee, ReadsWorkspace: b.readsWorkspace, Workflows: true, SourceItems: b.items}, nil
 }
 
 func (b *backend) AnswerOntologyGeneration(_ context.Context, r *foundryv1.AnswerOntologyGenerationRequest, _ ...grpc.CallOption) (
@@ -1270,7 +1272,7 @@ func TestPromptKeepsWhatAModelNeeds(t *testing.T) {
 func TestPromptOffersEveryRuntimeAnOwnerMayChoose(t *testing.T) {
 	// An owner who confirmed Codex asks for it: the Assistant must know it is a runtime.
 	assert.Contains(t, systemPrompt, "{runtime}: api, claude_code or codex (codex only once the owner confirmed it in Settings › AI models")
-	assert.Equal(t, "assistant-19", PromptVersion)
+	assert.Equal(t, "assistant-20", PromptVersion)
 }
 
 func TestTitle(t *testing.T) {

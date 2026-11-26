@@ -3743,17 +3743,28 @@ enum FoundrySlackIdentityMode {
   FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED = 0;
   // Each linked Slack user as their own Foundry user.
   FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON = 1;
-  // One shared bot: anyone in the Slack workspace may ask it, it reads only
-  // the sources its credential is given, and owners and admins run what it
+  // One shared bot: anyone in the Slack workspace may ask it, it reads what
+  // its scope says (FoundrySlackBotScope), and owners and admins run what it
   // proposes as themselves.
   FOUNDRY_SLACK_IDENTITY_MODE_BOT = 2;
+}
+
+// FoundrySlackBotScope is what an install's shared bot reads. Either way it
+// only reads and asks, and proposes what owners and admins run.
+enum FoundrySlackBotScope {
+  FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED = 0;
+  // Everything in the workspace an unrestricted member reads: every
+  // ontology, its current load and documents. A new bot's scope.
+  FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE = 1;
+  // Only the sources Settings › Access grants its credential.
+  FOUNDRY_SLACK_BOT_SCOPE_SOURCES = 2;
 }
 
 // FoundrySlackBot is an install's shared bot: the workspace service
 // credential it acts as.
 message FoundrySlackBot {
-  // Settings › Access chooses its sources, as principal
-  // service_credential:<credential_id>.
+  // Under the SOURCES scope Settings › Access chooses its sources, as
+  // principal service_credential:<credential_id>.
   string credential_id = 1;
   // Its name in the workspace's keys; empty when Helix can't read it.
   string credential_name = 2;
@@ -3761,6 +3772,8 @@ message FoundrySlackBot {
   // permissions: the bot's turns fail until bot mode is turned off and on
   // again.
   bool broken = 3;
+  // What it reads: WORKSPACE or SOURCES.
+  FoundrySlackBotScope scope = 4;
 }
 
 // FoundrySlackLink is a Slack user who acts as a Foundry user: the bot

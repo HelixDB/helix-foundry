@@ -6864,7 +6864,7 @@
         ]
       },
       "patch": {
-        "summary": "Sets whom the install's bot acts as, for an owner or admin. BOT makes\none shared bot for the whole Slack workspace: Helix makes it a\nworkspace service credential no one holds the token of, whose sources\nare chosen in Settings › Access, and owners and admins run what it\nproposes as themselves. PER_PERSON answers each linked Slack user as\ntheir own Foundry user: the bot's credential is revoked and its threads\ndeleted. Setting the mode it has changes nothing. NOT_FOUND without an\ninstall; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the\nhost makes no such credentials.",
+        "summary": "Sets whom the install's bot acts as, for an owner or admin. BOT makes\none shared bot for the whole Slack workspace: Helix makes it a\nworkspace service credential no one holds the token of, which reads\nwhat its bot_scope says (the whole workspace unless set otherwise), and\nowners and admins run what it proposes as themselves. BOT with a\nbot_scope sets the shared bot's scope. PER_PERSON answers each linked\nSlack user as their own Foundry user: the bot's credential is revoked\nand its threads deleted. Setting the mode it has changes nothing. NOT_FOUND without an\ninstall; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the\nhost makes no such credentials.",
         "operationId": "FoundryService_UpdateFoundrySlack",
         "responses": {
           "200": {
@@ -8323,6 +8323,10 @@
         "identityMode": {
           "$ref": "#/definitions/v1FoundrySlackIdentityMode",
           "description": "PER_PERSON or BOT; UNSPECIFIED is INVALID_ARGUMENT."
+        },
+        "botScope": {
+          "$ref": "#/definitions/v1FoundrySlackBotScope",
+          "description": "With BOT, what the shared bot reads: UNSPECIFIED keeps its scope (a new\nbot's is WORKSPACE). With PER_PERSON it must be UNSPECIFIED."
         }
       }
     },
@@ -8355,7 +8359,7 @@
         "NULL_VALUE"
       ],
       "default": "NULL_VALUE",
-      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
+      "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
     },
     "rpcStatus": {
       "type": "object",
@@ -13831,7 +13835,7 @@
       "properties": {
         "credentialId": {
           "type": "string",
-          "description": "Settings › Access chooses its sources, as principal\nservice_credential:\u003ccredential_id\u003e."
+          "description": "Under the SOURCES scope Settings › Access chooses its sources, as\nprincipal service_credential:\u003ccredential_id\u003e."
         },
         "credentialName": {
           "type": "string",
@@ -13840,9 +13844,23 @@
         "broken": {
           "type": "boolean",
           "description": "The credential was revoked, deleted, expired or given database\npermissions: the bot's turns fail until bot mode is turned off and on\nagain."
+        },
+        "scope": {
+          "$ref": "#/definitions/v1FoundrySlackBotScope",
+          "description": "What it reads: WORKSPACE or SOURCES."
         }
       },
       "description": "FoundrySlackBot is an install's shared bot: the workspace service\ncredential it acts as."
+    },
+    "v1FoundrySlackBotScope": {
+      "type": "string",
+      "enum": [
+        "FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED",
+        "FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE",
+        "FOUNDRY_SLACK_BOT_SCOPE_SOURCES"
+      ],
+      "default": "FOUNDRY_SLACK_BOT_SCOPE_UNSPECIFIED",
+      "description": "FoundrySlackBotScope is what an install's shared bot reads. Either way it\nonly reads and asks, and proposes what owners and admins run.\n\n - FOUNDRY_SLACK_BOT_SCOPE_WORKSPACE: Everything in the workspace an unrestricted member reads: every\nontology, its current load and documents. A new bot's scope.\n - FOUNDRY_SLACK_BOT_SCOPE_SOURCES: Only the sources Settings › Access grants its credential."
     },
     "v1FoundrySlackIdentityMode": {
       "type": "string",
@@ -13852,7 +13870,7 @@
         "FOUNDRY_SLACK_IDENTITY_MODE_BOT"
       ],
       "default": "FOUNDRY_SLACK_IDENTITY_MODE_UNSPECIFIED",
-      "description": "FoundrySlackIdentityMode is whom an install's bot acts as.\n\n - FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON: Each linked Slack user as their own Foundry user.\n - FOUNDRY_SLACK_IDENTITY_MODE_BOT: One shared bot: anyone in the Slack workspace may ask it, it reads only\nthe sources its credential is given, and owners and admins run what it\nproposes as themselves."
+      "description": "FoundrySlackIdentityMode is whom an install's bot acts as.\n\n - FOUNDRY_SLACK_IDENTITY_MODE_PER_PERSON: Each linked Slack user as their own Foundry user.\n - FOUNDRY_SLACK_IDENTITY_MODE_BOT: One shared bot: anyone in the Slack workspace may ask it, it reads what\nits scope says (FoundrySlackBotScope), and owners and admins run what it\nproposes as themselves."
     },
     "v1FoundrySlackInstall": {
       "type": "object",
@@ -14897,6 +14915,10 @@
             "$ref": "#/definitions/v1FoundrySourceItem"
           },
           "description": "For a grantee, the items of the sources that report their permissions\n(a Slack connection's channels) that those sources share with it now,\nsorted: what Founder records a restricted member's thread read under.\nA source's directory of people (Slack's users) is the item \"*directory\",\nshared with a person the source has a non-guest account for."
+        },
+        "readsWorkspace": {
+          "type": "boolean",
+          "description": "The caller reads the whole workspace as an unrestricted member does,\nand changes nothing: a Slack install's shared bot whose scope is\nWORKSPACE (FoundrySlackBotScope). grantee is false then, and\nontology_ids are every live ontology with a current load."
         }
       }
     },

@@ -1004,11 +1004,12 @@ service FoundryService {
   }
   // Sets whom the install's bot acts as, for an owner or admin. BOT makes
   // one shared bot for the whole Slack workspace: Helix makes it a
-  // workspace service credential no one holds the token of, whose sources
-  // are chosen in Settings › Access, and owners and admins run what it
-  // proposes as themselves. PER_PERSON answers each linked Slack user as
-  // their own Foundry user: the bot's credential is revoked and its threads
-  // deleted. Setting the mode it has changes nothing. NOT_FOUND without an
+  // workspace service credential no one holds the token of, which reads
+  // what its bot_scope says (the whole workspace unless set otherwise), and
+  // owners and admins run what it proposes as themselves. BOT with a
+  // bot_scope sets the shared bot's scope. PER_PERSON answers each linked
+  // Slack user as their own Foundry user: the bot's credential is revoked
+  // and its threads deleted. Setting the mode it has changes nothing. NOT_FOUND without an
   // install; FAILED_PRECONDITION FOUNDRY_SLACK_BOT_HOSTED_ONLY where the
   // host makes no such credentials.
   rpc UpdateFoundrySlack(UpdateFoundrySlackRequest) returns (FoundrySlackResponse) {
@@ -2419,6 +2420,11 @@ message GetMyFoundryAccessResponse {
   // A source's directory of people (Slack's users) is the item "*directory",
   // shared with a person the source has a non-guest account for.
   repeated FoundrySourceItem source_items = 6;
+  // The caller reads the whole workspace as an unrestricted member does,
+  // and changes nothing: a Slack install's shared bot whose scope is
+  // WORKSPACE (FoundrySlackBotScope). grantee is false then, and
+  // ontology_ids are every live ontology with a current load.
+  bool reads_workspace = 7;
 }
 
 // FoundrySourceItem is one item of a connection's source: a Slack channel,
@@ -3171,6 +3177,9 @@ message UpdateFoundrySlackRequest {
   string workspace_id = 1;
   // PER_PERSON or BOT; UNSPECIFIED is INVALID_ARGUMENT.
   FoundrySlackIdentityMode identity_mode = 2;
+  // With BOT, what the shared bot reads: UNSPECIFIED keeps its scope (a new
+  // bot's is WORKSPACE). With PER_PERSON it must be UNSPECIFIED.
+  FoundrySlackBotScope bot_scope = 3;
 }
 message ListFoundrySlackLinksRequest {
   string workspace_id = 1;

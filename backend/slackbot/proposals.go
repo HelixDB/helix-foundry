@@ -70,7 +70,7 @@ func (b *Bot) proposalOf(ctx context.Context, c claim, k slack.Clicked, actionID
 	}
 	a, err := b.db.GetFoundryAgentAction(ctx, c.install.WorkspaceID, actionID)
 	switch {
-	case errors.Is(err, store.ErrNotFound) || err == nil && a.Principal != model.AgentBot(shared):
+	case errors.Is(err, store.ErrNotFound) || err == nil && a.Principal != model.AgentBot{CredentialID: shared.CredentialID}:
 		return tell("This proposal is gone.")
 	case err != nil:
 		return nil, "", fmt.Errorf("read the proposal: %w", err)

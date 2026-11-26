@@ -42,7 +42,7 @@ func TestSlackPromptSaysHowSlackReadsIt(t *testing.T) {
 	odd.Surface = model.FoundryAgentSurface(7)
 	assert.PanicsWithValue(t, "agent: no prompt for FoundryAgentSurface(7)", func() { surfacePrompt(odd) },
 		"a surface outside the closed set is a bug")
-	assert.Equal(t, "assistant-19", PromptVersion)
+	assert.Equal(t, "assistant-20", PromptVersion)
 }
 
 // A Slack turn is told whom it acts as, which its install's mode decides:

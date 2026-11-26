@@ -38,6 +38,19 @@ func ExampleValidSlackID() {
 	// Output: true true false false
 }
 
+func ExampleParseSlackBotScope() {
+	scope, err := ParseSlackBotScope("workspace")
+	fmt.Println(scope == SlackBotWorkspace{}, err)
+	scope, err = ParseSlackBotScope("sources")
+	fmt.Println(scope == SlackBotSources{}, err)
+	_, err = ParseSlackBotScope("")
+	fmt.Println(err)
+	// Output:
+	// true <nil>
+	// true <nil>
+	// unknown Slack bot scope ""
+}
+
 func ExampleParseFoundryAgentSurface() {
 	slack, err := ParseFoundryAgentSurface("slack")
 	fmt.Println(slack, err, FoundryAgentSurface(0))

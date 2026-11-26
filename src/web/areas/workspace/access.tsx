@@ -824,10 +824,11 @@ function AgentsPanel({
   // Helix Foundry's Slack bot's key: turned off in Settings › Slack, not
   // revoked here.
   const slack = useQuery({ ...slackQuery(id), retry: false }).data;
-  const bot =
-    slack?.kind === "installed" && slack.mode.kind === "bot"
-      ? slack.mode.credentialId
-      : null;
+  const botMode =
+      slack?.kind === "installed" && slack.mode.kind === "bot"
+        ? slack.mode
+        : null,
+    bot = botMode?.credentialId ?? null;
   const [making, setMaking] = useState(false),
     [editing, setEditing] = useState<ServiceCredential>(),
     [revoking, setRevoking] = useState<ServiceCredential>(),
@@ -911,7 +912,9 @@ function AgentsPanel({
                 notes={
                   k.id === bot
                     ? [
-                        "Helix Foundry’s shared bot in Slack reads what this key is given. Turn bot mode off in Settings › Slack to retire it.",
+                        botMode?.scope === "workspace"
+                          ? "Helix Foundry’s shared bot in Slack reads everything in this workspace, whatever this key is given; Settings › Slack limits it to its sources. Turn bot mode off there to retire it."
+                          : "Helix Foundry’s shared bot in Slack reads what this key is given. Turn bot mode off in Settings › Slack to retire it.",
                       ]
                     : undefined
                 }

@@ -47,8 +47,9 @@ type Identity struct {
 	Allows        func(workspaceID, projectID string, grant Grant) bool
 	Authorize     func(context.Context, any, Grant, ...string) error
 	WithScope     func(context.Context, string, bool) context.Context
-	// FoundryGrants says source grants give it something, though it reads no database: it
-	// discovers the read tools, and each call is decided as it is made.
+	// FoundryGrants says Foundry gives it something, though it reads no database (source grants,
+	// or the whole workspace for a Slack bot whose scope is the workspace): it discovers the read
+	// tools, and each call is decided as it is made.
 	FoundryGrants bool
 	// AsGrantee is ctx for a call made as a grantee of source grants, and IsGrantee whether Authorize
 	// admitted ctx as one. Nil on a host without grants.

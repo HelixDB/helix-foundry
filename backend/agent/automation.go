@@ -84,8 +84,10 @@ func (t *turnRun) system() string {
 	switch t.reach {
 	case ReachGrants:
 		out += "\n\n" + granteePrompt
-	case ReachBot:
-		out += "\n\n" + botPrompt
+	case ReachBotSources:
+		out += "\n\n" + botPrompt + " " + botSourcesPrompt
+	case ReachBotWorkspace:
+		out += "\n\n" + botPrompt + " " + botWorkspacePrompt
 	case ReachReadOnly:
 		out += "\n\n" + readOnlyPrompt
 	}

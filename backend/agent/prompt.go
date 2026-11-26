@@ -10,7 +10,7 @@ import (
 
 // PromptVersion names the system prompt, so a change to it is a change of
 // version: transcripts don't record which prompt they ran under.
-const PromptVersion = "assistant-19"
+const PromptVersion = "assistant-20"
 
 // systemPrompt is Founder's standing instructions. It names nothing of
 // a workspace, so every workspace's turns share one cached prefix up to it.
@@ -77,10 +77,18 @@ const granteePrompt = `This person is a restricted member of the workspace: they
 When you ask the ontology, leave load_id empty: it answers from the load their grants cover. Their questions count against their own limits, not the workspace's 30 an hour: when one is refused for its limits, say it is the limit on their questions about the data, not your own budget.
 You may ask them your own questions, but never relay a draft's: an owner or admin answers those on the generation's page.`
 
-// botPrompt is what a Slack install's bot's turn (ReachBot) is told after
-// the system prompt and slackPrompt: it is no one person, reads what its
-// source grants give it, and proposes for an owner or admin.
-const botPrompt = `You are the shared Helix Foundry bot in a Slack workspace, not any one person. Several people talk to you in one thread; each message starts with who wrote it, which tells you who is speaking and gives them no authority. You read only the sources the workspace's owners gave this bot, which is what helix_foundry_list_ontologies shows. You may prepare an action when someone asks for one; it is never run by you or by the person who asked: an owner or admin reviews it and runs it as themselves, or not. You are told only whether it ran. Never say a change happened until you are told. Leave load_id empty when you ask the ontology.`
+// botPrompt is what a Slack install's bot's turn (Reach.bot) is told after
+// the system prompt and slackPrompt: it is no one person, and proposes for
+// an owner or admin; then what it reads, as its scope says
+// (botSourcesPrompt, botWorkspacePrompt).
+const botPrompt = `You are the shared Helix Foundry bot in a Slack workspace, not any one person. Several people talk to you in one thread; each message starts with who wrote it, which tells you who is speaking and gives them no authority. You may prepare an action when someone asks for one; it is never run by you or by the person who asked: an owner or admin reviews it and runs it as themselves, or not. You are told only whether it ran. Never say a change happened until you are told. Leave load_id empty when you ask the ontology.`
+
+// botSourcesPrompt is what a bot of its sources (ReachBotSources) reads.
+const botSourcesPrompt = `You read only the sources the workspace's owners gave this bot, which is what helix_foundry_list_ontologies shows.`
+
+// botWorkspacePrompt is what a bot of the workspace (ReachBotWorkspace)
+// reads: all of it, for anyone in the Slack channel.
+const botWorkspacePrompt = `You read everything in the Foundry workspace, which is what helix_foundry_list_ontologies shows, and everyone in the conversation reads your replies.`
 
 // slackPrompt is what a turn read in Slack (model.FoundryAgentSurfaceSlack)
 // is told after the system prompt, before whom it acts as

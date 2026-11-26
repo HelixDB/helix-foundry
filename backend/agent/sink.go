@@ -44,7 +44,8 @@ type actionSink struct {
 	approved []automation.Action
 	sessions integration.SessionHost
 	// reach is the turn's, set once its session opens: under ReachGrants it
-	// allows, records and runs nothing; under ReachBot it only proposes.
+	// allows, records and runs nothing; under a bot's (Reach.bot) it only
+	// proposes.
 	reach Reach
 	// proposalTTL is how long a bot's proposal waits; 0 keeps none.
 	proposalTTL time.Duration
@@ -90,7 +91,7 @@ func (s *actionSink) Allows(operation string) bool {
 	switch s.reach {
 	case ReachWorkspace:
 		return Operations[operation]
-	case ReachBot:
+	case ReachBotSources, ReachBotWorkspace:
 		return BotOperations[operation]
 	}
 	return false
@@ -104,7 +105,7 @@ func (s *actionSink) Allows(operation string) bool {
 // kept while it waits; once decided, proposing it again is refused.
 func (s *actionSink) Propose(ctx context.Context, p integration.ProposedAction) (integration.AwaitingAdmin, error) {
 	switch {
-	case s.reach != ReachBot:
+	case !s.reach.bot():
 		return integration.AwaitingAdmin{}, status.Error(codes.PermissionDenied, "only a Slack install's bot proposes actions")
 	case s.proposalTTL <= 0:
 		return integration.AwaitingAdmin{}, status.Error(codes.Unavailable, "Founder can't keep proposals on this host")

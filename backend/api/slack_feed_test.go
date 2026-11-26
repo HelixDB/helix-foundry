@@ -392,7 +392,7 @@ func TestFollowSlackReply(t *testing.T) {
 	} {
 		t.Run("bot mode: "+name, func(t *testing.T) {
 			f, i := feedFixture(t)
-			i.Mode = model.SlackSharedBot{CredentialID: "cred-1"}
+			i.Mode = model.SlackSharedBot{CredentialID: "cred-1", Scope: model.SlackBotWorkspace{}}
 			f.cfg.Foundry.Slack.Follow.Window = 24 * time.Hour
 			f.db.feed.mappings = c.mappings
 			f.db.feed.people = map[string][]string{"th-": c.people}
@@ -410,7 +410,7 @@ func TestFollowSlackReply(t *testing.T) {
 	}
 	t.Run("bot mode: the thread's people unread is retried", func(t *testing.T) {
 		f, i := feedFixture(t)
-		i.Mode = model.SlackSharedBot{CredentialID: "cred-1"}
+		i.Mode = model.SlackSharedBot{CredentialID: "cred-1", Scope: model.SlackBotWorkspace{}}
 		f.db.feed.mappings = []*model.SlackThread{mapping("", ago(time.Hour), nil)}
 		f.db.feed.peopleErr = errors.New("down")
 		_, err := f.s.ReceiveSlackRequest(door(), signed(foundryv1.SlackRoute_SLACK_ROUTE_EVENTS, fixture(t, "events/channel_reply.json")))

@@ -585,7 +585,7 @@ func TestReceiveSlackEvents(t *testing.T) {
 	})
 	t.Run("a bot's install has one conversation a thread", func(t *testing.T) {
 		f := newSlackFixture(t)
-		install := f.db.install(t, f.keys, model.SlackSharedBot{CredentialID: "cred-1"})
+		install := f.db.install(t, f.keys, model.SlackSharedBot{CredentialID: "cred-1", Scope: model.SlackBotWorkspace{}})
 		receive(t, f, fixture(t, "events/dm.json"))
 		require.Len(t, f.db.intake, 1)
 		assert.Equal(t, model.SlackConversation(install.ID, "D0DM00001", "1795000010.000100", ""), f.db.intake[0].Conversation)
@@ -711,7 +711,7 @@ func TestReceiveSlackClicks(t *testing.T) {
 		// A message at top level is its own thread; a bot's thread is
 		// everyone's.
 		f.db.intake = nil
-		install.Mode = model.SlackSharedBot{CredentialID: "cred-1"}
+		install.Mode = model.SlackSharedBot{CredentialID: "cred-1", Scope: model.SlackBotWorkspace{}}
 		assert.EqualValues(t, http.StatusOK, receive(t, f, clickBody(t, "ask_about_app.json")))
 		require.Len(t, f.db.intake, 1)
 		assert.Equal(t, model.SlackConversation(install.ID, "C0GEN0001", "1795000050.000100", ""), f.db.intake[0].Conversation)

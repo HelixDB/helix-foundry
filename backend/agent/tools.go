@@ -85,9 +85,9 @@ var GranteeTools = map[string]bool{
 	toolAskPerson:                   true,
 }
 
-// BotTools are the tools a Slack install's bot's turn offers (ReachBot):
-// GranteeTools, whose every call the API narrows to the bot's source grants,
-// and toolPrepare, which proposes an action for an owner or admin to run
+// BotTools are the tools a Slack install's bot's turn offers (Reach.bot):
+// GranteeTools, whose every call the API reads as the bot's scope says (the
+// whole workspace, or its source grants), and toolPrepare, which proposes an action for an owner or admin to run
 // (integration.ConfirmByAdmin).
 var BotTools = func() map[string]bool {
 	tools := maps.Clone(GranteeTools)

@@ -272,7 +272,7 @@ func TestAHelpersTurnRunsAsTheWorkersDo(t *testing.T) {
 }
 
 func TestFounderIsToldWhatItRunsAtOnce(t *testing.T) {
-	assert.Equal(t, "assistant-19", PromptVersion)
+	assert.Equal(t, "assistant-20", PromptVersion)
 	assert.True(t, strings.HasPrefix(systemPrompt, "You are Founder in Helix Foundry"))
 	assert.NotContains(t, systemPrompt, "Assistant", "it names itself Founder")
 	assert.Contains(t, systemPrompt, "You change nothing yourself, with one exception: a new dashboard the person asked for")
