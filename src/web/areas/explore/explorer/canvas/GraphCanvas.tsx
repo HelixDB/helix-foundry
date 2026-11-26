@@ -185,7 +185,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
   const sizeRef = useRef({ width: 0, height: 0, dpr: 1 });
   const rafRef = useRef(0);
   const frameRef = useRef<(now: number) => void>(() => {});
-  const fontRef = useRef("ui-sans-serif, system-ui, sans-serif");
+  const fontRef = useRef("ui-monospace, monospace");
   const measureRef = useRef(new Map<string, number>());
   const scratchRef = useRef(new FrameScratch());
   const hitsRef = useRef(new EdgeHitBuffer());
@@ -1447,16 +1447,16 @@ export function GraphCanvas(props: GraphCanvasProps) {
     };
   }, [layout]);
 
-  // Canvas text uses the dashboard's Geist, not a generic face.
+  // Canvas text uses the app's Helix Mono, not a generic face.
   useEffect(() => {
     const read = () => {
-      const geist = getComputedStyle(document.body)
-        .getPropertyValue("--font-geist")
+      const mono = getComputedStyle(document.body)
+        .getPropertyValue("--font-helix-mono")
         .trim();
-      fontRef.current = geist
-        ? `${geist}, ui-sans-serif, system-ui, sans-serif`
+      fontRef.current = mono
+        ? `${mono}, ui-monospace, monospace`
         : getComputedStyle(document.body).fontFamily ||
-          "ui-sans-serif, system-ui, sans-serif";
+          "ui-monospace, monospace";
       measureRef.current.clear();
       requestFrame();
     };

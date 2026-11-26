@@ -2,10 +2,11 @@
    reports its height). Its parts are the Analyst's (ask.css, ask-visual.css,
    ontology.css's callouts), with the website's tokens. */
 :root {
-  /* The website's Geist comes from next/font, which the tokens' font stacks
-     name first; the frame has none, so they start at the system's. */
-  --font-geist-sans: system-ui;
-  --font-geist-mono: ui-monospace;
+  /* The website's Helix Mono comes from next/font, which the frame has
+     none of: it keeps the host's system faces. */
+  --hf-font-sans: system-ui, sans-serif;
+  --hf-font-display: system-ui, sans-serif;
+  --hf-font-mono: ui-monospace, monospace;
 }
 html,
 body {

@@ -7,13 +7,13 @@
    first paint by the root layout: src/shared/theme.ts). Other CSS files use
    only these tokens, never a color of their own (tests/unit/theme-css.test.ts). */
 :root {
-  --hf-font-sans:
-    var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, sans-serif;
-  --hf-font-display: var(--hf-font-sans);
+  /* Helix Mono sets all of the app's text (src/web/fonts.ts): the three
+     roles share it. */
   --hf-font-mono:
-    var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas,
+    var(--font-helix-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas,
     monospace;
+  --hf-font-sans: var(--hf-font-mono);
+  --hf-font-display: var(--hf-font-mono);
 
   --hf-text-xs: 11px;
   --hf-text-sm: 12px;

@@ -71,7 +71,11 @@ export function CompanyPanel({
   // What a screen holds: what the company does, or a question's answer.
   const valueAt = (screen: number) => {
     const q = screen > 0 ? questions[screen - 1] : undefined;
-    return !company ? "" : q ? (company.answers.get(q.id) ?? "") : company.summary;
+    return !company
+      ? ""
+      : q
+        ? (company.answers.get(q.id) ?? "")
+        : company.summary;
   };
   // Whether the shown screen's field is open. Each screen opens on its
   // guess, asking whether it looks right, or on its field when it has none;
@@ -241,9 +245,7 @@ export function CompanyPanel({
                 value={value}
                 placeholder={q ? undefined : `What does ${name} do?`}
                 onChange={(e) =>
-                  q
-                    ? onAnswer(q.id, e.target.value)
-                    : onSummary(e.target.value)
+                  q ? onAnswer(q.id, e.target.value) : onSummary(e.target.value)
                 }
                 onKeyDown={(e) => {
                   // Enter goes on; Shift+Enter is a new line.
