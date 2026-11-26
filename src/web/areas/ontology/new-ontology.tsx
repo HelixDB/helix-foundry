@@ -996,7 +996,9 @@ export function NewOntologyPage() {
                     <span className="on-stepper-number" aria-hidden>
                       <Check size={12} />
                     </span>
-                    <span className="on-stepper-title">{STEP_LABELS[st.id]}</span>
+                    <span className="on-stepper-title">
+                      {STEP_LABELS[st.id]}
+                    </span>
                     <span className="hf-sr-only">
                       {" "}
                       (done: {stepSummary(st.state)})
@@ -1008,7 +1010,9 @@ export function NewOntologyPage() {
                     <span className="on-stepper-number" aria-hidden>
                       {i + 1}
                     </span>
-                    <span className="on-stepper-title">{STEP_LABELS[st.id]}</span>
+                    <span className="on-stepper-title">
+                      {STEP_LABELS[st.id]}
+                    </span>
                   </span>
                 )}
               </li>
