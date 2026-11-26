@@ -198,8 +198,14 @@ test("researches the company from the user's email, drafts the goal from the ans
   const again = page.waitForRequest(isPost(DRAFT));
   await page.getByRole("button", { name: "Write it again" }).click();
   await confirm.getByRole("button", { name: "Write it again" }).click();
-  await again;
-  await expect(goal).toHaveValue(drafted);
+  // Written again, it reads the data chosen since: the uploaded notes.
+  expect((await again).postDataJSON().data).toContain("General");
+  await expect(goal).not.toHaveValue("Renewals at risk, by customer.");
+  await expect(goal).toHaveValue(
+    /^Globex Industries uses this ontology to answer its team’s questions/,
+  );
+  const redrafted = await goal.inputValue();
+  expect(redrafted).not.toBe(drafted);
   await page.getByRole("button", { name: "Continue" }).click();
 
   // The review: the name the draft came with, the database a new one named
@@ -225,7 +231,7 @@ test("researches the company from the user's email, drafts the goal from the ans
   // Every new ontology's first draft is made current and loaded.
   expect((await generated).postDataJSON()).toMatchObject({
     noConnectors: true,
-    goal: drafted,
+    goal: redrafted,
     loadWhenReady: true,
   });
   await page.goto(await createdOntology(page));
