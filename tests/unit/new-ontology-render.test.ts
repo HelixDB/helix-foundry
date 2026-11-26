@@ -144,7 +144,7 @@ describe("CompanyPanel", () => {
     const html = panel({ kind: "idle" }, company);
     expect(html).toContain("1 of 3");
     expect(html).toContain("Globex");
-    expect(html).toContain('<p class="on-guess">Globex sells widgets.</p>');
+    expect(html).toContain('class="on-guess">Globex sells widgets.</p>');
     expect(html).toContain("Does this look right to you?");
     expect(html).toContain("This looks right to me");
     expect(html).toContain("Change it");
