@@ -267,7 +267,10 @@ export const companyResearchRoutes: MockRoute[] = [
         if ([...data].length > 12_000)
           return fail("INVALID_ARGUMENT", "data is at most 12,000 characters");
         if ([...summary].length > 600)
-          return fail("INVALID_ARGUMENT", "summary is longer than 600 characters");
+          return fail(
+            "INVALID_ARGUMENT",
+            "summary is longer than 600 characters",
+          );
         const said = questions.flatMap((q) => {
           const a = answers.find((x) => x.questionId === q.id)?.answer?.trim();
           return a ? [`${q.question} ${a}`] : [];

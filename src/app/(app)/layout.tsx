@@ -1,8 +1,7 @@
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { THEME_BACKGROUNDS, THEME_BOOT } from "@/shared/theme";
+import { helixMono } from "@/web/fonts";
 import { SLACK_RETURN_BOOT } from "@/web/areas/workspace/slack-return";
 import { Telemetry } from "@/web/telemetry";
 // Global styles, in helix-foundry's order (apps/web/src/main.tsx).
@@ -34,15 +33,11 @@ export const viewport: Viewport = {
 
 // THEME_BOOT sets data-theme on <html> before first paint, so the server's
 // <html> differs from the DOM React hydrates: suppressHydrationWarning.
-// Geist and Geist Mono are self-hosted by next/font; their variables feed
-// --hf-font-sans and --hf-font-mono (src/web/workspace.css).
+// Helix Mono is self-hosted by next/font (src/web/fonts.ts); its variable
+// feeds the font tokens (src/web/workspace.css).
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
-      suppressHydrationWarning
-    >
+    <html lang="en" className={helixMono.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         {/* Slack's and Helix's returns leave the URL before the tracker or
