@@ -413,9 +413,9 @@ test("says when the site can't be read, and when the research fails, with Retry"
   await expect(steps.nth(1)).toHaveText(
     "Following its pages about the company…",
   );
-  await expect(page.getByRole("status")).toHaveText(
-    "Following its pages about the company…",
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Following its pages" }),
+  ).toHaveText("Following its pages about the company…");
   await expect(
     page.getByText(
       "Foundry couldn’t read the site, so these guesses come from the domain alone.",
